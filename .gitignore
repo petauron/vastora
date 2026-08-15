@@ -1,0 +1,19 @@
+# Go
+/bin/
+/coverage.out
+
+# Node and Vite
+/web/node_modules/
+/web/dist/
+/backups/
+
+# Local Vastora state and generated development credentials
+/.vastora/
+/.env
+/.env.*
+!.env.example
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/

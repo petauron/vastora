@@ -1,0 +1,88 @@
+version: 2
+# Routine version PRs are limited to patch and minor releases. Major upgrades
+# are reviewed and tested manually; Dependabot security updates remain enabled.
+# A high open PR limit avoids GitHub's default five-PR version-update backlog.
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 99
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-patch
+          - version-update:semver-minor
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 99
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-patch
+          - version-update:semver-minor
+    # This is an npm alias for typescript@7, not a published package name.
+    # Dependabot currently requests the alias from the registry and gets a 404.
+    # Update it manually together with the TypeScript 6 API compatibility alias.
+    ignore:
+      - dependency-name: "@typescript/native"
+    groups:
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - patch
+          - minor
+      lint-toolchain:
+        patterns:
+          - eslint
+          - "@eslint/*"
+          - typescript
+          - typescript-eslint
+          - "@typescript/*"
+          - globals
+        update-types:
+          - patch
+          - minor
+      vite-toolchain:
+        patterns:
+          - vite
+          - vitest
+          - "@vitejs/*"
+          - "@rolldown/*"
+        update-types:
+          - patch
+          - minor
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 99
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-patch
+          - version-update:semver-minor
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 99
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-patch
+          - version-update:semver-minor
+    # Go feature releases use the 1.x version line, so Dependabot classifies
+    # 1.26 -> 1.27 (including release candidates) as a SemVer minor update.
+    # Keep the builder on patch releases; evaluate Go feature releases manually.
+    ignore:
+      - dependency-name: golang
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major

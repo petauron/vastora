@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-15T00:00:00Z",
+  "apps": [
+    {
+      "id": "cpa",
+      "version": "7.2.128",
+      "name": {
+        "en": "CPA",
+        "zh-CN": "CPA"
+      },
+      "description": {
+        "en": "CLIProxyAPI with an optional Cloudflare Tunnel.",
+        "zh-CN": "带可选 Cloudflare Tunnel 的 CLIProxyAPI。"
+      },
+      "license": "NOASSERTION",
+      "images": [
+        {
+          "name": "cli-proxy-api",
+          "reference": "eceasy/cli-proxy-api@sha256:3f7a734784f4cc2c86f6268929caff1b0c178fe600fdaa12cefe884dc4cae841"
+        },
+        {
+          "name": "cloudflared",
+          "reference": "cloudflare/cloudflared:2026.7.2@sha256:4f6655284ab3d252b7f28fedb19fe6c8fc82ee5b1295c20ac74d475e5398a52d"
+        }
+      ],
+      "compose": "services:\n  cli-proxy-api:\n    image: eceasy/cli-proxy-api@sha256:3f7a734784f4cc2c86f6268929caff1b0c178fe600fdaa12cefe884dc4cae841\n    restart: unless-stopped\n    read_only: true\n    environment:\n      TZ: ${timezone}\n    ports:\n      - 127.0.0.1:8317:8317\n    volumes:\n      - ./config.yaml:/CLIProxyAPI/config.yaml:ro\n      - ./auths:/root/.cli-proxy-api\n      - ./logs:/CLIProxyAPI/logs\n      - ./plugins:/CLIProxyAPI/plugins\n  cloudflared-cpa:\n    profiles: [cloudflare-tunnel]\n    image: cloudflare/cloudflared:2026.7.2@sha256:4f6655284ab3d252b7f28fedb19fe6c8fc82ee5b1295c20ac74d475e5398a52d\n    command: tunnel --no-autoupdate run --token-file /run/secrets/tunnel_token\n    volumes:\n      - ./secrets/tunnel_token:/run/secrets/tunnel_token:ro\n",
+      "config": [
+        {
+          "key": "timezone",
+          "type": "string",
+          "label": {
+            "en": "Timezone",
+            "zh-CN": "时区"
+          },
+          "description": {
+            "en": "IANA timezone for application logs.",
+            "zh-CN": "应用日志使用的 IANA 时区。"
+          },
+          "required": true,
+          "secret": false,
+          "default": "UTC"
+        },
+        {
+          "key": "management_key",
+          "type": "string",
+          "label": {
+            "en": "Management key",
+            "zh-CN": "管理密钥"
+          },
+          "description": {
+            "en": "Generated automatically if left empty during installation.",
+            "zh-CN": "安装时留空会自动生成。"
+          },
+          "required": true,
+          "secret": true
+        },
+        {
+          "key": "api_key",
+          "type": "string",
+          "label": {
+            "en": "Client API key",
+            "zh-CN": "客户端 API 密钥"
+          },
+          "description": {
+            "en": "Generated automatically if left empty during installation.",
+            "zh-CN": "安装时留空会自动生成。"
+          },
+          "required": true,
+          "secret": true
+        },
+        {
+          "key": "enable_tunnel",
+          "type": "boolean",
+          "label": {
+            "en": "Enable Cloudflare Tunnel",
+            "zh-CN": "启用 Cloudflare Tunnel"
+          },
+          "description": {
+            "en": "Starts the optional cloudflared profile.",
+            "zh-CN": "启动可选的 cloudflared profile。"
+          },
+          "required": false,
+          "secret": false,
+          "default": false
+        },
+        {
+          "key": "tunnel_token",
+          "type": "string",
+          "label": {
+            "en": "Tunnel token",
+            "zh-CN": "隧道令牌"
+          },
+          "description": {
+            "en": "Required only when Cloudflare Tunnel is enabled.",
+            "zh-CN": "仅在启用 Cloudflare Tunnel 时需要。"
+          },
+          "required": true,
+          "secret": true,
+          "visibleWhen": {
+            "field": "enable_tunnel",
+            "equals": true
+          }
+        },
+        {
+          "key": "debug",
+          "type": "boolean",
+          "label": {
+            "en": "Debug logging",
+            "zh-CN": "调试日志"
+          },
+          "description": {
+            "en": "Enables additional diagnostic logging.",
+            "zh-CN": "启用额外诊断日志。"
+          },
+          "required": false,
+          "secret": false,
+          "default": false
+        }
+      ]
+    }
+  ]
+}

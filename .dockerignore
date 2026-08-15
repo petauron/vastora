@@ -1,0 +1,9 @@
+.git
+.github
+.vastora
+backups
+web/node_modules
+web/dist
+*.md
+LICENSE
+NOTICE

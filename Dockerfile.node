@@ -1,0 +1,14 @@
+FROM golang:1.26.6-bookworm AS go-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN GOTOOLCHAIN=go1.26.6 go mod download
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+RUN CGO_ENABLED=0 GOTOOLCHAIN=go1.26.6 go build -trimpath -ldflags="-s -w" -o /out/vastora ./cmd/vastora
+RUN mkdir /out/node-data && chown 65532:65532 /out/node-data
+
+FROM gcr.io/distroless/static-debian13:nonroot
+COPY --from=go-build /out/vastora /usr/local/bin/vastora
+COPY --from=go-build --chown=65532:65532 /out/node-data /var/lib/vastora-node
+VOLUME ["/var/lib/vastora-node"]
+ENTRYPOINT ["/usr/local/bin/vastora"]

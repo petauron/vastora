@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vastora.example/schema/catalog-1.json",
+  "title": "Vastora catalog payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "apps"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "apps": {
+      "type": "array",
+      "items": { "$ref": "app-manifest.schema.json" }
+    }
+  }
+}

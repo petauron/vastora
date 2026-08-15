@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vastora.example/schema/app-manifest-1.json",
+  "title": "Vastora app manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "name", "description", "license", "images", "compose", "config"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$" },
+    "version": { "type": "string", "pattern": "^v?(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
+    "name": { "$ref": "#/$defs/localized" },
+    "description": { "$ref": "#/$defs/localized" },
+    "license": { "type": "string", "minLength": 1 },
+    "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
+    "compose": { "type": "string", "minLength": 1 },
+    "config": { "type": "array", "items": { "$ref": "#/$defs/configField" } }
+  },
+  "$defs": {
+    "localized": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["en", "zh-CN"],
+      "properties": { "en": { "type": "string", "minLength": 1 }, "zh-CN": { "type": "string", "minLength": 1 } }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "reference"],
+      "properties": { "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$" }, "reference": { "type": "string", "pattern": "@sha256:[a-f0-9]{64}$" } }
+    },
+    "configField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "type", "label", "description", "required", "secret"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
+        "type": { "enum": ["string", "boolean", "integer"] },
+        "label": { "$ref": "#/$defs/localized" },
+        "description": { "$ref": "#/$defs/localized" },
+        "required": { "type": "boolean" },
+        "secret": { "type": "boolean" },
+        "default": { "type": ["string", "boolean", "integer"] },
+        "visibleWhen": { "$ref": "#/$defs/condition" }
+      },
+      "allOf": [{ "if": { "properties": { "secret": { "const": true } } }, "then": { "not": { "required": ["default"] } } }]
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "equals"],
+      "properties": { "field": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" }, "equals": { "type": ["string", "boolean", "integer"] } }
+    }
+  }
+}

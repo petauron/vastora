@@ -1,0 +1,23 @@
+name: Bug report
+description: Report a reproducible defect without secrets or real infrastructure data.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Expected and actual outcome
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Use synthetic values only. Do not include tokens, IP addresses, hostnames, or logs containing secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security impact
+      description: If this could disclose or alter sensitive data, do not file publicly; follow SECURITY.md instead.

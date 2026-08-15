@@ -1,0 +1,29 @@
+name: Deliverable feature slice
+description: Propose one complete, testable vertical slice.
+title: "feat: "
+labels: ["needs-triage"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+    validations:
+      required: true
+  - type: textarea
+    id: interfaces
+    attributes:
+      label: Interface changes and dependencies
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance, tests, and security checks
+    validations:
+      required: true
