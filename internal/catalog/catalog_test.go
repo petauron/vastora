@@ -19,7 +19,6 @@ func validCatalog() Catalog {
 			Description: LocalizedText{English: "Proxy API", SimplifiedChinese: "代理 API"},
 			License:     "Apache-2.0",
 			Images:      []Image{{Name: "api", Reference: "example.invalid/cpa@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
-			Compose:     "services:\n  api:\n    image: example.invalid/cpa@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
 			Config: []ConfigField{{
 				Key:         "tunnel_token",
 				Type:        "string",
@@ -65,5 +64,32 @@ func TestSecretDefaultIsRejected(t *testing.T) {
 	catalog.Apps[0].Config[0].Default = &value
 	if err := ValidateCatalog(catalog); err == nil {
 		t.Fatal("expected secret default validation failure")
+	}
+}
+
+func TestAppAndImageIDsMayStartWithDigits(t *testing.T) {
+	t.Parallel()
+	catalog := validCatalog()
+	catalog.Apps[0].ID = "3x-ui"
+	catalog.Apps[0].Images[0].Name = "3x-ui"
+	if err := ValidateCatalog(catalog); err != nil {
+		t.Fatalf("expected numeric-leading identifiers to be valid: %v", err)
+	}
+}
+
+func TestHomepageMustReferenceADeclaredService(t *testing.T) {
+	t.Parallel()
+	catalog := validCatalog()
+	catalog.Apps[0].Homepage = &Homepage{Service: "manager", Path: "/"}
+	if err := ValidateCatalog(catalog); err == nil {
+		t.Fatal("expected unknown homepage service validation failure")
+	}
+	catalog.Apps[0].Services = []Service{{Name: "manager", Protocol: "http", ContainerPort: 8080, DefaultHostPort: 8080}}
+	if err := ValidateCatalog(catalog); err != nil {
+		t.Fatalf("expected declared homepage service to be valid: %v", err)
+	}
+	catalog.Apps[0].Homepage.Path = "https://example.invalid/"
+	if err := ValidateCatalog(catalog); err == nil {
+		t.Fatal("expected absolute homepage URL validation failure")
 	}
 }

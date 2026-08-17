@@ -1,4 +1,4 @@
-package master
+package center
 
 import (
 	"bytes"
@@ -59,20 +59,16 @@ func TestStaticHandlerKeepsRequestsInsideStaticRoot(t *testing.T) {
 	}
 }
 
-func TestBootstrapTokenCanCreateOnlyOneAdministrator(t *testing.T) {
+func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 	t.Parallel()
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	token, err := store.Initialize(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
 	server := httptest.NewServer(NewServer(store, "", false).Handler())
 	defer server.Close()
-	body, _ := json.Marshal(map[string]string{"bootstrapToken": token, "password": "correct-horse-battery-staple"})
+	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "correct-horse-battery-staple"})
 	response, err := http.Post(server.URL+"/api/v1/setup/admin", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -86,8 +82,27 @@ func TestBootstrapTokenCanCreateOnlyOneAdministrator(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("got status %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+
+	wrongLogin, _ := json.Marshal(map[string]string{"username": "other", "password": "correct-horse-battery-staple"})
+	response, err = http.Post(server.URL+"/api/v1/auth/login", "application/json", bytes.NewReader(wrongLogin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
 	if response.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("got status %d, want %d", response.StatusCode, http.StatusUnauthorized)
+		t.Fatalf("wrong username got status %d, want %d", response.StatusCode, http.StatusUnauthorized)
+	}
+
+	response, err = http.Post(server.URL+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("valid credentials got status %d, want %d", response.StatusCode, http.StatusOK)
 	}
 }
 
@@ -97,16 +112,13 @@ func TestEncryptedBackupRestoresToNewDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Initialize(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.CreateSource(context.Background(), SourceInput{
 		ID: "official", DisplayName: "Official", URL: "https://catalog.example.invalid/v1.json",
 		PublicKey: make([]byte, 32), RefreshSeconds: 3600,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	backupPath := filepath.Join(t.TempDir(), "master.vastora")
+	backupPath := filepath.Join(t.TempDir(), "center.vastora")
 	if err := store.Backup(context.Background(), backupPath, "backup-password-for-test"); err != nil {
 		t.Fatal(err)
 	}
@@ -141,9 +153,6 @@ func TestCatalogSourceListRedactsBearerToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := store.Initialize(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	if err := store.CreateSource(context.Background(), SourceInput{
 		ID: "private-catalog", DisplayName: "Private catalog", URL: "https://catalog.example.invalid/v1.json",
 		PublicKey: make([]byte, 32), BearerToken: "never-return-this-value",

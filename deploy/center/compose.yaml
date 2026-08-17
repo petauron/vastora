@@ -1,0 +1,56 @@
+name: vastora
+
+services:
+  center:
+    image: ${VASTORA_CENTER_IMAGE:?set VASTORA_CENTER_IMAGE to a pinned Center image}
+    restart: unless-stopped
+    command:
+      - center
+      - serve
+      - --data-dir
+      - /var/lib/vastora
+      - --listen
+      - 0.0.0.0:8080
+      - --web-dir
+      - /app/web/dist
+      - --official-catalog
+      - /app/catalog/catalog.json
+      - --tls-cert
+      - /run/vastora-tls/tls.crt
+      - --tls-key
+      - /run/vastora-tls/tls.key
+    ports:
+      - "${VASTORA_CENTER_PORT:-443}:8080"
+    volumes:
+      - center-data:/var/lib/vastora
+      - ./tls:/run/vastora-tls:ro
+    security_opt:
+      - no-new-privileges:true
+
+  headscale:
+    image: ghcr.io/juanfont/headscale:0.29.3
+    restart: unless-stopped
+    command: serve
+    read_only: true
+    tmpfs:
+      - /var/run/headscale
+    ports:
+      - "${VASTORA_HEADSCALE_PORT:-8443}:8080"
+    volumes:
+      - headscale-data:/var/lib/headscale
+      - center-data:/var/lib/vastora-shared:ro
+      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - ./headscale/policy.hujson:/etc/headscale/policy.hujson:ro
+      - ./tls:/run/vastora-tls:ro
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "headscale", "health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  center-data:
+  headscale-data:

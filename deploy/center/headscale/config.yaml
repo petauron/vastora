@@ -1,0 +1,65 @@
+# Replace this hostname before starting the stack. The public URL and exposed
+# port must match VASTORA_HEADSCALE_PORT in ../.env.
+server_url: https://headscale.example.com:8443
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: ""
+grpc_listen_addr: 127.0.0.1:50443
+grpc_allow_insecure: false
+trusted_proxies: []
+
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+
+derp:
+  server:
+    enabled: false
+    region_id: 999
+    region_code: vastora
+    region_name: Vastora Embedded DERP
+    stun_listen_addr: "0.0.0.0:3478"
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  paths: []
+  auto_update_enabled: true
+  update_frequency: 24h
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+    write_ahead_log: true
+    wal_autocheckpoint: 1000
+
+tls_cert_path: /run/vastora-tls/tls.crt
+tls_key_path: /run/vastora-tls/tls.key
+
+dns:
+  magic_dns: true
+  base_domain: vastora.internal
+  override_local_dns: false
+  nameservers:
+    global: []
+    split: {}
+  search_domains: []
+  extra_records: []
+  extra_records_path: /var/lib/vastora-shared/headscale-extra-records.json
+
+policy:
+  mode: file
+  path: /etc/headscale/policy.hujson
+
+unix_socket: /var/run/headscale/headscale.sock
+unix_socket_permission: "0770"
+
+log:
+  format: text
+  level: info
+
+node:
+  expiry: 0

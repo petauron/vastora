@@ -4,15 +4,17 @@
   "title": "Vastora app manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "version", "name", "description", "license", "images", "compose", "config"],
+  "required": ["id", "version", "name", "description", "license", "images", "config"],
   "properties": {
-    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
     "version": { "type": "string", "pattern": "^v?(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" },
     "name": { "$ref": "#/$defs/localized" },
     "description": { "$ref": "#/$defs/localized" },
     "license": { "type": "string", "minLength": 1 },
     "images": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/image" } },
-    "compose": { "type": "string", "minLength": 1 },
+    "services": { "type": "array", "items": { "$ref": "#/$defs/service" } },
+    "homepage": { "$ref": "#/$defs/homepage" },
+    "hostAccess": { "type": "boolean" },
     "config": { "type": "array", "items": { "$ref": "#/$defs/configField" } }
   },
   "$defs": {
@@ -26,8 +28,35 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "reference"],
-      "properties": { "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,62}$" }, "reference": { "type": "string", "pattern": "@sha256:[a-f0-9]{64}$" } }
+      "properties": { "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" }, "reference": { "type": "string", "pattern": "@sha256:[a-f0-9]{64}$" } }
     },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "protocol", "containerPort"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
+        "protocol": { "enum": ["http", "https"] },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "defaultHostPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "hostPortField": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,62}$" },
+        "healthPath": { "type": "string", "pattern": "^/" }
+		,"management": { "type": "boolean" }
+      },
+      "oneOf": [
+        { "required": ["defaultHostPort"], "not": { "required": ["hostPortField"] } },
+        { "required": ["hostPortField"], "not": { "required": ["defaultHostPort"] } }
+      ]
+    },
+	"homepage": {
+	  "type": "object",
+	  "additionalProperties": false,
+	  "required": ["service", "path"],
+	  "properties": {
+		"service": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
+		"path": { "type": "string", "pattern": "^/" }
+	  }
+	},
     "configField": {
       "type": "object",
       "additionalProperties": false,

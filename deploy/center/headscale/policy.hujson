@@ -1,0 +1,24 @@
+{
+  "tagOwners": {
+    "tag:vastora-agent": ["vastora@"],
+    "tag:vastora-gateway": ["vastora@"],
+    "tag:vastora-center": ["vastora@"]
+  },
+  "grants": [
+    {
+      "src": ["autogroup:member"],
+      "dst": ["tag:vastora-gateway"],
+      "ip": ["80,443"]
+    },
+    {
+      "src": ["tag:vastora-gateway"],
+      "dst": ["tag:vastora-agent"],
+      "ip": ["*"]
+    },
+    {
+      "src": ["tag:vastora-agent"],
+      "dst": ["tag:vastora-center"],
+      "ip": ["443"]
+    }
+  ]
+}

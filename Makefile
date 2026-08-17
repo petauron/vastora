@@ -4,7 +4,7 @@ GO_PACKAGES := ./cmd/... ./internal/...
 STATICCHECK_VERSION := v0.7.0
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: bootstrap check go-check web-check security-check dependency-security-check image-master image-node
+.PHONY: bootstrap check go-check web-check security-check dependency-security-check image-center image-agent
 
 bootstrap:
 	$(GO) mod download
@@ -32,8 +32,8 @@ dependency-security-check:
 	cd web && npm audit --audit-level=high
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(GO_PACKAGES)
 
-image-master:
-	docker build --file Dockerfile.master --tag vastora-master:dev .
+image-center:
+	docker build --file Dockerfile.center --tag vastora-center:dev .
 
-image-node:
-	docker build --file Dockerfile.node --tag vastora-node:dev .
+image-agent:
+	docker build --file Dockerfile.agent --tag vastora-agent:dev .

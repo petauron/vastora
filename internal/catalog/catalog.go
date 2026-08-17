@@ -17,7 +17,7 @@ import (
 const SchemaVersion = 1
 
 var (
-	identifierPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
+	identifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 	fieldPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	semverPattern     = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 	digestPattern     = regexp.MustCompile(`@sha256:[a-f0-9]{64}$`)
@@ -54,8 +54,27 @@ type Image struct {
 	Reference string `json:"reference"`
 }
 
-// AppManifest is self-contained in a catalog payload. Compose is static YAML;
-// future rendering is restricted to declared delivery fields, never shell code.
+// Service declares an addressable application endpoint without coupling the
+// catalog to Docker container identities or a gateway implementation.
+type Service struct {
+	Name            string `json:"name"`
+	Protocol        string `json:"protocol"`
+	ContainerPort   int    `json:"containerPort"`
+	DefaultHostPort int    `json:"defaultHostPort,omitempty"`
+	HostPortField   string `json:"hostPortField,omitempty"`
+	HealthPath      string `json:"healthPath,omitempty"`
+	Management      bool   `json:"management,omitempty"`
+}
+
+// Homepage identifies the service and relative path opened from Center. The
+// Agent-reported service endpoint supplies the scheme, address, and port.
+type Homepage struct {
+	Service string `json:"service"`
+	Path    string `json:"path"`
+}
+
+// AppManifest is declarative metadata consumed by a typed Agent executor. It
+// never carries shell commands or an arbitrary runtime definition.
 type AppManifest struct {
 	ID          string        `json:"id"`
 	Version     string        `json:"version"`
@@ -63,8 +82,10 @@ type AppManifest struct {
 	Description LocalizedText `json:"description"`
 	License     string        `json:"license"`
 	Images      []Image       `json:"images"`
-	Compose     string        `json:"compose"`
+	Services    []Service     `json:"services,omitempty"`
+	Homepage    *Homepage     `json:"homepage,omitempty"`
 	Config      []ConfigField `json:"config"`
+	HostAccess  bool          `json:"hostAccess,omitempty"`
 }
 
 type Catalog struct {
@@ -118,9 +139,6 @@ func ValidateApp(app AppManifest) error {
 	if strings.TrimSpace(app.License) == "" {
 		return fmt.Errorf("catalog: license is required for %q", app.ID)
 	}
-	if strings.TrimSpace(app.Compose) == "" {
-		return fmt.Errorf("catalog: compose is required for %q", app.ID)
-	}
 	if len(app.Images) == 0 {
 		return fmt.Errorf("catalog: at least one image is required for %q", app.ID)
 	}
@@ -157,6 +175,44 @@ func ValidateApp(app AppManifest) error {
 		}
 		if field.VisibleWhen != nil && !fieldPattern.MatchString(field.VisibleWhen.Field) {
 			return fmt.Errorf("catalog: invalid condition field in %q", app.ID)
+		}
+	}
+	services := make(map[string]struct{}, len(app.Services))
+	for _, service := range app.Services {
+		if !identifierPattern.MatchString(service.Name) {
+			return fmt.Errorf("catalog: invalid service name %q in %q", service.Name, app.ID)
+		}
+		if _, exists := services[service.Name]; exists {
+			return fmt.Errorf("catalog: duplicate service %q in %q", service.Name, app.ID)
+		}
+		services[service.Name] = struct{}{}
+		if service.Protocol != "http" && service.Protocol != "https" {
+			return fmt.Errorf("catalog: unsupported service protocol %q in %q", service.Protocol, app.ID)
+		}
+		if service.ContainerPort < 1 || service.ContainerPort > 65535 || service.DefaultHostPort < 0 || service.DefaultHostPort > 65535 {
+			return fmt.Errorf("catalog: invalid service port in %q", app.ID)
+		}
+		if service.HostPortField == "" && service.DefaultHostPort == 0 {
+			return fmt.Errorf("catalog: service %q in %q needs a host port", service.Name, app.ID)
+		}
+		if service.HostPortField != "" {
+			if !fieldPattern.MatchString(service.HostPortField) {
+				return fmt.Errorf("catalog: invalid host port field for service %q in %q", service.Name, app.ID)
+			}
+			if _, exists := fields[service.HostPortField]; !exists {
+				return fmt.Errorf("catalog: service %q in %q references unknown host port field %q", service.Name, app.ID, service.HostPortField)
+			}
+		}
+		if service.HealthPath != "" && !strings.HasPrefix(service.HealthPath, "/") {
+			return fmt.Errorf("catalog: service %q in %q has an invalid health path", service.Name, app.ID)
+		}
+	}
+	if app.Homepage != nil {
+		if _, exists := services[app.Homepage.Service]; !exists {
+			return fmt.Errorf("catalog: homepage in %q references unknown service %q", app.ID, app.Homepage.Service)
+		}
+		if !strings.HasPrefix(app.Homepage.Path, "/") || strings.HasPrefix(app.Homepage.Path, "//") || strings.ContainsAny(app.Homepage.Path, "?#") {
+			return fmt.Errorf("catalog: homepage in %q has an invalid path", app.ID)
 		}
 	}
 	for _, field := range app.Config {
