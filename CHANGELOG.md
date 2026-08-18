@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/petauron/vastora/compare/v0.1.0...v0.2.0) (2026-08-18)
+
+
+### Features
+
+* bootstrap Center through an SSH tunnel ([#17](https://github.com/petauron/vastora/issues/17)) ([097e07d](https://github.com/petauron/vastora/commit/097e07d03eb4a2fe5ecd86483a6082b358a3cc3e))
+
 ## [0.1.0](https://github.com/petauron/vastora/compare/v0.1.0...v0.1.0) (2026-08-18)
 
 
