@@ -39,14 +39,13 @@ type headscaleClient struct {
 
 func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (IntegrationView, error) {
 	input.Mode = strings.TrimSpace(input.Mode)
-	input.URL = strings.TrimRight(strings.TrimSpace(input.URL), "/")
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	if input.Mode != "builtin" && input.Mode != "external" {
 		return IntegrationView{}, errors.New("center: Headscale mode must be builtin or external")
 	}
-	parsed, err := url.Parse(input.URL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return IntegrationView{}, errors.New("center: Headscale requires an HTTPS control-plane URL")
+	endpoint, err := s.authorizedHeadscaleEndpoint(input.URL)
+	if err != nil {
+		return IntegrationView{}, err
 	}
 	existingSecretID, existingAPIKey, err := s.integrationSecret(ctx, "headscale")
 	if err != nil {
@@ -59,7 +58,7 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 	if len(input.APIKey) < 20 {
 		return IntegrationView{}, errors.New("center: Headscale API key is required")
 	}
-	client := headscaleClient{baseURL: input.URL, apiKey: input.APIKey, http: &http.Client{Timeout: 20 * time.Second}}
+	client := headscaleClient{baseURL: endpoint, apiKey: input.APIKey, http: s.headscaleHTTPClient}
 	if err := client.verify(ctx); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: verify Headscale: %w", err)
 	}
@@ -78,7 +77,7 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 	now := s.now().UTC()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at)
 		VALUES('headscale', ?, ?, ?, 'configured', ?, ?)
-		ON CONFLICT(kind) DO UPDATE SET mode = excluded.mode, endpoint = excluded.endpoint, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, input.Mode, input.URL, secretID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		ON CONFLICT(kind) DO UPDATE SET mode = excluded.mode, endpoint = excluded.endpoint, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, input.Mode, endpoint, secretID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: save Headscale integration: %w", err)
 	}
 	if replacingSecret && existingSecretID != "" && existingSecretID != secretID {
@@ -148,7 +147,33 @@ func (s *Store) headscale(ctx context.Context) (headscaleClient, error) {
 	if err != nil {
 		return headscaleClient{}, err
 	}
-	return headscaleClient{baseURL: endpoint, apiKey: string(key), http: &http.Client{Timeout: 20 * time.Second}}, nil
+	allowedEndpoint, err := s.authorizedHeadscaleEndpoint(endpoint)
+	if err != nil {
+		return headscaleClient{}, err
+	}
+	return headscaleClient{baseURL: allowedEndpoint, apiKey: string(key), http: s.headscaleHTTPClient}, nil
+}
+
+func normalizeHeadscaleEndpoint(value string) (string, error) {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" {
+		return "", errors.New("Headscale requires an HTTPS control-plane URL without a path")
+	}
+	return value, nil
+}
+
+func (s *Store) authorizedHeadscaleEndpoint(value string) (string, error) {
+	requested, err := normalizeHeadscaleEndpoint(value)
+	if err != nil {
+		return "", fmt.Errorf("center: %w", err)
+	}
+	for _, allowed := range s.headscaleAllowedEndpoints {
+		if requested == allowed {
+			return allowed, nil
+		}
+	}
+	return "", errors.New("center: Headscale URL is not allowed by this Center; add it with --headscale-allowed-url and restart Center")
 }
 
 func (s *Store) reconcileHeadscaleDNS(ctx context.Context) error {

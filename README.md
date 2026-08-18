@@ -42,6 +42,11 @@ Start a local control plane after the checks pass:
 GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center serve --data-dir .vastora/center --listen 127.0.0.1:8080 --agent-connect-url http://127.0.0.1:8080
 ```
 
+To connect Headscale, authorize its exact HTTPS origin when Center starts by
+adding `--headscale-allowed-url https://headscale.example.com`. Repeat the flag
+to permit additional operator-approved control planes; browser users cannot
+make Center send authenticated requests to any other host.
+
 In another terminal, start the web development server with `cd web && npm run
 dev`. On the first visit, create the administrator, then follow the required
 wizard to create a real location and confirm how Agents reach Center. The

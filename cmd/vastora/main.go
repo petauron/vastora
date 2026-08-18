@@ -150,6 +150,8 @@ func runCenter(arguments []string) error {
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
 		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
 		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
+		var headscaleAllowedURLs stringListFlag
+		flags.Var(&headscaleAllowedURLs, "headscale-allowed-url", "authorized Headscale control-plane URL (repeat for multiple URLs)")
 		tlsCert := flags.String("tls-cert", "", "PEM certificate path")
 		tlsKey := flags.String("tls-key", "", "PEM private key path")
 		if err := flags.Parse(arguments[1:]); err != nil {
@@ -172,7 +174,7 @@ func runCenter(arguments []string) error {
 		if err != nil {
 			return fmt.Errorf("read official catalog: %w", err)
 		}
-		store, err := center.Open(*dataDir)
+		store, err := center.Open(*dataDir, headscaleAllowedURLs...)
 		if err != nil {
 			return err
 		}
@@ -868,12 +870,23 @@ func usageError() error {
 	return errors.New("invalid command")
 }
 
+type stringListFlag []string
+
+func (values *stringListFlag) String() string {
+	return strings.Join(*values, ",")
+}
+
+func (values *stringListFlag) Set(value string) error {
+	*values = append(*values, value)
+	return nil
+}
+
 func printUsage(writer *os.File) {
 	fmt.Fprint(writer, `Vastora control-plane tools
 
 Usage:
   vastora version
-  vastora center serve --data-dir DIR --agent-connect-url URL [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
+  vastora center serve --data-dir DIR --agent-connect-url URL [--headscale-allowed-url URL] [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
   vastora center agent-token create --data-dir DIR --site-id SITE
   vastora center backup --data-dir DIR --output FILE --password-file FILE
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE

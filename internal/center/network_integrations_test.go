@@ -61,6 +61,19 @@ func TestHeadscaleRequestKeepsFixedOriginAndRejectsRedirects(t *testing.T) {
 	}
 }
 
+func TestHeadscaleEndpointMustBeOperatorAuthorized(t *testing.T) {
+	store := &Store{headscaleAllowedEndpoints: []string{"https://headscale.example.test"}}
+	endpoint, err := store.authorizedHeadscaleEndpoint("https://headscale.example.test/")
+	if err != nil || endpoint != "https://headscale.example.test" {
+		t.Fatalf("allowed Headscale endpoint was rejected: endpoint=%q err=%v", endpoint, err)
+	}
+	for _, value := range []string{"https://metadata.internal", "https://headscale.example.test/path", "http://headscale.example.test"} {
+		if _, err := store.authorizedHeadscaleEndpoint(value); err == nil {
+			t.Fatalf("unauthorized Headscale endpoint was accepted: %q", value)
+		}
+	}
+}
+
 func TestHeadscaleJoinKeyIsOneHourAndSingleUse(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -87,7 +100,7 @@ func TestHeadscaleJoinKeyIsOneHourAndSingleUse(t *testing.T) {
 
 func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 	var preAuthBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/user":
@@ -102,11 +115,12 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	store, err := Open(t.TempDir())
+	store, err := Open(t.TempDir(), server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	store.headscaleHTTPClient = server.Client()
 	tx, err := store.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)

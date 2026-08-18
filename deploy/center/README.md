@@ -49,8 +49,11 @@ After the stack starts:
    universal installer.
 
 Center verifies Headscale before saving the encrypted key. The key field can be
-left blank on later edits. Agent enrollment tokens expire after ten minutes and
-work only once.
+left blank on later edits. The installer also authorizes exactly the configured
+Headscale URL as an outbound control-plane target; external Headscale URLs must
+be added to Center's repeated `--headscale-allowed-url` startup option before
+they can be selected in the browser. Agent enrollment tokens expire after ten
+minutes and work only once.
 
 ## Release packaging
 

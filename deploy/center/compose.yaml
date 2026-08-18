@@ -17,6 +17,8 @@ services:
       - /app/catalog/catalog.json
       - --agent-connect-url
       - ${VASTORA_CENTER_URL:?set VASTORA_CENTER_URL}
+      - --headscale-allowed-url
+      - ${VASTORA_HEADSCALE_URL:?set VASTORA_HEADSCALE_URL}
       - --tls-cert
       - /run/vastora-tls/tls.crt
       - --tls-key

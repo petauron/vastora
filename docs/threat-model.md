@@ -29,6 +29,9 @@
 - Cloudflare and Headscale credentials are encrypted; list APIs return only
   configuration metadata. Connector tokens are delivered only to the selected
   Agent through authenticated, leased tasks.
+- Headscale API requests can target only exact HTTPS origins authorized when
+  Center starts. Browser administrators select from that operator-controlled
+  boundary and cannot send the stored Bearer token to arbitrary network hosts.
 - The unauthenticated setup endpoint creates an administrator only while the
   administrator table is empty; all later setup requests are rejected. Until
   setup finishes, the first client that can reach the Center can claim the

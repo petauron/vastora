@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,10 +31,12 @@ import (
 const sessionLifetime = 24 * time.Hour
 
 type Store struct {
-	db      *sql.DB
-	dataDir string
-	key     []byte
-	now     func() time.Time
+	db                        *sql.DB
+	dataDir                   string
+	key                       []byte
+	headscaleAllowedEndpoints []string
+	headscaleHTTPClient       *http.Client
+	now                       func() time.Time
 }
 
 type SourceInput struct {
@@ -115,7 +118,20 @@ type AgentView struct {
 
 const OfficialCatalogSourceID = "vastora-official"
 
-func Open(dataDir string) (*Store, error) {
+func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
+	headscaleAllowedEndpoints := make([]string, 0, len(headscaleAllowedURLs))
+	seenHeadscaleEndpoints := make(map[string]struct{}, len(headscaleAllowedURLs))
+	for _, value := range headscaleAllowedURLs {
+		endpoint, err := normalizeHeadscaleEndpoint(value)
+		if err != nil {
+			return nil, fmt.Errorf("center: invalid allowed Headscale URL: %w", err)
+		}
+		if _, exists := seenHeadscaleEndpoints[endpoint]; exists {
+			continue
+		}
+		seenHeadscaleEndpoints[endpoint] = struct{}{}
+		headscaleAllowedEndpoints = append(headscaleAllowedEndpoints, endpoint)
+	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("center: create data directory: %w", err)
 	}
@@ -134,7 +150,12 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("center: open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db, dataDir: dataDir, key: key, now: time.Now}
+	store := &Store{
+		db: db, dataDir: dataDir, key: key,
+		headscaleAllowedEndpoints: headscaleAllowedEndpoints,
+		headscaleHTTPClient:       &http.Client{Timeout: 20 * time.Second},
+		now:                       time.Now,
+	}
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
 		_ = db.Close()
 		return nil, err
