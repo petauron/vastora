@@ -448,6 +448,7 @@ func runAgent(arguments []string) error {
 		capabilitiesValue := flags.String("capabilities", "docker", "comma-separated implemented capabilities: docker,gateway")
 		caddyAdmin := flags.String("caddy-admin", "unix:///run/vastora/caddy-admin.sock", "private Caddy Admin API endpoint for gateway nodes")
 		caddyImage := flags.String("caddy-image", "docker.io/library/caddy:2.11.4@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d", "Caddy image installed by the Agent when this node is selected as a gateway")
+		haproxyImage := flags.String("haproxy-image", "docker.io/library/haproxy:3.2.7-alpine@sha256:a9b408a818f5d0d9a6a042ec2957921038399f7a515f8b7bfef2054ef7f4ce05", "HAProxy image installed only when this gateway shares public port 443")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -487,13 +488,15 @@ func runAgent(arguments []string) error {
 			client.Executor = agent.DockerExecutor{}
 		}
 		if capabilities.Gateway {
-			gatewayDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
+			caddyDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
 			if err != nil {
 				return err
 			}
-			client.GatewayDriver = gatewayDriver
-			client.GatewayProvisioner = agent.DockerGatewayProvisioner{
-				Image: *caddyImage, AdminListen: gatewayDriver.AdminListen, AdminSocketPath: gatewayDriver.AdminSocketPath,
+			layer4 := agent.DockerLayer4Provisioner{Image: *haproxyImage}
+			client.GatewayDriver = &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4}
+			client.GatewayProvisioner = agent.ManagedGatewayProvisioner{
+				Caddy:  agent.DockerGatewayProvisioner{Image: *caddyImage, AdminListen: caddyDriver.AdminListen, AdminSocketPath: caddyDriver.AdminSocketPath},
+				Layer4: layer4,
 			}
 		}
 		if capabilities.Tunnel {

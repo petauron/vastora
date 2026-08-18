@@ -207,7 +207,11 @@ func caddyConfiguration(desired gateway.DesiredState, adminListen string) ([]byt
 			servers["vastora-"+listener.Kind+"-http"] = map[string]any{"listen": []string{net.JoinHostPort(listener.Address, strconv.Itoa(listener.HTTPPort))}, "routes": httpRoutes}
 		}
 		if len(httpsRoutes) != 0 {
-			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort(listener.Address, strconv.Itoa(listener.HTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
+			httpsAddress, httpsPort := listener.Address, listener.HTTPSPort
+			if listener.Kind == "public" && desired.SharedHTTPS != nil {
+				httpsAddress, httpsPort = desired.SharedHTTPS.CaddyAddress, desired.SharedHTTPS.CaddyPort
+			}
+			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort(httpsAddress, strconv.Itoa(httpsPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
 		}
 	}
 	configuration := map[string]any{"admin": map[string]any{"listen": adminListen}, "apps": map[string]any{"http": map[string]any{"servers": servers}}}

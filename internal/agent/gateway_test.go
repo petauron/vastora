@@ -163,6 +163,33 @@ func TestCaddyHTTPSRouteEnablesTLSAndRedirectsPlaintext(t *testing.T) {
 	}
 }
 
+func TestShared443MovesCaddyHTTPSToLoopback(t *testing.T) {
+	state := gateway.DesiredState{
+		Revision:    1,
+		Listeners:   []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
+		Routes:      []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
+		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 8443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
+	}
+	payload, err := caddyConfiguration(state, "unix//run/vastora/caddy-admin.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := string(payload)
+	if !strings.Contains(encoded, `"listen":["127.0.0.1:8443"]`) || strings.Contains(encoded, `"listen":["203.0.113.10:443"]`) {
+		t.Fatalf("shared 443 did not move Caddy HTTPS to loopback: %s", encoded)
+	}
+	configuration, err := haproxyConfiguration(*state.SharedHTTPS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	haproxy := string(configuration)
+	for _, wanted := range []string{"bind 203.0.113.10:443", "req.ssl_sni -i vless.example.test", "server caddy 127.0.0.1:8443 check", "server upstream-0 127.0.0.1:2443 check"} {
+		if !strings.Contains(haproxy, wanted) {
+			t.Fatalf("HAProxy configuration missing %q: %s", wanted, haproxy)
+		}
+	}
+}
+
 func TestCaddyConfigurationKeepsLANAndHeadscaleListenersSeparate(t *testing.T) {
 	state := gatewayState(1, 8317)
 	state.Listeners = append(state.Listeners, gateway.Listener{Kind: "lan", Address: "192.168.1.2", HTTPPort: 80, HTTPSPort: 443})

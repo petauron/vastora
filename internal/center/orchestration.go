@@ -176,7 +176,9 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 }
 
 func (s *Store) queueAffectedGateways(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT r.gateway_node_id FROM routes r JOIN services s ON s.id = r.service_id WHERE s.application_id = ?`, applicationID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT r.gateway_node_id FROM routes r JOIN services s ON s.id = r.service_id WHERE s.application_id = ?
+		UNION SELECT DISTINCT p.gateway_node_id FROM publications p JOIN services s ON s.id = p.service_id
+		WHERE s.application_id = ? AND p.kind = 'public_shared_443' AND p.gateway_node_id IS NOT NULL`, applicationID, applicationID)
 	if err != nil {
 		return err
 	}
@@ -240,7 +242,6 @@ func desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID string, revi
 	if err != nil {
 		return gateway.DesiredState{}, err
 	}
-	defer rows.Close()
 	state := gateway.DesiredState{Revision: revision, Listeners: []gateway.Listener{}, Routes: []gateway.Route{}}
 	listeners := map[string]gateway.Listener{}
 	for rows.Next() {
@@ -275,13 +276,56 @@ func desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID string, revi
 		}
 		state.Routes = append(state.Routes, route)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return gateway.DesiredState{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return gateway.DesiredState{}, err
+	}
+	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.hostname, s.endpoint, n.public_address
+		FROM publications p JOIN services s ON s.id = p.service_id
+		JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
+		WHERE p.gateway_node_id = ? AND p.kind = 'public_shared_443'
+		AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.id`, gatewayID)
+	if err != nil {
+		return gateway.DesiredState{}, err
+	}
+	var shared *gateway.SharedHTTPS
+	for sharedRows.Next() {
+		var route gateway.Layer4Route
+		var endpoint, publicAddress string
+		if err := sharedRows.Scan(&route.ID, &route.Hostname, &endpoint, &publicAddress); err != nil {
+			sharedRows.Close()
+			return gateway.DesiredState{}, err
+		}
+		host, portValue, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			sharedRows.Close()
+			return gateway.DesiredState{}, errors.New("center: invalid stored shared 443 endpoint")
+		}
+		port, _ := strconv.Atoi(portValue)
+		route.Upstreams = []gateway.Upstream{{Address: host, Port: port}}
+		if shared == nil {
+			shared = &gateway.SharedHTTPS{Address: publicAddress, Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 8443}
+			listeners["public"] = gateway.Listener{Kind: "public", Address: publicAddress, HTTPPort: 80, HTTPSPort: 443}
+		} else if shared.Address != publicAddress {
+			sharedRows.Close()
+			return gateway.DesiredState{}, errors.New("center: shared 443 publications disagree on the public address")
+		}
+		shared.Routes = append(shared.Routes, route)
+	}
+	if err := sharedRows.Close(); err != nil {
+		return gateway.DesiredState{}, err
+	}
+	state.SharedHTTPS = shared
 	for _, listener := range listeners {
 		state.Listeners = append(state.Listeners, listener)
 	}
 	if err := state.Validate(); err != nil {
 		return gateway.DesiredState{}, err
 	}
-	return state.Sorted(), rows.Err()
+	return state.Sorted(), nil
 }
 
 func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
@@ -326,6 +370,10 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 			WHERE id IN (SELECT publication_id FROM routes WHERE gateway_node_id = ? AND desired_revision = ?)`, taskError, now, agentID, revision); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ?
+			WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, taskError, now, agentID); err != nil {
+			return err
+		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `UPDATE gateway_states SET applied_revision = ?, status = 'ready', lease_expires_at = '', last_error = '', updated_at = ? WHERE gateway_node_id = ?`, revision, now, agentID); err != nil {
 			return err
@@ -337,6 +385,10 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 			status = CASE WHEN kind = 'public_direct' THEN 'applying' ELSE 'ready' END,
 			last_error = '', updated_at = ?
 			WHERE id IN (SELECT publication_id FROM routes WHERE gateway_node_id = ? AND applied_revision = ?)`, now, agentID, revision); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision, status = 'applying', last_error = '', updated_at = ?
+			WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, now, agentID); err != nil {
 			return err
 		}
 	}

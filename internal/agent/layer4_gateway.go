@@ -1,0 +1,309 @@
+package agent
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/gateway"
+)
+
+const (
+	defaultHAProxyImage     = "docker.io/library/haproxy:3.2.7-alpine@sha256:a9b408a818f5d0d9a6a042ec2957921038399f7a515f8b7bfef2054ef7f4ce05"
+	defaultHAProxyContainer = "vastora-gateway-haproxy"
+)
+
+type Layer4Provisioner interface {
+	Apply(context.Context, gateway.SharedHTTPS) error
+	Remove(context.Context) error
+	Health(context.Context) error
+}
+
+// ManagedGatewayDriver keeps Caddy as the HTTPS endpoint and adds HAProxy only
+// while a shared-443 publication exists in the desired state.
+type ManagedGatewayDriver struct {
+	Caddy  *CaddyGatewayDriver
+	Layer4 Layer4Provisioner
+
+	mu    sync.RWMutex
+	state gateway.DesiredState
+}
+
+func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState) error {
+	if driver.Caddy == nil || driver.Layer4 == nil {
+		return errors.New("agent: managed gateway is not configured")
+	}
+	if err := desired.Validate(); err != nil {
+		return err
+	}
+	driver.mu.RLock()
+	previous := driver.state.Sorted()
+	driver.mu.RUnlock()
+	if err := driver.apply(ctx, desired.Sorted()); err != nil {
+		if previous.Revision > 0 {
+			_ = driver.apply(ctx, previous)
+		}
+		return err
+	}
+	driver.mu.Lock()
+	driver.state = desired.Sorted()
+	driver.mu.Unlock()
+	return nil
+}
+
+func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.DesiredState) error {
+	if desired.SharedHTTPS == nil {
+		if err := driver.Layer4.Remove(ctx); err != nil {
+			return err
+		}
+		return driver.Caddy.ApplyConfiguration(ctx, desired)
+	}
+	// Move Caddy away from public 443 before HAProxy claims it.
+	if err := driver.Caddy.ApplyConfiguration(ctx, desired); err != nil {
+		return err
+	}
+	if err := driver.Layer4.Apply(ctx, *desired.SharedHTTPS); err != nil {
+		return fmt.Errorf("agent: apply shared 443 frontend: %w", err)
+	}
+	return nil
+}
+
+func (driver *ManagedGatewayDriver) ListRoutes(ctx context.Context) ([]gateway.Route, error) {
+	return driver.Caddy.ListRoutes(ctx)
+}
+
+func (driver *ManagedGatewayDriver) ApplyRoute(ctx context.Context, route gateway.Route) error {
+	return driver.Caddy.ApplyRoute(ctx, route)
+}
+
+func (driver *ManagedGatewayDriver) DeleteRoute(ctx context.Context, routeID string) error {
+	return driver.Caddy.DeleteRoute(ctx, routeID)
+}
+
+func (driver *ManagedGatewayDriver) GetRouteStatus(ctx context.Context, routeID string) (string, error) {
+	return driver.Caddy.GetRouteStatus(ctx, routeID)
+}
+
+func (driver *ManagedGatewayDriver) Health(ctx context.Context) error {
+	if driver.Caddy == nil || driver.Layer4 == nil {
+		return errors.New("agent: managed gateway is not configured")
+	}
+	if err := driver.Caddy.Health(ctx); err != nil {
+		return err
+	}
+	driver.mu.RLock()
+	shared := driver.state.SharedHTTPS != nil
+	driver.mu.RUnlock()
+	if shared {
+		return driver.Layer4.Health(ctx)
+	}
+	return nil
+}
+
+type DockerLayer4Provisioner struct {
+	Socket    string
+	Image     string
+	Container string
+}
+
+func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired gateway.SharedHTTPS) error {
+	docker, err := provisioner.client()
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	settings := provisioner.settings()
+	configuration, err := haproxyConfiguration(desired)
+	if err != nil {
+		return err
+	}
+	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
+	if err != nil {
+		return fmt.Errorf("agent: pull HAProxy image: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, pull)
+	_ = pull.Close()
+	if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("agent: replace HAProxy container: %w", err)
+	}
+	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image: settings.Image,
+			User:  "0:0",
+			Cmd:   []string{"haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"},
+			Labels: map[string]string{
+				"io.vastora.managed":   "true",
+				"io.vastora.component": "layer4-gateway",
+			},
+		},
+		HostConfig: &container.HostConfig{
+			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
+			NetworkMode:    container.NetworkMode("host"),
+			ReadonlyRootfs: true,
+			CapDrop:        []string{"ALL"},
+			CapAdd:         []string{"NET_BIND_SERVICE"},
+			Tmpfs:          map[string]string{"/run": "rw,noexec,nosuid,size=16m"},
+			SecurityOpt:    []string{"no-new-privileges:true"},
+		},
+		Name: settings.Container,
+	})
+	if err != nil {
+		return fmt.Errorf("agent: create HAProxy container: %w", err)
+	}
+	if err := copyHAProxyConfiguration(ctx, docker, created.ID, configuration); err != nil {
+		_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
+		return err
+	}
+	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		return fmt.Errorf("agent: start HAProxy container: %w", err)
+	}
+	return provisioner.waitHealthy(ctx, docker, created.ID)
+}
+
+func (provisioner DockerLayer4Provisioner) Remove(ctx context.Context) error {
+	docker, err := provisioner.client()
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	if _, err := docker.ContainerRemove(ctx, provisioner.settings().Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("agent: remove HAProxy container: %w", err)
+	}
+	return nil
+}
+
+func (provisioner DockerLayer4Provisioner) Health(ctx context.Context) error {
+	docker, err := provisioner.client()
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	inspection, err := docker.ContainerInspect(ctx, provisioner.settings().Container, client.ContainerInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("agent: inspect HAProxy container: %w", err)
+	}
+	if inspection.Container.State == nil || !inspection.Container.State.Running {
+		return errors.New("agent: HAProxy gateway is not running")
+	}
+	return nil
+}
+
+func (provisioner DockerLayer4Provisioner) waitHealthy(ctx context.Context, docker *client.Client, containerID string) error {
+	ready, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		inspection, err := docker.ContainerInspect(ready, containerID, client.ContainerInspectOptions{})
+		if err == nil && inspection.Container.State != nil {
+			if inspection.Container.State.Running {
+				return nil
+			}
+			if inspection.Container.State.Status == "exited" || inspection.Container.State.Status == "dead" {
+				return fmt.Errorf("agent: HAProxy exited: %s", inspection.Container.State.Error)
+			}
+		}
+		select {
+		case <-ready.Done():
+			return errors.New("agent: HAProxy did not become healthy")
+		case <-ticker.C:
+		}
+	}
+}
+
+func (provisioner DockerLayer4Provisioner) client() (*client.Client, error) {
+	socket := provisioner.Socket
+	if socket == "" {
+		socket = "unix:///var/run/docker.sock"
+	}
+	docker, err := client.New(client.WithHost(socket))
+	if err != nil {
+		return nil, fmt.Errorf("agent: connect Docker for HAProxy provisioning: %w", err)
+	}
+	return docker, nil
+}
+
+func (provisioner DockerLayer4Provisioner) settings() DockerLayer4Provisioner {
+	if provisioner.Image == "" {
+		provisioner.Image = defaultHAProxyImage
+	}
+	if provisioner.Container == "" {
+		provisioner.Container = defaultHAProxyContainer
+	}
+	return provisioner
+}
+
+func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
+	state := gateway.DesiredState{Revision: 1, Listeners: []gateway.Listener{{Kind: "public", Address: desired.Address, HTTPPort: 80, HTTPSPort: desired.Port}}, SharedHTTPS: &desired}
+	if err := state.Validate(); err != nil {
+		return nil, err
+	}
+	desired = *state.Sorted().SharedHTTPS
+	var configuration strings.Builder
+	configuration.WriteString("global\n  log stdout format raw local0\n  maxconn 4096\n\ndefaults\n  log global\n  mode tcp\n  option tcplog\n  timeout connect 10s\n  timeout client 1m\n  timeout server 1m\n\n")
+	configuration.WriteString("frontend vastora-shared-https\n  bind ")
+	configuration.WriteString(net.JoinHostPort(desired.Address, strconv.Itoa(desired.Port)))
+	configuration.WriteString("\n  tcp-request inspect-delay 5s\n  tcp-request content accept if { req_ssl_hello_type 1 }\n")
+	for index, route := range desired.Routes {
+		configuration.WriteString(fmt.Sprintf("  use_backend vastora-raw-%d if { req.ssl_sni -i %s }\n", index, route.Hostname))
+	}
+	configuration.WriteString("  default_backend vastora-caddy\n\nbackend vastora-caddy\n")
+	configuration.WriteString("  server caddy ")
+	configuration.WriteString(net.JoinHostPort(desired.CaddyAddress, strconv.Itoa(desired.CaddyPort)))
+	configuration.WriteString(" check\n")
+	for index, route := range desired.Routes {
+		configuration.WriteString(fmt.Sprintf("\nbackend vastora-raw-%d\n", index))
+		for upstreamIndex, upstream := range route.Upstreams {
+			configuration.WriteString(fmt.Sprintf("  server upstream-%d %s check\n", upstreamIndex, net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port))))
+		}
+	}
+	return []byte(configuration.String()), nil
+}
+
+func copyHAProxyConfiguration(ctx context.Context, docker *client.Client, containerID string, configuration []byte) error {
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	if err := writer.WriteHeader(&tar.Header{Name: "haproxy.cfg", Mode: 0o644, Size: int64(len(configuration)), ModTime: time.Unix(0, 0)}); err != nil {
+		return err
+	}
+	if _, err := writer.Write(configuration); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	if _, err := docker.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{DestinationPath: "/usr/local/etc/haproxy", Content: bytes.NewReader(archive.Bytes())}); err != nil {
+		return fmt.Errorf("agent: install HAProxy configuration: %w", err)
+	}
+	return nil
+}
+
+type ManagedGatewayProvisioner struct {
+	Caddy  GatewayProvisioner
+	Layer4 Layer4Provisioner
+}
+
+func (provisioner ManagedGatewayProvisioner) Ensure(ctx context.Context) error {
+	if provisioner.Caddy == nil {
+		return errors.New("agent: Caddy provisioner is not configured")
+	}
+	return provisioner.Caddy.Ensure(ctx)
+}
+
+func (provisioner ManagedGatewayProvisioner) Remove(ctx context.Context) error {
+	if provisioner.Caddy == nil || provisioner.Layer4 == nil {
+		return errors.New("agent: managed gateway provisioner is not configured")
+	}
+	return errors.Join(provisioner.Layer4.Remove(ctx), provisioner.Caddy.Remove(ctx))
+}

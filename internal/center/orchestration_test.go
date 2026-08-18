@@ -86,6 +86,72 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	}
 }
 
+func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "public-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}, {Address: "203.0.113.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", PublicAddress: "203.0.113.10", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Public", Code: "public", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	applicationID := installCPA(t, store, node, "10.0.0.10")
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 {
+		t.Fatalf("unexpected Web service: %#v err=%v", services, err)
+	}
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationPublic, GatewayNodeID: node.ID, Hostname: "center.example.test", DNSProvider: "manual", ConfirmHighRisk: true}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, observed_listen, status, created_at, updated_at)
+		VALUES('vless-service', ?, ?, 'vless', 'tcp', 2443, 2443, '10.0.0.10:2443', 'observed', 'vless/tcp', '10.0.0.10', 'ready', ?, ?)`, applicationID, testSiteID(t, store), now, now); err != nil {
+		t.Fatal(err)
+	}
+	shared, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-service", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", DNSProvider: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil || task.GatewayState.SharedHTTPS == nil {
+		t.Fatalf("shared 443 did not queue a combined gateway state: %#v", task)
+	}
+	sharedState := task.GatewayState.SharedHTTPS
+	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "127.0.0.1" || sharedState.CaddyPort != 8443 || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "vless.example.test" {
+		t.Fatalf("unexpected shared 443 desired state: %#v", sharedState)
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	publication, err := store.Publication(ctx, shared.ID)
+	if err != nil || publication.Status != "applying" {
+		t.Fatalf("shared publication did not wait for external verification: %#v err=%v", publication, err)
+	}
+}
+
+func TestShared443RejectsAnApplicationAlreadyUsing443(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "public-gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{{Address: "10.0.0.20", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}, {Address: "203.0.113.20", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.20", LANAddress: "10.0.0.20", PublicAddress: "203.0.113.20", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Public", Code: "public", Timezone: "UTC", GatewayNodes: []string{node.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, status, created_at, updated_at) VALUES('xray-app', 'Xray', ?, ?, 'test/xray', 'running', ?, ?)`, node.ID, testSiteID(t, store), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, observed_listen, status, created_at, updated_at)
+		VALUES('vless-443', 'xray-app', ?, 'vless', 'tcp', 443, 443, '10.0.0.20:443', 'observed', 'vless/tcp', '0.0.0.0', 'ready', ?, ?)`, testSiteID(t, store), now, now); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-443", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", DNSProvider: "manual"})
+	if err == nil || !strings.Contains(err.Error(), "away from port 443") {
+		t.Fatalf("shared 443 accepted an occupied local port: %v", err)
+	}
+}
+
 func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
