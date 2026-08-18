@@ -37,6 +37,14 @@ func TestUnimplementedCapabilitiesCannotBeAdvertised(t *testing.T) {
 	}
 }
 
+func TestCenterBootstrapDoesNotRequireSuggestedAgentURL(t *testing.T) {
+	missingCatalog := filepath.Join(t.TempDir(), "missing-catalog.json")
+	err := runCenter([]string{"serve", "--data-dir", t.TempDir(), "--official-catalog", missingCatalog})
+	if err == nil || !strings.Contains(err.Error(), "read official catalog") {
+		t.Fatalf("Center did not reach startup without --agent-connect-url: %v", err)
+	}
+}
+
 func TestSystemdAgentUnitUsesPersistentServiceConfiguration(t *testing.T) {
 	unit := systemdAgentUnit("/usr/local/bin/vastora", "/var/lib/vastora/agent", "worker,gateway", "docker,gateway,tunnel")
 	for _, expected := range []string{
