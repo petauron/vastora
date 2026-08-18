@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/petauron/vastora/compare/v0.2.0...v0.2.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* bind containerized Center to loopback ([#20](https://github.com/petauron/vastora/issues/20)) ([0bfb835](https://github.com/petauron/vastora/commit/0bfb835f98d9447b8c45151613e08bbfe26e279d))
+
 ## [0.2.0](https://github.com/petauron/vastora/compare/v0.1.0...v0.2.0) (2026-08-18)
 
 
