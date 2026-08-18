@@ -30,6 +30,36 @@ func TestCloudflareAPIErrorsDoNotExposeToken(t *testing.T) {
 	}
 }
 
+func TestHeadscaleRequestKeepsFixedOriginAndRejectsRedirects(t *testing.T) {
+	targetRequests := 0
+	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		targetRequests++
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Location", target.URL+"/stolen")
+		response.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+	client := headscaleClient{baseURL: redirect.URL, apiKey: "headscale-secret", http: redirect.Client()}
+	if err := client.do(context.Background(), http.MethodGet, "/api/v1/user", nil, nil); err == nil || !strings.Contains(err.Error(), "307") {
+		t.Fatalf("Headscale redirect was followed or accepted: %v", err)
+	}
+	if targetRequests != 0 {
+		t.Fatal("Headscale credentials were forwarded to a redirect target")
+	}
+	requestURL, err := headscaleRequestURL("https://headscale.example.test/", "/api/v1/user")
+	if err != nil || requestURL != "https://headscale.example.test/api/v1/user" {
+		t.Fatalf("unexpected validated Headscale URL: %q err=%v", requestURL, err)
+	}
+	for _, invalid := range []struct{ base, path string }{{"https://headscale.example.test/prefix", "/api/v1/user"}, {"https://headscale.example.test", "//metadata.invalid/"}, {"https://headscale.example.test", "/api/v1/user?next=https://metadata.invalid"}} {
+		if _, err := headscaleRequestURL(invalid.base, invalid.path); err == nil {
+			t.Fatalf("unsafe Headscale request URL was accepted: %#v", invalid)
+		}
+	}
+}
+
 func TestHeadscaleJoinKeyIsOneHourAndSingleUse(t *testing.T) {
 	var body map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

@@ -45,7 +45,7 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 		return IntegrationView{}, errors.New("center: Headscale mode must be builtin or external")
 	}
 	parsed, err := url.Parse(input.URL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return IntegrationView{}, errors.New("center: Headscale requires an HTTPS control-plane URL")
 	}
 	existingSecretID, existingAPIKey, err := s.integrationSecret(ctx, "headscale")
@@ -288,13 +288,21 @@ func (client headscaleClient) do(ctx context.Context, method, path string, body 
 		}
 		payload = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, client.baseURL+path, payload)
+	requestURL, err := headscaleRequestURL(client.baseURL, path)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, method, requestURL, payload)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Authorization", "Bearer "+client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
-	response, err := client.http.Do(request)
+	httpClient := *client.http
+	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return err
 	}
@@ -333,6 +341,23 @@ func (client headscaleClient) do(ctx context.Context, method, path string, body 
 		}
 	}
 	return nil
+}
+
+func headscaleRequestURL(baseURL, path string) (string, error) {
+	base, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" || (base.Path != "" && base.Path != "/") {
+		return "", errors.New("center: stored Headscale URL is invalid")
+	}
+	if !strings.HasPrefix(path, "/api/v1/") || strings.Contains(path, "?") || strings.Contains(path, "#") {
+		return "", errors.New("center: Headscale API path is invalid")
+	}
+	target := *base
+	target.Path = path
+	target.RawPath = ""
+	target.RawQuery = ""
+	target.ForceQuery = false
+	target.Fragment = ""
+	return target.String(), nil
 }
 
 func shellQuote(value string) string {
