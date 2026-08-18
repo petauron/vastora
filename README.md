@@ -81,6 +81,12 @@ one-line Agent install command. See [`deploy/center`](deploy/center/README.md)
 for the complete bootstrap flow and local release packaging. The short address
 is `https://vastora.petauron.com/install.sh`.
 
+Released Center schemas upgrade in place through ordered, forward-only
+migrations. Center writes a private, consistent SQLite snapshot before applying
+pending migrations and refuses to start if migration, foreign-key, or integrity
+verification fails. Restore that snapshot to downgrade; database downgrades are
+never attempted automatically.
+
 ## Security model
 
 - The Center never mounts a Docker socket.
