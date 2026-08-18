@@ -33,14 +33,11 @@ secrets.
 ## App manifest contract
 
 The catalog payload validates against the JSON Schema 2020-12 files in
-[`schemas/`](../schemas/). Every app version declares a fixed OCI digest,
-static Compose text, bilingual labels, and typed installation fields. A secret
+[`schemas/`](../schemas/). Every app version declares fixed OCI digests,
+addressable Services, bilingual labels, and typed installation fields. A secret
 field cannot provide a default. Conditions use a single field equality check;
-there is no expression language and no app-provided shell hook.
-
-The current repository validates and displays this contract. The future Node
-deployment slice will implement the declarative delivery mapping and Compose
-rendering; it will not execute arbitrary manifest code.
+there is no expression language, arbitrary Compose input, or app-provided shell
+hook. The Agent maps verified official app identities to typed executors.
 
 ## Refresh behavior
 

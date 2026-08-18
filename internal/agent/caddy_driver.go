@@ -1,0 +1,215 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/petauron/vastora/internal/gateway"
+)
+
+type CaddyGatewayDriver struct {
+	AdminURL        string
+	AdminListen     string
+	AdminSocketPath string
+	HTTPClient      *http.Client
+
+	mu    sync.RWMutex
+	state gateway.DesiredState
+}
+
+func NewCaddyGatewayDriver(adminURL string) (*CaddyGatewayDriver, error) {
+	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(adminURL), "/"))
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, errors.New("agent: Caddy Admin API must use a Unix socket or loopback HTTP")
+	}
+	if parsed.Scheme == "unix" {
+		if parsed.Host != "" || !strings.HasPrefix(parsed.Path, "/") {
+			return nil, errors.New("agent: Caddy Admin API Unix socket path must be absolute")
+		}
+		socketPath := parsed.Path
+		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		}}
+		return &CaddyGatewayDriver{
+			AdminURL:        "http://localhost",
+			AdminListen:     "unix/" + socketPath,
+			AdminSocketPath: socketPath,
+			HTTPClient:      &http.Client{Transport: transport, Timeout: 15 * time.Second},
+		}, nil
+	}
+	if parsed.Scheme != "http" || parsed.Path != "" || !isLoopbackHost(parsed.Hostname()) {
+		return nil, errors.New("agent: Caddy Admin API must use a Unix socket or loopback HTTP")
+	}
+	if parsed.Port() == "" {
+		return nil, errors.New("agent: Caddy Admin API port is required")
+	}
+	return &CaddyGatewayDriver{AdminURL: parsed.String(), AdminListen: parsed.Host, HTTPClient: &http.Client{Timeout: 15 * time.Second}}, nil
+}
+
+func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState) error {
+	if err := desired.Validate(); err != nil {
+		return err
+	}
+	configuration, err := caddyConfiguration(desired.Sorted(), driver.AdminListen)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, driver.AdminURL+"/load", bytes.NewReader(configuration))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := driver.client().Do(request)
+	if err != nil {
+		return fmt.Errorf("request Caddy Admin API: %w", err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = response.Status
+		}
+		return fmt.Errorf("caddy rejected configuration: %s", message)
+	}
+	driver.mu.Lock()
+	driver.state = desired.Sorted()
+	driver.mu.Unlock()
+	return nil
+}
+
+func (driver *CaddyGatewayDriver) ApplyRoute(ctx context.Context, route gateway.Route) error {
+	driver.mu.RLock()
+	next := driver.state.Sorted()
+	driver.mu.RUnlock()
+	found := false
+	for index := range next.Routes {
+		if next.Routes[index].ID == route.ID {
+			next.Routes[index] = route
+			found = true
+		}
+	}
+	if !found {
+		next.Routes = append(next.Routes, route)
+	}
+	if next.Revision < 1 {
+		next.Revision = 1
+	} else {
+		next.Revision++
+	}
+	return driver.ApplyConfiguration(ctx, next)
+}
+
+func (driver *CaddyGatewayDriver) DeleteRoute(ctx context.Context, routeID string) error {
+	driver.mu.RLock()
+	current := driver.state.Sorted()
+	driver.mu.RUnlock()
+	next := gateway.DesiredState{Revision: current.Revision, Routes: make([]gateway.Route, 0, len(current.Routes))}
+	for _, route := range current.Routes {
+		if route.ID != routeID {
+			next.Routes = append(next.Routes, route)
+		}
+	}
+	if next.Revision < 1 {
+		next.Revision = 1
+	} else {
+		next.Revision++
+	}
+	return driver.ApplyConfiguration(ctx, next)
+}
+
+func (driver *CaddyGatewayDriver) ListRoutes(context.Context) ([]gateway.Route, error) {
+	driver.mu.RLock()
+	defer driver.mu.RUnlock()
+	return driver.state.Sorted().Routes, nil
+}
+
+func (driver *CaddyGatewayDriver) GetRouteStatus(ctx context.Context, routeID string) (string, error) {
+	routes, _ := driver.ListRoutes(ctx)
+	for _, route := range routes {
+		if route.ID == routeID {
+			if err := driver.Health(ctx); err != nil {
+				return "failed", err
+			}
+			return "ready", nil
+		}
+	}
+	return "", errors.New("agent: route not found")
+}
+
+func (driver *CaddyGatewayDriver) Health(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, driver.AdminURL+"/config/", nil)
+	if err != nil {
+		return err
+	}
+	response, err := driver.client().Do(request)
+	if err != nil {
+		return fmt.Errorf("agent: Caddy health: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("agent: Caddy health: %s", response.Status)
+	}
+	return nil
+}
+
+func (driver *CaddyGatewayDriver) client() *http.Client {
+	if driver.HTTPClient != nil {
+		return driver.HTTPClient
+	}
+	return &http.Client{Timeout: 15 * time.Second}
+}
+
+func caddyConfiguration(desired gateway.DesiredState, adminListen string) ([]byte, error) {
+	type caddyRoute struct {
+		Match    []map[string][]string `json:"match"`
+		Handle   []map[string]any      `json:"handle"`
+		Terminal bool                  `json:"terminal"`
+	}
+	servers := map[string]any{}
+	for _, listener := range desired.Listeners {
+		httpRoutes := make([]caddyRoute, 0)
+		httpsRoutes := make([]caddyRoute, 0)
+		for _, route := range desired.Routes {
+			if route.ListenerKind != listener.Kind {
+				continue
+			}
+			upstreams := make([]map[string]string, 0, len(route.Upstreams))
+			for _, upstream := range route.Upstreams {
+				upstreams = append(upstreams, map[string]string{"dial": net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port))})
+			}
+			proxy := map[string]any{"handler": "reverse_proxy", "upstreams": upstreams}
+			if route.Protocol == "https" {
+				proxy["transport"] = map[string]any{"protocol": "http", "tls": map[string]any{}}
+			}
+			candidate := caddyRoute{Match: []map[string][]string{{"host": {route.Hostname}}}, Handle: []map[string]any{proxy}, Terminal: true}
+			if route.TLSEnabled {
+				httpsRoutes = append(httpsRoutes, candidate)
+				redirect := map[string]any{"handler": "static_response", "status_code": 308, "headers": map[string][]string{"Location": {"https://{http.request.host}{http.request.uri}"}}}
+				httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string][]string{{"host": {route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
+			} else {
+				httpRoutes = append(httpRoutes, candidate)
+			}
+		}
+		if len(httpRoutes) != 0 {
+			servers["vastora-"+listener.Kind+"-http"] = map[string]any{"listen": []string{net.JoinHostPort(listener.Address, strconv.Itoa(listener.HTTPPort))}, "routes": httpRoutes}
+		}
+		if len(httpsRoutes) != 0 {
+			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort(listener.Address, strconv.Itoa(listener.HTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
+		}
+	}
+	configuration := map[string]any{"admin": map[string]any{"listen": adminListen}, "apps": map[string]any{"http": map[string]any{"servers": servers}}}
+	return json.Marshal(configuration)
+}

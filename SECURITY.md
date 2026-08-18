@@ -17,5 +17,5 @@ updates. Pre-alpha builds are not production-supported.
 - Catalogs must be signed before use.
 - Secret values are write-only API inputs and must never appear in responses,
   task payload logs, catalog files, Git history, or UI state.
-- Nodes are the only components allowed to access Docker sockets.
-- Runtime application data remains outside Master configuration storage.
+- Agents are the only components allowed to access Docker sockets.
+- Runtime application data remains outside Center configuration storage.

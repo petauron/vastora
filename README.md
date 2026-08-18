@@ -1,23 +1,30 @@
 # Vastora
 
-Vastora is a self-hosted control plane for deploying containerized applications
-to a Master host and passive Node Agents. It is designed for private VPS fleets:
-the Master stores desired startup configuration, while every Node keeps its last
-successfully applied encrypted configuration so existing applications can restart
-when the Master is unavailable.
+Vastora is a self-hosted desired-state control plane for Docker applications
+across multiple Sites and Nodes. The Center stores intent and orchestration
+state; one Agent binary is the only node-side executor for Docker and an
+optional local Caddy Gateway. Existing applications and applied routes continue
+when the Center is unavailable.
 
 > **Pre-alpha.** The repository is intentionally published only with working,
 > tested building blocks. Do not use it to manage production workloads yet.
 
 ## What is implemented now
 
-- A Go `vastora` CLI with Master initialization, Master HTTP API, Node local
-  encrypted state, and catalog signing/validation commands.
-- An authenticated Master setup flow with a one-time bootstrap token and
-  Argon2id password hashing.
+- A Go `vastora` CLI with a Center HTTP API, one-time Agent enrollment,
+  authenticated Agent heartbeats, Agent-local encrypted credentials, and catalog
+  signing/validation commands.
+- Browser-based first-administrator setup with a username, Argon2id password
+  hashing, and authenticated sessions.
 - AES-256-GCM encrypted secrets in SQLite, multi-source catalog persistence,
   Ed25519 signed catalog verification, and a bilingual React catalog console.
-- A signed CPA application package whose images are pinned by digest.
+- Organization → Site → Node topology, typed Network Candidate/Profile state,
+  private application Services, and independent multi-entry Publications.
+- Leased, retryable, attempt-fenced Agent tasks with append-only audit events.
+- LAN, Headscale, direct-public, and Cloudflare Tunnel publication paths;
+  Agent-managed Caddy uses a private Unix socket and never receives Docker access.
+- Signed 3x-ui, CPA, Keeper, and Komari Agent application packages with
+  images pinned by digest.
 
 ## Development
 
@@ -32,37 +39,60 @@ make security-check
 Start a local control plane after the checks pass:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora master init --data-dir .vastora/master
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora master serve --data-dir .vastora/master --listen 127.0.0.1:8080
+GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center serve --data-dir .vastora/center --listen 127.0.0.1:8080 --agent-connect-url http://127.0.0.1:8080
 ```
 
-The first command prints a one-time bootstrap token. Keep it out of shell
-history and use it once in the web setup screen. In another terminal, start the
-web development server with `cd web && npm run dev`.
+To connect Headscale, authorize its exact HTTPS origin when Center starts by
+adding `--headscale-allowed-url https://headscale.example.com`. Repeat the flag
+to permit additional operator-approved control planes; browser users cannot
+make Center send authenticated requests to any other host.
+
+In another terminal, start the web development server with `cd web && npm run
+dev`. On the first visit, create the administrator, then follow the required
+wizard to create a real location and confirm how Agents reach Center. The
+configured Agent address is reused automatically when adding nodes.
 
 Create an encrypted control-plane backup with a password stored in a local
 `0600` file, then restore only into a new empty state directory:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora master backup --data-dir .vastora/master --output master.vastora --password-file ./backup-password
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora master restore --input master.vastora --data-dir .vastora/restored-master --password-file ./backup-password
+GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center backup --data-dir .vastora/center --output center.vastora --password-file ./backup-password
+GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center restore --input center.vastora --data-dir .vastora/restored-center --password-file ./backup-password
 ```
 
-The Dockerfiles build an unprivileged Master image with the compiled web UI and
-a separate Node image. They intentionally do not provide an insecure default
-command: a network-reachable Master must be started with its TLS certificate
+The Dockerfiles build an unprivileged Center image with the compiled web UI and
+a separate Agent image. They intentionally do not provide an insecure default
+command: a network-reachable Center must be started with its TLS certificate
 and key.
+
+Released versions use one public Center bootstrap command:
+
+```sh
+curl -LsSf https://github.com/petauron/vastora/releases/latest/download/install.sh | sudo sh -s -- center
+```
+
+It downloads a verified release bundle and starts the guided Center and built-in
+Headscale setup. Users do not clone this repository or enter a container image
+digest. Each Center then generates its own short-lived, one-line Agent install
+command. The command becomes live with the first published image and release
+assets; see [`deploy/center`](deploy/center/README.md) for prerequisites and
+local release packaging without uploading artifacts. The planned short address
+is `https://vastora.petauron.com/install.sh`; use the GitHub URL until that
+domain endpoint is live.
 
 ## Security model
 
-- The Master never mounts a Docker socket.
+- The Center never mounts a Docker socket.
+- Agent enrollment uses a short-lived, one-time token; the Agent exchanges it
+  for a unique credential encrypted in its own local state.
 - Catalog source content is accepted only after Ed25519 signature verification.
 - Registry credentials and catalog Bearer tokens are separate from catalogs and
   stored encrypted.
-- Application runtime data is Node-local and never uploaded as configuration.
-- The current implementation is a foundation: Node enrollment, Docker
-  deployment execution, control-plane CA management, and app installation are
-  tracked for v0.1 and must be complete before the first stable release.
+- Application runtime data is Agent-local and never uploaded as configuration.
+- The Center deployment stack can run a fixed-version Headscale service with a
+  separate data volume; an existing Headscale control plane is also supported.
+- Management pages remain private by default. Public publication requires an
+  explicit high-risk confirmation and application-level authentication.
 
 Read [the architecture](docs/architecture.md), [catalog format](docs/catalog.md),
 and [threat model](docs/threat-model.md) before contributing.

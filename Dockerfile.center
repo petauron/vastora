@@ -1,0 +1,35 @@
+FROM node:24.19.0-bookworm-slim AS web-build
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.26.6-bookworm AS go-build
+ARG VASTORA_VERSION=0.1.0-dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN GOTOOLCHAIN=go1.26.6 go mod download
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+RUN CGO_ENABLED=0 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+    -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
+    -o /out/vastora ./cmd/vastora
+RUN mkdir -p /out/agent-binaries && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+      -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
+      -o /out/agent-binaries/linux-amd64 ./cmd/vastora && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+      -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
+      -o /out/agent-binaries/linux-arm64 ./cmd/vastora
+RUN mkdir /out/center-data && chown 65532:65532 /out/center-data
+
+FROM gcr.io/distroless/static-debian13:nonroot
+WORKDIR /app
+COPY --from=go-build /out/vastora /usr/local/bin/vastora
+COPY --from=go-build /out/agent-binaries /app/agent-binaries
+COPY --from=web-build /src/web/dist /app/web/dist
+COPY catalog/catalog.json /app/catalog/catalog.json
+COPY --from=go-build --chown=65532:65532 /out/center-data /var/lib/vastora
+VOLUME ["/var/lib/vastora"]
+ENTRYPOINT ["/usr/local/bin/vastora"]

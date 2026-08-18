@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-15T00:00:00Z",
+  "generatedAt": "2026-08-16T00:00:00Z",
   "apps": [
     {
       "id": "cpa",
@@ -10,21 +10,20 @@
         "zh-CN": "CPA"
       },
       "description": {
-        "en": "CLIProxyAPI with an optional Cloudflare Tunnel.",
-        "zh-CN": "带可选 Cloudflare Tunnel 的 CLIProxyAPI。"
+        "en": "CLIProxyAPI with local-only management and persistent application data.",
+        "zh-CN": "具有仅本地管理和持久化应用数据的 CLIProxyAPI。"
       },
       "license": "NOASSERTION",
       "images": [
         {
           "name": "cli-proxy-api",
           "reference": "eceasy/cli-proxy-api@sha256:3f7a734784f4cc2c86f6268929caff1b0c178fe600fdaa12cefe884dc4cae841"
-        },
-        {
-          "name": "cloudflared",
-          "reference": "cloudflare/cloudflared:2026.7.2@sha256:4f6655284ab3d252b7f28fedb19fe6c8fc82ee5b1295c20ac74d475e5398a52d"
         }
       ],
-      "compose": "services:\n  cli-proxy-api:\n    image: eceasy/cli-proxy-api@sha256:3f7a734784f4cc2c86f6268929caff1b0c178fe600fdaa12cefe884dc4cae841\n    restart: unless-stopped\n    read_only: true\n    environment:\n      TZ: ${timezone}\n    ports:\n      - 127.0.0.1:8317:8317\n    volumes:\n      - ./config.yaml:/CLIProxyAPI/config.yaml:ro\n      - ./auths:/root/.cli-proxy-api\n      - ./logs:/CLIProxyAPI/logs\n      - ./plugins:/CLIProxyAPI/plugins\n  cloudflared-cpa:\n    profiles: [cloudflare-tunnel]\n    image: cloudflare/cloudflared:2026.7.2@sha256:4f6655284ab3d252b7f28fedb19fe6c8fc82ee5b1295c20ac74d475e5398a52d\n    command: tunnel --no-autoupdate run --token-file /run/secrets/tunnel_token\n    volumes:\n      - ./secrets/tunnel_token:/run/secrets/tunnel_token:ro\n",
+      "services": [
+        {"name":"api","protocol":"http","containerPort":8317,"defaultHostPort":8317,"healthPath":"/","management":true}
+      ],
+      "homepage": {"service":"api","path":"/management.html"},
       "config": [
         {
           "key": "timezone",
@@ -49,8 +48,8 @@
             "zh-CN": "管理密钥"
           },
           "description": {
-            "en": "Generated automatically if left empty during installation.",
-            "zh-CN": "安装时留空会自动生成。"
+            "en": "Required for the local Management API. Stored encrypted by the control plane and Agent.",
+            "zh-CN": "本地管理 API 必需；由控制平面和 Agent 加密保存。"
           },
           "required": true,
           "secret": true
@@ -63,44 +62,11 @@
             "zh-CN": "客户端 API 密钥"
           },
           "description": {
-            "en": "Generated automatically if left empty during installation.",
-            "zh-CN": "安装时留空会自动生成。"
+            "en": "Required by clients calling the proxy. Stored encrypted by the control plane and Agent.",
+            "zh-CN": "代理客户端调用必需；由控制平面和 Agent 加密保存。"
           },
           "required": true,
           "secret": true
-        },
-        {
-          "key": "enable_tunnel",
-          "type": "boolean",
-          "label": {
-            "en": "Enable Cloudflare Tunnel",
-            "zh-CN": "启用 Cloudflare Tunnel"
-          },
-          "description": {
-            "en": "Starts the optional cloudflared profile.",
-            "zh-CN": "启动可选的 cloudflared profile。"
-          },
-          "required": false,
-          "secret": false,
-          "default": false
-        },
-        {
-          "key": "tunnel_token",
-          "type": "string",
-          "label": {
-            "en": "Tunnel token",
-            "zh-CN": "隧道令牌"
-          },
-          "description": {
-            "en": "Required only when Cloudflare Tunnel is enabled.",
-            "zh-CN": "仅在启用 Cloudflare Tunnel 时需要。"
-          },
-          "required": true,
-          "secret": true,
-          "visibleWhen": {
-            "field": "enable_tunnel",
-            "equals": true
-          }
         },
         {
           "key": "debug",
@@ -112,6 +78,119 @@
           "description": {
             "en": "Enables additional diagnostic logging.",
             "zh-CN": "启用额外诊断日志。"
+          },
+          "required": false,
+          "secret": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "id": "keeper",
+      "version": "1.14.1",
+      "name": {"en": "CPA Usage Keeper", "zh-CN": "CPA Usage Keeper"},
+      "description": {"en": "CPA companion dashboard installed beside a Vastora-managed CPA instance.", "zh-CN": "安装在 Vastora 管理的 CPA 实例旁的用量与管理面板。"},
+      "license": "MIT",
+      "images": [{"name": "keeper", "reference": "ghcr.io/willxup/cpa-usage-keeper:v1.14.1@sha256:8068a69f755e37de78c5878adbe098cc37de0cf145b04c7af77c5550a444aff2"}],
+      "services": [{"name":"dashboard","protocol":"http","containerPort":8080,"defaultHostPort":8080,"healthPath":"/","management":true}],
+      "homepage": {"service":"dashboard","path":"/"},
+      "config": [
+        {"key":"timezone","type":"string","label":{"en":"Timezone","zh-CN":"时区"},"description":{"en":"Timezone for statistics and logs.","zh-CN":"统计与日志使用的时区。"},"required":true,"secret":false,"default":"UTC"},
+        {"key":"login_password","type":"string","label":{"en":"Keeper login password","zh-CN":"Keeper 登录密码"},"description":{"en":"Protects the Keeper dashboard.","zh-CN":"用于保护 Keeper 仪表板。"},"required":true,"secret":true}
+      ]
+    },
+    {
+      "id": "komari-agent",
+      "version": "1.2.60",
+      "name": {"en": "Komari Agent", "zh-CN": "Komari 探针"},
+      "description": {"en": "Komari monitoring agent for an existing Komari panel.", "zh-CN": "连接既有 Komari 面板的监控探针。"},
+      "license": "MIT",
+      "hostAccess": true,
+      "images": [{"name": "komari-agent", "reference": "ghcr.io/komari-monitor/komari-agent:1.2.60@sha256:48815bdfce540d83c60b92809858d9aea3635d07abf78581486e0433ca97d676"}],
+      "config": [
+        {"key":"endpoint","type":"string","label":{"en":"Komari endpoint","zh-CN":"Komari 面板地址"},"description":{"en":"Base URL of the Komari panel.","zh-CN":"Komari 面板的基础 URL。"},"required":true,"secret":false},
+        {"key":"token","type":"string","label":{"en":"Agent token","zh-CN":"探针 Token"},"description":{"en":"Token issued by the Komari panel.","zh-CN":"由 Komari 面板签发的 Token。"},"required":true,"secret":true}
+      ]
+    },
+    {
+      "id": "3x-ui",
+      "version": "3.6.0",
+      "name": {
+        "en": "3x-ui",
+        "zh-CN": "3x-ui"
+      },
+      "description": {
+        "en": "Self-hosted Xray management panel with persistent local state and optional Fail2ban enforcement.",
+        "zh-CN": "自托管的 Xray 管理面板，持久化本地状态并可选启用 Fail2ban 限制。"
+      },
+      "license": "GPL-3.0",
+      "images": [
+        {
+          "name": "3x-ui",
+          "reference": "ghcr.io/mhsanaei/3x-ui:v3.6.0@sha256:652ef431a2d351cfcc7b5dc91798de5c1dd50da8c1b44f9e3afee1c60817035e"
+        }
+      ],
+      "services": [
+        {"name":"panel","protocol":"http","containerPort":2053,"hostPortField":"panel_port","healthPath":"/","management":true},
+        {"name":"subscription","protocol":"http","containerPort":2096,"defaultHostPort":2096,"healthPath":"/sub/"}
+      ],
+      "homepage": {"service":"panel","path":"/"},
+      "config": [
+        {
+          "key": "timezone",
+          "type": "string",
+          "label": {
+            "en": "Timezone",
+            "zh-CN": "时区"
+          },
+          "description": {
+            "en": "IANA timezone used by the panel and logs.",
+            "zh-CN": "面板和日志使用的 IANA 时区。"
+          },
+          "required": true,
+          "secret": false,
+          "default": "UTC"
+        },
+        {
+          "key": "panel_port",
+          "type": "integer",
+          "label": {
+            "en": "Panel port",
+            "zh-CN": "面板端口"
+          },
+          "description": {
+            "en": "Host port bound to the node's selected private management address.",
+            "zh-CN": "绑定到节点所选私有管理地址的主机端口。"
+          },
+          "required": true,
+          "secret": false,
+          "default": 2053
+        },
+        {
+          "key": "enable_fail2ban",
+          "type": "boolean",
+          "label": {
+            "en": "Enable Fail2ban enforcement",
+            "zh-CN": "启用 Fail2ban 限制"
+          },
+          "description": {
+            "en": "Enforces client IP limits. This requires the NET_ADMIN and NET_RAW capabilities granted by this package.",
+            "zh-CN": "强制执行客户端 IP 限制；需要本应用包授予的 NET_ADMIN 和 NET_RAW 能力。"
+          },
+          "required": false,
+          "secret": false,
+          "default": true
+        },
+        {
+          "key": "vmess_aead_forced",
+          "type": "boolean",
+          "label": {
+            "en": "Force VMess AEAD",
+            "zh-CN": "强制 VMess AEAD"
+          },
+          "description": {
+            "en": "Sets XRAY_VMESS_AEAD_FORCED for compatibility with older VMess clients.",
+            "zh-CN": "设置 XRAY_VMESS_AEAD_FORCED，以兼容较旧的 VMess 客户端。"
           },
           "required": false,
           "secret": false,

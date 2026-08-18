@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -33,6 +34,12 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: cd web && npm ci --ignore-scripts
       - run: make web-check
+
+  deployment:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: make deployment-check
 
   security:
     runs-on: ubuntu-24.04

@@ -2,7 +2,7 @@
 
 ## Non-goals
 
-## Interface or migration impact
+## Interface impact
 
 ## Validation
 
@@ -13,4 +13,4 @@
 ## Security review
 
 - [ ] No secret, private host, account, or runtime data is added.
-- [ ] The change preserves the Master/Node trust boundary.
+- [ ] The change preserves the Center-Agent trust boundary.

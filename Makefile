@@ -4,13 +4,13 @@ GO_PACKAGES := ./cmd/... ./internal/...
 STATICCHECK_VERSION := v0.7.0
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: bootstrap check go-check web-check security-check dependency-security-check image-master image-node
+.PHONY: bootstrap check go-check web-check deployment-check security-check dependency-security-check agent-binaries center-install-bundle image-center image-agent
 
 bootstrap:
 	$(GO) mod download
 	cd web && npm ci --ignore-scripts
 
-check: go-check web-check
+check: go-check web-check deployment-check
 
 go-check:
 	@VASTORA_FORMATTED_FILES="$$(gofmt -l cmd internal)"; \
@@ -24,6 +24,16 @@ web-check:
 	cd web && npm test
 	cd web && npm run build
 
+deployment-check:
+	sh -n install.sh
+	sh -n deploy/center/setup.sh
+	sh -n scripts/package-center-install.sh
+	sh -n scripts/test-center-install.sh
+	./install.sh --help >/dev/null
+	deploy/center/setup.sh --help >/dev/null
+	scripts/package-center-install.sh --help >/dev/null
+	scripts/test-center-install.sh
+
 security-check:
 	gitleaks detect --no-git --redact --source .
 	$(MAKE) dependency-security-check
@@ -32,8 +42,16 @@ dependency-security-check:
 	cd web && npm audit --audit-level=high
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(GO_PACKAGES)
 
-image-master:
-	docker build --file Dockerfile.master --tag vastora-master:dev .
+agent-binaries:
+	mkdir -p bin/agent-binaries
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o bin/agent-binaries/linux-amd64 ./cmd/vastora
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w" -o bin/agent-binaries/linux-arm64 ./cmd/vastora
 
-image-node:
-	docker build --file Dockerfile.node --tag vastora-node:dev .
+center-install-bundle:
+	scripts/package-center-install.sh --version "$${VASTORA_VERSION:?set VASTORA_VERSION}" --image "$${VASTORA_CENTER_IMAGE:?set VASTORA_CENTER_IMAGE}" --output-dir dist
+
+image-center:
+	docker build --file Dockerfile.center --tag vastora-center:dev .
+
+image-agent:
+	docker build --file Dockerfile.agent --tag vastora-agent:dev .
