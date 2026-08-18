@@ -2,16 +2,12 @@ package center
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
 
 const centerSchemaVersion = 4
 
-// initializeSchema deliberately supports only the current schema. Vastora is
-// pre-release and changing this model requires rebuilding the Center data
-// directory instead of carrying migration or compatibility code indefinitely.
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
 		return fmt.Errorf("center: enable WAL: %w", err)
@@ -20,16 +16,15 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 		return fmt.Errorf("center: enable foreign keys: %w", err)
 	}
 	if existing {
-		var version int
-		if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
-			return fmt.Errorf("center: inspect schema version: %w", err)
-		}
-		if version != centerSchemaVersion {
-			return errors.New("center: database schema is obsolete; back up any needed data, then rebuild the Center data directory")
-		}
-		return nil
+		return s.migrateSchema(ctx)
 	}
+	if err := s.initializeCurrentSchema(ctx); err != nil {
+		return err
+	}
+	return s.initializeMigrationHistory(ctx, centerSchemaVersion)
+}
 
+func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("center: begin schema initialization: %w", err)
@@ -310,7 +305,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {
 		return fmt.Errorf("center: create default organization: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 4`); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, centerSchemaVersion)); err != nil {
 		return fmt.Errorf("center: set schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

@@ -5,6 +5,13 @@ locations. Center is the only source of network and publication intent. Agent is
 the only component that discovers local addresses and touches host Docker,
 Caddy, optional HAProxy, cloudflared, or application-local APIs.
 
+Center database changes use ordered, forward-only SQLite migrations. Before an
+existing database advances, Center creates a transactionally consistent
+snapshot under its private data directory. Each migration runs in a transaction,
+then Center verifies foreign keys and database integrity. Older Center binaries
+refuse newer schemas; downgrades restore the pre-migration snapshot instead of
+attempting a reverse migration.
+
 ```mermaid
 flowchart LR
   Browser["Administrator browser"] --> Center["Vastora Center"]
