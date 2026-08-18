@@ -1,0 +1,66 @@
+name: Released Image Security
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 4 * * 1"
+
+permissions:
+  contents: read
+  packages: read
+  security-events: write
+
+concurrency:
+  group: released-image-security
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.0.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve released image digest
+        id: image
+        env:
+          IMAGE: ghcr.io/petauron/vastora-center:latest
+        run: |
+          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{ .Manifest.Digest }}')"
+          case "$digest" in
+            sha256:*) ;;
+            *)
+              echo "Could not resolve $IMAGE to an immutable digest: $digest" >&2
+              exit 1
+              ;;
+          esac
+          resolved_image="ghcr.io/petauron/vastora-center@$digest"
+          echo "image=$resolved_image" >> "$GITHUB_OUTPUT"
+
+      - name: Scan released Center image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ steps.image.outputs.image }}
+          format: sarif
+          output: trivy-released-center-image.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "1"
+
+      - name: Upload released image scan results
+        if: ${{ always() && steps.image.outputs.image != '' }}
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          sarif_file: trivy-released-center-image.sarif
+          category: trivy-vastora-center-released
