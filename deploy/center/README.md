@@ -8,8 +8,8 @@ curl -LsSf https://github.com/petauron/vastora/releases/latest/download/install.
 
 The bootstrap downloads the latest Center install bundle and its SHA-256 file,
 verifies the archive, installs it under `/opt/vastora/center`, and starts Center
-on `127.0.0.1:8080`. It does not require Git, a domain, a certificate, or an
-unused public port 443.
+with host networking on `127.0.0.1:8080`. It publishes no Docker port and does
+not require Git, a domain, a certificate, or an unused public port 443.
 
 ## Open the first-run wizard
 

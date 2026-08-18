@@ -31,7 +31,12 @@ test -x "$temporary_dir/setup.sh"
 test -f "$temporary_dir/compose.yaml"
 test -f "$temporary_dir/headscale/config.yaml"
 test -f "$temporary_dir/headscale/policy.hujson"
-grep -Fq '127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}:8080' "$temporary_dir/compose.yaml"
+grep -Fq '127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}' "$temporary_dir/compose.yaml"
+grep -Fq 'network_mode: host' "$temporary_dir/compose.yaml"
+if sed -n '/^  center:/,/^  headscale:/p' "$temporary_dir/compose.yaml" | grep -Fq '    ports:'; then
+  echo "Center install bundle still publishes a Docker port" >&2
+  exit 1
+fi
 if grep -Fq '${VASTORA_CENTER_PORT:-443}:8080' "$temporary_dir/compose.yaml"; then
   echo "Center install bundle still claims public port 443" >&2
   exit 1
