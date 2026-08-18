@@ -158,7 +158,7 @@ func normalizeHeadscaleEndpoint(value string) (string, error) {
 	value = strings.TrimRight(strings.TrimSpace(value), "/")
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" {
-		return "", errors.New("Headscale requires an HTTPS control-plane URL without a path")
+		return "", errors.New("headscale requires an HTTPS control-plane URL without a path")
 	}
 	return value, nil
 }
