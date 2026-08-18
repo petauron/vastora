@@ -98,11 +98,19 @@ describe("network and app views", () => {
   });
 
   it("starts first-run onboarding with a real location and the browser timezone", () => {
-    const container = render(<SetupWizard language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} suggestedAgentConnectUrl="https://center.example.com" />);
+    const container = render(<SetupWizard language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} suggestedAgentConnectUrl="" />);
     expect(container.textContent).toContain("创建第一个位置");
     expect(container.textContent).toContain("位置通常是一处家庭、办公室或数据中心");
     expect(container.querySelector<HTMLInputElement>("#setup-timezone")?.value).not.toBe("");
     expect(container.textContent).not.toContain("Default");
+    const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "DMIT");
+      location.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    expect(container.textContent).toContain("安装向导通过 SSH 隧道打开");
+    expect(container.textContent).toContain("不要填写本机浏览器中的 127.0.0.1:18082");
   });
 
   it("uses the saved Center address when adding a node and keeps editing advanced", () => {

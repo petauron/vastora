@@ -34,8 +34,9 @@
   boundary and cannot send the stored Bearer token to arbitrary network hosts.
 - The unauthenticated setup endpoint creates an administrator only while the
   administrator table is empty; all later setup requests are rejected. Until
-  setup finishes, the first client that can reach the Center can claim the
-  administrator account, so operators must restrict initial network access.
+  setup finishes, the released deployment publishes Center only on server
+  loopback and administrators reach it through SSH port forwarding. Custom
+  deployments must enforce an equivalent initial-access restriction.
 - The public root installer accepts only HTTPS release URLs, verifies the
   release archive against its published SHA-256 value, rejects unsafe archive
   entries, and installs a Center image pinned by its complete digest. Running a
