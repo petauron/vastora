@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Ignore generated local Vastora development state"
+paths = ['''^\.vastora/''']

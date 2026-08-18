@@ -42,8 +42,11 @@ Service publication method, not a fourth network.
 Center releases publish a fixed-name, checksummed deployment bundle containing
 the guided setup, Compose and Headscale configuration, and an immutable Center
 image reference. The public `install.sh center` bootstrap verifies and installs
-that bundle; it never builds source on the user's server. Each running Center
-then serves its own Agent installer and architecture-specific Agent binaries.
+that bundle; it never builds source on the user's server. Center initially maps
+only to the server loopback interface, and the administrator opens the first-run
+wizard through an SSH tunnel. Domain, TLS, Headscale, and public Gateway setup
+therefore do not block installation or claim public port 443. Each running
+Center then serves its own Agent installer and architecture-specific Agent binaries.
 Agent enrollment, site assignment, roles, Headscale pre-authentication, and the
 short-lived credential therefore remain specific to that Center instead of a
 universal public Agent command.

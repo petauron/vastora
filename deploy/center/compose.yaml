@@ -15,31 +15,23 @@ services:
       - /app/web/dist
       - --official-catalog
       - /app/catalog/catalog.json
-      - --agent-connect-url
-      - ${VASTORA_CENTER_URL:?set VASTORA_CENTER_URL}
-      - --headscale-allowed-url
-      - ${VASTORA_HEADSCALE_URL:?set VASTORA_HEADSCALE_URL}
-      - --tls-cert
-      - /run/vastora-tls/tls.crt
-      - --tls-key
-      - /run/vastora-tls/tls.key
     ports:
-      - "${VASTORA_CENTER_PORT:-443}:8080"
+      - "127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}:8080"
     volumes:
       - center-data:/var/lib/vastora
-      - ./tls:/run/vastora-tls:ro
     security_opt:
       - no-new-privileges:true
 
   headscale:
     image: ghcr.io/juanfont/headscale:0.29.3@sha256:0e7f1c6e4ce6c2a2a001103ecd3fa645a045adf30ac8a5234fe037b43000cd72
     restart: unless-stopped
+    profiles: ["headscale"]
     command: serve
     read_only: true
     tmpfs:
       - /var/run/headscale
     ports:
-      - "${VASTORA_HEADSCALE_PORT:-8443}:8080"
+      - "127.0.0.1:8081:8080"
     volumes:
       - headscale-data:/var/lib/headscale
       - center-data:/var/lib/vastora-shared:ro

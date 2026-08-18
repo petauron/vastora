@@ -157,15 +157,19 @@ func runCenter(arguments []string) error {
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
-		if *dataDir == "" || *agentConnectURL == "" {
-			return errors.New("--data-dir and --agent-connect-url are required")
+		if *dataDir == "" {
+			return errors.New("--data-dir is required")
 		}
 		if (*tlsCert == "") != (*tlsKey == "") {
 			return errors.New("--tls-cert and --tls-key must be provided together")
 		}
-		normalizedAgentConnectURL, err := center.NormalizeAgentConnectURL(*agentConnectURL)
-		if err != nil {
-			return err
+		normalizedAgentConnectURL := ""
+		if *agentConnectURL != "" {
+			var err error
+			normalizedAgentConnectURL, err = center.NormalizeAgentConnectURL(*agentConnectURL)
+			if err != nil {
+				return err
+			}
 		}
 		if *tlsCert == "" && !loopbackAddress(*listen) {
 			return errors.New("refusing a non-loopback HTTP listener; provide TLS certificate and key")
@@ -886,7 +890,7 @@ func printUsage(writer *os.File) {
 
 Usage:
   vastora version
-  vastora center serve --data-dir DIR --agent-connect-url URL [--headscale-allowed-url URL] [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
+  vastora center serve --data-dir DIR [--agent-connect-url URL] [--headscale-allowed-url URL] [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
   vastora center agent-token create --data-dir DIR --site-id SITE
   vastora center backup --data-dir DIR --output FILE --password-file FILE
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE
