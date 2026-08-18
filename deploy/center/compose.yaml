@@ -10,13 +10,12 @@ services:
       - --data-dir
       - /var/lib/vastora
       - --listen
-      - 0.0.0.0:8080
+      - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}
       - --web-dir
       - /app/web/dist
       - --official-catalog
       - /app/catalog/catalog.json
-    ports:
-      - "127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}:8080"
+    network_mode: host
     volumes:
       - center-data:/var/lib/vastora
     security_opt:
