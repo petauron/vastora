@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -43,18 +44,18 @@ func TestHeadscaleRequestKeepsFixedOriginAndRejectsRedirects(t *testing.T) {
 	}))
 	defer redirect.Close()
 	client := headscaleClient{baseURL: redirect.URL, apiKey: "headscale-secret", http: redirect.Client()}
-	if err := client.do(context.Background(), http.MethodGet, "/api/v1/user", nil, nil); err == nil || !strings.Contains(err.Error(), "307") {
+	if err := client.do(context.Background(), http.MethodGet, "/api/v1/user", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "307") {
 		t.Fatalf("Headscale redirect was followed or accepted: %v", err)
 	}
 	if targetRequests != 0 {
 		t.Fatal("Headscale credentials were forwarded to a redirect target")
 	}
-	requestURL, err := headscaleRequestURL("https://headscale.example.test/", "/api/v1/user")
-	if err != nil || requestURL != "https://headscale.example.test/api/v1/user" {
+	requestURL, err := headscaleRequestURL("https://headscale.example.test/", "/api/v1/user", url.Values{"name": []string{"vastora"}})
+	if err != nil || requestURL != "https://headscale.example.test/api/v1/user?name=vastora" {
 		t.Fatalf("unexpected validated Headscale URL: %q err=%v", requestURL, err)
 	}
 	for _, invalid := range []struct{ base, path string }{{"https://headscale.example.test/prefix", "/api/v1/user"}, {"https://headscale.example.test", "//metadata.invalid/"}, {"https://headscale.example.test", "/api/v1/user?next=https://metadata.invalid"}} {
-		if _, err := headscaleRequestURL(invalid.base, invalid.path); err == nil {
+		if _, err := headscaleRequestURL(invalid.base, invalid.path, nil); err == nil {
 			t.Fatalf("unsafe Headscale request URL was accepted: %#v", invalid)
 		}
 	}

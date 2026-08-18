@@ -227,7 +227,7 @@ func (s *Store) ensureHeadscaleDNSFile() error {
 
 func (client headscaleClient) verify(ctx context.Context) error {
 	var result json.RawMessage
-	return client.do(ctx, http.MethodGet, "/api/v1/user", nil, &result)
+	return client.do(ctx, http.MethodGet, "/api/v1/user", nil, nil, &result)
 }
 
 func (client headscaleClient) ensureUser(ctx context.Context, name string) (string, error) {
@@ -236,7 +236,7 @@ func (client headscaleClient) ensureUser(ctx context.Context, name string) (stri
 		Name string `json:"name"`
 	}
 	var users []user
-	if err := client.do(ctx, http.MethodGet, "/api/v1/user?name="+url.QueryEscape(name), nil, &users); err != nil {
+	if err := client.do(ctx, http.MethodGet, "/api/v1/user", url.Values{"name": []string{name}}, nil, &users); err != nil {
 		return "", err
 	}
 	for _, candidate := range users {
@@ -245,7 +245,7 @@ func (client headscaleClient) ensureUser(ctx context.Context, name string) (stri
 		}
 	}
 	var created user
-	if err := client.do(ctx, http.MethodPost, "/api/v1/user", map[string]string{"name": name}, &created); err != nil {
+	if err := client.do(ctx, http.MethodPost, "/api/v1/user", nil, map[string]string{"name": name}, &created); err != nil {
 		return "", err
 	}
 	if created.ID == "" {
@@ -257,7 +257,7 @@ func (client headscaleClient) ensureUser(ctx context.Context, name string) (stri
 func (client headscaleClient) createPreAuthKey(ctx context.Context, user string, tags []string, expiration time.Time) (string, error) {
 	body := map[string]any{"user": user, "reusable": false, "ephemeral": false, "expiration": expiration.Format(time.RFC3339), "aclTags": tags}
 	var raw json.RawMessage
-	if err := client.do(ctx, http.MethodPost, "/api/v1/preauthkey", body, &raw); err != nil {
+	if err := client.do(ctx, http.MethodPost, "/api/v1/preauthkey", nil, body, &raw); err != nil {
 		return "", fmt.Errorf("center: create Headscale pre-auth key: %w", err)
 	}
 	var direct struct {
@@ -279,7 +279,7 @@ func (client headscaleClient) createPreAuthKey(ctx context.Context, user string,
 	return key, nil
 }
 
-func (client headscaleClient) do(ctx context.Context, method, path string, body any, output any) error {
+func (client headscaleClient) do(ctx context.Context, method, path string, query url.Values, body any, output any) error {
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -288,7 +288,7 @@ func (client headscaleClient) do(ctx context.Context, method, path string, body 
 		}
 		payload = bytes.NewReader(encoded)
 	}
-	requestURL, err := headscaleRequestURL(client.baseURL, path)
+	requestURL, err := headscaleRequestURL(client.baseURL, path, query)
 	if err != nil {
 		return err
 	}
@@ -343,7 +343,7 @@ func (client headscaleClient) do(ctx context.Context, method, path string, body 
 	return nil
 }
 
-func headscaleRequestURL(baseURL, path string) (string, error) {
+func headscaleRequestURL(baseURL, path string, query url.Values) (string, error) {
 	base, err := url.Parse(strings.TrimSpace(baseURL))
 	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" || (base.Path != "" && base.Path != "/") {
 		return "", errors.New("center: stored Headscale URL is invalid")
@@ -354,7 +354,7 @@ func headscaleRequestURL(baseURL, path string) (string, error) {
 	target := *base
 	target.Path = path
 	target.RawPath = ""
-	target.RawQuery = ""
+	target.RawQuery = query.Encode()
 	target.ForceQuery = false
 	target.Fragment = ""
 	return target.String(), nil
