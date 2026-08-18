@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.2](https://github.com/petauron/vastora/compare/v0.1.0-alpha.1...v0.1.0-alpha.2) (2026-08-18)
+
+
+### Features
+
+* add optional shared 443 gateway ([#24](https://github.com/petauron/vastora/issues/24)) ([976d774](https://github.com/petauron/vastora/commit/976d77457d192bcd21c2d21dbc3af0d64199c04f))
+
 ## 0.1.0-alpha.1 (2026-08-18)
 
 ### Features
