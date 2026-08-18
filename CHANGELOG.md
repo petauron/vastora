@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.3](https://github.com/petauron/vastora/compare/v0.1.0-alpha.2...v0.1.0-alpha.3) (2026-08-18)
+
+
+### Features
+
+* add forward-only database migrations ([#26](https://github.com/petauron/vastora/issues/26)) ([47d84b4](https://github.com/petauron/vastora/commit/47d84b461afcddca2fe2155db468ed53ad4c5ea7))
+
 ## [0.1.0-alpha.2](https://github.com/petauron/vastora/compare/v0.1.0-alpha.1...v0.1.0-alpha.2) (2026-08-18)
 
 
