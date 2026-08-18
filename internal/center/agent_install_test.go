@@ -21,10 +21,8 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	}
 	defer store.Close()
 	binaries := t.TempDir()
-	for _, target := range []string{"linux-amd64", "linux-arm64"} {
-		if err := os.WriteFile(filepath.Join(binaries, target), []byte("binary-"+target), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.WriteFile(filepath.Join(binaries, "linux-amd64"), []byte("binary-linux-amd64"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	server := NewServer(store, "", false).WithAgentBinaries(binaries)
 	if !server.agentInstallerAvailable() {
@@ -58,6 +56,14 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	}
 	if response.Header().Get("X-Vastora-Version") != Version {
 		t.Fatalf("initial Agent download version = %q", response.Header().Get("X-Vastora-Version"))
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/agent-binaries/linux/arm64", nil)
+	request.Header.Set("Authorization", "Bearer "+enrollment.Token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("arm64 binary download status = %d", response.Code)
 	}
 	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "downloaded-agent", "test"); err != nil {
 		t.Fatalf("binary download consumed enrollment token: %v", err)
@@ -121,7 +127,7 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 	response := httptest.NewRecorder()
 	NewServer(store, "", false).Handler().ServeHTTP(response, request)
 	script := response.Body.String()
-	for _, expected := range []string{"command -v \"$required\"", "docker info", "sha256sum", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url"} {
+	for _, expected := range []string{"command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "supports only Ubuntu 24.04 on amd64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("installer is missing %q:\n%s", expected, script)
 		}

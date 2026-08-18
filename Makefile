@@ -45,7 +45,6 @@ dependency-security-check:
 agent-binaries:
 	mkdir -p bin/agent-binaries
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o bin/agent-binaries/linux-amd64 ./cmd/vastora
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w" -o bin/agent-binaries/linux-arm64 ./cmd/vastora
 
 center-install-bundle:
 	scripts/package-center-install.sh --version "$${VASTORA_VERSION:?set VASTORA_VERSION}" --image "$${VASTORA_CENTER_IMAGE:?set VASTORA_CENTER_IMAGE}" --output-dir dist

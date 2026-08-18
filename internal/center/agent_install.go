@@ -56,8 +56,7 @@ fi
 
 case "$(uname -m)" in
   x86_64|amd64) arch="amd64" ;;
-  aarch64|arm64) arch="arm64" ;;
-  *) echo "This CPU architecture is not supported." >&2; exit 1 ;;
+  *) echo "Vastora Agent currently supports only Ubuntu 24.04 on amd64." >&2; exit 1 ;;
 esac
 
 temporary="$(mktemp -t vastora-agent.XXXXXX)"
@@ -110,11 +109,9 @@ func (s *Store) ValidateAgentEnrollment(ctx context.Context, token string) error
 }
 
 func (s *Server) agentInstallerAvailable() bool {
-	for _, target := range []string{"linux-amd64", "linux-arm64"} {
-		info, err := os.Stat(filepath.Join(s.agentBinariesDir, target))
-		if err != nil || !info.Mode().IsRegular() {
-			return false
-		}
+	info, err := os.Stat(filepath.Join(s.agentBinariesDir, "linux-amd64"))
+	if err != nil || !info.Mode().IsRegular() {
+		return false
 	}
 	return true
 }
@@ -148,7 +145,7 @@ func (s *Server) handleAgentUpdateBinary(writer http.ResponseWriter, request *ht
 }
 
 func (s *Server) serveAgentBinary(writer http.ResponseWriter, request *http.Request, operatingSystem, architecture string) {
-	if operatingSystem != "linux" || (architecture != "amd64" && architecture != "arm64") {
+	if operatingSystem != "linux" || architecture != "amd64" {
 		writeError(writer, http.StatusNotFound, errors.New("center: Agent binary target is not available"))
 		return
 	}
