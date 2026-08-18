@@ -20,6 +20,7 @@ const (
 	publicationLAN        = "lan_gateway"
 	publicationHeadscale  = "headscale_gateway"
 	publicationPublic     = "public_direct"
+	publicationShared443  = "public_shared_443"
 	publicationCloudflare = "cloudflare_tunnel"
 )
 
@@ -119,15 +120,18 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		return PublicationView{}, errors.New("center: stored service endpoint is invalid")
 	}
 	webService := protocol == "http" || protocol == "https"
-	if !webService && input.Kind != publicationPublic {
-		return PublicationView{}, errors.New("center: raw TCP/UDP services only support direct public publication")
+	if !webService && input.Kind != publicationPublic && input.Kind != publicationShared443 {
+		return PublicationView{}, errors.New("center: raw TCP/UDP services only support direct public or shared 443 publication")
+	}
+	if input.Kind == publicationShared443 && protocol != "tcp" {
+		return PublicationView{}, errors.New("center: shared 443 requires a raw TCP service with TLS SNI")
 	}
 
 	gatewayID := input.GatewayNodeID
-	if gatewayID == "" && (input.Kind == publicationPublic || input.Kind == publicationCloudflare) {
+	if gatewayID == "" && (input.Kind == publicationPublic || input.Kind == publicationShared443 || input.Kind == publicationCloudflare) {
 		gatewayID = appNodeID
 	}
-	if input.Kind == publicationLAN || input.Kind == publicationHeadscale || (input.Kind == publicationPublic && webService) {
+	if input.Kind == publicationLAN || input.Kind == publicationHeadscale || input.Kind == publicationShared443 || (input.Kind == publicationPublic && webService) {
 		if gatewayID == "" {
 			return PublicationView{}, errors.New("center: select an entry node for this publication")
 		}
@@ -146,6 +150,39 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		listenIP := net.ParseIP(observedListen)
 		if listenIP != nil && !listenIP.IsUnspecified() && listenIP.String() != publicAddress {
 			return PublicationView{}, errors.New("center: raw port is not listening on the confirmed public address")
+		}
+		_, port, _ := net.SplitHostPort(endpoint)
+		if port == "443" {
+			var shared int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, appNodeID).Scan(&shared); err != nil {
+				return PublicationView{}, err
+			}
+			if shared != 0 {
+				return PublicationView{}, errors.New("center: this gateway already shares public port 443; use a non-443 application port and the shared 443 access method")
+			}
+		}
+	}
+	if input.Kind == publicationShared443 {
+		if err := validatePublicationOrigin(ctx, tx, appNodeID, gatewayID, endpoint); err != nil {
+			return PublicationView{}, err
+		}
+		_, port, _ := net.SplitHostPort(endpoint)
+		if appNodeID == gatewayID && port == "443" {
+			return PublicationView{}, errors.New("center: move the application inbound away from port 443 before enabling the shared 443 gateway")
+		}
+		occupied, err := gatewayHasDirectRaw443(ctx, tx, gatewayID)
+		if err != nil {
+			return PublicationView{}, err
+		}
+		if occupied {
+			return PublicationView{}, errors.New("center: a direct raw publication already owns port 443 on this gateway; move that inbound before enabling shared 443")
+		}
+		var duplicate int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND hostname = ? AND status <> 'stopped'`, gatewayID, input.Hostname).Scan(&duplicate); err != nil {
+			return PublicationView{}, err
+		}
+		if duplicate != 0 {
+			return PublicationView{}, errors.New("center: this SNI hostname is already used on the selected gateway")
 		}
 	}
 	if input.Kind == publicationCloudflare {
@@ -182,6 +219,10 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		if err := s.upsertPublicationRoute(ctx, tx, id, siteID, input.ServiceID, gatewayID, input.Hostname, protocol, endpoint, tlsEnabled, now); err != nil {
 			return PublicationView{}, err
 		}
+		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
+			return PublicationView{}, err
+		}
+	} else if input.Kind == publicationShared443 {
 		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
 			return PublicationView{}, err
 		}
@@ -419,7 +460,7 @@ func (s *Store) publicationDNSRecord(ctx context.Context, publication Publicatio
 		if err != nil {
 			return nil, err
 		}
-	case publicationPublic:
+	case publicationPublic, publicationShared443:
 		err := s.db.QueryRowContext(ctx, `SELECT n.public_address FROM agent_network_profiles n JOIN publications p ON p.gateway_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
 		if err != nil {
 			return nil, err
@@ -494,6 +535,9 @@ func (s *Store) VerifyPublication(ctx context.Context, id string) (PublicationVi
 		}
 		if protocol == "udp" {
 			return s.recordPublicationVerification(ctx, id, "UDP reachability cannot be proven automatically; verify it from an external client")
+		}
+		if publication.Kind == publicationShared443 {
+			port = "443"
 		}
 		connection, dialErr := (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(publication.Hostname, port))
 		if dialErr != nil {
@@ -625,6 +669,9 @@ func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx
 			}
 			gateways[value.gatewayID] = true
 		}
+		if value.kind == publicationShared443 {
+			gateways[value.gatewayID] = true
+		}
 		if value.kind == publicationCloudflare {
 			tunnels[value.gatewayID] = true
 		}
@@ -673,7 +720,7 @@ func validateGatewayForPublication(ctx context.Context, tx *sql.Tx, siteID, gate
 	if kind == publicationHeadscale {
 		required = networking.KindHeadscale
 	}
-	if kind == publicationPublic {
+	if kind == publicationPublic || kind == publicationShared443 {
 		required = networking.KindPublic
 		if direct != 1 {
 			return errors.New("center: entry node is not approved for direct public ingress")
@@ -771,8 +818,31 @@ func validateDirectPublicNode(ctx context.Context, tx *sql.Tx, nodeID string) (s
 	return "", errors.New("center: application node does not have public networking enabled")
 }
 
+func gatewayHasDirectRaw443(ctx context.Context, tx *sql.Tx, gatewayID string) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT s.endpoint FROM publications p JOIN services s ON s.id = p.service_id
+		WHERE p.gateway_node_id = ? AND p.kind = 'public_direct' AND p.status <> 'stopped' AND s.protocol IN ('tcp', 'udp')`, gatewayID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var endpoint string
+		if err := rows.Scan(&endpoint); err != nil {
+			return false, err
+		}
+		_, port, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			return false, errors.New("center: stored direct public endpoint is invalid")
+		}
+		if port == "443" {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 func validPublicationKind(kind string) bool {
-	return kind == publicationLAN || kind == publicationHeadscale || kind == publicationPublic || kind == publicationCloudflare
+	return kind == publicationLAN || kind == publicationHeadscale || kind == publicationPublic || kind == publicationShared443 || kind == publicationCloudflare
 }
 
 func validPublicationDNS(kind, provider string) bool {
@@ -781,7 +851,7 @@ func validPublicationDNS(kind, provider string) bool {
 		return provider == "manual"
 	case publicationHeadscale:
 		return provider == "headscale" || provider == "manual"
-	case publicationPublic:
+	case publicationPublic, publicationShared443:
 		return provider == "cloudflare" || provider == "manual"
 	case publicationCloudflare:
 		return provider == "cloudflare"

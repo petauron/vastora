@@ -77,6 +77,18 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("所有可用节点都已安装此应用");
   });
 
+  it("offers an automatic shared 443 gateway for raw TLS services", () => {
+	const data = dashboard();
+	data.agents[0].networkCandidates = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-18T00:00:00Z" }];
+	data.agents[0].networkProfile = { serviceAddress: "203.0.113.10", publicAddress: "203.0.113.10", enabledKinds: ["public"], directPublic: true };
+	data.services = [{ id: "vless", applicationId: "running", siteId: "site", name: "VLESS", protocol: "tcp", containerPort: 2443, hostPort: 2443, endpoint: "203.0.113.10:2443", source: "observed", appProtocol: "vless/tcp", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+	const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+	const add = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"));
+	act(() => add?.click());
+	expect(document.body.textContent).toContain("共享 443");
+	expect(document.body.textContent).toContain("自动启用 HAProxy");
+  });
+
   it("shows a failed install with its reason and a retry action", () => {
     const data = dashboard();
     data.deployments = [{ id: "failed-install", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "install", deleteData: false, error: "container could not start", applicationId: "failed", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];

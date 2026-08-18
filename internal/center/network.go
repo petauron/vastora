@@ -109,7 +109,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	input.ConfirmedAt = s.now().UTC()
 	if !input.DirectPublic {
 		var publicationCount int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE a.node_id = ? AND p.kind = 'public_direct' AND p.status <> 'stopped'`, agentID).Scan(&publicationCount); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
 		if publicationCount != 0 {

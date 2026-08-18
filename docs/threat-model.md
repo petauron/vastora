@@ -26,6 +26,10 @@
   it on a local interface and an administrator explicitly enables direct ingress.
 - LAN and Headscale Web entries use selected Caddy Gateway nodes. Public Web
   entries require HTTPS. Caddy Admin remains reachable only over its Unix socket.
+- HAProxy is installed only for an explicit shared-443 Publication. It performs
+  TCP ClientHello SNI routing without terminating TLS, uses no Docker socket,
+  and binds only the confirmed public address. Unknown SNI traffic is passed to
+  Caddy, which has no matching application route for unconfigured hostnames.
 - Cloudflare and Headscale credentials are encrypted; list APIs return only
   configuration metadata. Connector tokens are delivered only to the selected
   Agent through authenticated, leased tasks.

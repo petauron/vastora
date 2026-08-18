@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 3
+const centerSchemaVersion = 4
 
 // initializeSchema deliberately supports only the current schema. Vastora is
 // pre-release and changing this model requires rebuilding the Center data
@@ -183,7 +183,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 		`CREATE TABLE publications (
 			id TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'cloudflare_tunnel')),
+			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'public_shared_443', 'cloudflare_tunnel')),
 			gateway_node_id TEXT REFERENCES agents(id) ON DELETE RESTRICT,
 			hostname TEXT NOT NULL,
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
@@ -310,7 +310,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {
 		return fmt.Errorf("center: create default organization: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 3`); err != nil {
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 4`); err != nil {
 		return fmt.Errorf("center: set schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

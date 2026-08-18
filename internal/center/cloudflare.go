@@ -247,7 +247,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 		}
 		return tx.Commit()
 	}
-	if kind == publicationPublic {
+	if kind == publicationPublic || kind == publicationShared443 {
 		var publicAddress string
 		if err := s.db.QueryRowContext(ctx, `SELECT public_address FROM agent_network_profiles WHERE agent_id = ? AND direct_public = 1`, gatewayID).Scan(&publicAddress); err != nil {
 			return errors.New("center: public entry node has no confirmed public address")

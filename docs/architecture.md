@@ -3,7 +3,7 @@
 Vastora is a desired-state control plane for Docker applications across multiple
 locations. Center is the only source of network and publication intent. Agent is
 the only component that discovers local addresses and touches host Docker,
-Caddy, cloudflared, or application-local APIs.
+Caddy, optional HAProxy, cloudflared, or application-local APIs.
 
 ```mermaid
 flowchart LR
@@ -13,10 +13,14 @@ flowchart LR
   Agent --> Docker["Host Docker Engine"]
   Docker --> App["Private application origin"]
   Agent -->|"private Unix Admin socket"| Caddy["Caddy Gateway"]
+  Agent --> HAProxy["Optional HAProxy L4 Gateway"]
   Agent --> Cloudflared["cloudflared connector"]
   LAN["LAN clients"] --> Caddy
   Tailnet["Headscale clients"] --> Caddy
   Internet["Internet clients"] -->|"HTTPS"| Caddy
+  Internet -->|"shared TCP 443"| HAProxy
+  HAProxy -->|"Web TLS passthrough"| Caddy
+  HAProxy -->|"raw TLS SNI"| App
   Internet -->|"Cloudflare HTTPS"| Cloudflared
   Caddy --> App
   Cloudflared --> App
@@ -73,7 +77,7 @@ still depends on it.
 2. Agent starts the allowlisted Docker workload on the confirmed private service address.
 3. Agent reports declared Service endpoints. Center validates protocol, ports, and address against the signed manifest and Network Profile.
 4. The administrator independently adds one or more Publications to each Service.
-5. LAN and Headscale Web Publications queue a complete Caddy desired state on the selected Site Gateway. Direct-public Web Publications use the public listener and force HTTPS.
+5. LAN and Headscale Web Publications queue a complete Caddy desired state on the selected Site Gateway. Direct-public Web Publications use the public listener and force HTTPS. A shared-443 raw TCP Publication additionally places HAProxy in front of Caddy on that Gateway.
 6. Cloudflare Tunnel Publications update the remotely managed Tunnel ingress and DNS records, then queue a versioned cloudflared connector task on the selected node.
 7. Gateway and Tunnel task results advance only the exact desired revision and claim attempt. DNS and reachability checks provide the final ready state where propagation is asynchronous.
 
@@ -89,6 +93,7 @@ chooses permanent data deletion.
 | `lan_gateway` | HTTP/HTTPS | selected Site Gateway with LAN address | HTTP by default on LAN |
 | `headscale_gateway` | HTTP/HTTPS | selected Site Gateway with Headscale address | HTTP by default inside the tailnet |
 | `public_direct` | Web or raw TCP/UDP | public Gateway for Web; application node for raw ports | HTTPS for Web; app-controlled raw protocol |
+| `public_shared_443` | raw TLS-over-TCP with a distinct SNI | selected public Site Gateway | HAProxy SNI passthrough on public 443; Caddy retains Web TLS |
 | `cloudflare_tunnel` | HTTP/HTTPS | selected Tunnel-capable node | Cloudflare HTTPS to a private origin |
 
 Direct-public DNS managed through Cloudflare is always DNS-only. A standard
@@ -102,6 +107,15 @@ Caddy receives explicit listeners for LAN, Headscale, and public addresses.
 Routes reference exactly one listener kind, so the same hostname can be scoped
 to separate private entry networks without a wildcard bind. Caddy has no Docker
 socket; its Admin API is a permissioned Unix socket shared only with Agent.
+
+HAProxy is absent by default. When at least one `public_shared_443` Publication
+exists, Agent moves Caddy's public HTTPS listener to loopback `8443`, starts a
+fixed, digest-pinned HAProxy container on the confirmed public address at `443`,
+and routes explicitly configured SNI hostnames to raw TCP origins. All remaining
+Web TLS passes through untouched to Caddy, which continues to obtain certificates
+and terminate HTTPS. Removing the final shared-443 Publication removes HAProxy
+and returns public `443` directly to Caddy. Services without a distinct TLS SNI
+must use another port or public address.
 
 Each Cloudflare entry node owns one remotely managed Tunnel. One Tunnel can
 carry multiple Web ingress rules. Agent runs a fixed cloudflared image with host

@@ -21,8 +21,9 @@ when the Center is unavailable.
 - Organization → Site → Node topology, typed Network Candidate/Profile state,
   private application Services, and independent multi-entry Publications.
 - Leased, retryable, attempt-fenced Agent tasks with append-only audit events.
-- LAN, Headscale, direct-public, and Cloudflare Tunnel publication paths;
-  Agent-managed Caddy uses a private Unix socket and never receives Docker access.
+- LAN, Headscale, direct-public, shared-443, and Cloudflare Tunnel publication
+  paths; Agent-managed Caddy uses a private Unix socket, while optional HAProxy
+  provides TLS SNI passthrough only when Web HTTPS and raw TCP must share `443`.
 - Signed 3x-ui, CPA, Keeper, and Komari Agent application packages with
   images pinned by digest.
 
