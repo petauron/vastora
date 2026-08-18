@@ -351,7 +351,11 @@ func (s *Store) backfillGatewayRoutes(ctx context.Context, tx *sql.Tx, siteID, g
 	return len(publications), nil
 }
 
-func (s *Store) AssignAgentSite(ctx context.Context, agentID, siteID string) error {
+func (s *Store) UpdateAgent(ctx context.Context, agentID, name, siteID string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 128 {
+		return errors.New("center: node name must be 1 to 128 characters")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("center: begin node site assignment: %w", err)
@@ -370,13 +374,49 @@ func (s *Store) AssignAgentSite(ctx context.Context, agentID, siteID string) err
 	if activeApplications != 0 {
 		return errors.New("center: stop active applications before moving the node to another site")
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agents SET site_id = ? WHERE id = ? AND EXISTS(SELECT 1 FROM sites WHERE id = ?)`, siteID, agentID, siteID)
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET name = ?, site_id = ? WHERE id = ? AND status = 'active' AND EXISTS(SELECT 1 FROM sites WHERE id = ? AND status = 'active')`, name, siteID, agentID, siteID)
 	if err != nil {
 		return fmt.Errorf("center: assign node site: %w", err)
 	}
 	changed, _ := result.RowsAffected()
 	if changed != 1 {
 		return errors.New("center: node or site not found")
+	}
+	return tx.Commit()
+}
+
+func (s *Store) DisableAgent(ctx context.Context, agentID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("center: begin node disable: %w", err)
+	}
+	defer tx.Rollback()
+	checks := []struct {
+		query   string
+		message string
+	}{
+		{`SELECT COUNT(*) FROM applications WHERE node_id = ? AND status <> 'stopped'`, "center: uninstall active applications before disabling this node"},
+		{`SELECT COUNT(*) FROM site_gateways WHERE agent_id = ?`, "center: remove this node as a Site gateway before disabling it"},
+		{`SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND status <> 'stopped'`, "center: stop publications using this node before disabling it"},
+		{`SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND state IN ('pending', 'running')`, "center: wait for active node tasks before disabling it"},
+		{`SELECT COUNT(*) FROM cloudflare_tunnels WHERE agent_id = ? AND status <> 'stopped'`, "center: stop the Cloudflare Tunnel connector before disabling this node"},
+	}
+	for _, check := range checks {
+		var count int
+		if err := tx.QueryRowContext(ctx, check.query, agentID).Scan(&count); err != nil {
+			return err
+		}
+		if count != 0 {
+			return errors.New(check.message)
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET status = 'disabled' WHERE id = ? AND status = 'active'`, agentID)
+	if err != nil {
+		return fmt.Errorf("center: disable node: %w", err)
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("center: active node not found")
 	}
 	return tx.Commit()
 }

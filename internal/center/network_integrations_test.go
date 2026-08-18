@@ -53,3 +53,84 @@ func TestHeadscaleJoinKeyIsOneHourAndSingleUse(t *testing.T) {
 		t.Fatalf("unexpected Headscale pre-auth key request: key=%q body=%#v", key, body)
 	}
 }
+
+func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
+	var preAuthBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/user":
+			_, _ = response.Write([]byte(`[{"id":"42","name":"vastora"}]`))
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/preauthkey":
+			if err := json.NewDecoder(request.Body).Decode(&preAuthBody); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = response.Write([]byte(`{"preAuthKey":{"key":"bootstrap-one-time-key"}}`))
+		default:
+			t.Fatalf("unexpected Headscale request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	tx, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID, err := store.putSecret(context.Background(), tx, []byte("headscale-bootstrap-secret"), "integration:headscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at) VALUES('headscale', 'external', ?, ?, 'configured', ?, ?)`, server.URL, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	join, err := store.CreateHeadscaleBootstrap(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if join.AgentID != "" || !strings.Contains(join.Command, "bootstrap-one-time-key") {
+		t.Fatalf("unexpected bootstrap join: %#v", join)
+	}
+	tags, ok := preAuthBody["aclTags"].([]any)
+	if !ok || len(tags) != 2 || tags[0] != "tag:vastora-agent" || tags[1] != "tag:vastora-gateway" {
+		t.Fatalf("bootstrap tags = %#v", preAuthBody["aclTags"])
+	}
+}
+
+func TestConfiguredIntegrationSecretCanBeRetained(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID, err := store.putSecret(ctx, tx, []byte("existing-headscale-api-key"), "integration:headscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at) VALUES('headscale', 'builtin', 'https://headscale.example.com', ?, 'configured', ?, ?)`, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	gotID, gotValue, err := store.integrationSecret(ctx, "headscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotID != secretID || gotValue != "existing-headscale-api-key" {
+		t.Fatalf("stored integration secret was not retained: id=%q value=%q", gotID, gotValue)
+	}
+}

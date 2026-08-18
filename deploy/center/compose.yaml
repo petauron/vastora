@@ -39,7 +39,7 @@ services:
     volumes:
       - headscale-data:/var/lib/headscale
       - center-data:/var/lib/vastora-shared:ro
-      - ./headscale/config.yaml:/etc/headscale/config.yaml:ro
+      - ${VASTORA_HEADSCALE_CONFIG:-./headscale/config.yaml}:/etc/headscale/config.yaml:ro
       - ./headscale/policy.hujson:/etc/headscale/policy.hujson:ro
       - ./tls:/run/vastora-tls:ro
     security_opt:

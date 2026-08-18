@@ -26,7 +26,7 @@ type HeadscaleInput struct {
 }
 
 type HeadscaleJoin struct {
-	AgentID   string    `json:"agentId"`
+	AgentID   string    `json:"agentId,omitempty"`
 	Command   string    `json:"command"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }
@@ -48,6 +48,14 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return IntegrationView{}, errors.New("center: Headscale requires an HTTPS control-plane URL")
 	}
+	existingSecretID, existingAPIKey, err := s.integrationSecret(ctx, "headscale")
+	if err != nil {
+		return IntegrationView{}, err
+	}
+	replacingSecret := input.APIKey != ""
+	if !replacingSecret {
+		input.APIKey = existingAPIKey
+	}
 	if len(input.APIKey) < 20 {
 		return IntegrationView{}, errors.New("center: Headscale API key is required")
 	}
@@ -60,15 +68,23 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 		return IntegrationView{}, err
 	}
 	defer tx.Rollback()
-	secretID, err := s.putSecret(ctx, tx, []byte(input.APIKey), "integration:headscale")
-	if err != nil {
-		return IntegrationView{}, err
+	secretID := existingSecretID
+	if replacingSecret {
+		secretID, err = s.putSecret(ctx, tx, []byte(input.APIKey), "integration:headscale")
+		if err != nil {
+			return IntegrationView{}, err
+		}
 	}
 	now := s.now().UTC()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at)
 		VALUES('headscale', ?, ?, ?, 'configured', ?, ?)
 		ON CONFLICT(kind) DO UPDATE SET mode = excluded.mode, endpoint = excluded.endpoint, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, input.Mode, input.URL, secretID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: save Headscale integration: %w", err)
+	}
+	if replacingSecret && existingSecretID != "" && existingSecretID != secretID {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, existingSecretID); err != nil {
+			return IntegrationView{}, fmt.Errorf("center: replace Headscale API key: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return IntegrationView{}, err
@@ -83,7 +99,7 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 
 func (s *Store) CreateHeadscaleJoin(ctx context.Context, agentID string) (HeadscaleJoin, error) {
 	var capabilitiesJSON []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT capabilities_json FROM agents WHERE id = ?`, agentID).Scan(&capabilitiesJSON); errors.Is(err, sql.ErrNoRows) {
+	if err := s.db.QueryRowContext(ctx, `SELECT capabilities_json FROM agents WHERE id = ? AND status = 'active'`, agentID).Scan(&capabilitiesJSON); errors.Is(err, sql.ErrNoRows) {
 		return HeadscaleJoin{}, errors.New("center: Agent not found")
 	} else if err != nil {
 		return HeadscaleJoin{}, err
@@ -92,6 +108,14 @@ func (s *Store) CreateHeadscaleJoin(ctx context.Context, agentID string) (Headsc
 	if json.Unmarshal(capabilitiesJSON, &capabilities) != nil {
 		return HeadscaleJoin{}, errors.New("center: Agent capabilities are invalid")
 	}
+	return s.createHeadscaleJoin(ctx, agentID, capabilities.Gateway)
+}
+
+func (s *Store) CreateHeadscaleBootstrap(ctx context.Context, gateway bool) (HeadscaleJoin, error) {
+	return s.createHeadscaleJoin(ctx, "", gateway)
+}
+
+func (s *Store) createHeadscaleJoin(ctx context.Context, agentID string, gateway bool) (HeadscaleJoin, error) {
 	client, err := s.headscale(ctx)
 	if err != nil {
 		return HeadscaleJoin{}, err
@@ -102,7 +126,7 @@ func (s *Store) CreateHeadscaleJoin(ctx context.Context, agentID string) (Headsc
 	}
 	expiresAt := s.now().UTC().Add(time.Hour)
 	tags := []string{"tag:vastora-agent"}
-	if capabilities.Gateway {
+	if gateway {
 		tags = append(tags, "tag:vastora-gateway")
 	}
 	key, err := client.createPreAuthKey(ctx, userID, tags, expiresAt)

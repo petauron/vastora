@@ -92,7 +92,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
 	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ?`, request.AgentID).Scan(&exists); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active'`, request.AgentID).Scan(&exists); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: read agent: %w", err)
 	}
 	if exists == 0 {
@@ -383,17 +383,8 @@ func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.agent_id, d.app_key, d.app_version, d.operation, d.delete_data, d.state, d.error, d.created_at, d.updated_at, d.application_id
 		FROM deployments AS d
-		WHERE d.state = 'succeeded'
-		  AND d.operation IN ('install', 'upgrade')
-		  AND d.application_id IS NOT NULL
-		  AND d.application_id <> ''
-		  AND d.id = (
-			SELECT latest.id FROM deployments AS latest
-			WHERE latest.agent_id = d.agent_id AND latest.app_key = d.app_key
-			  AND latest.state IN ('succeeded', 'failed')
-			ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1
-		  )
-		ORDER BY d.created_at DESC`)
+		ORDER BY d.created_at DESC, d.rowid DESC
+		LIMIT 200`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list deployments: %w", err)
 	}
@@ -423,6 +414,9 @@ func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {
 		return nil, err
 	}
 	for index := range deployments {
+		if deployments[index].State != "succeeded" || deployments[index].Operation == "uninstall" {
+			continue
+		}
 		deployments[index].AccessURL, err = s.applicationHomepageURL(ctx, deployments[index].ApplicationID, homepages[deployments[index].AppKey])
 		if err != nil {
 			return nil, err
@@ -788,7 +782,7 @@ func validateApplicationResult(manifest catalog.AppManifest, configJSON []byte, 
 
 func (s *Store) authenticateAgent(ctx context.Context, id, credential string) error {
 	var expected []byte
-	err := s.db.QueryRowContext(ctx, `SELECT credential_hash FROM agents WHERE id = ?`, id).Scan(&expected)
+	err := s.db.QueryRowContext(ctx, `SELECT credential_hash FROM agents WHERE id = ? AND status = 'active'`, id).Scan(&expected)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: agent authentication failed")
 	}

@@ -12,6 +12,8 @@
 /.env
 /.env.*
 !.env.example
+/deploy/center/generated/
+/deploy/center/tls/
 
 # OS and editor files
 .DS_Store

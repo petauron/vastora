@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 1
+const centerSchemaVersion = 2
 
 // initializeSchema deliberately supports only the current schema. Vastora is
 // pre-release and changing this model requires rebuilding the Center data
@@ -103,6 +103,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 		)`,
 		`CREATE TABLE agent_enrollment_tokens (
 			token_hash BLOB PRIMARY KEY,
+			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
 			expires_at TEXT NOT NULL,
 			used_at TEXT
 		)`,
@@ -111,6 +112,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 			name TEXT NOT NULL,
 			credential_hash BLOB NOT NULL UNIQUE,
 			version TEXT NOT NULL,
+			status TEXT NOT NULL CHECK(status IN ('active', 'disabled')),
 			applied_installations INTEGER NOT NULL DEFAULT 0,
 			enrolled_at TEXT NOT NULL,
 			last_seen_at TEXT NOT NULL,
@@ -311,7 +313,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 		VALUES(?, ?, 'Default', 'default', 'Default location', '', 'active', ?, ?)`, defaultSiteID, defaultOrganizationID, now, now); err != nil {
 		return fmt.Errorf("center: create default site: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 1`); err != nil {
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 2`); err != nil {
 		return fmt.Errorf("center: set schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

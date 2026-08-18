@@ -106,6 +106,41 @@ func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 	}
 }
 
+func TestAdministratorCanChangePasswordAndRevokeOtherSessions(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	firstSession, firstCSRF, err := store.CreateFirstAdmin(ctx, "admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSession, _, err := store.Authenticate(ctx, "admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ChangePassword(ctx, firstSession, "wrong-current-password", "new-correct-horse-battery-staple"); err == nil {
+		t.Fatal("wrong current password was accepted")
+	}
+	if err := store.ChangePassword(ctx, firstSession, "correct-horse-battery-staple", "new-correct-horse-battery-staple"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Authenticate(ctx, "admin", "correct-horse-battery-staple"); err == nil {
+		t.Fatal("old password remained valid")
+	}
+	if _, _, err := store.Authenticate(ctx, "admin", "new-correct-horse-battery-staple"); err != nil {
+		t.Fatalf("new password is not valid: %v", err)
+	}
+	if err := store.ValidateSession(ctx, firstSession, firstCSRF, true); err != nil {
+		t.Fatalf("current session was revoked: %v", err)
+	}
+	if err := store.ValidateSession(ctx, secondSession, "", false); err == nil {
+		t.Fatal("other administrator session was not revoked")
+	}
+}
+
 func TestEncryptedBackupRestoresToNewDirectory(t *testing.T) {
 	sourceDir := t.TempDir()
 	store, err := Open(sourceDir)
@@ -143,6 +178,74 @@ func TestEncryptedBackupRestoresToNewDirectory(t *testing.T) {
 	}
 	if len(sources) != 1 || sources[0].ID != "official" {
 		t.Fatalf("unexpected restored sources: %#v", sources)
+	}
+}
+
+func TestWebBackupDownloadIsEncryptedAndRestorable(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server := NewServer(store, "", false)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/backups", strings.NewReader(`{"password":"web-backup-password"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.handleCreateBackup(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("backup status = %d, body = %q", response.Code, response.Body.String())
+	}
+	if !strings.HasPrefix(response.Body.String(), backupMagic) {
+		t.Fatal("download is not a Vastora encrypted backup")
+	}
+	if !strings.Contains(response.Header().Get("Content-Disposition"), ".vastora") {
+		t.Fatalf("missing backup filename: %q", response.Header().Get("Content-Disposition"))
+	}
+	backupPath := filepath.Join(t.TempDir(), "download.vastora")
+	if err := os.WriteFile(backupPath, response.Body.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(backupPath, filepath.Join(t.TempDir(), "restored"), "web-backup-password"); err != nil {
+		t.Fatalf("downloaded backup is not restorable: %v", err)
+	}
+}
+
+func TestDiagnosticsSummarizeHealthWithoutSecrets(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateSource(context.Background(), SourceInput{
+		ID: "private", DisplayName: "Private", URL: "https://catalog.example.invalid/v1.json",
+		PublicKey: make([]byte, 32), BearerToken: "diagnostic-must-not-leak", RefreshSeconds: 3600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), defaultSiteID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := store.EnrollAgent(context.Background(), enrollment.Token, "retired", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DisableAgent(context.Background(), node.ID); err != nil {
+		t.Fatal(err)
+	}
+	value, err := store.Diagnostics(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Nodes.Total != 1 || value.Nodes.Disabled != 1 || value.Schema != centerSchemaVersion {
+		t.Fatalf("unexpected diagnostics: %#v", value)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("diagnostic-must-not-leak")) {
+		t.Fatal("diagnostics leaked a secret")
 	}
 }
 

@@ -84,8 +84,11 @@ type RegistryCredential struct {
 }
 
 type AgentEnrollment struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	Token              string    `json:"token"`
+	SiteID             string    `json:"siteId"`
+	ExpiresAt          time.Time `json:"expiresAt"`
+	HeadscaleCommand   string    `json:"headscaleCommand,omitempty"`
+	HeadscaleExpiresAt time.Time `json:"headscaleExpiresAt,omitempty"`
 }
 
 type AgentCredential struct {
@@ -97,6 +100,7 @@ type AgentView struct {
 	ID                   string                 `json:"id"`
 	Name                 string                 `json:"name"`
 	Version              string                 `json:"version"`
+	Status               string                 `json:"status"`
 	AppliedInstallations int                    `json:"appliedInstallations"`
 	EnrolledAt           time.Time              `json:"enrolledAt"`
 	LastSeenAt           time.Time              `json:"lastSeenAt"`
@@ -242,6 +246,58 @@ func (s *Store) ValidateSession(ctx context.Context, sessionToken, csrfToken str
 	}
 	if mutation && subtle.ConstantTimeCompare([]byte(storedCSRF), []byte(csrfToken)) != 1 {
 		return errors.New("center: CSRF token is invalid")
+	}
+	return nil
+}
+
+func (s *Store) ChangePassword(ctx context.Context, sessionToken, currentPassword, newPassword string) error {
+	if sessionToken == "" {
+		return errors.New("center: authentication required")
+	}
+	if len(newPassword) < 12 {
+		return errors.New("center: new password must be at least 12 characters")
+	}
+	if currentPassword == newPassword {
+		return errors.New("center: new password must be different")
+	}
+	var adminID, passwordHash, expiresAt string
+	sessionHash := tokenHash(sessionToken)
+	err := s.db.QueryRowContext(ctx, `SELECT a.id, a.password_hash, s.expires_at FROM sessions s JOIN admins a ON a.id = s.admin_id WHERE s.token_hash = ?`, sessionHash).Scan(&adminID, &passwordHash, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("center: session is invalid")
+	}
+	if err != nil {
+		return fmt.Errorf("center: read administrator session: %w", err)
+	}
+	expires, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil || !expires.After(s.now()) {
+		return errors.New("center: session has expired")
+	}
+	if !verifyPassword(currentPassword, passwordHash) {
+		return errors.New("center: current password is incorrect")
+	}
+	nextHash, err := hashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("center: begin password change: %w", err)
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE admins SET password_hash = ? WHERE id = ? AND password_hash = ?`, nextHash, adminID, passwordHash)
+	if err != nil {
+		return fmt.Errorf("center: update administrator password: %w", err)
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("center: administrator password changed concurrently; retry")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE admin_id = ? AND token_hash <> ?`, adminID, sessionHash); err != nil {
+		return fmt.Errorf("center: revoke other sessions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("center: commit password change: %w", err)
 	}
 	return nil
 }
@@ -439,13 +495,24 @@ func (s *Store) CreateRegistryCredential(ctx context.Context, host, username, to
 	return RegistryCredential{ID: id, Host: host, Username: username, TokenSet: true, CreatedAt: now}, nil
 }
 
-func (s *Store) CreateAgentEnrollment(ctx context.Context) (AgentEnrollment, error) {
+func (s *Store) CreateAgentEnrollment(ctx context.Context, siteID string) (AgentEnrollment, error) {
+	siteID = strings.TrimSpace(siteID)
+	if siteID == "" {
+		siteID = defaultSiteID
+	}
+	var siteExists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE id = ? AND status = 'active'`, siteID).Scan(&siteExists); err != nil {
+		return AgentEnrollment{}, fmt.Errorf("center: inspect enrollment site: %w", err)
+	}
+	if siteExists != 1 {
+		return AgentEnrollment{}, errors.New("center: enrollment site was not found")
+	}
 	token, err := randomToken(32)
 	if err != nil {
 		return AgentEnrollment{}, err
 	}
-	enrollment := AgentEnrollment{Token: token, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, expires_at) VALUES(?, ?)`, tokenHash(token), enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
+	enrollment := AgentEnrollment{Token: token, SiteID: siteID, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, expires_at) VALUES(?, ?, ?)`, tokenHash(token), siteID, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: create agent enrollment: %w", err)
 	}
 	return enrollment, nil
@@ -536,9 +603,9 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, name, version 
 		return AgentCredential{}, fmt.Errorf("center: begin agent enrollment: %w", err)
 	}
 	defer tx.Rollback()
-	var expiresAt string
+	var expiresAt, siteID string
 	var usedAt sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT expires_at, used_at FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(enrollmentToken)).Scan(&expiresAt, &usedAt)
+	err = tx.QueryRowContext(ctx, `SELECT expires_at, used_at, site_id FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(enrollmentToken)).Scan(&expiresAt, &usedAt, &siteID)
 	if errors.Is(err, sql.ErrNoRows) || usedAt.Valid {
 		return AgentCredential{}, errors.New("center: agent enrollment token is invalid")
 	}
@@ -558,7 +625,7 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, name, version 
 		return AgentCredential{}, err
 	}
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, ?, ?, ?, '[]', '{}')`, id, name, tokenHash(credential), version, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), defaultSiteID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, 'active', ?, ?, ?, '[]', '{}')`, id, name, tokenHash(credential), version, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: save agent: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash(enrollmentToken))
@@ -656,7 +723,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy FROM agents ORDER BY name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy FROM agents ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
@@ -666,7 +733,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		var enrolledAt, lastSeenAt string
 		var rolesJSON, capabilitiesJSON []byte
 		var gatewayHealthy int
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy); err != nil {
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy); err != nil {
 			return nil, fmt.Errorf("center: scan agent: %w", err)
 		}
 		var err error
@@ -678,7 +745,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		if err != nil {
 			return nil, fmt.Errorf("center: parse agent heartbeat time: %w", err)
 		}
-		agent.Connected = agent.LastSeenAt.After(s.now().Add(-45 * time.Second))
+		agent.Connected = agent.Status == "active" && agent.LastSeenAt.After(s.now().Add(-45*time.Second))
 		agent.GatewayHealthy = gatewayHealthy == 1
 		if json.Unmarshal(rolesJSON, &agent.Roles) != nil || json.Unmarshal(capabilitiesJSON, &agent.Capabilities) != nil {
 			return nil, errors.New("center: invalid stored Agent capabilities")

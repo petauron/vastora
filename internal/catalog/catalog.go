@@ -203,7 +203,7 @@ func ValidateApp(app AppManifest) error {
 				return fmt.Errorf("catalog: service %q in %q references unknown host port field %q", service.Name, app.ID, service.HostPortField)
 			}
 		}
-		if service.HealthPath != "" && !strings.HasPrefix(service.HealthPath, "/") {
+		if service.HealthPath != "" && (!strings.HasPrefix(service.HealthPath, "/") || strings.HasPrefix(service.HealthPath, "//") || strings.ContainsAny(service.HealthPath, "?#")) {
 			return fmt.Errorf("catalog: service %q in %q has an invalid health path", service.Name, app.ID)
 		}
 	}

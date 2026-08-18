@@ -13,8 +13,12 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,6 +123,7 @@ func runCenter(arguments []string) error {
 		flags := flag.NewFlagSet("center agent-token create", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "", "Center state directory")
+		siteID := flags.String("site-id", "", "target Site ID (defaults to the initial Site)")
 		if err := flags.Parse(arguments[2:]); err != nil {
 			return err
 		}
@@ -130,7 +135,7 @@ func runCenter(arguments []string) error {
 			return err
 		}
 		defer store.Close()
-		enrollment, err := store.CreateAgentEnrollment(context.Background())
+		enrollment, err := store.CreateAgentEnrollment(context.Background(), *siteID)
 		if err != nil {
 			return err
 		}
@@ -143,6 +148,7 @@ func runCenter(arguments []string) error {
 		listen := flags.String("listen", "127.0.0.1:8080", "listen address")
 		webDir := flags.String("web-dir", "web/dist", "compiled React web directory")
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
+		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
 		tlsCert := flags.String("tls-cert", "", "PEM certificate path")
 		tlsKey := flags.String("tls-key", "", "PEM private key path")
 		if err := flags.Parse(arguments[1:]); err != nil {
@@ -169,7 +175,7 @@ func runCenter(arguments []string) error {
 		if err := store.SeedOfficialCatalog(context.Background(), catalogPayload); err != nil {
 			return err
 		}
-		server := &http.Server{Addr: *listen, Handler: center.NewServer(store, *webDir, *tlsCert != "").WithOfficialCatalog(catalogPayload).Handler(), ReadHeaderTimeout: 5 * time.Second}
+		server := &http.Server{Addr: *listen, Handler: center.NewServer(store, *webDir, *tlsCert != "").WithOfficialCatalog(catalogPayload).WithAgentBinaries(*agentBinariesDir).Handler(), ReadHeaderTimeout: 5 * time.Second}
 		fmt.Printf("Center listening on %s\n", *listen)
 		if *tlsCert != "" {
 			err = server.ListenAndServeTLS(*tlsCert, *tlsKey)
@@ -237,6 +243,138 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "install":
+		flags := flag.NewFlagSet("agent install", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
+		name := flags.String("name", "", "agent display name")
+		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
+		rolesValue := flags.String("roles", "worker,gateway", "comma-separated node roles: worker,gateway")
+		capabilitiesValue := flags.String("capabilities", "docker,gateway,tunnel", "comma-separated implemented capabilities: docker,gateway,tunnel")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if runtime.GOOS != "linux" {
+			return errors.New("agent install currently supports Linux systemd hosts")
+		}
+		if os.Geteuid() != 0 {
+			return errors.New("agent install must run as root")
+		}
+		if *centerURL == "" || *tokenFile == "" {
+			return errors.New("--center-url and --token-file are required")
+		}
+		if *name == "" {
+			*name, _ = os.Hostname()
+		}
+		roles, err := parseNodeRoles(*rolesValue)
+		if err != nil {
+			return err
+		}
+		capabilities, err := parseNodeCapabilities(*capabilitiesValue)
+		if err != nil {
+			return err
+		}
+		if capabilities.Docker && !containsValue(roles, "worker") || capabilities.Gateway && !containsValue(roles, "gateway") || capabilities.Tunnel && !containsValue(roles, "worker") {
+			return errors.New("selected capabilities do not match the node roles")
+		}
+		store, err := agent.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if _, connectionErr := store.Connection(context.Background()); connectionErr != nil {
+			token, tokenErr := readPrivateToken(*tokenFile)
+			if tokenErr != nil {
+				return tokenErr
+			}
+			if err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, *name, token); err != nil {
+				return err
+			}
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate vastora executable: %w", err)
+		}
+		if err := installSystemdAgent(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
+			return err
+		}
+		fmt.Printf("Agent %s installed and started\n", *name)
+		return nil
+	case "configure":
+		flags := flag.NewFlagSet("agent configure", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		rolesValue := flags.String("roles", "", "comma-separated node roles: worker,gateway")
+		capabilitiesValue := flags.String("capabilities", "", "comma-separated implemented capabilities: docker,gateway,tunnel")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent configure"); err != nil {
+			return err
+		}
+		if *rolesValue == "" || *capabilitiesValue == "" {
+			return errors.New("--roles and --capabilities are required")
+		}
+		roles, capabilities, err := validatedNodeRuntime(*rolesValue, *capabilitiesValue)
+		if err != nil {
+			return err
+		}
+		store, err := agent.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if _, err := store.Connection(context.Background()); err != nil {
+			return errors.New("agent must be enrolled before its purpose can be changed")
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate vastora executable: %w", err)
+		}
+		if err := installSystemdAgent(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
+			return err
+		}
+		if output, err := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput(); err != nil {
+			return fmt.Errorf("restart Agent service: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		fmt.Println("Agent purpose updated; Center will refresh it after the next heartbeat")
+		return nil
+	case "update":
+		flags := flag.NewFlagSet("agent update", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent update"); err != nil {
+			return err
+		}
+		store, err := agent.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		connection, err := store.Connection(context.Background())
+		if err != nil {
+			return errors.New("agent must be enrolled before it can update")
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate vastora executable: %w", err)
+		}
+		version, err := updateAgentExecutable(context.Background(), &http.Client{Timeout: 2 * time.Minute}, connection, executable, func() error {
+			output, restartErr := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput()
+			if restartErr != nil {
+				return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), restartErr)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Agent updated to %s and restarted\n", version)
+		return nil
 	case "enroll":
 		flags := flag.NewFlagSet("agent enroll", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -353,6 +491,180 @@ func runAgent(arguments []string) error {
 	default:
 		return errors.New("unknown agent command")
 	}
+}
+
+func requireLinuxRoot(command string) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("%s currently supports Linux systemd hosts", command)
+	}
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("%s must run as root", command)
+	}
+	return nil
+}
+
+func validatedNodeRuntime(rolesValue, capabilitiesValue string) ([]string, agent.Capabilities, error) {
+	roles, err := parseNodeRoles(rolesValue)
+	if err != nil {
+		return nil, agent.Capabilities{}, err
+	}
+	capabilities, err := parseNodeCapabilities(capabilitiesValue)
+	if err != nil {
+		return nil, agent.Capabilities{}, err
+	}
+	if capabilities.Docker && !containsValue(roles, "worker") || capabilities.Gateway && !containsValue(roles, "gateway") || capabilities.Tunnel && !containsValue(roles, "worker") {
+		return nil, agent.Capabilities{}, errors.New("selected capabilities do not match the node roles")
+	}
+	return roles, capabilities, nil
+}
+
+func updateAgentExecutable(ctx context.Context, client *http.Client, connection agent.Connection, executable string, restart func() error) (string, error) {
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		return "", errors.New("agent update is available only for amd64 and arm64")
+	}
+	endpoint := strings.TrimRight(connection.CenterURL, "/") + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/binary/linux/" + runtime.GOARCH
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("create Agent update request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+connection.Credential)
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("download Agent update: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		return "", fmt.Errorf("download Agent update: %s: %s", response.Status, strings.TrimSpace(string(message)))
+	}
+	expectedVersion := strings.TrimSpace(response.Header.Get("X-Vastora-Version"))
+	expectedDigest := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Vastora-SHA256")))
+	if expectedVersion == "" || len(expectedDigest) != sha256.Size*2 {
+		return "", errors.New("center returned incomplete Agent update metadata")
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve Agent executable: %w", err)
+	}
+	info, err := os.Stat(executable)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", errors.New("agent executable is not a regular file")
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(executable), ".vastora-update-*")
+	if err != nil {
+		return "", fmt.Errorf("create Agent update file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	digest := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(temporary, digest), io.LimitReader(response.Body, (256<<20)+1))
+	if copyErr == nil && written > 256<<20 {
+		copyErr = errors.New("agent update exceeds 256 MiB")
+	}
+	if syncErr := temporary.Sync(); copyErr == nil {
+		copyErr = syncErr
+	}
+	if closeErr := temporary.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return "", fmt.Errorf("store Agent update: %w", copyErr)
+	}
+	if got := fmt.Sprintf("%x", digest.Sum(nil)); got != expectedDigest {
+		return "", errors.New("agent update integrity check failed")
+	}
+	if err := os.Chmod(temporaryPath, 0o755); err != nil {
+		return "", fmt.Errorf("make Agent update executable: %w", err)
+	}
+	output, err := exec.CommandContext(ctx, temporaryPath, "version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(output)) != expectedVersion {
+		return "", errors.New("downloaded Agent update failed its version check")
+	}
+	backupPath := executable + ".previous"
+	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("prepare Agent rollback file: %w", err)
+	}
+	if err := os.Rename(executable, backupPath); err != nil {
+		return "", fmt.Errorf("preserve previous Agent binary: %w", err)
+	}
+	if err := os.Rename(temporaryPath, executable); err != nil {
+		_ = os.Rename(backupPath, executable)
+		return "", fmt.Errorf("install Agent update: %w", err)
+	}
+	if err := restart(); err != nil {
+		_ = os.Rename(executable, temporaryPath)
+		_ = os.Rename(backupPath, executable)
+		_ = restart()
+		return "", fmt.Errorf("restart updated Agent; previous binary restored: %w", err)
+	}
+	return expectedVersion, nil
+}
+
+const vastoraAgentUnitPath = "/etc/systemd/system/vastora-agent.service"
+
+func installSystemdAgent(executable, dataDir, roles, capabilities string) error {
+	executable, err := filepath.Abs(executable)
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+	dataDir, err = filepath.Abs(dataDir)
+	if err != nil {
+		return fmt.Errorf("resolve Agent data path: %w", err)
+	}
+	unit := systemdAgentUnit(executable, dataDir, roles, capabilities)
+	if existing, readErr := os.ReadFile(vastoraAgentUnitPath); readErr == nil && !strings.Contains(string(existing), "Description=Vastora Agent") {
+		return errors.New("refusing to replace an unrelated vastora-agent.service")
+	} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect systemd service: %w", readErr)
+	}
+	temporary := vastoraAgentUnitPath + ".tmp"
+	if err := os.WriteFile(temporary, []byte(unit), 0o644); err != nil {
+		return fmt.Errorf("write systemd service: %w", err)
+	}
+	if err := os.Rename(temporary, vastoraAgentUnitPath); err != nil {
+		return fmt.Errorf("install systemd service: %w", err)
+	}
+	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
+		return fmt.Errorf("reload systemd: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	if output, err := exec.Command("systemctl", "enable", "--now", "vastora-agent.service").CombinedOutput(); err != nil {
+		return fmt.Errorf("start Agent service: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+func systemdAgentUnit(executable, dataDir, roles, capabilities string) string {
+	return `[Unit]
+Description=Vastora Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=` + systemdQuote(executable) + ` agent serve --data-dir ` + systemdQuote(dataDir) + ` --roles ` + systemdQuote(roles) + ` --capabilities ` + systemdQuote(capabilities) + `
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target
+`
+}
+
+func systemdQuote(value string) string { return strconv.Quote(value) }
+
+func nodeCapabilitiesString(value agent.Capabilities) string {
+	capabilities := make([]string, 0, 3)
+	if value.Docker {
+		capabilities = append(capabilities, "docker")
+	}
+	if value.Gateway {
+		capabilities = append(capabilities, "gateway")
+	}
+	if value.Tunnel {
+		capabilities = append(capabilities, "tunnel")
+	}
+	return strings.Join(capabilities, ",")
 }
 
 func parseNodeRoles(raw string) ([]string, error) {
@@ -557,6 +869,9 @@ Usage:
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE
   vastora agent init --data-dir DIR
   vastora agent enroll --data-dir DIR --center-url URL --token-file FILE [--name NAME]
+  vastora agent install --center-url URL --token-file FILE [--name NAME]
+  vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
+  vastora agent update [--data-dir /var/lib/vastora/agent]
   vastora agent serve --data-dir DIR [--listen 127.0.0.1:8090]
   vastora catalog keygen --out-dir DIR
   vastora catalog validate --catalog FILE

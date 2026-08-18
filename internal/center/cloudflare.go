@@ -58,6 +58,14 @@ func (s *Store) ConfigureCloudflare(ctx context.Context, input CloudflareInput) 
 	input.AccountID = strings.TrimSpace(input.AccountID)
 	input.ZoneID = strings.TrimSpace(input.ZoneID)
 	input.APIToken = strings.TrimSpace(input.APIToken)
+	existingSecretID, existingToken, err := s.integrationSecret(ctx, "cloudflare")
+	if err != nil {
+		return IntegrationView{}, err
+	}
+	replacingSecret := input.APIToken != ""
+	if !replacingSecret {
+		input.APIToken = existingToken
+	}
 	if input.AccountID == "" || input.ZoneID == "" || len(input.APIToken) < 20 {
 		return IntegrationView{}, errors.New("center: Cloudflare Account, Zone, and API Token are required")
 	}
@@ -71,9 +79,12 @@ func (s *Store) ConfigureCloudflare(ctx context.Context, input CloudflareInput) 
 		return IntegrationView{}, err
 	}
 	defer tx.Rollback()
-	secretID, err := s.putSecret(ctx, tx, []byte(input.APIToken), "integration:cloudflare")
-	if err != nil {
-		return IntegrationView{}, err
+	secretID := existingSecretID
+	if replacingSecret {
+		secretID, err = s.putSecret(ctx, tx, []byte(input.APIToken), "integration:cloudflare")
+		if err != nil {
+			return IntegrationView{}, err
+		}
 	}
 	now := s.now().UTC()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, account_id, zone_id, secret_id, status, created_at, updated_at)
@@ -81,10 +92,31 @@ func (s *Store) ConfigureCloudflare(ctx context.Context, input CloudflareInput) 
 		ON CONFLICT(kind) DO UPDATE SET mode = 'managed', endpoint = excluded.endpoint, account_id = excluded.account_id, zone_id = excluded.zone_id, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, zoneName, input.AccountID, input.ZoneID, secretID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: save Cloudflare integration: %w", err)
 	}
+	if replacingSecret && existingSecretID != "" && existingSecretID != secretID {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, existingSecretID); err != nil {
+			return IntegrationView{}, fmt.Errorf("center: replace Cloudflare API token: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return IntegrationView{}, err
 	}
 	return s.Integration(ctx, "cloudflare")
+}
+
+func (s *Store) integrationSecret(ctx context.Context, kind string) (string, string, error) {
+	var secretID string
+	err := s.db.QueryRowContext(ctx, `SELECT secret_id FROM network_integrations WHERE kind = ? AND secret_id IS NOT NULL`, kind).Scan(&secretID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("center: read %s integration secret: %w", kind, err)
+	}
+	value, err := s.getSecret(ctx, secretID, "integration:"+kind)
+	if err != nil {
+		return "", "", err
+	}
+	return secretID, string(value), nil
 }
 
 func (s *Store) Integration(ctx context.Context, kind string) (IntegrationView, error) {

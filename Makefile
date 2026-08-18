@@ -4,13 +4,13 @@ GO_PACKAGES := ./cmd/... ./internal/...
 STATICCHECK_VERSION := v0.7.0
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: bootstrap check go-check web-check security-check dependency-security-check image-center image-agent
+.PHONY: bootstrap check go-check web-check deployment-check security-check dependency-security-check agent-binaries image-center image-agent
 
 bootstrap:
 	$(GO) mod download
 	cd web && npm ci --ignore-scripts
 
-check: go-check web-check
+check: go-check web-check deployment-check
 
 go-check:
 	@VASTORA_FORMATTED_FILES="$$(gofmt -l cmd internal)"; \
@@ -24,6 +24,10 @@ web-check:
 	cd web && npm test
 	cd web && npm run build
 
+deployment-check:
+	sh -n deploy/center/setup.sh
+	deploy/center/setup.sh --help >/dev/null
+
 security-check:
 	gitleaks detect --no-git --redact --source .
 	$(MAKE) dependency-security-check
@@ -31,6 +35,11 @@ security-check:
 dependency-security-check:
 	cd web && npm audit --audit-level=high
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(GO_PACKAGES)
+
+agent-binaries:
+	mkdir -p bin/agent-binaries
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o bin/agent-binaries/linux-amd64 ./cmd/vastora
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w" -o bin/agent-binaries/linux-arm64 ./cmd/vastora
 
 image-center:
 	docker build --file Dockerfile.center --tag vastora-center:dev .

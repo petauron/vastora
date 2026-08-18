@@ -47,6 +47,13 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	if events["queued"] != 1 || events["claimed"] != 2 || events["lease_expired"] != 1 || events["failed"] != 1 {
 		t.Fatalf("unexpected task audit trail: %#v", events)
 	}
+	deployments, err := store.ListDeployments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deployments) != 1 || deployments[0].State != "failed" || deployments[0].Error != "expected failure" || deployments[0].OneTimeCredentials != nil {
+		t.Fatalf("failed operation is not safely visible to the UI: %#v", deployments)
+	}
 }
 
 func TestDeploymentLifecyclePreventsDuplicateInstallAndControlsDataDeletion(t *testing.T) {

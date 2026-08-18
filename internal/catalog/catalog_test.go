@@ -93,3 +93,18 @@ func TestHomepageMustReferenceADeclaredService(t *testing.T) {
 		t.Fatal("expected absolute homepage URL validation failure")
 	}
 }
+
+func TestHealthPathMustBeAPlainAbsolutePath(t *testing.T) {
+	t.Parallel()
+	catalog := validCatalog()
+	catalog.Apps[0].Services = []Service{{Name: "manager", Protocol: "http", ContainerPort: 8080, DefaultHostPort: 8080, HealthPath: "/healthz"}}
+	if err := ValidateCatalog(catalog); err != nil {
+		t.Fatalf("expected plain health path to be valid: %v", err)
+	}
+	for _, path := range []string{"healthz", "//example.invalid/", "/healthz?token=secret", "/healthz#fragment"} {
+		catalog.Apps[0].Services[0].HealthPath = path
+		if err := ValidateCatalog(catalog); err == nil {
+			t.Fatalf("expected health path %q to be rejected", path)
+		}
+	}
+}

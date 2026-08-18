@@ -1,27 +1,37 @@
-# Center and built-in Headscale
+# Install Center and built-in Headscale
 
-This product deployment keeps Center and Headscale as separate services with
-independent persistent volumes. Center writes the built-in Headscale DNS file
-to the shared `center-data` volume; Headscale mounts that file read-only.
+The guided installer validates Docker, the TLS certificate, the private key,
+ports, the immutable Center image, and the final Compose configuration before
+starting anything. It does not install Docker or change DNS.
 
-1. Copy `.env.example` to `.env` and pin the Center image.
-2. Put the TLS certificate and key at `tls/tls.crt` and `tls/tls.key`. The
-   certificate must cover both the Center and Headscale hostnames.
-3. Edit `headscale/config.yaml`: replace `headscale.example.com`, and change
-   the port if `VASTORA_HEADSCALE_PORT` is not `8443`.
-4. Start the stack with `docker compose up -d`.
-5. Create the Headscale API key once:
+Before starting, point the Center and Headscale hostnames at this server and
+prepare one trusted TLS certificate that covers both names. Then run:
 
-   ```sh
-   docker compose exec headscale headscale apikeys create --expiration 365d
-   ```
+```sh
+cd deploy/center
+./setup.sh \
+  --image 'ghcr.io/petauron/vastora-center@sha256:replace-with-release-digest' \
+  --center-url 'https://center.example.com' \
+  --headscale-url 'https://headscale.example.com:8443' \
+  --tls-cert /path/to/fullchain.pem \
+  --tls-key /path/to/private-key.pem
+```
 
-6. In Center, choose **Network → Headscale → Built-in**, enter the exact
-   `server_url` and the API key. Center verifies HTTPS before saving it.
+The script starts the stack and saves a newly generated Headscale API key in
+`generated/headscale-api-key.txt` with mode `0600`.
 
-The API key is encrypted by Center and is never returned by list APIs. Agent
-join commands contain a one-time key valid for one hour, so copy them only to
-the intended node. Validate configuration changes before restart with:
+Next:
+
+1. Open the Center URL and create the first administrator account.
+2. Choose **Network → Headscale → Set up**.
+3. Keep **Built into Center stack**, enter the Headscale URL, and paste the API
+   key from `generated/headscale-api-key.txt`.
+
+Center verifies Headscale before saving the encrypted key. The key field can be
+left blank on later edits. Agent join commands contain a one-hour, single-use
+key and should be run only on the intended node.
+
+To validate a later Headscale configuration change before restarting:
 
 ```sh
 docker compose run --rm headscale configtest

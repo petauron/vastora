@@ -59,6 +59,11 @@ a separate Agent image. They intentionally do not provide an insecure default
 command: a network-reachable Center must be started with its TLS certificate
 and key.
 
+For a product-style installation, use the validated guided setup in
+[`deploy/center`](deploy/center/README.md). It prepares Center and the built-in
+Headscale stack, checks the TLS files and immutable image before startup, and
+creates the Headscale API key needed by the browser setup flow.
+
 ## Security model
 
 - The Center never mounts a Docker socket.

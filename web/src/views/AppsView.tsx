@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AppWindowIcon, ArrowUpCircleIcon, CopyIcon, ExternalLinkIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
+import { AppWindowIcon, ArrowUpCircleIcon, CopyIcon, ExternalLinkIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, RotateCcwIcon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
 import { api } from "../api";
 import type { DashboardData, Mutate } from "../App";
 import type { AgentView, Application, AppView, Deployment, Publication, PublicationKind, Service } from "../types";
@@ -26,6 +26,7 @@ export function AppsView({ data, language, mutate }: { data: DashboardData; lang
   const [credentials, setCredentials] = useState<Deployment["oneTimeCredentials"]>(undefined);
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
   const installedApplications = data.applications.filter((application) => application.status === "running");
+  const recentOperations = latestOperations(data.deployments).filter((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.state === "failed");
 
   const openUpgrade = (application: Application) => {
     const app = catalogByKey.get(application.appKey);
@@ -39,6 +40,12 @@ export function AppsView({ data, language, mutate }: { data: DashboardData; lang
 
       {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "请立即保存 3x-ui 管理账号", "Save the 3x-ui administrator account now")}</AlertTitle><AlertDescription><p>{copy(language, "凭据只显示这一次。Center 和 Agent 会分别加密保存。", "These credentials are shown only once. Center and Agent store them separately in encrypted form.")}</p><dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password} /></dd></div></dl><Button className="mt-3" onClick={() => setCredentials(undefined)} size="sm" variant="outline">{copy(language, "我已保存", "I saved them")}</Button></AlertDescription></Alert> : null}
 
+      {recentOperations.length ? <div aria-live="polite" className="flex flex-col gap-3"><div><h2 className="text-lg font-semibold">{copy(language, "最近操作", "Recent operations")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "页面会自动更新，无需手动刷新。", "This page updates automatically; no manual refresh is needed.")}</p></div>{recentOperations.map((deployment) => {
+        const app = catalogByKey.get(deployment.appKey); const agent = data.agents.find((value) => value.id === deployment.agentId); const application = data.applications.find((value) => value.id === deployment.applicationId);
+        const retry = () => { if (!app || !agent) return; if (deployment.operation === "uninstall" && application) setUninstallApplication(application); else setDeploymentEditor({ app, agent: deployment.operation === "upgrade" ? agent : undefined, operation: deployment.operation === "upgrade" ? "upgrade" : "install" }); };
+        return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-1 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.error ? <p className="mt-2 text-sm text-destructive">{deployment.error}</p> : null}</div>{deployment.state === "failed" && app && agent ? <Button onClick={retry} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重试", "Retry")}</Button> : null}</CardContent></Card>;
+      })}</div> : null}
+
       <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "已安装", "Installed")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "每个服务都可以有独立的访问方式。", "Each service can have its own access methods.")}</p></div>
         {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从下方应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store below. Failed tasks remain only in Activity.")}</EmptyDescription></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onPublish={setPublicationService} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openUpgrade(application)} mutate={mutate} />)}</div>}
@@ -48,7 +55,9 @@ export function AppsView({ data, language, mutate }: { data: DashboardData; lang
         <div><h2 className="text-lg font-semibold">{copy(language, "应用商店", "App Store")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "应用默认只在节点的私有地址上运行。", "Apps run on the node's private address by default.")}</p></div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{data.apps.map((app) => {
           const installed = installedApplications.filter((application) => application.appKey === app.key);
-          return <Card key={app.key}><CardHeader><CardTitle>{localized(app, language, "name")}</CardTitle><CardDescription>{localized(app, language, "description")}</CardDescription><CardAction>{app.app.hostAccess ? <HighPrivilegeBadge language={language} /> : <Badge variant="outline">Docker</Badge>}</CardAction></CardHeader><CardContent><div className="flex flex-wrap gap-2"><Badge variant="secondary">v{app.app.version}</Badge>{app.app.services?.map((service) => <Badge key={service.name} variant="outline">{service.name}</Badge>)}</div>{app.app.hostAccess ? <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-destructive"><ShieldAlertIcon className="mt-0.5 size-3.5 shrink-0" />{copy(language, "此应用需要主机级权限，请确认来源与用途。", "This app needs host-level access. Confirm its source and purpose.")}</p> : null}</CardContent><CardFooter className="justify-between"><span className="text-xs text-muted-foreground">{installed.length ? copy(language, `已安装到 ${installed.length} 个节点`, `Installed on ${installed.length} node(s)`) : copy(language, "尚未安装", "Not installed")}</span><Button disabled={!data.agents.some(canInstall)} onClick={() => setDeploymentEditor({ app, operation: "install" })} size="sm"><PackagePlusIcon data-icon="inline-start" />{copy(language, "安装", "Install")}</Button></CardFooter></Card>;
+          const eligible = data.agents.filter((agent) => canInstall(agent) && !data.applications.some((application) => application.nodeId === agent.id && application.appKey === app.key && isActiveApplication(application.status)));
+          const blocker = eligible.length === 0 ? installBlocker(data, app.key, language) : "";
+          return <Card key={app.key}><CardHeader><CardTitle>{localized(app, language, "name")}</CardTitle><CardDescription>{localized(app, language, "description")}</CardDescription><CardAction>{app.app.hostAccess ? <HighPrivilegeBadge language={language} /> : <Badge variant="outline">Docker</Badge>}</CardAction></CardHeader><CardContent><div className="flex flex-wrap gap-2"><Badge variant="secondary">v{app.app.version}</Badge>{app.app.services?.map((service) => <Badge key={service.name} variant="outline">{service.name}</Badge>)}</div>{app.app.hostAccess ? <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-destructive"><ShieldAlertIcon className="mt-0.5 size-3.5 shrink-0" />{copy(language, "此应用需要主机级权限，请确认来源与用途。", "This app needs host-level access. Confirm its source and purpose.")}</p> : null}{blocker ? <p className="mt-3 text-xs leading-5 text-muted-foreground" id={`install-blocker-${app.app.id}`}>{blocker}</p> : null}</CardContent><CardFooter className="justify-between"><span className="text-xs text-muted-foreground">{installed.length ? copy(language, `已安装到 ${installed.length} 个节点`, `Installed on ${installed.length} node(s)`) : copy(language, "尚未安装", "Not installed")}</span><Button aria-describedby={blocker ? `install-blocker-${app.app.id}` : undefined} disabled={eligible.length === 0} onClick={() => setDeploymentEditor({ app, operation: "install" })} size="sm"><PackagePlusIcon data-icon="inline-start" />{copy(language, "安装", "Install")}</Button></CardFooter></Card>;
         })}</div>
       </div>
 
@@ -67,7 +76,7 @@ export function AppsView({ data, language, mutate }: { data: DashboardData; lang
 function InstalledAppCard({ application, app, data, language, onPublish, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: DashboardData; language: Language; onPublish: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const agent = data.agents.find((value) => value.id === application.nodeId);
   const services = data.services.filter((service) => service.applicationId === application.id && service.status !== "stopped");
-  const deployment = data.deployments.find((value) => value.applicationId === application.id);
+  const deployment = data.deployments.find((value) => value.applicationId === application.id && value.state === "succeeded" && value.operation !== "uninstall");
   return <Card><CardHeader><CardTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}</CardTitle><CardDescription>{agent?.name ?? application.nodeId} · {application.runtime}</CardDescription><CardAction><StateBadge value={application.status} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3">{deployment?.accessUrl ? <Button render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开私有主页", "Open private homepage")}</Button> : null}{services.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : services.map((service) => <ServiceRow data={data} key={service.id} language={language} onPublish={() => onPublish(service)} service={service} mutate={mutate} />)}</CardContent><CardFooter className="justify-end gap-2"><Button onClick={onUpgrade} size="sm" variant="outline"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, "升级", "Upgrade")}</Button><Button onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter></Card>;
 }
 
@@ -192,6 +201,27 @@ function gatewaysForKind(data: DashboardData, service: Service, kind: Publicatio
 
 function canInstall(agent: AgentView) { return agent.connected && agent.capabilities.docker && Boolean(agent.networkProfile); }
 function isActiveApplication(status: string) { return ["pending", "deploying", "running"].includes(status); }
+function latestOperations(deployments: Deployment[]) {
+  const seen = new Set<string>();
+  return deployments.filter((deployment) => {
+    const key = `${deployment.agentId}\n${deployment.appKey}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function operationLabel(language: Language, operation: Deployment["operation"]) {
+  const labels: Record<Deployment["operation"], [string, string]> = { install: ["安装", "Install"], upgrade: ["升级", "Upgrade"], uninstall: ["卸载", "Uninstall"] };
+  return copy(language, ...labels[operation]);
+}
+function installBlocker(data: DashboardData, appKey: string, language: Language) {
+  if (data.agents.length === 0) return copy(language, "先添加一台节点，再安装应用。", "Add a node before installing apps.");
+  if (!data.agents.some((agent) => agent.connected)) return copy(language, "没有在线节点。请检查 Agent 服务。", "No node is online. Check the Agent service.");
+  if (!data.agents.some((agent) => agent.connected && agent.capabilities.docker)) return copy(language, "在线节点没有 Docker 应用能力。", "Online nodes do not provide Docker app capability.");
+  if (!data.agents.some((agent) => agent.connected && agent.capabilities.docker && agent.networkProfile)) return copy(language, "请先在“网络”页面确认节点地址。", "Confirm a node address on the Network page first.");
+  if (data.agents.every((agent) => !canInstall(agent) || data.applications.some((application) => application.nodeId === agent.id && application.appKey === appKey && isActiveApplication(application.status)))) return copy(language, "所有可用节点都已安装此应用。", "This app is already installed on every eligible node.");
+  return copy(language, "当前没有符合条件的节点。", "No eligible node is currently available.");
+}
 function localized(app: AppView, language: Language, field: "name" | "description") { return app.app[field][language] || app.app[field].en; }
 function publicationKindLabel(language: Language, kind: PublicationKind) {
   const labels: Record<PublicationKind, [string, string]> = { lan_gateway: ["局域网", "Local network"], headscale_gateway: ["Headscale 私网", "Headscale private network"], public_direct: ["公网直连", "Direct public"], cloudflare_tunnel: ["Cloudflare Tunnel", "Cloudflare Tunnel"] };

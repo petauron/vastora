@@ -21,10 +21,11 @@ import (
 const Version = "0.1.0-dev"
 
 type Server struct {
-	store           *Store
-	staticDir       string
-	secureCookies   bool
-	officialCatalog []byte
+	store            *Store
+	staticDir        string
+	agentBinariesDir string
+	secureCookies    bool
+	officialCatalog  []byte
 }
 
 func NewServer(store *Store, staticDir string, secureCookies bool) *Server {
@@ -36,14 +37,25 @@ func (s *Server) WithOfficialCatalog(payload []byte) *Server {
 	return s
 }
 
+func (s *Server) WithAgentBinaries(path string) *Server {
+	s.agentBinariesDir = path
+	return s
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /install/agent.sh", s.handleAgentInstallScript)
+	mux.HandleFunc("GET /api/v1/agent-binaries/{os}/{arch}", s.handleAgentBinary)
+	mux.HandleFunc("GET /api/v1/agents/{id}/binary/{os}/{arch}", s.handleAgentUpdateBinary)
 	mux.HandleFunc("GET /api/v1/setup/status", s.handleSetupStatus)
 	mux.HandleFunc("POST /api/v1/setup/admin", s.handleSetupAdmin)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(true, s.handleLogout))
+	mux.HandleFunc("PUT /api/v1/auth/password", s.requireAuth(true, s.handleChangePassword))
 	mux.HandleFunc("GET /api/v1/status", s.requireAuth(false, s.handleStatus))
+	mux.HandleFunc("GET /api/v1/diagnostics", s.requireAuth(false, s.handleDiagnostics))
+	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
 	mux.HandleFunc("POST /api/v1/deployments", s.requireAuth(true, s.handleCreateDeployment))
 	mux.HandleFunc("GET /api/v1/organizations", s.requireAuth(false, s.handleListOrganizations))
@@ -63,7 +75,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/headscale-join", s.requireAuth(true, s.handleCreateHeadscaleJoin))
 	mux.HandleFunc("GET /api/v1/actions", s.requireAuth(false, s.handleListActions))
 	mux.HandleFunc("GET /api/v1/agents", s.requireAuth(false, s.handleListAgents))
+	mux.HandleFunc("POST /api/v1/agent-enrollments", s.requireAuth(true, s.handleCreateAgentEnrollment))
 	mux.HandleFunc("PATCH /api/v1/agents/{id}", s.requireAuth(true, s.handleUpdateAgent))
+	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.requireAuth(true, s.handleDisableAgent))
 	mux.HandleFunc("PUT /api/v1/agents/{id}/network-profile", s.requireAuth(true, s.handleConfirmNetworkProfile))
 	mux.HandleFunc("POST /api/v1/agents/enroll", s.handleEnrollAgent)
 	mux.HandleFunc("POST /api/v1/agents/{id}/heartbeat", s.handleAgentHeartbeat)
@@ -133,6 +147,27 @@ func (s *Server) handleLogout(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": false})
 }
 
+func (s *Server) handleChangePassword(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		NewPassword     string `json:"newPassword"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	cookie, err := request.Cookie("vastora_session")
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, errors.New("center: authentication required"))
+		return
+	}
+	if err := s.store.ChangePassword(request.Context(), cookie.Value, input.CurrentPassword, input.NewPassword); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"changed": true})
+}
+
 func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request) {
 	sources, err := s.store.ListSources(request.Context())
 	if err != nil {
@@ -155,11 +190,12 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"version":        Version,
-		"catalogSources": len(sources),
-		"catalogApps":    len(apps),
-		"agents":         len(agents),
-		"deployments":    len(deployments),
+		"version":                 Version,
+		"catalogSources":          len(sources),
+		"catalogApps":             len(apps),
+		"agents":                  countActiveAgents(agents),
+		"deployments":             len(deployments),
+		"agentInstallerAvailable": s.agentInstallerAvailable(),
 	})
 }
 
@@ -363,19 +399,55 @@ func (s *Server) handleListAgents(writer http.ResponseWriter, request *http.Requ
 	writeJSON(writer, http.StatusOK, map[string]any{"agents": agents})
 }
 
-func (s *Server) handleUpdateAgent(writer http.ResponseWriter, request *http.Request) {
+func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
-		SiteID string `json:"siteId"`
+		SiteID       string `json:"siteId"`
+		UseHeadscale bool   `json:"useHeadscale"`
+		Gateway      bool   `json:"gateway"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.AssignAgentSite(request.Context(), request.PathValue("id"), input.SiteID); err != nil {
+	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), input.SiteID)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if input.UseHeadscale {
+		join, err := s.store.CreateHeadscaleBootstrap(request.Context(), input.Gateway)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, err)
+			return
+		}
+		enrollment.HeadscaleCommand = join.Command
+		enrollment.HeadscaleExpiresAt = join.ExpiresAt
+	}
+	writeJSON(writer, http.StatusCreated, enrollment)
+}
+
+func (s *Server) handleUpdateAgent(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		SiteID string `json:"siteId"`
+		Name   string `json:"name"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.UpdateAgent(request.Context(), request.PathValue("id"), input.Name, input.SiteID); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]bool{"updated": true})
+}
+
+func (s *Server) handleDisableAgent(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.DisableAgent(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"disabled": true})
 }
 
 func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request *http.Request) {

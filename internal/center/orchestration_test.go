@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/petauron/vastora/internal/networking"
@@ -163,7 +164,7 @@ func openOrchestrationStore(t *testing.T) *Store {
 func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabilities NodeCapabilities, candidates []networking.Candidate, profile networking.Profile) AgentCredential {
 	t.Helper()
 	ctx := context.Background()
-	enrollment, err := store.CreateAgentEnrollment(ctx)
+	enrollment, err := store.CreateAgentEnrollment(ctx, defaultSiteID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,4 +186,63 @@ func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabiliti
 		t.Fatal(err)
 	}
 	return node
+}
+
+func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	site, err := store.CreateSite(ctx, SiteInput{Name: "Singapore", Code: "singapore"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrollment, err := store.CreateAgentEnrollment(ctx, site.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enrollment.SiteID != site.ID {
+		t.Fatalf("enrollment site = %q, want %q", enrollment.SiteID, site.ID)
+	}
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "sg-node", "test"); err != nil {
+		t.Fatal(err)
+	}
+	agents, err := store.ListAgents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0].SiteID != site.ID {
+		t.Fatalf("Agent did not join selected Site: %#v", agents)
+	}
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "duplicate", "test"); err == nil {
+		t.Fatal("single-use enrollment token was accepted twice")
+	}
+}
+
+func TestDisabledAgentCredentialIsRevoked(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "retired", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
+	if err := store.DisableAgent(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}}); err == nil || !strings.Contains(err.Error(), "authentication failed") {
+		t.Fatalf("disabled Agent credential remained usable: %v", err)
+	}
+	agents, err := store.ListAgents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0].Status != "disabled" || agents[0].Connected {
+		t.Fatalf("disabled Agent state is incorrect: %#v", agents)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)}); err == nil {
+		t.Fatal("disabled Agent accepted a deployment")
+	}
+	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}}); err == nil {
+		t.Fatal("disabled Agent accepted a network profile update")
+	}
+	if _, err := store.CreateHeadscaleJoin(ctx, node.ID); err == nil {
+		t.Fatal("disabled Agent accepted a Headscale join request")
+	}
 }

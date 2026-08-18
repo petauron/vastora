@@ -470,6 +470,13 @@ func deployKeeper(ctx context.Context, docker *client.Client, task DeploymentTas
 	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("agent: start Keeper container: %w", err)
 	}
+	inspected, err := docker.ContainerInspect(ctx, created.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("agent: inspect Keeper container: %w", err)
+	}
+	if inspected.Container.State == nil || !inspected.Container.State.Running {
+		return errors.New("agent: Keeper container did not remain running")
+	}
 	return nil
 }
 
@@ -525,7 +532,7 @@ func reportedServices(ctx context.Context, task DeploymentTask, bindAddress stri
 		if err != nil {
 			return ApplicationTaskResult{}, err
 		}
-		if err := waitForEndpoint(ctx, bindAddress, hostPort); err != nil {
+		if err := waitForServiceEndpoint(ctx, bindAddress, hostPort, service); err != nil {
 			return ApplicationTaskResult{}, fmt.Errorf("agent: service %s did not become ready: %w", service.Name, err)
 		}
 		result.Services = append(result.Services, ApplicationServiceResult{
@@ -534,6 +541,46 @@ func reportedServices(ctx context.Context, task DeploymentTask, bindAddress stri
 		})
 	}
 	return result, nil
+}
+
+func waitForServiceEndpoint(ctx context.Context, address string, port int, service catalog.Service) error {
+	if err := waitForEndpoint(ctx, address, port); err != nil {
+		return err
+	}
+	if service.HealthPath == "" {
+		return nil
+	}
+	readyContext, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	target := service.Protocol + "://" + net.JoinHostPort(address, strconv.Itoa(port)) + service.HealthPath
+	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		request, err := http.NewRequestWithContext(readyContext, http.MethodGet, target, nil)
+		if err != nil {
+			return fmt.Errorf("invalid health endpoint: %w", err)
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode < http.StatusInternalServerError {
+				return nil
+			}
+			lastErr = fmt.Errorf("health endpoint returned %s", response.Status)
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-readyContext.Done():
+			if lastErr != nil {
+				return lastErr
+			}
+			return readyContext.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func serviceHostPort(raw json.RawMessage, service catalog.Service) (int, error) {

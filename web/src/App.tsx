@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { AppWindowIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, SettingsIcon, type LucideIcon } from "lucide-react";
+import { AppWindowIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, ServerIcon, SettingsIcon, type LucideIcon } from "lucide-react";
 import { APIError, api } from "./api";
 import type { Action, AgentView, AppView, Application, CatalogSource, DashboardStatus, Deployment, Integration, Organization, Publication, Route, Service, Site } from "./types";
 import type { Language } from "./translations";
@@ -7,6 +7,7 @@ import { ActivityView } from "./views/ActivityView";
 import { AppsView } from "./views/AppsView";
 import { HomeView } from "./views/HomeView";
 import { NetworkView } from "./views/NetworkView";
+import { NodesView } from "./views/NodesView";
 import { SettingsView } from "./views/SettingsView";
 import { Brand, PageHeading, copy } from "./views/shared";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -35,7 +36,7 @@ export type DashboardData = {
   actions: Action[];
 };
 
-export type Screen = "home" | "apps" | "network" | "activity" | "settings";
+export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "settings";
 type Phase = "loading" | "setup" | "login" | "ready" | "unavailable";
 export type Mutate = (operation: () => Promise<unknown>, success?: string) => Promise<void>;
 
@@ -47,6 +48,7 @@ const preferredLanguage = (): Language => {
 
 const navigation = [
   { id: "home" as const, icon: HomeIcon, zh: "主页", en: "Home" },
+  { id: "nodes" as const, icon: ServerIcon, zh: "节点", en: "Nodes" },
   { id: "apps" as const, icon: AppWindowIcon, zh: "应用", en: "Apps" },
   { id: "network" as const, icon: NetworkIcon, zh: "网络", en: "Network" },
   { id: "activity" as const, icon: HistoryIcon, zh: "活动", en: "Activity" }
@@ -111,6 +113,21 @@ export function App() {
 
   useEffect(() => { void initialize(); }, [initialize]);
   useEffect(() => { document.documentElement.lang = language; }, [language]);
+  useEffect(() => {
+    if (phase !== "ready") return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      if (document.visibilityState === "visible") {
+        try { await loadDashboard(); } catch (error) {
+          if (error instanceof APIError && error.status === 401 && !cancelled) setPhase("login");
+        }
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 5000);
+    };
+    timer = window.setTimeout(() => void poll(), 5000);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [phase, loadDashboard]);
 
   const mutate = useCallback<Mutate>(async (operation, success) => {
     try {
@@ -168,6 +185,7 @@ export function App() {
           <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content">
             {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}><CircleCheckIcon /><AlertTitle>{notice.message}</AlertTitle></Alert> : null}
             {screen === "home" ? <HomeView data={data} language={language} onNavigate={setScreen} mutate={mutate} /> : null}
+            {screen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onNavigate={setScreen} /> : null}
             {screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
             {screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
             {screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}

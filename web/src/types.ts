@@ -19,12 +19,26 @@ export type DashboardStatus = {
   catalogApps: number;
   agents: number;
   deployments: number;
+  agentInstallerAvailable: boolean;
+};
+
+export type DiagnosticCount = { total: number; healthy: number; warning: number; failed: number; disabled?: number };
+export type Diagnostics = {
+  generatedAt: string;
+  version: string;
+  schema: number;
+  nodes: DiagnosticCount;
+  applications: DiagnosticCount;
+  publications: DiagnosticCount;
+  integrations: Integration[];
+  recentErrors: Action[];
 };
 
 export type AgentView = {
   id: string;
   name: string;
   version: string;
+  status: "active" | "disabled";
   appliedInstallations: number;
   enrolledAt: string;
   lastSeenAt: string;
@@ -36,6 +50,8 @@ export type AgentView = {
   networkProfile?: NetworkProfile;
   gatewayHealthy: boolean;
 };
+
+export type AgentEnrollment = { token: string; siteId: string; expiresAt: string; headscaleCommand?: string; headscaleExpiresAt?: string };
 
 export type NetworkKind = "lan" | "headscale" | "public";
 export type NetworkCandidate = { address: string; interface: string; family: "ipv4" | "ipv6"; kind: NetworkKind; observedAt: string };

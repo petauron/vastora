@@ -63,6 +63,13 @@ func (s *Store) networkProfile(ctx context.Context, agentID string) (*networking
 }
 
 func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input networking.Profile) (*networking.Profile, error) {
+	var active int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active'`, agentID).Scan(&active); err != nil {
+		return nil, fmt.Errorf("center: inspect Agent: %w", err)
+	}
+	if active == 0 {
+		return nil, errors.New("center: active Agent not found")
+	}
 	input.ServiceAddress = strings.TrimSpace(input.ServiceAddress)
 	input.LANAddress = strings.TrimSpace(input.LANAddress)
 	input.HeadscaleAddress = strings.TrimSpace(input.HeadscaleAddress)
@@ -84,11 +91,11 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		return nil, err
 	}
 	if previous != nil && previous.ServiceAddress != input.ServiceAddress {
-		var active int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications WHERE node_id = ? AND status NOT IN ('stopped', 'failed')`, agentID).Scan(&active); err != nil {
+		var applicationCount int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications WHERE node_id = ? AND status NOT IN ('stopped', 'failed')`, agentID).Scan(&applicationCount); err != nil {
 			return nil, err
 		}
-		if active != 0 {
+		if applicationCount != 0 {
 			return nil, errors.New("center: stop applications before changing the private service address")
 		}
 	}
@@ -101,11 +108,11 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	input.CandidateObserved = latest
 	input.ConfirmedAt = s.now().UTC()
 	if !input.DirectPublic {
-		var active int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE a.node_id = ? AND p.kind = 'public_direct' AND p.status <> 'stopped'`, agentID).Scan(&active); err != nil {
+		var publicationCount int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE a.node_id = ? AND p.kind = 'public_direct' AND p.status <> 'stopped'`, agentID).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
-		if active != 0 {
+		if publicationCount != 0 {
 			return nil, errors.New("center: stop direct public publications before disabling public ingress")
 		}
 	}
@@ -118,11 +125,11 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		if enabled[check.kind] {
 			continue
 		}
-		var active int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.publication).Scan(&active); err != nil {
+		var publicationCount int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.publication).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
-		if active != 0 {
+		if publicationCount != 0 {
 			return nil, fmt.Errorf("center: stop %s publications before disabling this network", check.kind)
 		}
 	}
