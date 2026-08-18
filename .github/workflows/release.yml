@@ -37,8 +37,8 @@ jobs:
           RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
           head_branch="$(printf '%s' "$RELEASE_PR" | jq -er '.headBranchName')"
-          gh workflow run ci.yml --ref "$head_branch"
-          gh workflow run codeql.yml --ref "$head_branch"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$head_branch"
+          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$head_branch"
 
   publish:
     needs: prepare
