@@ -19,7 +19,7 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-const Version = "0.1.0-dev"
+var Version = "0.1.0-dev"
 
 type Client struct {
 	HTTPClient         *http.Client

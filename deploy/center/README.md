@@ -3,7 +3,7 @@
 Vastora releases use one public installation command:
 
 ```sh
-curl -LsSf https://get.vastora.io/install.sh | sudo sh -s -- center
+curl -LsSf https://github.com/petauron/vastora/releases/latest/download/install.sh | sudo sh -s -- center
 ```
 
 The bootstrap downloads the latest Center install bundle and its SHA-256 file,
@@ -30,7 +30,7 @@ The guided prompts request the two HTTPS URLs and the two TLS file paths. For an
 unattended installation, pass the setup options after `--`:
 
 ```sh
-curl -LsSf https://get.vastora.io/install.sh | sudo sh -s -- center -- \
+curl -LsSf https://github.com/petauron/vastora/releases/latest/download/install.sh | sudo sh -s -- center -- \
   --center-url 'https://center.example.com' \
   --headscale-url 'https://headscale.example.com:8443' \
   --tls-cert /path/to/fullchain.pem \
@@ -58,8 +58,9 @@ minutes and work only once.
 ## Release packaging
 
 The public command becomes usable when a release publishes the immutable Center
-image and these two fixed-name assets:
+image and these three fixed-name assets:
 
+- `install.sh`
 - `vastora-center-install.tar.gz`
 - `vastora-center-install.tar.gz.sha256`
 
@@ -75,6 +76,26 @@ The bundle contains `setup.sh`, Compose and Headscale configuration, plus
 `release.env` with the release version and immutable image. `install.sh`
 supports `--release-url` for a trusted mirror and `--install-dir` for a custom
 location; both are bootstrap options before the `--` separator.
+
+## Automated releases
+
+Merges to `main` update a Release Please pull request from conventional commit
+messages. Merging that pull request creates a draft release, builds and pushes
+the `linux/amd64` and `linux/arm64` Center image to GHCR, packages the installer
+against the image manifest digest, uploads all three assets, and publishes the
+release only after every step succeeds. Failed builds leave the release as a
+draft, so `releases/latest` never points to incomplete installer assets.
+
+The GHCR package must allow unauthenticated pulls. The release job checks that
+before publishing. The planned short installer address is
+`https://vastora.petauron.com/install.sh`; keep using the GitHub Release URL
+until that endpoint has been configured and verified publicly.
+
+Repository owners must enable **Settings → Actions → General → Allow GitHub
+Actions to create and approve pull requests** once. The first image publication
+may also require changing the new `vastora-center` package visibility to
+**Public** and rerunning only the failed `publish` job. Until that succeeds, the
+draft release is not exposed through `releases/latest`.
 
 To validate a later Headscale configuration change before restarting:
 

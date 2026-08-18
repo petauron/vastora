@@ -68,7 +68,7 @@ and key.
 Released versions use one public Center bootstrap command:
 
 ```sh
-curl -LsSf https://get.vastora.io/install.sh | sudo sh -s -- center
+curl -LsSf https://github.com/petauron/vastora/releases/latest/download/install.sh | sudo sh -s -- center
 ```
 
 It downloads a verified release bundle and starts the guided Center and built-in
@@ -76,7 +76,9 @@ Headscale setup. Users do not clone this repository or enter a container image
 digest. Each Center then generates its own short-lived, one-line Agent install
 command. The command becomes live with the first published image and release
 assets; see [`deploy/center`](deploy/center/README.md) for prerequisites and
-local release packaging without uploading artifacts.
+local release packaging without uploading artifacts. The planned short address
+is `https://vastora.petauron.com/install.sh`; use the GitHub URL until that
+domain endpoint is live.
 
 ## Security model
 
