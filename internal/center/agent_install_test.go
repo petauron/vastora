@@ -38,7 +38,7 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 		t.Fatalf("unauthenticated binary download status = %d", response.Code)
 	}
 
-	enrollment, err := store.CreateAgentEnrollment(context.Background(), defaultSiteID)
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), testSiteID(t, store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestEnrolledAgentCanDownloadAuthenticatedUpdate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(binaries, "linux-amd64"), payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := store.CreateAgentEnrollment(context.Background(), defaultSiteID)
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), testSiteID(t, store))
 	if err != nil {
 		t.Fatal(err)
 	}

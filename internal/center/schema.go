@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 2
+const centerSchemaVersion = 3
 
 // initializeSchema deliberately supports only the current schema. Vastora is
 // pre-release and changing this model requires rebuilding the Center data
@@ -96,6 +96,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 			name TEXT NOT NULL,
 			code TEXT NOT NULL UNIQUE,
 			description TEXT NOT NULL DEFAULT '',
+			timezone TEXT NOT NULL,
 			domain_suffix TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL CHECK(status IN ('active', 'disabled')),
 			created_at TEXT NOT NULL,
@@ -309,11 +310,7 @@ func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {
 		return fmt.Errorf("center: create default organization: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sites(id, organization_id, name, code, description, domain_suffix, status, created_at, updated_at)
-		VALUES(?, ?, 'Default', 'default', 'Default location', '', 'active', ?, ?)`, defaultSiteID, defaultOrganizationID, now, now); err != nil {
-		return fmt.Errorf("center: create default site: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 2`); err != nil {
+	if _, err := tx.ExecContext(ctx, `PRAGMA user_version = 3`); err != nil {
 		return fmt.Errorf("center: set schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

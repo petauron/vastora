@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, DashboardStatus, Deployment, Diagnostics, HeadscaleJoin, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, Site } from "./types";
+import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, DashboardStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -54,12 +54,13 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
-  setupStatus: () => request<{ configured: boolean }>("/api/v1/setup/status"),
+  setupStatus: () => request<SetupStatus>("/api/v1/setup/status"),
   setupAdmin: (username: string, password: string) =>
-    request<{ configured: boolean }>("/api/v1/setup/admin", {
+    request<{ administratorConfigured: boolean }>("/api/v1/setup/admin", {
       method: "POST",
       body: JSON.stringify({ username, password })
     }),
+  completeSetup: (input: InitialSetupInput) => request<{ site: Site; network: InitialSetupInput["network"] }>("/api/v1/setup/complete", { method: "POST", body: JSON.stringify(input) }),
   login: (username: string, password: string) =>
     request<{ authenticated: boolean }>("/api/v1/auth/login", {
       method: "POST",
@@ -78,8 +79,8 @@ export const api = {
   deployments: () => request<{ deployments: Deployment[] }>("/api/v1/deployments"),
 	sites: () => request<{ sites: Site[] }>("/api/v1/sites"),
 	organizations: () => request<{ organizations: Organization[] }>("/api/v1/organizations"),
-	createSite: (input: { name: string; code: string; description: string; domainSuffix: string; gatewayNodes: string[] }) => request<Site>("/api/v1/sites", { method: "POST", body: JSON.stringify(input) }),
-	updateSite: (site: Site, input: { name: string; code: string; description: string; domainSuffix: string; gatewayNodes: string[] }) => request<Site>(`/api/v1/sites/${encodeURIComponent(site.id)}`, { method: "PUT", body: JSON.stringify(input) }),
+	createSite: (input: SiteInput) => request<Site>("/api/v1/sites", { method: "POST", body: JSON.stringify(input) }),
+	updateSite: (site: Site, input: SiteInput) => request<Site>(`/api/v1/sites/${encodeURIComponent(site.id)}`, { method: "PUT", body: JSON.stringify(input) }),
 	updateAgent: (agentId: string, name: string, siteId: string) => request<{ updated: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", body: JSON.stringify({ name, siteId }) }),
 	disableAgent: (agentId: string) => request<{ disabled: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
 	applications: () => request<{ applications: Application[] }>("/api/v1/applications"),

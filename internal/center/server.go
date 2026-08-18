@@ -21,11 +21,12 @@ import (
 const Version = "0.1.0-dev"
 
 type Server struct {
-	store            *Store
-	staticDir        string
-	agentBinariesDir string
-	secureCookies    bool
-	officialCatalog  []byte
+	store                *Store
+	staticDir            string
+	agentBinariesDir     string
+	setupAgentConnectURL string
+	secureCookies        bool
+	officialCatalog      []byte
 }
 
 func NewServer(store *Store, staticDir string, secureCookies bool) *Server {
@@ -42,6 +43,11 @@ func (s *Server) WithAgentBinaries(path string) *Server {
 	return s
 }
 
+func (s *Server) WithSetupAgentConnectURL(value string) *Server {
+	s.setupAgentConnectURL = value
+	return s
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
@@ -50,6 +56,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/agents/{id}/binary/{os}/{arch}", s.handleAgentUpdateBinary)
 	mux.HandleFunc("GET /api/v1/setup/status", s.handleSetupStatus)
 	mux.HandleFunc("POST /api/v1/setup/admin", s.handleSetupAdmin)
+	mux.HandleFunc("POST /api/v1/setup/complete", s.requireAuth(true, s.handleSetupComplete))
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(true, s.handleLogout))
 	mux.HandleFunc("PUT /api/v1/auth/password", s.requireAuth(true, s.handleChangePassword))
@@ -98,12 +105,16 @@ func (s *Server) handleHealth(writer http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Request) {
-	configured, err := s.store.IsConfigured(request.Context())
+	status, err := s.store.SetupStatus(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]bool{"configured": configured})
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"administratorConfigured":  status.AdministratorConfigured,
+		"onboardingComplete":       status.OnboardingComplete,
+		"suggestedAgentConnectUrl": s.setupAgentConnectURL,
+	})
 }
 
 func (s *Server) handleSetupAdmin(writer http.ResponseWriter, request *http.Request) {
@@ -121,7 +132,27 @@ func (s *Server) handleSetupAdmin(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	s.setSessionCookies(writer, session, csrf)
-	writeJSON(writer, http.StatusCreated, map[string]bool{"configured": true})
+	writeJSON(writer, http.StatusCreated, map[string]bool{"administratorConfigured": true})
+}
+
+func (s *Server) handleSetupComplete(writer http.ResponseWriter, request *http.Request) {
+	var input InitialSetupInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if input.Network.AgentConnectionMode == "headscale" && input.Headscale != nil {
+		if _, err := s.store.ConfigureHeadscale(request.Context(), *input.Headscale); err != nil {
+			writeError(writer, http.StatusBadRequest, err)
+			return
+		}
+	}
+	result, err := s.store.CompleteInitialSetup(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, result)
 }
 
 func (s *Server) handleLogin(writer http.ResponseWriter, request *http.Request) {
@@ -169,6 +200,11 @@ func (s *Server) handleChangePassword(writer http.ResponseWriter, request *http.
 }
 
 func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request) {
+	networkConfig, err := s.store.CenterNetworkConfig(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
 	sources, err := s.store.ListSources(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, err)
@@ -196,6 +232,8 @@ func (s *Server) handleStatus(writer http.ResponseWriter, request *http.Request)
 		"agents":                  countActiveAgents(agents),
 		"deployments":             len(deployments),
 		"agentInstallerAvailable": s.agentInstallerAvailable(),
+		"agentConnectionMode":     networkConfig.AgentConnectionMode,
+		"agentConnectUrl":         networkConfig.AgentConnectURL,
 	})
 }
 

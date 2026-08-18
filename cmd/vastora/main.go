@@ -123,12 +123,12 @@ func runCenter(arguments []string) error {
 		flags := flag.NewFlagSet("center agent-token create", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "", "Center state directory")
-		siteID := flags.String("site-id", "", "target Site ID (defaults to the initial Site)")
+		siteID := flags.String("site-id", "", "target Site ID")
 		if err := flags.Parse(arguments[2:]); err != nil {
 			return err
 		}
-		if *dataDir == "" {
-			return errors.New("--data-dir is required")
+		if *dataDir == "" || *siteID == "" {
+			return errors.New("--data-dir and --site-id are required")
 		}
 		store, err := center.Open(*dataDir)
 		if err != nil {
@@ -149,16 +149,21 @@ func runCenter(arguments []string) error {
 		webDir := flags.String("web-dir", "web/dist", "compiled React web directory")
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
 		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
+		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
 		tlsCert := flags.String("tls-cert", "", "PEM certificate path")
 		tlsKey := flags.String("tls-key", "", "PEM private key path")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
-		if *dataDir == "" {
-			return errors.New("--data-dir is required")
+		if *dataDir == "" || *agentConnectURL == "" {
+			return errors.New("--data-dir and --agent-connect-url are required")
 		}
 		if (*tlsCert == "") != (*tlsKey == "") {
 			return errors.New("--tls-cert and --tls-key must be provided together")
+		}
+		normalizedAgentConnectURL, err := center.NormalizeAgentConnectURL(*agentConnectURL)
+		if err != nil {
+			return err
 		}
 		if *tlsCert == "" && !loopbackAddress(*listen) {
 			return errors.New("refusing a non-loopback HTTP listener; provide TLS certificate and key")
@@ -175,7 +180,12 @@ func runCenter(arguments []string) error {
 		if err := store.SeedOfficialCatalog(context.Background(), catalogPayload); err != nil {
 			return err
 		}
-		server := &http.Server{Addr: *listen, Handler: center.NewServer(store, *webDir, *tlsCert != "").WithOfficialCatalog(catalogPayload).WithAgentBinaries(*agentBinariesDir).Handler(), ReadHeaderTimeout: 5 * time.Second}
+		handler := center.NewServer(store, *webDir, *tlsCert != "").
+			WithOfficialCatalog(catalogPayload).
+			WithAgentBinaries(*agentBinariesDir).
+			WithSetupAgentConnectURL(normalizedAgentConnectURL).
+			Handler()
+		server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 		fmt.Printf("Center listening on %s\n", *listen)
 		if *tlsCert != "" {
 			err = server.ListenAndServeTLS(*tlsCert, *tlsKey)
@@ -863,8 +873,8 @@ func printUsage(writer *os.File) {
 
 Usage:
   vastora version
-  vastora center serve --data-dir DIR [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
-  vastora center agent-token create --data-dir DIR
+  vastora center serve --data-dir DIR --agent-connect-url URL [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
+  vastora center agent-token create --data-dir DIR --site-id SITE
   vastora center backup --data-dir DIR --output FILE --password-file FILE
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE
   vastora agent init --data-dir DIR

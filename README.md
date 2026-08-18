@@ -39,12 +39,13 @@ make security-check
 Start a local control plane after the checks pass:
 
 ```sh
-GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center serve --data-dir .vastora/center --listen 127.0.0.1:8080
+GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center serve --data-dir .vastora/center --listen 127.0.0.1:8080 --agent-connect-url http://127.0.0.1:8080
 ```
 
 In another terminal, start the web development server with `cd web && npm run
-dev`. On the first visit, choose the administrator username and password; the
-Center creates the account and signs it in immediately.
+dev`. On the first visit, create the administrator, then follow the required
+wizard to create a real location and confirm how Agents reach Center. The
+configured Agent address is reused automatically when adding nodes.
 
 Create an encrypted control-plane backup with a password stored in a local
 `0600` file, then restore only into a new empty state directory:

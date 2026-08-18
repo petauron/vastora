@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/petauron/vastora/internal/networking"
 )
 
-const defaultSiteID = "site-default"
 const defaultOrganizationID = "organization-default"
 
 var (
@@ -55,6 +55,7 @@ type SiteInput struct {
 	Name         string   `json:"name"`
 	Code         string   `json:"code"`
 	Description  string   `json:"description"`
+	Timezone     string   `json:"timezone"`
 	DomainSuffix string   `json:"domainSuffix"`
 	GatewayNodes []string `json:"gatewayNodes"`
 }
@@ -72,6 +73,7 @@ type SiteView struct {
 	Name           string    `json:"name"`
 	Code           string    `json:"code"`
 	Description    string    `json:"description"`
+	Timezone       string    `json:"timezone"`
 	DomainSuffix   string    `json:"domainSuffix"`
 	GatewayNodes   []string  `json:"gatewayNodes"`
 	GatewayStatus  string    `json:"gatewayStatus"`
@@ -130,16 +132,33 @@ type RouteView struct {
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
-func (s *Store) CreateSite(ctx context.Context, input SiteInput) (SiteView, error) {
+func normalizeSiteInput(input SiteInput) (SiteInput, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
 	input.Description = strings.TrimSpace(input.Description)
+	input.Timezone = strings.TrimSpace(input.Timezone)
 	input.DomainSuffix = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.DomainSuffix), "."))
 	if input.Name == "" || len(input.Name) > 128 || !siteCodePattern.MatchString(input.Code) {
-		return SiteView{}, errors.New("center: site name and valid lowercase code are required")
+		return SiteInput{}, errors.New("center: site name and valid lowercase code are required")
 	}
 	if input.DomainSuffix != "" && !domainSuffixPattern.MatchString(input.DomainSuffix) {
-		return SiteView{}, errors.New("center: invalid site domain suffix")
+		return SiteInput{}, errors.New("center: invalid site domain suffix")
+	}
+	if input.Timezone == "" {
+		return SiteInput{}, errors.New("center: site timezone is required")
+	}
+	if _, err := time.LoadLocation(input.Timezone); err != nil {
+		return SiteInput{}, errors.New("center: invalid site timezone")
+	}
+	input.GatewayNodes = uniqueStrings(input.GatewayNodes)
+	return input, nil
+}
+
+func (s *Store) CreateSite(ctx context.Context, input SiteInput) (SiteView, error) {
+	var err error
+	input, err = normalizeSiteInput(input)
+	if err != nil {
+		return SiteView{}, err
 	}
 	id, err := randomToken(18)
 	if err != nil {
@@ -151,7 +170,7 @@ func (s *Store) CreateSite(ctx context.Context, input SiteInput) (SiteView, erro
 		return SiteView{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO sites(id, organization_id, name, code, description, domain_suffix, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'active', ?, ?)`, id, defaultOrganizationID, input.Name, input.Code, input.Description, input.DomainSuffix, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO sites(id, organization_id, name, code, description, timezone, domain_suffix, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`, id, defaultOrganizationID, input.Name, input.Code, input.Description, input.Timezone, input.DomainSuffix, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return SiteView{}, fmt.Errorf("center: create site: %w", err)
 	}
 	if err := s.replaceSiteGateways(ctx, tx, id, input.GatewayNodes, now); err != nil {
@@ -160,16 +179,14 @@ func (s *Store) CreateSite(ctx context.Context, input SiteInput) (SiteView, erro
 	if err := tx.Commit(); err != nil {
 		return SiteView{}, err
 	}
-	return SiteView{ID: id, OrganizationID: defaultOrganizationID, Name: input.Name, Code: input.Code, Description: input.Description, DomainSuffix: input.DomainSuffix, GatewayNodes: uniqueStrings(input.GatewayNodes), Status: "active", CreatedAt: now, UpdatedAt: now}, nil
+	return SiteView{ID: id, OrganizationID: defaultOrganizationID, Name: input.Name, Code: input.Code, Description: input.Description, Timezone: input.Timezone, DomainSuffix: input.DomainSuffix, GatewayNodes: uniqueStrings(input.GatewayNodes), Status: "active", CreatedAt: now, UpdatedAt: now}, nil
 }
 
 func (s *Store) UpdateSite(ctx context.Context, id string, input SiteInput) (SiteView, error) {
-	input.Name = strings.TrimSpace(input.Name)
-	input.Code = strings.ToLower(strings.TrimSpace(input.Code))
-	input.Description = strings.TrimSpace(input.Description)
-	input.DomainSuffix = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.DomainSuffix), "."))
-	if input.Name == "" || !siteCodePattern.MatchString(input.Code) || (input.DomainSuffix != "" && !domainSuffixPattern.MatchString(input.DomainSuffix)) {
-		return SiteView{}, errors.New("center: invalid site configuration")
+	var err error
+	input, err = normalizeSiteInput(input)
+	if err != nil {
+		return SiteView{}, err
 	}
 	now := s.now().UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -184,7 +201,7 @@ func (s *Store) UpdateSite(ctx context.Context, id string, input SiteInput) (Sit
 	if existing == 0 {
 		return SiteView{}, errors.New("center: site not found")
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE sites SET name = ?, code = ?, description = ?, domain_suffix = ?, updated_at = ? WHERE id = ?`, input.Name, input.Code, input.Description, input.DomainSuffix, now.Format(time.RFC3339Nano), id)
+	result, err := tx.ExecContext(ctx, `UPDATE sites SET name = ?, code = ?, description = ?, timezone = ?, domain_suffix = ?, updated_at = ? WHERE id = ?`, input.Name, input.Code, input.Description, input.Timezone, input.DomainSuffix, now.Format(time.RFC3339Nano), id)
 	if err != nil {
 		return SiteView{}, fmt.Errorf("center: update site: %w", err)
 	}
@@ -435,7 +452,7 @@ func (s *Store) Site(ctx context.Context, id string) (SiteView, error) {
 func (s *Store) ListSites(ctx context.Context) ([]SiteView, error) { return s.listSites(ctx, "") }
 
 func (s *Store) listSites(ctx context.Context, onlyID string) ([]SiteView, error) {
-	query := `SELECT id, organization_id, name, code, description, domain_suffix, status, created_at, updated_at FROM sites`
+	query := `SELECT id, organization_id, name, code, description, timezone, domain_suffix, status, created_at, updated_at FROM sites`
 	args := []any{}
 	if onlyID != "" {
 		query += ` WHERE id = ?`
@@ -450,7 +467,7 @@ func (s *Store) listSites(ctx context.Context, onlyID string) ([]SiteView, error
 	for rows.Next() {
 		var site SiteView
 		var createdAt, updatedAt string
-		if err := rows.Scan(&site.ID, &site.OrganizationID, &site.Name, &site.Code, &site.Description, &site.DomainSuffix, &site.Status, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&site.ID, &site.OrganizationID, &site.Name, &site.Code, &site.Description, &site.Timezone, &site.DomainSuffix, &site.Status, &createdAt, &updatedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}

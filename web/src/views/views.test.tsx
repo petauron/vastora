@@ -9,6 +9,7 @@ import { HomeView } from "./HomeView";
 import { NetworkView } from "./NetworkView";
 import { NodesView, agentInstallCommand, validCenterURL } from "./NodesView";
 import { SettingsView } from "./SettingsView";
+import { SetupWizard } from "./SetupWizard";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,9 +21,9 @@ afterEach(() => {
 });
 
 const dashboard = (): DashboardData => ({
-  status: { version: "test", catalogSources: 1, catalogApps: 1, agents: 1, deployments: 1, agentInstallerAvailable: true },
+  status: { version: "test", catalogSources: 1, catalogApps: 1, agents: 1, deployments: 1, agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" },
   sources: [], organizations: [], routes: [], actions: [], integrations: [],
-  sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
+  sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
   agents: [{ id: "agent", name: "home-server", version: "test", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", family: "ipv4", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
   applications: [
@@ -49,7 +50,7 @@ describe("network and app views", () => {
     let destination = "";
     const container = render(<HomeView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={(screen) => { destination = screen; }} />);
     expect(container.textContent).toContain("完成首次设置");
-    expect(container.textContent).toContain("管理员账号已创建");
+    expect(container.textContent).not.toContain("管理员账号已创建");
     expect(container.textContent).toContain("一次只完成当前步骤");
     const add = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加节点"));
     act(() => add?.click());
@@ -94,6 +95,26 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("添加第一台节点");
     expect(container.textContent).toContain("复制一条命令");
     expect(container.textContent).toContain("添加节点");
+  });
+
+  it("starts first-run onboarding with a real location and the browser timezone", () => {
+    const container = render(<SetupWizard language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} suggestedAgentConnectUrl="https://center.example.com" />);
+    expect(container.textContent).toContain("创建第一个位置");
+    expect(container.textContent).toContain("位置通常是一处家庭、办公室或数据中心");
+    expect(container.querySelector<HTMLInputElement>("#setup-timezone")?.value).not.toBe("");
+    expect(container.textContent).not.toContain("Default");
+  });
+
+  it("uses the saved Center address when adding a node and keeps editing advanced", () => {
+    const data = dashboard();
+    data.agents = [];
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    const add = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加节点"));
+    act(() => add?.click());
+    expect(document.querySelector<HTMLInputElement>("#new-node-center")?.value).toBe("https://center.example.com");
+    expect(document.body.textContent).toContain("Agent 将连接");
+    const advanced = [...document.querySelectorAll("details")].find((details) => details.textContent?.includes("Center 地址"));
+    expect(advanced?.open).toBe(false);
   });
 
   it("generates a TLS-restricted one-line Agent installer", () => {
@@ -143,6 +164,7 @@ describe("network and app views", () => {
     expect(validCenterURL("http://127.0.0.1:8080")).toBe(true);
     expect(validCenterURL("http://100.64.0.1:8080")).toBe(false);
     expect(validCenterURL("https://user:password@center.example.com")).toBe(false);
+    expect(validCenterURL("https://center.example.com/api")).toBe(false);
   });
 
   it("makes backup and diagnostics discoverable without the CLI", () => {

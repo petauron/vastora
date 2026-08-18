@@ -150,14 +150,6 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) IsConfigured(ctx context.Context) (bool, error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM admins`).Scan(&count); err != nil {
-		return false, fmt.Errorf("center: read administrators: %w", err)
-	}
-	return count > 0, nil
-}
-
 func (s *Store) CreateFirstAdmin(ctx context.Context, username, password string) (string, string, error) {
 	username = strings.TrimSpace(username)
 	if !usernamePattern.MatchString(username) {
@@ -498,7 +490,7 @@ func (s *Store) CreateRegistryCredential(ctx context.Context, host, username, to
 func (s *Store) CreateAgentEnrollment(ctx context.Context, siteID string) (AgentEnrollment, error) {
 	siteID = strings.TrimSpace(siteID)
 	if siteID == "" {
-		siteID = defaultSiteID
+		return AgentEnrollment{}, errors.New("center: enrollment site is required")
 	}
 	var siteExists int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE id = ? AND status = 'active'`, siteID).Scan(&siteExists); err != nil {

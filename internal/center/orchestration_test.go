@@ -19,7 +19,7 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 		{Address: "100.64.0.10", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale},
 	}, networking.Profile{ServiceAddress: "100.64.0.10", LANAddress: "192.168.50.10", HeadscaleAddress: "100.64.0.10", EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale}})
 
-	if _, err := store.UpdateSite(ctx, defaultSiteID, SiteInput{Name: "Lab", Code: "lab", DomainSuffix: "apps.example.test", GatewayNodes: []string{node.ID}}); err != nil {
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Lab", Code: "lab", Timezone: "UTC", DomainSuffix: "apps.example.test", GatewayNodes: []string{node.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
@@ -91,7 +91,7 @@ func TestPublicationCanUseGatewayOnAnotherNode(t *testing.T) {
 	ctx := context.Background()
 	worker := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.20.0.11", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.20.0.11", LANAddress: "10.20.0.11", EnabledKinds: []string{networking.KindLAN}})
 	gateway := enrollOrchestrationNode(t, store, "gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{{Address: "10.20.0.12", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.20.0.12", LANAddress: "10.20.0.12", EnabledKinds: []string{networking.KindLAN}})
-	if _, err := store.UpdateSite(ctx, defaultSiteID, SiteInput{Name: "Lab", Code: "lab", DomainSuffix: "apps.example.test", GatewayNodes: []string{gateway.ID}}); err != nil {
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Lab", Code: "lab", Timezone: "UTC", DomainSuffix: "apps.example.test", GatewayNodes: []string{gateway.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, gateway, "gateway.component.apply", nil)
@@ -164,7 +164,7 @@ func openOrchestrationStore(t *testing.T) *Store {
 func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabilities NodeCapabilities, candidates []networking.Candidate, profile networking.Profile) AgentCredential {
 	t.Helper()
 	ctx := context.Background()
-	enrollment, err := store.CreateAgentEnrollment(ctx, defaultSiteID)
+	enrollment, err := store.CreateAgentEnrollment(ctx, testSiteID(t, store))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	site, err := store.CreateSite(ctx, SiteInput{Name: "Singapore", Code: "singapore"})
+	site, err := store.CreateSite(ctx, SiteInput{Name: "Singapore", Code: "singapore", Timezone: "Asia/Singapore"})
 	if err != nil {
 		t.Fatal(err)
 	}

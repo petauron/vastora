@@ -106,6 +106,46 @@ func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 	}
 }
 
+func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	server := NewServer(store, "", false).WithSetupAgentConnectURL("https://center.example.com")
+	statusResponse := httptest.NewRecorder()
+	server.handleSetupStatus(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil))
+	var status map[string]any
+	if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["administratorConfigured"] != false || status["onboardingComplete"] != false || status["suggestedAgentConnectUrl"] != "https://center.example.com" {
+		t.Fatalf("unexpected fresh setup status: %#v", status)
+	}
+	if _, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple"); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(InitialSetupInput{
+		Site:    SiteInput{Name: "Home", Code: "home", Timezone: "Asia/Singapore"},
+		Network: CenterNetworkInput{AgentConnectionMode: "lan", AgentConnectURL: "https://center.example.com"},
+	})
+	completeResponse := httptest.NewRecorder()
+	completeRequest := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", bytes.NewReader(payload))
+	completeRequest.Header.Set("Content-Type", "application/json")
+	server.handleSetupComplete(completeResponse, completeRequest)
+	if completeResponse.Code != http.StatusCreated {
+		t.Fatalf("complete setup status = %d, body = %q", completeResponse.Code, completeResponse.Body.String())
+	}
+	statusResponse = httptest.NewRecorder()
+	server.handleSetupStatus(statusResponse, httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil))
+	if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["administratorConfigured"] != true || status["onboardingComplete"] != true {
+		t.Fatalf("unexpected completed setup status: %#v", status)
+	}
+}
+
 func TestAdministratorCanChangePasswordAndRevokeOtherSessions(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -222,7 +262,7 @@ func TestDiagnosticsSummarizeHealthWithoutSecrets(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := store.CreateAgentEnrollment(context.Background(), defaultSiteID)
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), testSiteID(t, store))
 	if err != nil {
 		t.Fatal(err)
 	}

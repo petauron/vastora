@@ -20,6 +20,21 @@ export type DashboardStatus = {
   agents: number;
   deployments: number;
   agentInstallerAvailable: boolean;
+  agentConnectionMode: AgentConnectionMode;
+  agentConnectUrl: string;
+};
+
+export type AgentConnectionMode = "lan" | "headscale" | "public";
+export type SetupStatus = {
+  administratorConfigured: boolean;
+  onboardingComplete: boolean;
+  suggestedAgentConnectUrl: string;
+};
+export type SiteInput = { name: string; code: string; description: string; timezone: string; domainSuffix: string; gatewayNodes: string[] };
+export type InitialSetupInput = {
+  site: SiteInput;
+  network: { agentConnectionMode: AgentConnectionMode; agentConnectUrl: string };
+  headscale?: { mode: "builtin" | "external"; url: string; apiKey: string };
 };
 
 export type DiagnosticCount = { total: number; healthy: number; warning: number; failed: number; disabled?: number };
@@ -91,7 +106,7 @@ export type AppView = {
 };
 
 export type Organization = { id: string; name: string; createdAt: string; updatedAt: string };
-export type Site = { id: string; organizationId: string; name: string; code: string; description: string; domainSuffix: string; status: string; gatewayNodes: string[]; gatewayStatus: string; createdAt: string; updatedAt: string };
+export type Site = { id: string; organizationId: string; name: string; code: string; description: string; timezone: string; domainSuffix: string; status: string; gatewayNodes: string[]; gatewayStatus: string; createdAt: string; updatedAt: string };
 export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; createdAt: string; updatedAt: string };
 export type Service = { id: string; applicationId: string; siteId: string; name: string; protocol: "http" | "https" | "tcp" | "udp"; containerPort: number; hostPort: number; endpoint: string; source: "catalog" | "observed"; appProtocol?: string; management: boolean; observedListen?: string; status: string; lastError?: string; createdAt: string; updatedAt: string };
 export type PublicationKind = "lan_gateway" | "headscale_gateway" | "public_direct" | "cloudflare_tunnel";

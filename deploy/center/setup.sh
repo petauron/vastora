@@ -207,6 +207,7 @@ temporary_env="$(mktemp "${TMPDIR:-/tmp}/vastora-center-env.XXXXXX")"
 trap 'rm -f "$temporary_env"; cleanup' EXIT HUP INT TERM
 {
   printf 'VASTORA_CENTER_IMAGE=%s\n' "$image"
+  printf 'VASTORA_CENTER_URL=%s\n' "$center_url"
   printf 'VASTORA_CENTER_PORT=%s\n' "$center_port"
   printf 'VASTORA_HEADSCALE_PORT=%s\n' "$headscale_port"
   printf 'VASTORA_HEADSCALE_CONFIG=./generated/headscale.yaml\n'
@@ -246,4 +247,5 @@ trap - EXIT HUP INT TERM
 
 echo "Center is starting at: $center_url"
 echo "Headscale API key saved to: $script_dir/$api_key_file"
-echo "Open Center, create the administrator, then connect Headscale from Network settings."
+echo "Open Center and follow the first-run wizard."
+echo "If you choose Headscale, use the API key saved above when the wizard asks for it."
