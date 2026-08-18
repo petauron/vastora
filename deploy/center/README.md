@@ -81,7 +81,7 @@ location; both are bootstrap options before the `--` separator.
 
 Merges to `main` update a Release Please pull request from conventional commit
 messages. Merging that pull request creates a draft release, builds and pushes
-the `linux/amd64` and `linux/arm64` Center image to GHCR, packages the installer
+the `linux/amd64` Center image to GHCR, packages the installer
 against the image manifest digest, uploads all three assets, and publishes the
 release only after every step succeeds. Failed builds leave the release as a
 draft, so `releases/latest` never points to incomplete installer assets.

@@ -15,13 +15,7 @@ COPY internal/ ./internal/
 RUN CGO_ENABLED=0 GOTOOLCHAIN=go1.26.6 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
     -o /out/vastora ./cmd/vastora
-RUN mkdir -p /out/agent-binaries && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
-      -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
-      -o /out/agent-binaries/linux-amd64 ./cmd/vastora && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
-      -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
-      -o /out/agent-binaries/linux-arm64 ./cmd/vastora
+RUN mkdir -p /out/agent-binaries && cp /out/vastora /out/agent-binaries/linux-amd64
 RUN mkdir /out/center-data && chown 65532:65532 /out/center-data
 
 FROM gcr.io/distroless/static-debian13:nonroot

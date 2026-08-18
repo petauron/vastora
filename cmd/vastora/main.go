@@ -148,7 +148,7 @@ func runCenter(arguments []string) error {
 		listen := flags.String("listen", "127.0.0.1:8080", "listen address")
 		webDir := flags.String("web-dir", "web/dist", "compiled React web directory")
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
-		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
+		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing the linux-amd64 Agent binary")
 		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
 		var headscaleAllowedURLs stringListFlag
 		flags.Var(&headscaleAllowedURLs, "headscale-allowed-url", "authorized Headscale control-plane URL (repeat for multiple URLs)")
@@ -531,8 +531,8 @@ func validatedNodeRuntime(rolesValue, capabilitiesValue string) ([]string, agent
 }
 
 func updateAgentExecutable(ctx context.Context, client *http.Client, connection agent.Connection, executable string, restart func() error) (string, error) {
-	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
-		return "", errors.New("agent update is available only for amd64 and arm64")
+	if runtime.GOARCH != "amd64" {
+		return "", errors.New("agent update is available only for amd64")
 	}
 	endpoint := strings.TrimRight(connection.CenterURL, "/") + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/binary/linux/" + runtime.GOARCH
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
