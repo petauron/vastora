@@ -37,6 +37,17 @@ There are three node network capabilities, and they are additive rather than
 mutually exclusive: `lan`, `headscale`, and `public`. Cloudflare Tunnel is a
 Service publication method, not a fourth network.
 
+## Installation boundary
+
+Center releases publish a fixed-name, checksummed deployment bundle containing
+the guided setup, Compose and Headscale configuration, and an immutable Center
+image reference. The public `install.sh center` bootstrap verifies and installs
+that bundle; it never builds source on the user's server. Each running Center
+then serves its own Agent installer and architecture-specific Agent binaries.
+Agent enrollment, site assignment, roles, Headscale pre-authentication, and the
+short-lived credential therefore remain specific to that Center instead of a
+universal public Agent command.
+
 ## Address discovery and confirmation
 
 Agent enumerates addresses assigned to local interfaces and reports

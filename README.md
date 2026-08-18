@@ -59,10 +59,18 @@ a separate Agent image. They intentionally do not provide an insecure default
 command: a network-reachable Center must be started with its TLS certificate
 and key.
 
-For a product-style installation, use the validated guided setup in
-[`deploy/center`](deploy/center/README.md). It prepares Center and the built-in
-Headscale stack, checks the TLS files and immutable image before startup, and
-creates the Headscale API key needed by the browser setup flow.
+Released versions use one public Center bootstrap command:
+
+```sh
+curl -LsSf https://get.vastora.io/install.sh | sudo sh -s -- center
+```
+
+It downloads a verified release bundle and starts the guided Center and built-in
+Headscale setup. Users do not clone this repository or enter a container image
+digest. Each Center then generates its own short-lived, one-line Agent install
+command. The command becomes live with the first published image and release
+assets; see [`deploy/center`](deploy/center/README.md) for prerequisites and
+local release packaging without uploading artifacts.
 
 ## Security model
 

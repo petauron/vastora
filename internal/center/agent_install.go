@@ -43,7 +43,7 @@ if [ -z "$center_url" ] || [ -z "$token" ] || [ -z "$name" ]; then
   exit 2
 fi
 
-for required in curl systemctl docker; do
+for required in curl systemctl docker sha256sum awk; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
@@ -61,9 +61,29 @@ case "$(uname -m)" in
 esac
 
 temporary="$(mktemp -t vastora-agent.XXXXXX)"
-trap 'rm -f "$temporary"' EXIT HUP INT TERM
+headers="$(mktemp -t vastora-agent-headers.XXXXXX)"
+trap 'rm -f "$temporary" "$headers"' EXIT HUP INT TERM
+case "$center_url" in
+  https://*) curl_protocol="https" ;;
+  http://127.0.0.1:*|http://127.0.0.1|http://localhost:*|http://localhost) curl_protocol="http" ;;
+  *) echo "Center must use HTTPS; only loopback development addresses may use HTTP." >&2; exit 1 ;;
+esac
 echo "Downloading the Vastora Agent for $arch..."
-curl -fsSL -H "Authorization: Bearer $token" "${center_url%/}/api/v1/agent-binaries/linux/$arch" -o "$temporary"
+curl --proto "=$curl_protocol" --proto-redir '=https' --tlsv1.2 --max-filesize 268435456 -fsSL \
+  -D "$headers" -H "Authorization: Bearer $token" \
+  "${center_url%/}/api/v1/agent-binaries/linux/$arch" -o "$temporary"
+expected_digest="$(awk 'tolower($1) == "x-vastora-sha256:" {gsub("\\r", "", $2); value=tolower($2)} END {print value}' "$headers")"
+expected_version="$(awk 'tolower($1) == "x-vastora-version:" {sub("^[^:]*:[[:space:]]*", ""); gsub("\\r", ""); value=$0} END {print value}' "$headers")"
+actual_digest="$(sha256sum "$temporary" | awk '{print tolower($1)}')"
+if [ -z "$expected_digest" ] || [ "$expected_digest" != "$actual_digest" ]; then
+  echo "The downloaded Agent failed its SHA-256 integrity check." >&2
+  exit 1
+fi
+chmod 0755 "$temporary"
+if [ -z "$expected_version" ] || [ "$("$temporary" version)" != "$expected_version" ]; then
+  echo "The downloaded Agent failed its version check." >&2
+  exit 1
+fi
 install -m 0755 "$temporary" /usr/local/bin/vastora
 echo "Registering this node and starting the system service..."
 printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --name "$name" --roles "$roles" --capabilities "$capabilities"

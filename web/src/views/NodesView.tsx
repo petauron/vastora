@@ -17,6 +17,13 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 
+export function agentInstallCommand({ capabilities, centerURL, enrollment, installerAvailable, name, roles }: { capabilities: string; centerURL: string; enrollment: AgentEnrollment; installerAvailable: boolean; name: string; roles: string }) {
+  const bootstrap = enrollment.headscaleCommand ? `command -v tailscale >/dev/null 2>&1 || { echo 'Install Tailscale first.' >&2; exit 1; }; ${enrollment.headscaleCommand} && ` : "";
+  const curlSecurity = centerURL.startsWith("https://") ? "--proto '=https' --proto-redir '=https' --tlsv1.2" : "--proto '=http' --proto-redir '=https'";
+  if (installerAvailable) return `${bootstrap}curl ${curlSecurity} -fsSL ${shellQuote(`${centerURL.replace(/\/$/, "")}/install/agent.sh`)} | sudo sh -s -- --center-url ${shellQuote(centerURL)} --token ${shellQuote(enrollment.token)} --name ${shellQuote(name)} --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
+  return `${bootstrap}printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file - --name ${shellQuote(name)} --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
+}
+
 export function NodesView({ data, language, mutate, onNavigate }: { data: DashboardData; language: Language; mutate: Mutate; onNavigate: (screen: Screen) => void }) {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AgentView | null>(null);
@@ -55,9 +62,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: Dashb
   const headscaleReady = data.integrations.some((integration) => integration.kind === "headscale" && integration.status === "configured");
   const command = useMemo(() => {
     if (!enrollment) return "";
-    const bootstrap = enrollment.headscaleCommand ? `command -v tailscale >/dev/null 2>&1 || { echo 'Install Tailscale first.' >&2; exit 1; }; ${enrollment.headscaleCommand} && ` : "";
-    if (data.status.agentInstallerAvailable) return `${bootstrap}curl -fsSL ${shellQuote(`${centerURL.replace(/\/$/, "")}/install/agent.sh`)} | sudo sh -s -- --center-url ${shellQuote(centerURL)} --token ${shellQuote(enrollment.token)} --name ${shellQuote(name)} --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
-    return `${bootstrap}printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file - --name ${shellQuote(name)} --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
+    return agentInstallCommand({ capabilities, centerURL, enrollment, installerAvailable: data.status.agentInstallerAvailable, name, roles });
   }, [enrollment, data.status.agentInstallerAvailable, name, centerURL, roles, capabilities]);
   const joinedAgent = enrollment ? data.agents.find((agent) => agent.status === "active" && agent.name === name && !existingAgentIDs.includes(agent.id)) : undefined;
   const close = () => { setName(""); setSiteID(data.sites[0]?.id ?? ""); setGateway(true); setTunnel(false); setEnrollment(null); setExistingAgentIDs([]); setUseHeadscale(false); setError(""); setBusy(false); onClose(); };

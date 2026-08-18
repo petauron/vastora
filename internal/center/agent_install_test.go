@@ -52,6 +52,13 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	if readErr != nil || response.Code != http.StatusOK || string(body) != "binary-linux-amd64" {
 		t.Fatalf("authorized binary download failed: status=%d body=%q err=%v", response.Code, body, readErr)
 	}
+	wantDigest := sha256.Sum256(body)
+	if got := response.Header().Get("X-Vastora-SHA256"); got != hex.EncodeToString(wantDigest[:]) {
+		t.Fatalf("initial Agent download digest = %q", got)
+	}
+	if response.Header().Get("X-Vastora-Version") != Version {
+		t.Fatalf("initial Agent download version = %q", response.Header().Get("X-Vastora-Version"))
+	}
 	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "downloaded-agent", "test"); err != nil {
 		t.Fatalf("binary download consumed enrollment token: %v", err)
 	}
@@ -114,7 +121,7 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 	response := httptest.NewRecorder()
 	NewServer(store, "", false).Handler().ServeHTTP(response, request)
 	script := response.Body.String()
-	for _, expected := range []string{"command -v \"$required\"", "docker info", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "install -m 0755", "agent install --center-url"} {
+	for _, expected := range []string{"command -v \"$required\"", "docker info", "sha256sum", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("installer is missing %q:\n%s", expected, script)
 		}

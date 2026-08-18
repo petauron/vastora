@@ -6,6 +6,7 @@
 /web/node_modules/
 /web/dist/
 /backups/
+/dist/
 
 # Local Vastora state and generated development credentials
 /.vastora/

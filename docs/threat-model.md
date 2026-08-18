@@ -33,6 +33,15 @@
   administrator table is empty; all later setup requests are rejected. Until
   setup finishes, the first client that can reach the Center can claim the
   administrator account, so operators must restrict initial network access.
+- The public root installer accepts only HTTPS release URLs, verifies the
+  release archive against its published SHA-256 value, rejects unsafe archive
+  entries, and installs a Center image pinned by its complete digest. Running a
+  remote installer as root still trusts the official installer origin and
+  release account; operators may download and inspect `install.sh` first.
+- Center-generated Agent installers use ten-minute, single-use enrollment
+  tokens. Agent binaries require that token, carry Center-provided version and
+  SHA-256 headers, and are executed only after both integrity and version checks
+  pass.
 
 ## Non-goals for v0.1
 

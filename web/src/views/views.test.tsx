@@ -7,7 +7,7 @@ import type { DashboardData } from "../App";
 import { AppsView } from "./AppsView";
 import { HomeView } from "./HomeView";
 import { NetworkView } from "./NetworkView";
-import { NodesView, validCenterURL } from "./NodesView";
+import { NodesView, agentInstallCommand, validCenterURL } from "./NodesView";
 import { SettingsView } from "./SettingsView";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -94,6 +94,21 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("添加第一台节点");
     expect(container.textContent).toContain("复制一条命令");
     expect(container.textContent).toContain("添加节点");
+  });
+
+  it("generates a TLS-restricted one-line Agent installer", () => {
+    const command = agentInstallCommand({
+      capabilities: "docker,gateway",
+      centerURL: "https://center.example.com",
+      enrollment: { token: "one-time-token", siteId: "site", expiresAt: "2026-08-18T00:10:00Z" },
+      installerAvailable: true,
+      name: "home-node",
+      roles: "worker,gateway"
+    });
+    expect(command).toContain("curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL");
+    expect(command).toContain("https://center.example.com/install/agent.sh");
+    expect(command).toContain("sudo sh -s --");
+    expect(command).toContain("--token 'one-time-token'");
   });
 
   it("generates one safe command for node purpose changes and Agent updates", () => {
