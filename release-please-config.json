@@ -8,8 +8,6 @@
       "prerelease": true,
       "prerelease-type": "alpha",
       "versioning": "prerelease",
-      "release-as": "0.1.0-alpha.1",
-      "skip-changelog": true,
       "include-component-in-tag": false,
       "include-v-in-tag": true,
       "bump-minor-pre-major": true
