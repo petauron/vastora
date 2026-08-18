@@ -32,13 +32,14 @@ type NodeCapabilities struct {
 }
 
 type NodeHeartbeat struct {
-	Version              string
-	AppliedInstallations int
-	Roles                []string
-	Capabilities         NodeCapabilities
-	NetworkCandidates    []networking.Candidate
-	ApplicationEndpoints []ApplicationEndpointObservation
-	GatewayHealthy       bool
+	Version                      string
+	AppliedInstallations         int
+	Roles                        []string
+	Capabilities                 NodeCapabilities
+	NetworkCandidates            []networking.Candidate
+	ApplicationEndpoints         []ApplicationEndpointObservation
+	ApplicationEndpointsObserved bool
+	GatewayHealthy               bool
 }
 
 type ApplicationEndpointObservation struct {

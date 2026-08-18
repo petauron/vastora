@@ -156,6 +156,11 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 			return PublicationView{}, err
 		}
 	}
+	if webService && gatewayID != "" {
+		if err := validatePublicationOrigin(ctx, tx, appNodeID, gatewayID, endpoint); err != nil {
+			return PublicationView{}, err
+		}
+	}
 
 	id, err := randomToken(18)
 	if err != nil {
@@ -242,15 +247,91 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if dnsRecordID != "" || kind == publicationCloudflare {
-		err := s.removeCloudflarePublication(ctx, id, kind, gatewayID.String, dnsRecordID)
-		return s.recordDNSRemoval(ctx, id, gatewayID.String, revision+1, "cloudflare", err)
+	return s.cleanupStoppedPublications(ctx, []publicationCleanup{{ID: id, Kind: kind, GatewayID: gatewayID.String, DNSProvider: dnsProvider, DNSRecordID: dnsRecordID, Revision: revision + 1}})
+}
+
+type publicationCleanup struct {
+	ID          string
+	Kind        string
+	GatewayID   string
+	DNSProvider string
+	DNSRecordID string
+	Revision    int64
+}
+
+func publicationCleanups(rows *sql.Rows) ([]publicationCleanup, error) {
+	defer rows.Close()
+	values := []publicationCleanup{}
+	for rows.Next() {
+		var value publicationCleanup
+		if err := rows.Scan(&value.ID, &value.Kind, &value.GatewayID, &value.DNSProvider, &value.DNSRecordID, &value.Revision); err != nil {
+			return nil, err
+		}
+		values = append(values, value)
 	}
-	if dnsProvider == "headscale" {
+	return values, rows.Err()
+}
+
+func (s *Store) servicePublicationCleanups(ctx context.Context, tx *sql.Tx, serviceID string) ([]publicationCleanup, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, kind, COALESCE(gateway_node_id, ''), dns_provider, dns_record_id, desired_revision + 1
+		FROM publications WHERE service_id = ? AND status <> 'stopped' ORDER BY id`, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return publicationCleanups(rows)
+}
+
+func (s *Store) applicationPublicationCleanups(ctx context.Context, tx *sql.Tx, applicationID string) ([]publicationCleanup, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, COALESCE(p.gateway_node_id, ''), p.dns_provider, p.dns_record_id, p.desired_revision + 1
+		FROM publications p JOIN services s ON s.id = p.service_id
+		WHERE s.application_id = ? AND p.status <> 'stopped' ORDER BY p.id`, applicationID)
+	if err != nil {
+		return nil, err
+	}
+	return publicationCleanups(rows)
+}
+
+func (s *Store) cleanupStoppedPublications(ctx context.Context, values []publicationCleanup) error {
+	var cleanupErrors []error
+	headscaleValues := []publicationCleanup{}
+	for _, value := range values {
+		if value.DNSRecordID != "" || value.Kind == publicationCloudflare {
+			err := s.removeCloudflarePublication(ctx, value.ID, value.Kind, value.GatewayID, value.DNSRecordID)
+			if recordErr := s.finishPublicationCleanup(ctx, value, "cloudflare", err); recordErr != nil {
+				cleanupErrors = append(cleanupErrors, recordErr)
+			}
+			continue
+		}
+		if value.DNSProvider == "headscale" {
+			headscaleValues = append(headscaleValues, value)
+		}
+	}
+	if len(headscaleValues) != 0 {
 		err := s.reconcileHeadscaleDNS(ctx)
-		return s.recordDNSRemoval(ctx, id, gatewayID.String, revision+1, "headscale", err)
+		for _, value := range headscaleValues {
+			if recordErr := s.finishPublicationCleanup(ctx, value, "headscale", err); recordErr != nil {
+				cleanupErrors = append(cleanupErrors, recordErr)
+			}
+		}
 	}
-	return nil
+	return errors.Join(cleanupErrors...)
+}
+
+func (s *Store) finishPublicationCleanup(ctx context.Context, value publicationCleanup, provider string, operationErr error) error {
+	message := ""
+	if operationErr != nil {
+		message = strings.TrimSpace(operationErr.Error())
+		if len(message) > 1024 {
+			message = message[:1024]
+		}
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE publications SET last_error = ?, updated_at = ? WHERE id = ? AND status = 'stopped'`, message, s.now().UTC().Format(time.RFC3339Nano), value.ID); err != nil {
+		if operationErr != nil {
+			return errors.Join(operationErr, err)
+		}
+		return err
+	}
+	return s.recordDNSRemoval(ctx, value.ID, value.GatewayID, value.Revision, provider, operationErr)
 }
 
 func dnsTaskID(publicationID string, revision int64) string {
@@ -619,6 +700,55 @@ func validateTunnelNode(ctx context.Context, tx *sql.Tx, siteID, nodeID string) 
 		return errors.New("center: selected node does not have Tunnel capability in this site")
 	}
 	return nil
+}
+
+func validatePublicationOrigin(ctx context.Context, tx *sql.Tx, applicationNodeID, gatewayNodeID, endpoint string) error {
+	if applicationNodeID == gatewayNodeID {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		return errors.New("center: stored service endpoint is invalid")
+	}
+	originIP := net.ParseIP(host)
+	if originIP == nil || originIP.IsLoopback() || originIP.IsUnspecified() {
+		return errors.New("center: cross-node entry requires a routable private service address")
+	}
+	var serviceAddress, lanAddress, headscaleAddress string
+	var originEnabledJSON, gatewayEnabledJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT service_address, lan_address, headscale_address, enabled_kinds_json FROM agent_network_profiles WHERE agent_id = ?`, applicationNodeID).Scan(&serviceAddress, &lanAddress, &headscaleAddress, &originEnabledJSON); errors.Is(err, sql.ErrNoRows) {
+		return errors.New("center: application node needs a confirmed network profile")
+	} else if err != nil {
+		return err
+	}
+	serviceIP := net.ParseIP(serviceAddress)
+	if serviceIP == nil || !originIP.Equal(serviceIP) {
+		return errors.New("center: service endpoint no longer matches the application node network profile")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT enabled_kinds_json FROM agent_network_profiles WHERE agent_id = ?`, gatewayNodeID).Scan(&gatewayEnabledJSON); errors.Is(err, sql.ErrNoRows) {
+		return errors.New("center: cross-node entry requires a confirmed gateway network profile")
+	} else if err != nil {
+		return err
+	}
+	var originEnabled, gatewayEnabled []string
+	if json.Unmarshal(originEnabledJSON, &originEnabled) != nil || json.Unmarshal(gatewayEnabledJSON, &gatewayEnabled) != nil {
+		return errors.New("center: node has an invalid network profile")
+	}
+	originKinds := map[string]bool{}
+	for _, kind := range originEnabled {
+		if kind == networking.KindLAN && net.ParseIP(lanAddress) != nil && originIP.Equal(net.ParseIP(lanAddress)) {
+			originKinds[kind] = true
+		}
+		if kind == networking.KindHeadscale && net.ParseIP(headscaleAddress) != nil && originIP.Equal(net.ParseIP(headscaleAddress)) {
+			originKinds[kind] = true
+		}
+	}
+	for _, kind := range gatewayEnabled {
+		if originKinds[kind] {
+			return nil
+		}
+	}
+	return errors.New("center: entry node cannot reach the application private service network")
 }
 
 func validateDirectPublicNode(ctx context.Context, tx *sql.Tx, nodeID string) (string, error) {

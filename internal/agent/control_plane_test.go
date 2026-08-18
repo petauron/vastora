@@ -54,6 +54,48 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 	}
 }
 
+func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T) {
+	heartbeats := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
+			t.Fatalf("unexpected request path: %s", request.URL.Path)
+		}
+		var payload struct {
+			ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
+			ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 {
+			t.Fatalf("failed observation was reported as authoritative: %#v", payload)
+		}
+		heartbeats++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.6.0", Config: config, Secrets: json.RawMessage(`{}`), ServiceAddress: "127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	observationErr, heartbeatErr := (Client{}).heartbeat(context.Background(), store)
+	if heartbeatErr != nil {
+		t.Fatalf("observation failure blocked heartbeat: %v", heartbeatErr)
+	}
+	if observationErr == nil || heartbeats != 1 {
+		t.Fatalf("observation error was not isolated: err=%v heartbeats=%d", observationErr, heartbeats)
+	}
+}
+
 func TestTunnelDesiredStateRequiresFixedImageAndTokenWhileRunning(t *testing.T) {
 	valid := TunnelDesiredState{Revision: 2, Status: "running", Image: "docker.io/cloudflare/cloudflared:2026.7.2", Token: "token"}
 	if err := valid.Validate(); err != nil {

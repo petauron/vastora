@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -85,6 +86,55 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	}
 }
 
+func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	configureBuiltinHeadscaleForTest(t, store)
+	node := enrollOrchestrationNode(t, store, "all-in-one", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "100.64.0.40", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.40", HeadscaleAddress: "100.64.0.40", EnabledKinds: []string{networking.KindHeadscale}})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Lab", Code: "lab", Timezone: "UTC", DomainSuffix: "apps.example.test", GatewayNodes: []string{node.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	installCPA(t, store, node, "100.64.0.40")
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 {
+		t.Fatalf("unexpected services: %#v err=%v", services, err)
+	}
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, GatewayNodeID: node.ID, Hostname: "cpa.tail.example.test", DNSProvider: "headscale"}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "gateway.routes.apply", nil)
+	before, err := os.ReadFile(store.dataDir + "/" + headscaleDNSFile)
+	if err != nil || !strings.Contains(string(before), "cpa.tail.example.test") {
+		t.Fatalf("managed Headscale record was not created: %s err=%v", before, err)
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall"}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "application.apply", nil)
+	after, err := os.ReadFile(store.dataDir + "/" + headscaleDNSFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after), "cpa.tail.example.test") || strings.TrimSpace(string(after)) != "[]" {
+		t.Fatalf("uninstall left stale Headscale DNS: %s", after)
+	}
+	actions, err := store.ListActions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundRemoval := false
+	for _, action := range actions {
+		if action.Kind == "dns.record.remove" && action.Event == "succeeded" {
+			foundRemoval = true
+		}
+	}
+	if !foundRemoval {
+		t.Fatalf("automatic DNS cleanup was not recorded in Actions: %#v", actions)
+	}
+}
+
 func TestPublicationCanUseGatewayOnAnotherNode(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -106,6 +156,49 @@ func TestPublicationCanUseGatewayOnAnotherNode(t *testing.T) {
 	task := claimTask(t, store, gateway)
 	if task.GatewayState == nil || len(task.GatewayState.Routes) != 1 || task.GatewayState.Routes[0].Upstreams[0].Address != "10.20.0.11" {
 		t.Fatalf("cross-node gateway did not receive the worker upstream: %#v", task)
+	}
+}
+
+func TestPublicationRejectsUnreachableCrossNodeOrigin(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	worker := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.20.0.21", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.20.0.21", LANAddress: "10.20.0.21", EnabledKinds: []string{networking.KindLAN}})
+	gateway := enrollOrchestrationNode(t, store, "gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{{Address: "10.20.0.22", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.20.0.22", LANAddress: "10.20.0.22", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Lab", Code: "lab", Timezone: "UTC", DomainSuffix: "apps.example.test", GatewayNodes: []string{gateway.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, gateway, "gateway.component.apply", nil)
+	installCPA(t, store, worker, "10.20.0.21")
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 {
+		t.Fatalf("unexpected services: %#v err=%v", services, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET endpoint = '127.0.0.1:8317' WHERE id = ?`, services[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: gateway.ID, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "routable private service address") {
+		t.Fatalf("cross-node loopback origin was accepted: %v", err)
+	}
+}
+
+func TestPublicationRejectsCrossNodeWithoutSharedPrivateNetwork(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	worker := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.21", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.21", HeadscaleAddress: "100.64.0.21", EnabledKinds: []string{networking.KindHeadscale}})
+	gateway := enrollOrchestrationNode(t, store, "gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{{Address: "10.20.0.32", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.20.0.32", LANAddress: "10.20.0.32", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Lab", Code: "lab", Timezone: "UTC", DomainSuffix: "apps.example.test", GatewayNodes: []string{gateway.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, gateway, "gateway.component.apply", nil)
+	installCPA(t, store, worker, "100.64.0.21")
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 {
+		t.Fatalf("unexpected services: %#v err=%v", services, err)
+	}
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: gateway.ID, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "cannot reach") {
+		t.Fatalf("cross-node publication without a shared private network was accepted: %v", err)
 	}
 }
 
@@ -159,6 +252,27 @@ func openOrchestrationStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func configureBuiltinHeadscaleForTest(t *testing.T, store *Store) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	secretID, err := store.putSecret(ctx, tx, []byte("test-headscale-api-key"), "integration:headscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at) VALUES('headscale', 'builtin', 'https://headscale.example.test', ?, 'configured', ?, ?)`, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabilities NodeCapabilities, candidates []networking.Candidate, profile networking.Profile) AgentCredential {

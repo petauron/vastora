@@ -14,7 +14,7 @@ import (
 
 var observedEndpointNamePattern = regexp.MustCompile(`^inbound-[1-9][0-9]*$`)
 
-func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time) error {
+func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
 	seen := map[string]bool{}
 	for _, value := range observations {
 		value.AppKey = strings.TrimSpace(value.AppKey)
@@ -81,7 +81,7 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 		}
 		delete(existing, value.Name)
 		if !value.Enabled {
-			if err := s.stopServicePublications(ctx, tx, serviceID, now); err != nil {
+			if err := s.stopServicePublications(ctx, tx, serviceID, now, cleanups); err != nil {
 				return err
 			}
 		}
@@ -90,14 +90,19 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), serviceID); err != nil {
 			return err
 		}
-		if err := s.stopServicePublications(ctx, tx, serviceID, now); err != nil {
+		if err := s.stopServicePublications(ctx, tx, serviceID, now, cleanups); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) stopServicePublications(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time) error {
+func (s *Store) stopServicePublications(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time, cleanups *[]publicationCleanup) error {
+	values, err := s.servicePublicationCleanups(ctx, tx, serviceID)
+	if err != nil {
+		return err
+	}
+	*cleanups = append(*cleanups, values...)
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT gateway_node_id FROM routes WHERE service_id = ?`, serviceID)
 	if err != nil {
 		return err
@@ -114,7 +119,7 @@ func (s *Store) stopServicePublications(ctx context.Context, tx *sql.Tx, service
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1, updated_at = ? WHERE service_id = ? AND status <> 'stopped'`, now.Format(time.RFC3339Nano), serviceID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1, last_error = '', updated_at = ? WHERE service_id = ? AND status <> 'stopped'`, now.Format(time.RFC3339Nano), serviceID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE service_id = ?`, serviceID); err != nil {

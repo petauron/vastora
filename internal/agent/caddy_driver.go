@@ -19,9 +19,10 @@ import (
 )
 
 type CaddyGatewayDriver struct {
-	AdminURL    string
-	AdminListen string
-	HTTPClient  *http.Client
+	AdminURL        string
+	AdminListen     string
+	AdminSocketPath string
+	HTTPClient      *http.Client
 
 	mu    sync.RWMutex
 	state gateway.DesiredState
@@ -41,9 +42,10 @@ func NewCaddyGatewayDriver(adminURL string) (*CaddyGatewayDriver, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
 		}}
 		return &CaddyGatewayDriver{
-			AdminURL:    "http://localhost",
-			AdminListen: "unix/" + socketPath,
-			HTTPClient:  &http.Client{Transport: transport, Timeout: 15 * time.Second},
+			AdminURL:        "http://localhost",
+			AdminListen:     "unix/" + socketPath,
+			AdminSocketPath: socketPath,
+			HTTPClient:      &http.Client{Transport: transport, Timeout: 15 * time.Second},
 		}, nil
 	}
 	if parsed.Scheme != "http" || parsed.Path != "" || !isLoopbackHost(parsed.Hostname()) {

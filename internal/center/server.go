@@ -522,13 +522,14 @@ func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Req
 
 func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
-		Version              string                           `json:"version"`
-		AppliedInstallations int                              `json:"appliedInstallations"`
-		Roles                []string                         `json:"roles"`
-		Capabilities         NodeCapabilities                 `json:"capabilities"`
-		NetworkCandidates    []networking.Candidate           `json:"networkCandidates"`
-		ApplicationEndpoints []ApplicationEndpointObservation `json:"applicationEndpoints"`
-		GatewayHealthy       bool                             `json:"gatewayHealthy"`
+		Version                      string                           `json:"version"`
+		AppliedInstallations         int                              `json:"appliedInstallations"`
+		Roles                        []string                         `json:"roles"`
+		Capabilities                 NodeCapabilities                 `json:"capabilities"`
+		NetworkCandidates            []networking.Candidate           `json:"networkCandidates"`
+		ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
+		ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
+		GatewayHealthy               bool                             `json:"gatewayHealthy"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -539,7 +540,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, GatewayHealthy: input.GatewayHealthy}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moby/moby/api/types/mount"
 	"github.com/petauron/vastora/internal/gateway"
 )
 
@@ -195,7 +196,7 @@ func TestCaddyDriverAcceptsOnlyPrivateAdminEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if driver.AdminListen != "unix//run/vastora/caddy-admin.sock" || driver.AdminURL != "http://localhost" {
+	if driver.AdminListen != "unix//run/vastora/caddy-admin.sock" || driver.AdminSocketPath != "/run/vastora/caddy-admin.sock" || driver.AdminURL != "http://localhost" {
 		t.Fatalf("unexpected Unix Admin API configuration: %#v", driver)
 	}
 	for _, endpoint := range []string{"http://127.0.0.1:2019", "http://[::1]:2019"} {
@@ -207,5 +208,29 @@ func TestCaddyDriverAcceptsOnlyPrivateAdminEndpoints(t *testing.T) {
 		if _, err := NewCaddyGatewayDriver(endpoint); err == nil {
 			t.Fatalf("unsafe endpoint %q was accepted", endpoint)
 		}
+	}
+}
+
+func TestGatewayProvisionerSharesUnixAdminSocketWithHost(t *testing.T) {
+	settings, err := (DockerGatewayProvisioner{}).settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.AdminListen != "unix//run/vastora/caddy-admin.sock" || settings.AdminSocketPath != "/run/vastora/caddy-admin.sock" {
+		t.Fatalf("unexpected default Admin API settings: %#v", settings)
+	}
+	mounts := gatewayMounts(settings)
+	if len(mounts) != 3 || mounts[2].Type != mount.TypeBind || mounts[2].Source != "/run/vastora" || mounts[2].Target != "/run/vastora" {
+		t.Fatalf("Admin socket directory is not shared with the host: %#v", mounts)
+	}
+	loopback, err := (DockerGatewayProvisioner{AdminListen: "127.0.0.1:2019"}).settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loopback.AdminSocketPath != "" {
+		t.Fatalf("loopback Admin API unexpectedly configured a socket: %#v", loopback)
+	}
+	if _, err := (DockerGatewayProvisioner{AdminSocketPath: "relative.sock"}).settings(); err == nil {
+		t.Fatal("relative Admin socket path was accepted")
 	}
 }

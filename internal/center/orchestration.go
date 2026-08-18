@@ -71,18 +71,26 @@ func selectedCatalogService(manifest catalog.AppManifest, name string) (catalog.
 	return catalog.Service{}, fmt.Errorf("center: catalog service %q not found", name)
 }
 
-func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, result ApplicationTaskResult, now time.Time) error {
+func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
 	if operation == "uninstall" {
+		values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE application_id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', updated_at = ? WHERE service_id IN (SELECT id FROM services WHERE application_id = ?)`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1, last_error = '', updated_at = ? WHERE service_id IN (SELECT id FROM services WHERE application_id = ?) AND status <> 'stopped'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
-		return s.queueAffectedGateways(ctx, tx, applicationID, now)
+		if err := s.queueAffectedGateways(ctx, tx, applicationID, now); err != nil {
+			return err
+		}
+		*cleanups = append(*cleanups, values...)
+		return nil
 	}
 	var siteID string
 	if err := tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID); err != nil {
@@ -152,12 +160,17 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		if reportedServices[service.name] {
 			continue
 		}
+		values, err := s.servicePublicationCleanups(ctx, tx, service.id)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), service.id); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', updated_at = ? WHERE service_id = ?`, now.Format(time.RFC3339Nano), service.id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1, last_error = '', updated_at = ? WHERE service_id = ? AND status <> 'stopped'`, now.Format(time.RFC3339Nano), service.id); err != nil {
 			return err
 		}
+		*cleanups = append(*cleanups, values...)
 	}
 	return s.reconcileApplicationPublications(ctx, tx, applicationID, now)
 }

@@ -662,6 +662,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if len(heartbeat.ApplicationEndpoints) > 512 {
 		return errors.New("center: Agent reported too many application endpoints")
 	}
+	if !heartbeat.ApplicationEndpointsObserved && len(heartbeat.ApplicationEndpoints) != 0 {
+		return errors.New("center: Agent reported application endpoints without a complete observation")
+	}
 	seenAddresses := map[string]bool{}
 	for _, candidate := range heartbeat.NetworkCandidates {
 		ip := net.ParseIP(candidate.Address)
@@ -681,6 +684,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	defer tx.Rollback()
 	now := s.now().UTC()
+	publicationCleanups := []publicationCleanup{}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, now.Format(time.RFC3339Nano), id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
 	}
@@ -692,8 +696,10 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return fmt.Errorf("center: record Agent network candidate: %w", err)
 		}
 	}
-	if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now); err != nil {
-		return err
+	if heartbeat.ApplicationEndpointsObserved {
+		if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now, &publicationCleanups); err != nil {
+			return err
+		}
 	}
 	if heartbeat.Capabilities.Gateway && !heartbeat.GatewayHealthy {
 		result, err := tx.ExecContext(ctx, `UPDATE gateway_components SET generation = generation + 1, status = 'failed', lease_expires_at = '', last_error = 'gateway health check failed; queued for reconcile', updated_at = ? WHERE gateway_node_id = ? AND desired_status = 'running' AND status = 'ready'`, now.Format(time.RFC3339Nano), id)
@@ -711,7 +717,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			}
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = s.cleanupStoppedPublications(ctx, publicationCleanups)
+	return nil
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {

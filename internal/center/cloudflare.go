@@ -274,37 +274,43 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 
 func (s *Store) removeCloudflarePublication(ctx context.Context, id, kind, gatewayID, dnsRecordID string) error {
 	client, err := s.cloudflare(ctx)
+	cleanupErrors := []error{}
 	if err != nil {
-		return err
-	}
-	if dnsRecordID != "" {
+		cleanupErrors = append(cleanupErrors, err)
+	} else if dnsRecordID != "" {
 		if err := client.deleteDNSRecord(ctx, dnsRecordID); err != nil {
-			return err
+			cleanupErrors = append(cleanupErrors, err)
+		} else if _, err := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = '', updated_at = ? WHERE id = ?`, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+			cleanupErrors = append(cleanupErrors, err)
 		}
 	}
 	if kind != publicationCloudflare {
-		return nil
+		return errors.Join(cleanupErrors...)
 	}
-	var tunnelID string
-	if err := s.db.QueryRowContext(ctx, `SELECT tunnel_id FROM cloudflare_tunnels WHERE agent_id = ?`, gatewayID).Scan(&tunnelID); err != nil {
-		return err
-	}
-	ingress, err := s.cloudflareIngress(ctx, gatewayID)
-	if err != nil {
-		return err
-	}
-	if err := client.putTunnelConfiguration(ctx, tunnelID, ingress); err != nil {
-		return err
+	if err == nil {
+		var tunnelID string
+		if queryErr := s.db.QueryRowContext(ctx, `SELECT tunnel_id FROM cloudflare_tunnels WHERE agent_id = ?`, gatewayID).Scan(&tunnelID); queryErr != nil {
+			cleanupErrors = append(cleanupErrors, queryErr)
+		} else if ingress, ingressErr := s.cloudflareIngress(ctx, gatewayID); ingressErr != nil {
+			cleanupErrors = append(cleanupErrors, ingressErr)
+		} else if updateErr := client.putTunnelConfiguration(ctx, tunnelID, ingress); updateErr != nil {
+			cleanupErrors = append(cleanupErrors, updateErr)
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		cleanupErrors = append(cleanupErrors, err)
+		return errors.Join(cleanupErrors...)
 	}
 	defer tx.Rollback()
 	if err := s.queueTunnelState(ctx, tx, gatewayID, s.now().UTC()); err != nil {
-		return err
+		cleanupErrors = append(cleanupErrors, err)
+		return errors.Join(cleanupErrors...)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+	return errors.Join(cleanupErrors...)
 }
 
 func (s *Store) cloudflareIngress(ctx context.Context, agentID string) ([]TunnelTaskIngress, error) {

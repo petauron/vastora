@@ -631,6 +631,7 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 		return errors.New("center: stale task result")
 	}
 	now := s.now().UTC()
+	publicationCleanups := []publicationCleanup{}
 	if succeeded {
 		var taskResult ApplicationTaskResult
 		if len(rawResult) != 0 && string(rawResult) != "null" && json.Unmarshal(rawResult, &taskResult) != nil {
@@ -648,7 +649,7 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 			}
 		}
 		if succeeded {
-			if err := s.completeApplication(ctx, tx, taskID, applicationID, operation, taskResult, now); err != nil {
+			if err := s.completeApplication(ctx, tx, taskID, applicationID, operation, taskResult, now, &publicationCleanups); err != nil {
 				state = "failed"
 				taskError = err.Error()
 				succeeded = false
@@ -687,7 +688,11 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.apply", applicationTaskRevision, state, taskError); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_ = s.cleanupStoppedPublications(ctx, publicationCleanups)
+	return nil
 }
 
 func gatewayComponentTaskGeneration(taskID string) (int64, bool) {

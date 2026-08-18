@@ -107,13 +107,18 @@ func (c Client) Enroll(ctx context.Context, store *Store, centerURL, name, enrol
 }
 
 func (c Client) Heartbeat(ctx context.Context, store *Store) error {
+	_, err := c.heartbeat(ctx, store)
+	return err
+}
+
+func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 	connection, err := store.Connection(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	states, err := store.ListApplied(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	gatewayHealthy := false
 	if c.GatewayDriver != nil {
@@ -121,16 +126,20 @@ func (c Client) Heartbeat(ctx context.Context, store *Store) error {
 	}
 	candidates, err := networking.Discover(time.Now())
 	if err != nil {
-		return fmt.Errorf("agent: discover network addresses: %w", err)
+		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
 	}
 	endpoints, observeErr := observeThreeXUI(ctx, store)
-	if observeErr != nil && observeErr.Error() != "agent: application is not installed" {
-		return fmt.Errorf("agent: observe 3x-ui: %w", observeErr)
+	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
+	if errors.Is(observeErr, errApplicationNotInstalled) {
+		observeErr = nil
+	} else if observeErr != nil {
+		observeErr = fmt.Errorf("agent: observe 3x-ui: %w", observeErr)
 	}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/heartbeat", map[string]any{
+	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/heartbeat", map[string]any{
 		"version": Version, "appliedInstallations": len(states), "roles": c.Roles,
-		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "gatewayHealthy": gatewayHealthy,
+		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 	}, connection.Credential, nil)
+	return observeErr, err
 }
 
 func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointObservation, error) {
@@ -201,7 +210,10 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 		if gatewayErr := restoreGatewayState(requestContext, store, c.GatewayDriver); gatewayErr != nil && report != nil {
 			report(gatewayErr)
 		}
-		err := c.Heartbeat(requestContext, store)
+		observeErr, err := c.heartbeat(requestContext, store)
+		if observeErr != nil && report != nil {
+			report(observeErr)
+		}
 		if err != nil {
 			if report != nil {
 				report(err)

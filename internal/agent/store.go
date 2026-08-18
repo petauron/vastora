@@ -22,6 +22,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+var errApplicationNotInstalled = errors.New("agent: application is not installed")
+
 type Store struct {
 	db  *sql.DB
 	key []byte
@@ -286,7 +288,7 @@ func (s *Store) AppliedConfig(ctx context.Context, appKey string) (json.RawMessa
 	var config []byte
 	err := s.db.QueryRowContext(ctx, `SELECT config_json FROM applied_installations WHERE app_key = ? ORDER BY applied_at DESC LIMIT 1`, appKey).Scan(&config)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("agent: application is not installed")
+		return nil, errApplicationNotInstalled
 	}
 	if err != nil {
 		return nil, fmt.Errorf("agent: read applied application: %w", err)
@@ -300,7 +302,7 @@ func (s *Store) AppliedInstallation(ctx context.Context, appKey string) (Applied
 	var appliedAt string
 	err := s.db.QueryRowContext(ctx, `SELECT instance_id, app_key, version, config_json, sealed_secrets, service_address, config_hash, applied_at FROM applied_installations WHERE app_key = ? ORDER BY applied_at DESC LIMIT 1`, appKey).Scan(&value.InstanceID, &value.AppKey, &value.Version, &value.Config, &sealed, &value.ServiceAddress, &value.ConfigHash, &appliedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return AppliedInstallation{}, errors.New("agent: application is not installed")
+		return AppliedInstallation{}, errApplicationNotInstalled
 	}
 	if err != nil {
 		return AppliedInstallation{}, fmt.Errorf("agent: read applied application: %w", err)

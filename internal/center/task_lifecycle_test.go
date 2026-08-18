@@ -154,3 +154,62 @@ func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 		t.Fatalf("deployment list leaked one-time credentials: %s", encoded)
 	}
 }
+
+func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.41", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.41", LANAddress: "10.0.0.41", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)}); err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.41"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.41"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := NodeHeartbeat{Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-7", Protocol: "tcp", AppProtocol: "vless/tcp", Listen: "0.0.0.0", Port: 443, Enabled: true}}}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	services, err := store.ListServices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observedStatus := ""
+	for _, service := range services {
+		if service.Name == "inbound-7" {
+			observedStatus = service.Status
+		}
+	}
+	if observedStatus != "ready" {
+		t.Fatalf("initial endpoint observation was not stored: %#v", services)
+	}
+	heartbeat.ApplicationEndpoints = nil
+	heartbeat.ApplicationEndpointsObserved = false
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	services, err = store.ListServices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range services {
+		if service.Name == "inbound-7" && service.Status != "ready" {
+			t.Fatalf("incomplete observation stopped the last known endpoint: %#v", service)
+		}
+	}
+	heartbeat.ApplicationEndpointsObserved = true
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	services, err = store.ListServices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range services {
+		if service.Name == "inbound-7" && service.Status != "stopped" {
+			t.Fatalf("complete empty observation did not stop the disappeared endpoint: %#v", service)
+		}
+	}
+}

@@ -442,7 +442,6 @@ func runAgent(arguments []string) error {
 		capabilitiesValue := flags.String("capabilities", "docker", "comma-separated implemented capabilities: docker,gateway")
 		caddyAdmin := flags.String("caddy-admin", "unix:///run/vastora/caddy-admin.sock", "private Caddy Admin API endpoint for gateway nodes")
 		caddyImage := flags.String("caddy-image", "docker.io/library/caddy:2.11.4@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d", "Caddy image installed by the Agent when this node is selected as a gateway")
-		gatewayAdminVolume := flags.String("gateway-admin-volume", "vastora-gateway-admin", "Docker volume shared only by the Agent and managed Caddy admin socket")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -482,12 +481,13 @@ func runAgent(arguments []string) error {
 			client.Executor = agent.DockerExecutor{}
 		}
 		if capabilities.Gateway {
-			client.GatewayDriver, err = agent.NewCaddyGatewayDriver(*caddyAdmin)
+			gatewayDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
 			if err != nil {
 				return err
 			}
+			client.GatewayDriver = gatewayDriver
 			client.GatewayProvisioner = agent.DockerGatewayProvisioner{
-				Image: *caddyImage, AdminVolume: *gatewayAdminVolume,
+				Image: *caddyImage, AdminListen: gatewayDriver.AdminListen, AdminSocketPath: gatewayDriver.AdminSocketPath,
 			}
 		}
 		if capabilities.Tunnel {
