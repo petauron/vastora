@@ -4,11 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,9 +96,12 @@ func (installer DockerHeadscaleInstaller) InstallHeadscale(ctx context.Context, 
 	if err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL)); err != nil {
 		return deployapi.HeadscaleInstallResult{}, err
 	}
-	for _, healthURL := range []string{centerURL + "/healthz", headscaleURL + "/health"} {
-		if err := waitForURL(ctx, settings.HTTPClient, healthURL, 3*time.Minute); err != nil {
-			return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: HTTPS gateway did not make %s reachable: %w", healthURL, err)
+	for _, health := range []struct {
+		endpoint string
+		path     string
+	}{{centerURL, "/healthz"}, {headscaleURL, "/health"}} {
+		if err := waitForLocalGateway(ctx, health.endpoint, health.path, 3*time.Minute); err != nil {
+			return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err)
 		}
 	}
 	return deployapi.HeadscaleInstallResult{Endpoint: headscaleURL, APIKey: apiKey}, nil
@@ -351,6 +356,51 @@ func waitForURL(ctx context.Context, httpClient *http.Client, target string, tim
 			return err
 		}
 		response, err := httpClient.Do(request)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+			_ = response.Body.Close()
+			if response.StatusCode >= 200 && response.StatusCode < 300 {
+				return nil
+			}
+			lastErr = fmt.Errorf("HTTP %d", response.StatusCode)
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("timeout")
+	}
+	return lastErr
+}
+
+func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, timeout time.Duration) error {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return err
+	}
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:8443")
+		},
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: parsed.Hostname()},
+	}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 8 * time.Second}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://127.0.0.1:8443"+healthPath, nil)
+		if err != nil {
+			return err
+		}
+		request.Host = parsed.Host
+		response, err := client.Do(request)
 		if err == nil {
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
 			_ = response.Body.Close()
