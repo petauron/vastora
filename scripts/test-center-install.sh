@@ -17,6 +17,7 @@ image="ghcr.io/petauron/vastora-center@sha256:$digest"
 archive="$temporary_dir/output/vastora-center-install.tar.gz"
 test -f "$archive"
 test -f "$archive.sha256"
+test "$(tar -xOzf "$archive" ./release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')" = "0.1.0-test"
 expected_digest="$(awk 'NR == 1 {print $1}' "$archive.sha256")"
 test "$(awk 'NR == 1 {print $2}' "$archive.sha256")" = "vastora-center-install.tar.gz"
 if command -v sha256sum >/dev/null 2>&1; then

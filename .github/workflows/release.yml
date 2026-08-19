@@ -175,5 +175,5 @@ jobs:
           sh -n "$temporary_dir/install.sh"
           cd "$temporary_dir"
           sha256sum --check vastora-center-install.tar.gz.sha256
-          actual_version="$(tar -xOzf vastora-center-install.tar.gz release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')"
+          actual_version="$(tar -xOzf vastora-center-install.tar.gz ./release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')"
           test "$actual_version" = "$EXPECTED_VERSION"
