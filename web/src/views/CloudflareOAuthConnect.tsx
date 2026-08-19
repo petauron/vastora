@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2Icon, CloudIcon, ExternalLinkIcon } from "lucide-react";
+import { CheckCircle2Icon, CircleAlertIcon, CloudIcon, ExternalLinkIcon } from "lucide-react";
 import { api } from "../api";
 import type { CloudflareZone } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -84,14 +84,28 @@ export function CloudflareOAuthConnect({ available, connected, language, zoneNam
     }
   };
 
-  if (!available) return <Alert><CloudIcon /><AlertTitle>{copy(language, "此版本未启用 Cloudflare 登录", "Cloudflare login is unavailable in this build")}</AlertTitle><AlertDescription>{copy(language, "请先升级 Center。", "Upgrade Center first.")}</AlertDescription></Alert>;
-  return <div className="flex flex-col gap-4">
-    {connected && stage === "idle" ? <Alert><CheckCircle2Icon /><AlertTitle>{copy(language, "Cloudflare 已连接", "Cloudflare connected")}</AlertTitle><AlertDescription>{zoneName ? copy(language, `当前域名：${zoneName}`, `Current zone: ${zoneName}`) : copy(language, "权限已安全保存。", "Authorization is stored securely.")}</AlertDescription></Alert> : null}
-    {stage === "waiting" ? <Alert><Spinner /><AlertTitle>{copy(language, "等待 Cloudflare 授权", "Waiting for Cloudflare authorization")}</AlertTitle><AlertDescription>{copy(language, "请在新窗口确认账号和权限。本页会自动继续。", "Confirm the account and permissions in the new window. This page continues automatically.")}</AlertDescription></Alert> : null}
-    {stage === "selecting" || stage === "saving" ? <Field><FieldLabel htmlFor="cloudflare-zone">{copy(language, "管理哪个域名？", "Which zone should Vastora manage?")}</FieldLabel><NativeSelect disabled={stage === "saving"} id="cloudflare-zone" onChange={(event) => setZoneID(event.target.value)} value={zoneID}>{zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}{zone.accountName ? ` — ${zone.accountName}` : ""}</option>)}</NativeSelect><FieldDescription>{copy(language, "Vastora 只会管理你明确创建的服务记录。", "Vastora only manages records you explicitly create for services.")}</FieldDescription></Field> : null}
-    {error ? <FieldError role="alert">{error}</FieldError> : null}
-    <div className="flex justify-end gap-2">
-      {stage === "selecting" || stage === "saving" ? <Button disabled={stage === "saving"} onClick={() => void save()} type="button">{stage === "saving" ? <Spinner data-icon="inline-start" /> : null}{copy(language, "确认域名", "Use this zone")}</Button> : <Button disabled={stage === "opening" || stage === "waiting"} onClick={() => void connect()} type="button" variant={connected ? "outline" : "default"}>{stage === "opening" ? <Spinner data-icon="inline-start" /> : <ExternalLinkIcon data-icon="inline-start" />}{connected ? copy(language, "重新授权", "Reconnect") : copy(language, "使用 Cloudflare 登录", "Sign in with Cloudflare")}</Button>}
+  if (!available) return <Alert><CloudIcon /><AlertTitle>{copy(language, "需要更新 Center", "Center update required")}</AlertTitle><AlertDescription>{copy(language, "当前版本还不能自动连接 Cloudflare。升级后可以直接登录，无需复制 Token。", "This version cannot connect Cloudflare automatically. Upgrade to sign in without copying a token.")}</AlertDescription></Alert>;
+
+  const busy = stage === "opening" || stage === "waiting";
+  return <section aria-label={copy(language, "连接 Cloudflare", "Connect Cloudflare")} className="rounded-2xl border bg-background p-4 shadow-xs sm:p-5">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400"><CloudIcon aria-hidden="true" className="size-6" /></span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{copy(language, "连接 Cloudflare", "Connect Cloudflare")}</h3><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${connected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>{connected ? copy(language, "已连接", "Connected") : copy(language, "尚未连接", "Not connected")}</span></div>
+          <p className="mt-1 text-sm leading-5 text-muted-foreground">{connected && zoneName ? copy(language, `已选择 ${zoneName}。Vastora 只管理自己创建的 DNS 记录。`, `${zoneName} selected. Vastora only manages DNS records it creates.`) : copy(language, "仅用于创建 Vastora 需要的 DNS 记录，不会更改其他域名。", "Only creates DNS records Vastora needs and does not change other domains.")}</p>
+        </div>
+      </div>
+      {stage !== "selecting" && stage !== "saving" ? <Button className="min-h-11 shrink-0 sm:self-center" disabled={busy} onClick={() => void connect()} type="button" variant={connected ? "outline" : "default"}>{stage === "opening" ? <Spinner data-icon="inline-start" /> : <ExternalLinkIcon aria-hidden="true" data-icon="inline-start" />}{busy ? copy(language, "等待授权…", "Waiting…") : connected ? copy(language, "重新连接", "Reconnect") : copy(language, "登录 Cloudflare", "Sign in to Cloudflare")}</Button> : null}
     </div>
-  </div>;
+    {stage === "waiting" ? <Alert className="mt-4"><Spinner /><AlertTitle>{copy(language, "在新窗口完成登录", "Finish signing in in the new window")}</AlertTitle><AlertDescription>{copy(language, "授权完成后，本页会自动让你选择域名。", "After authorization, this page will automatically ask you to choose a domain.")}</AlertDescription></Alert> : null}
+    {stage === "selecting" || stage === "saving" ? <div className="mt-4 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-end"><Field className="flex-1"><FieldLabel htmlFor="cloudflare-zone">{copy(language, "选择用于 Vastora 的域名", "Choose a domain for Vastora")}</FieldLabel><NativeSelect disabled={stage === "saving"} id="cloudflare-zone" onChange={(event) => setZoneID(event.target.value)} value={zoneID}>{zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}{zone.accountName ? ` — ${zone.accountName}` : ""}</option>)}</NativeSelect><FieldDescription>{copy(language, "后续仍可以在网络设置中更换。", "You can change this later in Network settings.")}</FieldDescription></Field><Button className="min-h-11" disabled={stage === "saving"} onClick={() => void save()} type="button">{stage === "saving" ? <Spinner data-icon="inline-start" /> : <CheckCircle2Icon aria-hidden="true" data-icon="inline-start" />}{copy(language, "使用这个域名", "Use this domain")}</Button></div> : null}
+    {error ? <Alert className="mt-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{friendlyOAuthError(language, error)}</AlertTitle><AlertDescription><p>{copy(language, "没有保存任何授权，也没有修改 DNS。请重试。", "No authorization was saved and no DNS was changed. Try again.")}</p><details className="mt-2"><summary className="cursor-pointer text-xs font-medium">{copy(language, "查看技术详情", "Show technical details")}</summary><p className="mt-2 break-words font-mono text-xs">{error}</p></details></AlertDescription></Alert> : null}
+  </section>;
+}
+
+function friendlyOAuthError(language: Language, error: string) {
+  const scopeMismatch = /scope.+(invalid|unknown|malformed)|not allowed to request scope/i.test(error);
+  if (scopeMismatch) return copy(language, "Cloudflare 授权配置不匹配，请更新 Center 后重试", "Cloudflare authorization does not match this Center version. Update Center and try again");
+  return copy(language, "Cloudflare 登录没有完成", "Cloudflare sign-in did not finish");
 }
