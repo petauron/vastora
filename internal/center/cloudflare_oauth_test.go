@@ -46,7 +46,7 @@ func TestCloudflareOAuthStartUsesPKCEWithoutExposingSecrets(t *testing.T) {
 	if query.Get("state") != session.State || query.Get("code_challenge") != oauthSHA256(session.PKCEVerifier) || query.Get("code_challenge_method") != "S256" {
 		t.Fatalf("OAuth request did not bind state and PKCE: %s", started.AuthorizationURL)
 	}
-	if query.Get("scope") != "account-settings.read zone.read dns.write argotunnel.write offline_access" {
+	if query.Get("scope") != "zone.read dns.write argotunnel.write offline_access" {
 		t.Fatalf("OAuth request used unexpected scopes: %q", query.Get("scope"))
 	}
 	for _, secret := range []string{session.PollSecret, session.PKCEVerifier} {

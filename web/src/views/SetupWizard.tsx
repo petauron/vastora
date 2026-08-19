@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { CheckIcon, ChevronDownIcon, Globe2Icon, HouseIcon, LanguagesIcon, MapPinIcon, NetworkIcon, Settings2Icon, ShieldCheckIcon, type LucideIcon } from "lucide-react";
 import { api } from "../api";
 import type { AgentConnectionMode, CloudflareZone, InitialSetupInput, NetworkCandidate } from "../types";
@@ -33,24 +33,44 @@ const connectionOptions: Array<{ mode: AgentConnectionMode; icon: LucideIcon; zh
   { mode: "public", icon: Globe2Icon, zh: "已有公网地址", en: "Existing public address", descriptionZh: "Center 已经有域名和 HTTPS。", descriptionEn: "Center already has a hostname and HTTPS." }
 ];
 
+const setupDraftKey = "vastora.initial-setup.v1";
+
+type SetupDraft = {
+  step: 1 | 2;
+  name: string;
+  timezone: string;
+  domainSuffix: string;
+  mode: AgentConnectionMode;
+  agentConnectUrl: string;
+  headscaleMode: "builtin" | "external";
+  headscaleUrl: string;
+  dnsMode: "cloudflare" | "manual";
+  publicAddress: string;
+};
+
 export function SetupWizard(props: SetupWizardProps) {
   const { language, suggestedAgentConnectUrl, builtinHeadscaleAvailable, cloudflareOAuthAvailable, publicAddressCandidates, onLanguage, onComplete } = props;
-  const [step, setStep] = useState(1);
-  const [name, setName] = useState("");
-  const [timezone, setTimezone] = useState(browserTimezone);
-  const [domainSuffix, setDomainSuffix] = useState("");
+  const [draft] = useState(readSetupDraft);
+  const [step, setStep] = useState(draft.step ?? 1);
+  const [name, setName] = useState(draft.name ?? "");
+  const [timezone, setTimezone] = useState(draft.timezone ?? browserTimezone);
+  const [domainSuffix, setDomainSuffix] = useState(draft.domainSuffix ?? "");
   const [code] = useState(() => `site-${crypto.randomUUID().slice(0, 8)}`);
-  const [mode, setMode] = useState<AgentConnectionMode>("lan");
-  const [agentConnectUrl, setAgentConnectUrl] = useState(suggestedAgentConnectUrl);
-  const [headscaleMode, setHeadscaleMode] = useState<"builtin" | "external">("builtin");
-  const [headscaleUrl, setHeadscaleUrl] = useState("");
+  const [mode, setMode] = useState<AgentConnectionMode>(draft.mode ?? "lan");
+  const [agentConnectUrl, setAgentConnectUrl] = useState(draft.agentConnectUrl ?? suggestedAgentConnectUrl);
+  const [headscaleMode, setHeadscaleMode] = useState<"builtin" | "external">(draft.headscaleMode ?? "builtin");
+  const [headscaleUrl, setHeadscaleUrl] = useState(draft.headscaleUrl ?? "");
   const [headscaleApiKey, setHeadscaleApiKey] = useState("");
-  const [dnsMode, setDNSMode] = useState<"cloudflare" | "manual">(cloudflareOAuthAvailable && publicAddressCandidates.length > 0 ? "cloudflare" : "manual");
+  const [dnsMode, setDNSMode] = useState<"cloudflare" | "manual">(draft.dnsMode ?? (cloudflareOAuthAvailable && publicAddressCandidates.length > 0 ? "cloudflare" : "manual"));
   const [cloudflareConfigured, setCloudflareConfigured] = useState(props.cloudflareConfigured);
   const [cloudflareZone, setCloudflareZone] = useState(props.cloudflareZone ?? "");
-  const [publicAddress, setPublicAddress] = useState(publicAddressCandidates[0]?.address ?? "");
+  const [publicAddress, setPublicAddress] = useState(draft.publicAddress ?? publicAddressCandidates[0]?.address ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    writeSetupDraft({ step: step === 1 ? 1 : 2, name, timezone, domainSuffix, mode, agentConnectUrl, headscaleMode, headscaleUrl, dnsMode, publicAddress });
+  }, [step, name, timezone, domainSuffix, mode, agentConnectUrl, headscaleMode, headscaleUrl, dnsMode, publicAddress]);
 
   const nextLocation = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); setError(""); setStep(2); };
   const nextNetwork = (event: FormEvent<HTMLFormElement>) => {
@@ -71,6 +91,7 @@ export function SetupWizard(props: SetupWizardProps) {
     try {
       if (mode === "headscale" && headscaleMode === "builtin" && dnsMode === "cloudflare") await api.configureSetupDNS({ centerUrl: agentConnectUrl.replace(/\/$/, ""), headscaleUrl: headscaleUrl.replace(/\/$/, ""), publicAddress });
       await onComplete(input);
+      clearSetupDraft();
     } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Request failed"); } finally { setBusy(false); }
   };
   const connectedCloudflare = (zone: CloudflareZone) => {
@@ -136,3 +157,43 @@ function SetupProgress({ language, step }: { language: Language; step: number })
 function Summary({ icon: Icon, label, value, wide }: { icon: LucideIcon; label: string; value: string; wide?: boolean }) { return <div className={wide ? "sm:col-span-2" : ""}><dt className="flex items-center gap-2 text-muted-foreground"><Icon aria-hidden="true" className="size-4" />{label}</dt><dd className="mt-1 break-words font-medium">{value}</dd></div>; }
 function TimezoneOptions() { return <datalist id="vastora-timezones"><option value="UTC" /><option value="Asia/Shanghai" /><option value="Asia/Singapore" /><option value="Asia/Tokyo" /><option value="Europe/London" /><option value="America/Los_Angeles" /><option value="America/New_York" /></datalist>; }
 function validHeadscaleURL(value: string) { try { const parsed = new URL(value); return parsed.protocol === "https:" && parsed.username === "" && parsed.password === "" && parsed.pathname === "/" && parsed.search === "" && parsed.hash === ""; } catch { return false; } }
+
+function readSetupDraft(): Partial<SetupDraft> {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(setupDraftKey) ?? "null") as Partial<SetupDraft> | null;
+    if (!parsed || typeof parsed !== "object") return {};
+    const mode = connectionOptions.some((option) => option.mode === parsed.mode) ? parsed.mode : undefined;
+    const headscaleMode = parsed.headscaleMode === "builtin" || parsed.headscaleMode === "external" ? parsed.headscaleMode : undefined;
+    const dnsMode = parsed.dnsMode === "cloudflare" || parsed.dnsMode === "manual" ? parsed.dnsMode : undefined;
+    return {
+      step: parsed.step === 2 ? 2 : 1,
+      name: typeof parsed.name === "string" ? parsed.name : undefined,
+      timezone: typeof parsed.timezone === "string" ? parsed.timezone : undefined,
+      domainSuffix: typeof parsed.domainSuffix === "string" ? parsed.domainSuffix : undefined,
+      mode,
+      agentConnectUrl: typeof parsed.agentConnectUrl === "string" ? parsed.agentConnectUrl : undefined,
+      headscaleMode,
+      headscaleUrl: typeof parsed.headscaleUrl === "string" ? parsed.headscaleUrl : undefined,
+      dnsMode,
+      publicAddress: typeof parsed.publicAddress === "string" ? parsed.publicAddress : undefined
+    };
+  } catch {
+    return {};
+  }
+}
+
+function writeSetupDraft(draft: SetupDraft) {
+  try {
+    window.sessionStorage.setItem(setupDraftKey, JSON.stringify(draft));
+  } catch {
+    // Setup still works when browser storage is unavailable.
+  }
+}
+
+function clearSetupDraft() {
+  try {
+    window.sessionStorage.removeItem(setupDraftKey);
+  } catch {
+    // The completed setup does not depend on browser storage cleanup.
+  }
+}
