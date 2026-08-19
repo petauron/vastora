@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.7](https://github.com/petauron/vastora/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) (2026-08-19)
+
+
+### Features
+
+* connect Cloudflare with OAuth ([#39](https://github.com/petauron/vastora/issues/39)) ([bf4c3ba](https://github.com/petauron/vastora/commit/bf4c3bac6de08fdfb12417da248c770e56f44704))
+
 ## [0.1.0-alpha.6](https://github.com/petauron/vastora/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) (2026-08-19)
 
 
