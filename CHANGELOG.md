@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.10](https://github.com/petauron/vastora/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) (2026-08-19)
+
+
+### Bug Fixes
+
+* use standard HTTPS for bundled gateway ([#45](https://github.com/petauron/vastora/issues/45)) ([0824a05](https://github.com/petauron/vastora/commit/0824a05ca73c8584ab9eaa7ff123ac7e568b9c63))
+
 ## [0.1.0-alpha.9](https://github.com/petauron/vastora/compare/v0.1.0-alpha.8...v0.1.0-alpha.9) (2026-08-19)
 
 
