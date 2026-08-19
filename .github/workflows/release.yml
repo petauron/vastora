@@ -47,7 +47,14 @@ jobs:
             echo "invalid release tag: $RELEASE_TAG" >&2
             exit 1
           fi
-          release_json="$(gh api "/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          release_json="$(
+            gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq -c --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | first'
+          )"
+          if [ "$release_json" = 'null' ]; then
+            echo "draft release $RELEASE_TAG was not found" >&2
+            exit 1
+          fi
           if [ "$(printf '%s' "$release_json" | jq -r '.draft')" != 'true' ]; then
             echo "release $RELEASE_TAG is not an existing draft" >&2
             exit 1
