@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.8](https://github.com/petauron/vastora/compare/v0.1.0-alpha.7...v0.1.0-alpha.8) (2026-08-19)
+
+
+### Bug Fixes
+
+* correct Cloudflare OAuth and simplify setup ([#41](https://github.com/petauron/vastora/issues/41)) ([6748daf](https://github.com/petauron/vastora/commit/6748daf9d651b9fe051b6f7d79c7354f7db9fa03))
+
 ## [0.1.0-alpha.7](https://github.com/petauron/vastora/compare/v0.1.0-alpha.6...v0.1.0-alpha.7) (2026-08-19)
 
 
