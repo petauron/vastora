@@ -204,12 +204,14 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 	if interval < time.Second {
 		interval = 15 * time.Second
 	}
+	restoreContext, restoreCancel := context.WithTimeout(ctx, 5*time.Minute)
+	if gatewayErr := restoreGatewayState(restoreContext, store, c.GatewayDriver); gatewayErr != nil && report != nil {
+		report(gatewayErr)
+	}
+	restoreCancel()
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		if gatewayErr := restoreGatewayState(requestContext, store, c.GatewayDriver); gatewayErr != nil && report != nil {
-			report(gatewayErr)
-		}
 		observeErr, err := c.heartbeat(requestContext, store)
 		if observeErr != nil && report != nil {
 			report(observeErr)

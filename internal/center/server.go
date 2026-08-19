@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/logout", s.requireAuth(true, s.handleLogout))
 	mux.HandleFunc("PUT /api/v1/auth/password", s.requireAuth(true, s.handleChangePassword))
 	mux.HandleFunc("GET /api/v1/status", s.requireAuth(false, s.handleStatus))
+	mux.HandleFunc("GET /api/v1/dashboard", s.requireAuth(false, s.handleDashboard))
 	mux.HandleFunc("GET /api/v1/diagnostics", s.requireAuth(false, s.handleDiagnostics))
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
@@ -173,7 +174,16 @@ func (s *Server) handleLogin(writer http.ResponseWriter, request *http.Request) 
 	writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": true})
 }
 
-func (s *Server) handleLogout(writer http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleLogout(writer http.ResponseWriter, request *http.Request) {
+	cookie, err := request.Cookie("vastora_session")
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, errors.New("center: authentication required"))
+		return
+	}
+	if err := s.store.Logout(request.Context(), cookie.Value); err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
 	s.clearSessionCookies(writer)
 	writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": false})
 }

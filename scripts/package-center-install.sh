@@ -45,7 +45,7 @@ case "$image" in
   *[[:space:]]*) echo "Center image cannot contain whitespace." >&2; exit 2 ;;
 esac
 
-for required in install mktemp tar; do
+for required in awk basename install mktemp tar; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
@@ -68,6 +68,7 @@ trap cleanup EXIT HUP INT TERM
 
 install -d -m 0755 "$temporary_dir/headscale"
 install -m 0755 "$project_dir/deploy/center/setup.sh" "$temporary_dir/setup.sh"
+install -m 0755 "$project_dir/deploy/center/upgrade.sh" "$temporary_dir/upgrade.sh"
 install -m 0644 "$project_dir/deploy/center/compose.yaml" "$temporary_dir/compose.yaml"
 install -m 0644 "$project_dir/deploy/center/headscale/config.yaml" "$temporary_dir/headscale/config.yaml"
 install -m 0644 "$project_dir/deploy/center/headscale/policy.hujson" "$temporary_dir/headscale/policy.hujson"
@@ -81,6 +82,7 @@ install -d -m 0755 "$output_dir"
 archive="$output_dir/vastora-center-install.tar.gz"
 checksum="$archive.sha256"
 tar -czf "$archive" -C "$temporary_dir" .
-$digest_command "$archive" > "$checksum"
+archive_digest="$($digest_command "$archive" | awk 'NR == 1 {print $1}')"
+printf '%s  %s\n' "$archive_digest" "$(basename "$archive")" > "$checksum"
 echo "Created $archive"
 echo "Created $checksum"

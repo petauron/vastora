@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { DashboardData, Mutate } from "../App";
 import type { AgentView, Application, AppView, Deployment, Publication, PublicationKind, Service } from "../types";
 import type { Language } from "../translations";
+import { canInstall, gatewaysForKind, installBlocker, isActiveApplication, latestOperations, localized, operationLabel, publicationKindLabel, publicationOptions } from "./appAccess";
 import { HighPrivilegeBadge, PageHeading, StateBadge, copy } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -165,68 +166,4 @@ function UninstallSheet({ application, app, language, onClose, onSubmit }: { app
   return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(application)}><SheetContent><SheetHeader><SheetTitle>{copy(language, `卸载 ${app ? localized(app, language, "name") : application?.name ?? ""}`, `Uninstall ${app ? localized(app, language, "name") : application?.name ?? ""}`)}</SheetTitle><SheetDescription>{copy(language, "卸载会停止应用并移除所有访问入口。默认保留持久数据，便于以后重新安装。", "Uninstalling stops the app and removes all access points. Persistent data is kept by default for a later reinstall.")}</SheetDescription></SheetHeader><div className="px-4"><Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="delete-data">{copy(language, "同时永久删除应用数据", "Permanently delete app data too")}</FieldLabel><FieldDescription>{copy(language, "此操作不可恢复，包括配置、账号和历史数据。", "This cannot be undone and includes configuration, accounts, and history.")}</FieldDescription></div><Switch checked={deleteData} id="delete-data" onCheckedChange={setDeleteData} /></Field>{deleteData ? <Alert className="mt-4" variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, "应用数据将永久删除", "App data will be permanently deleted")}</AlertTitle></Alert> : null}{error ? <FieldError className="mt-3">{error}</FieldError> : null}</div><SheetFooter><Button onClick={onClose} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void submit()} variant={deleteData ? "destructive" : "default"}>{busy ? <Spinner data-icon="inline-start" /> : null}{deleteData ? copy(language, "卸载并删除数据", "Uninstall and delete data") : copy(language, "卸载并保留数据", "Uninstall and keep data")}</Button></SheetFooter></SheetContent></Sheet>;
 }
 
-function publicationOptions(data: DashboardData, service: Service | null, language: Language) {
-  if (!service) return [];
-  const web = service.protocol === "http" || service.protocol === "https";
-  const cloudflare = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
-  const lan = gatewaysForKind(data, service, "lan_gateway").length > 0;
-  const headscale = gatewaysForKind(data, service, "headscale_gateway").length > 0;
-  const direct = gatewaysForKind(data, service, "public_direct").length > 0;
-  const shared443 = gatewaysForKind(data, service, "public_shared_443").length > 0;
-  const tunnel = gatewaysForKind(data, service, "cloudflare_tunnel").length > 0 && cloudflare;
-  const options: Array<{ kind: PublicationKind; enabled: boolean; reason: string }> = [];
-  if (web) {
-    options.push({ kind: "lan_gateway", enabled: lan, reason: lan ? "HTTP · LAN Gateway" : copy(language, "没有可用的局域网 Gateway", "No LAN Gateway is available") });
-    options.push({ kind: "headscale_gateway", enabled: headscale, reason: headscale ? "HTTP · Headscale Gateway" : copy(language, "没有可用的 Headscale Gateway", "No Headscale Gateway is available") });
-    options.push({ kind: "public_direct", enabled: direct, reason: direct ? "HTTPS · Public Gateway" : copy(language, "没有已批准的公网 Gateway", "No approved public Gateway is available") });
-    options.push({ kind: "cloudflare_tunnel", enabled: tunnel, reason: tunnel ? "HTTPS · Cloudflare Tunnel" : copy(language, "请先连接 Cloudflare 并启用 Tunnel 节点", "Connect Cloudflare and enable a Tunnel node first") });
-  } else {
-    options.push({ kind: "public_direct", enabled: direct, reason: direct ? copy(language, "原始端口 · 仅应用节点", "Direct raw port · app node only") : copy(language, "应用节点没有已批准的公网地址", "The app node has no approved public address") });
-    if (service.protocol === "tcp") options.push({ kind: "public_shared_443", enabled: shared443, reason: shared443 ? copy(language, "与 Web 共用公网 443 · 自动启用 HAProxy", "Share public 443 with Web · enables HAProxy automatically") : copy(language, "没有可用的公网 Gateway", "No public Gateway is available") });
-  }
-  return options;
-}
-
-function gatewaysForKind(data: DashboardData, service: Service, kind: PublicationKind): AgentView[] {
-  const app = data.applications.find((value) => value.id === service.applicationId);
-  const site = data.sites.find((value) => value.id === service.siteId);
-  return data.agents.filter((agent) => {
-    if (!agent.connected || agent.siteId !== service.siteId || !agent.networkProfile) return false;
-    if (kind === "cloudflare_tunnel") return agent.capabilities.tunnel;
-    if (kind === "public_direct" && service.protocol !== "http" && service.protocol !== "https") return agent.id === app?.nodeId && agent.networkProfile.directPublic && agent.networkProfile.enabledKinds.includes("public");
-    if (!agent.capabilities.gateway || !site?.gatewayNodes.includes(agent.id)) return false;
-    if (kind === "lan_gateway") return agent.networkProfile.enabledKinds.includes("lan");
-    if (kind === "headscale_gateway") return agent.networkProfile.enabledKinds.includes("headscale");
-    return agent.networkProfile.directPublic && agent.networkProfile.enabledKinds.includes("public");
-  });
-}
-
-function canInstall(agent: AgentView) { return agent.connected && agent.capabilities.docker && Boolean(agent.networkProfile); }
-function isActiveApplication(status: string) { return ["pending", "deploying", "running"].includes(status); }
-function latestOperations(deployments: Deployment[]) {
-  const seen = new Set<string>();
-  return deployments.filter((deployment) => {
-    const key = `${deployment.agentId}\n${deployment.appKey}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-function operationLabel(language: Language, operation: Deployment["operation"]) {
-  const labels: Record<Deployment["operation"], [string, string]> = { install: ["安装", "Install"], upgrade: ["升级", "Upgrade"], uninstall: ["卸载", "Uninstall"] };
-  return copy(language, ...labels[operation]);
-}
-function installBlocker(data: DashboardData, appKey: string, language: Language) {
-  if (data.agents.length === 0) return copy(language, "先添加一台节点，再安装应用。", "Add a node before installing apps.");
-  if (!data.agents.some((agent) => agent.connected)) return copy(language, "没有在线节点。请检查 Agent 服务。", "No node is online. Check the Agent service.");
-  if (!data.agents.some((agent) => agent.connected && agent.capabilities.docker)) return copy(language, "在线节点没有 Docker 应用能力。", "Online nodes do not provide Docker app capability.");
-  if (!data.agents.some((agent) => agent.connected && agent.capabilities.docker && agent.networkProfile)) return copy(language, "请先在“网络”页面确认节点地址。", "Confirm a node address on the Network page first.");
-  if (data.agents.every((agent) => !canInstall(agent) || data.applications.some((application) => application.nodeId === agent.id && application.appKey === appKey && isActiveApplication(application.status)))) return copy(language, "所有可用节点都已安装此应用。", "This app is already installed on every eligible node.");
-  return copy(language, "当前没有符合条件的节点。", "No eligible node is currently available.");
-}
-function localized(app: AppView, language: Language, field: "name" | "description") { return app.app[field][language] || app.app[field].en; }
-function publicationKindLabel(language: Language, kind: PublicationKind) {
-  const labels: Record<PublicationKind, [string, string]> = { lan_gateway: ["局域网", "Local network"], headscale_gateway: ["Headscale 私网", "Headscale private network"], public_direct: ["公网直连", "Direct public"], public_shared_443: ["共享 443", "Shared 443"], cloudflare_tunnel: ["Cloudflare Tunnel", "Cloudflare Tunnel"] };
-  return copy(language, ...labels[kind]);
-}
 function CopyButton({ language, value }: { language: Language; value: string }) { return <Button aria-label={copy(language, "复制", "Copy")} onClick={() => void navigator.clipboard.writeText(value)} size="icon-sm" variant="ghost"><CopyIcon /></Button>; }

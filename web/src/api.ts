@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, DashboardStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
+import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, DashboardData, DashboardStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -69,6 +69,7 @@ export const api = {
   logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST", body: "{}" }),
   changePassword: (currentPassword: string, newPassword: string) => request<{ changed: boolean }>("/api/v1/auth/password", { method: "PUT", body: JSON.stringify({ currentPassword, newPassword }) }),
   status: () => request<DashboardStatus>("/api/v1/status"),
+  dashboard: () => request<DashboardData>("/api/v1/dashboard"),
   diagnostics: () => request<Diagnostics>("/api/v1/diagnostics"),
   downloadDiagnostics: () => download("/api/v1/diagnostics", `vastora-diagnostics-${new Date().toISOString().slice(0, 10)}.json`),
   downloadBackup: (password: string) => download("/api/v1/backups", "vastora-center.vastora", { method: "POST", body: JSON.stringify({ password }) }),

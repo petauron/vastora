@@ -119,3 +119,19 @@ jobs:
             dist/vastora-center-install.tar.gz.sha256 \
             --clobber
           gh release edit "$RELEASE_TAG" --draft=false
+
+      - name: Verify public installer endpoint
+        run: |
+          temporary_dir="$(mktemp -d)"
+          curl --retry 5 --retry-all-errors -fsSL \
+            https://vastora.petauron.com/install.sh \
+            -o "$temporary_dir/install.sh"
+          curl --retry 5 --retry-all-errors -fsSL \
+            https://vastora.petauron.com/vastora-center-install.tar.gz \
+            -o "$temporary_dir/vastora-center-install.tar.gz"
+          curl --retry 5 --retry-all-errors -fsSL \
+            https://vastora.petauron.com/vastora-center-install.tar.gz.sha256 \
+            -o "$temporary_dir/vastora-center-install.tar.gz.sha256"
+          sh -n "$temporary_dir/install.sh"
+          cd "$temporary_dir"
+          sha256sum --check vastora-center-install.tar.gz.sha256

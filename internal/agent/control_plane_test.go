@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
+
+	"github.com/petauron/vastora/internal/gateway"
 )
 
 func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testing.T) {
@@ -51,6 +54,54 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 	}
 	if observed[1].Name != "inbound-8" || observed[1].AppProtocol != "vmess/ws" || observed[1].Enabled {
 		t.Fatalf("disabled inbound state was not preserved: %#v", observed[1])
+	}
+}
+
+func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	heartbeats := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/agents/agent-1/heartbeat":
+			heartbeats++
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{}`))
+			if heartbeats == 2 {
+				cancel()
+			}
+		case "/api/v1/agents/agent-1/tasks/next":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"task":null}`))
+		default:
+			t.Fatalf("unexpected request path: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	state := gateway.DesiredState{Revision: 3, Listeners: []gateway.Listener{{Kind: "lan", Address: "192.0.2.10", HTTPPort: 80, HTTPSPort: 443}}}
+	if _, err := store.RecordGatewayState(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	driver := &fakeGatewayDriver{}
+	(Client{GatewayDriver: driver}).RunHeartbeats(ctx, store, time.Second, func(err error) {
+		if ctx.Err() == nil {
+			t.Errorf("heartbeat error: %v", err)
+		}
+	})
+	if heartbeats != 2 {
+		t.Fatalf("expected two heartbeat cycles, got %d", heartbeats)
+	}
+	if len(driver.applied) != 1 || driver.applied[0].Revision != 3 {
+		t.Fatalf("persisted gateway state was restored %d times: %#v", len(driver.applied), driver.applied)
 	}
 }
 

@@ -5,10 +5,123 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 )
+
+type schemaColumn struct {
+	Name, Type, Default string
+	NotNull, PrimaryKey int
+}
+
+type schemaIndex struct {
+	Name            string
+	Unique, Partial int
+	Columns         []string
+}
+
+type schemaTable struct {
+	Columns []schemaColumn
+	Indexes []schemaIndex
+}
+
+func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
+	fresh, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Close()
+
+	migratedDirectory := t.TempDir()
+	createLegacyVersion3Database(t, migratedDirectory)
+	migrated, err := Open(migratedDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+
+	freshShape := databaseSchemaShape(t, fresh.db)
+	migratedShape := databaseSchemaShape(t, migrated.db)
+	if !reflect.DeepEqual(freshShape, migratedShape) {
+		t.Fatalf("fresh and migrated schema differ:\nfresh=%#v\nmigrated=%#v", freshShape, migratedShape)
+	}
+}
+
+func databaseSchemaShape(t *testing.T, db *sql.DB) map[string]schemaTable {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	shape := make(map[string]schemaTable, len(tables))
+	for _, tableName := range tables {
+		value := schemaTable{}
+		columnRows, err := db.Query(`SELECT name, type, "notnull", COALESCE(dflt_value, ''), pk FROM pragma_table_info(?) ORDER BY cid`, tableName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for columnRows.Next() {
+			var column schemaColumn
+			if err := columnRows.Scan(&column.Name, &column.Type, &column.NotNull, &column.Default, &column.PrimaryKey); err != nil {
+				t.Fatal(err)
+			}
+			value.Columns = append(value.Columns, column)
+		}
+		if err := columnRows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		sort.Slice(value.Columns, func(i, j int) bool { return value.Columns[i].Name < value.Columns[j].Name })
+		indexRows, err := db.Query(`SELECT name, "unique", partial FROM pragma_index_list(?)`, tableName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		indexes := []schemaIndex{}
+		for indexRows.Next() {
+			var index schemaIndex
+			if err := indexRows.Scan(&index.Name, &index.Unique, &index.Partial); err != nil {
+				t.Fatal(err)
+			}
+			indexes = append(indexes, index)
+		}
+		if err := indexRows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		for _, index := range indexes {
+			columnNames, err := db.Query(`SELECT name FROM pragma_index_info(?) ORDER BY seqno`, index.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for columnNames.Next() {
+				var name string
+				if err := columnNames.Scan(&name); err != nil {
+					t.Fatal(err)
+				}
+				index.Columns = append(index.Columns, name)
+			}
+			if err := columnNames.Close(); err != nil {
+				t.Fatal(err)
+			}
+			value.Indexes = append(value.Indexes, index)
+		}
+		sort.Slice(value.Indexes, func(i, j int) bool { return value.Indexes[i].Name < value.Indexes[j].Name })
+		shape[tableName] = value
+	}
+	return shape
+}
 
 func TestOpenMigratesVersion3WithoutLosingPublicationsOrRoutes(t *testing.T) {
 	directory := t.TempDir()
@@ -47,7 +160,7 @@ func TestOpenMigratesVersion3WithoutLosingPublicationsOrRoutes(t *testing.T) {
 	) VALUES('publication-v4', 'service-v3', 'public_shared_443', 'agent-v3', 'raw.example.test', 'manual', 'pending', ?, ?)`, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("new publication kind was not accepted: %v", err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v3-before-v4-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v3-before-v5-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("migration backups = %v, err = %v", backups, err)
 	}
@@ -75,10 +188,10 @@ func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`INSERT INTO goose_db_version(version_id, is_applied) VALUES(5, 1)`); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO goose_db_version(version_id, is_applied) VALUES(6, 1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`PRAGMA user_version = 5`); err != nil {
+	if _, err := store.db.Exec(`PRAGMA user_version = 6`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -112,7 +225,7 @@ func TestFailedMigrationRollsBackSchemaAndLeavesBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "migrate database from 3 to 4") {
+	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "migrate database from 3 to 5") {
 		t.Fatalf("migration error = %v", err)
 	}
 	db, err = sql.Open("sqlite", filepath.Join(directory, "center.db"))
@@ -132,7 +245,7 @@ func TestFailedMigrationRollsBackSchemaAndLeavesBackup(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('publications_v4', 'routes_v4')`).Scan(&temporaryTables); err != nil || temporaryTables != 0 {
 		t.Fatalf("temporary migration tables = %d, err = %v", temporaryTables, err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v3-before-v4-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v3-before-v5-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("failed migration backups = %v, err = %v", backups, err)
 	}
@@ -187,7 +300,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'degraded', 'failed', 'stopped')),
 			last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
 			UNIQUE(service_id, kind, hostname))`,
-		`INSERT INTO publications_v3 SELECT * FROM publications`,
+		`INSERT INTO publications_v3(id, service_id, kind, gateway_node_id, hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at)
+		 SELECT id, service_id, kind, gateway_node_id, hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at FROM publications`,
 		`CREATE TABLE routes_v3 (
 			id TEXT PRIMARY KEY, publication_id TEXT NOT NULL REFERENCES publications_v3(id) ON DELETE CASCADE,
 			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,

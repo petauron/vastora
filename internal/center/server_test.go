@@ -106,6 +106,32 @@ func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 	}
 }
 
+func TestLogoutRevokesServerSideSession(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	session, csrf, err := store.CreateFirstAdmin(ctx, "admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, "", false)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader("{}"))
+	request.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+	request.AddCookie(&http.Cookie{Name: "vastora_csrf", Value: csrf})
+	request.Header.Set("X-CSRF-Token", csrf)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("logout status = %d body=%s", response.Code, response.Body.String())
+	}
+	if err := store.ValidateSession(ctx, session, csrf, false); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("logged-out session remained valid: %v", err)
+	}
+}
+
 func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {

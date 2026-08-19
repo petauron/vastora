@@ -27,10 +27,12 @@ web-check:
 deployment-check:
 	sh -n install.sh
 	sh -n deploy/center/setup.sh
+	sh -n deploy/center/upgrade.sh
 	sh -n scripts/package-center-install.sh
 	sh -n scripts/test-center-install.sh
 	./install.sh --help >/dev/null
 	deploy/center/setup.sh --help >/dev/null
+	deploy/center/upgrade.sh --help >/dev/null
 	scripts/package-center-install.sh --help >/dev/null
 	scripts/test-center-install.sh
 

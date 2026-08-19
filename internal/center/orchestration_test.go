@@ -84,6 +84,13 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	if stopped != 1 || ready != 1 {
 		t.Fatalf("stopping one publication affected its sibling: %#v", publications)
 	}
+	reactivated, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.lan.example.test", DNSProvider: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reactivated.ID != lan.ID || reactivated.Status != "pending" || reactivated.DesiredRevision <= lan.DesiredRevision {
+		t.Fatalf("stopped publication was not safely reactivated: before=%#v after=%#v", lan, reactivated)
+	}
 }
 
 func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
@@ -198,6 +205,58 @@ func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
 	}
 	if !foundRemoval {
 		t.Fatalf("automatic DNS cleanup was not recorded in Actions: %#v", actions)
+	}
+}
+
+func TestFailedPublicationCleanupIsPersistedAndRetried(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	configureBuiltinHeadscaleForTest(t, store)
+	node := enrollOrchestrationNode(t, store, "cleanup-node", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "100.64.0.41", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.41", HeadscaleAddress: "100.64.0.41", EnabledKinds: []string{networking.KindHeadscale}})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Cleanup", Code: "cleanup", Timezone: "UTC", GatewayNodes: []string{node.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	installCPA(t, store, node, "100.64.0.41")
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 {
+		t.Fatalf("unexpected services: %#v err=%v", services, err)
+	}
+	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, GatewayNodeID: node.ID, Hostname: "retry.tail.example.test", DNSProvider: "headscale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	originalDataDir := store.dataDir
+	blocker := t.TempDir() + "/not-a-directory"
+	if err := os.WriteFile(blocker, []byte("block"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store.dataDir = blocker
+	if err := store.StopPublication(ctx, publication.ID); err != nil {
+		t.Fatalf("durably queued cleanup should not fail the stop operation: %v", err)
+	}
+	var pending, attempt int
+	var retryAt string
+	if err := store.db.QueryRowContext(ctx, `SELECT cleanup_pending, cleanup_attempt, cleanup_retry_at FROM publications WHERE id = ?`, publication.ID).Scan(&pending, &attempt, &retryAt); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 || attempt != 1 || retryAt == "" {
+		t.Fatalf("failed cleanup was not scheduled: pending=%d attempt=%d retryAt=%q", pending, attempt, retryAt)
+	}
+
+	store.dataDir = originalDataDir
+	future := time.Now().UTC().Add(2 * time.Minute)
+	store.now = func() time.Time { return future }
+	if err := store.retryPublicationCleanups(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT cleanup_pending, cleanup_attempt, cleanup_retry_at FROM publications WHERE id = ?`, publication.ID).Scan(&pending, &attempt, &retryAt); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || attempt != 0 || retryAt != "" {
+		t.Fatalf("successful cleanup retry was not finalized: pending=%d attempt=%d retryAt=%q", pending, attempt, retryAt)
 	}
 }
 

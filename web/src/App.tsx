@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { AppWindowIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, ServerIcon, SettingsIcon, type LucideIcon } from "lucide-react";
 import { APIError, api } from "./api";
-import type { Action, AgentView, AppView, Application, CatalogSource, DashboardStatus, Deployment, Integration, Organization, Publication, Route, Service, SetupStatus, Site } from "./types";
+import type { DashboardData, SetupStatus } from "./types";
 import type { Language } from "./translations";
 import { ActivityView } from "./views/ActivityView";
 import { AppsView } from "./views/AppsView";
@@ -21,21 +21,7 @@ import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupConte
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-export type DashboardData = {
-  status: DashboardStatus;
-  sources: CatalogSource[];
-  apps: AppView[];
-  agents: AgentView[];
-  deployments: Deployment[];
-  organizations: Organization[];
-  sites: Site[];
-  applications: Application[];
-  services: Service[];
-  publications: Publication[];
-  routes: Route[];
-  integrations: Integration[];
-  actions: Action[];
-};
+export type { DashboardData } from "./types";
 
 export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "settings";
 type Phase = "loading" | "setup-admin" | "setup-wizard" | "login" | "ready" | "unavailable";
@@ -70,24 +56,7 @@ export function App() {
   };
 
   const loadDashboard = useCallback(async () => {
-    const [status, sources, apps, agents, deployments, organizations, sites, applications, services, publications, routes, integrations, actions] = await Promise.all([
-      api.status(), api.sources(), api.apps(), api.agents(), api.deployments(), api.organizations(), api.sites(), api.applications(), api.services(), api.publications(), api.routes(), api.integrations(), api.actions()
-    ]);
-    setData({
-      status,
-      sources: sources.sources,
-      apps: apps.apps,
-      agents: agents.agents,
-      deployments: deployments.deployments,
-      organizations: organizations.organizations,
-      sites: sites.sites,
-      applications: applications.applications,
-      services: services.services,
-      publications: publications.publications,
-      routes: routes.routes,
-      integrations: integrations.integrations,
-      actions: actions.actions
-    });
+    setData(await api.dashboard());
   }, []);
 
   const initialize = useCallback(async () => {
@@ -149,8 +118,6 @@ export function App() {
   const mutate = useCallback<Mutate>(async (operation, success) => {
     try {
       await operation();
-      await loadDashboard();
-      setNotice(success ? { message: success } : null);
     } catch (error) {
       if (error instanceof APIError && error.status === 401) {
         setPhase("login");
@@ -159,7 +126,18 @@ export function App() {
       setNotice({ message: error instanceof Error ? error.message : "Request failed", error: true });
       throw error;
     }
-  }, [loadDashboard]);
+    setNotice(success ? { message: success } : null);
+    try {
+      await loadDashboard();
+    } catch (error) {
+      if (error instanceof APIError && error.status === 401) {
+        setPhase("login");
+      } else {
+        const refreshMessage = copy(language, "操作已完成，但页面状态刷新失败；系统会自动重试。", "The operation completed, but the page could not refresh; it will retry automatically.");
+        setNotice({ message: success ? `${success} ${refreshMessage}` : refreshMessage });
+      }
+    }
+  }, [language, loadDashboard]);
 
   if (phase === "loading") return <CenteredState language={language} loading />;
   if (phase === "unavailable") return <CenteredState language={language} message={notice?.message} onRetry={initialize} />;
