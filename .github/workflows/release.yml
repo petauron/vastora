@@ -2,6 +2,11 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing draft release tag to retry (for example, v0.1.0-alpha.4)
+        required: false
+        type: string
   push:
     branches: [main]
 
@@ -18,17 +23,42 @@ jobs:
       issues: write
       pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      release_sha: ${{ steps.release.outputs.sha }}
-      release_tag: ${{ steps.release.outputs.tag_name }}
-      release_version: ${{ steps.release.outputs.version }}
+      release_created: ${{ steps.retry.outputs.release_created || steps.release.outputs.release_created }}
+      release_sha: ${{ steps.retry.outputs.release_sha || steps.release.outputs.sha }}
+      release_tag: ${{ steps.retry.outputs.release_tag || steps.release.outputs.tag_name }}
+      release_version: ${{ steps.retry.outputs.release_version || steps.release.outputs.version }}
     steps:
       - name: Create or update release pull request
         id: release
+        if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
           token: ${{ github.token }}
           target-branch: main
+
+      - name: Resolve draft release retry
+        id: retry
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          release_json="$(gh api "/repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG")"
+          if [ "$(printf '%s' "$release_json" | jq -r '.draft')" != 'true' ]; then
+            echo "release $RELEASE_TAG is not an existing draft" >&2
+            exit 1
+          fi
+          release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
+          {
+            echo 'release_created=true'
+            echo "release_sha=$release_sha"
+            echo "release_tag=$RELEASE_TAG"
+            echo "release_version=${RELEASE_TAG#v}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Run CI for release pull request
         if: steps.release.outputs.prs_created == 'true'
@@ -104,7 +134,7 @@ jobs:
         env:
           VASTORA_CENTER_IMAGE: ghcr.io/petauron/vastora-center@${{ steps.image.outputs.digest }}
         run: |
-          sha256sum --check dist/vastora-center-install.tar.gz.sha256
+          (cd dist && sha256sum --check vastora-center-install.tar.gz.sha256)
           anonymous_config="$(mktemp -d)"
           DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$VASTORA_CENTER_IMAGE"
 
