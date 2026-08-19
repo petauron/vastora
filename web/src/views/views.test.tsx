@@ -110,7 +110,7 @@ describe("network and app views", () => {
   });
 
   it("starts first-run onboarding with a real location and the browser timezone", () => {
-    const container = render(<SetupWizard builtinHeadscaleAvailable language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} suggestedAgentConnectUrl="" />);
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-19T00:00:00Z" }]} suggestedAgentConnectUrl="" />);
     expect(container.textContent).toContain("创建第一个位置");
     expect(container.textContent).toContain("位置通常是一处家庭、办公室或数据中心");
     expect(container.querySelector<HTMLInputElement>("#setup-timezone")?.value).not.toBe("");
@@ -125,6 +125,7 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("不要填写本机浏览器中的 127.0.0.1:18082");
     act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
     expect(container.textContent).toContain("向导会自动完成安装");
+    expect(container.textContent).toContain("使用 Cloudflare 登录");
     expect(container.querySelector("#setup-headscale-key")).toBeNull();
   });
 
@@ -173,7 +174,7 @@ describe("network and app views", () => {
     const data = dashboard();
     data.integrations = [
       { kind: "headscale", mode: "external", endpoint: "https://headscale.example.com:8443", secretSet: true, status: "configured" },
-      { kind: "cloudflare", mode: "managed", endpoint: "example.com", accountId: "a".repeat(32), zoneId: "b".repeat(32), secretSet: true, status: "configured" }
+      { kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "a".repeat(32), zoneId: "b".repeat(32), secretSet: true, status: "configured" }
     ];
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
     const editButtons = [...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("修改"));

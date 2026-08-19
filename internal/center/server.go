@@ -85,7 +85,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/publications/{id}/verify", s.requireAuth(true, s.handleVerifyPublication))
 	mux.HandleFunc("GET /api/v1/routes", s.requireAuth(false, s.handleListRoutes))
 	mux.HandleFunc("GET /api/v1/integrations", s.requireAuth(false, s.handleListIntegrations))
-	mux.HandleFunc("PUT /api/v1/integrations/cloudflare", s.requireAuth(true, s.handleConfigureCloudflare))
+	mux.HandleFunc("POST /api/v1/integrations/cloudflare/oauth/start", s.requireAuth(true, s.handleStartCloudflareOAuth))
+	mux.HandleFunc("POST /api/v1/integrations/cloudflare/oauth/poll", s.requireAuth(true, s.handlePollCloudflareOAuth))
+	mux.HandleFunc("POST /api/v1/integrations/cloudflare/oauth/complete", s.requireAuth(true, s.handleCompleteCloudflareOAuth))
+	mux.HandleFunc("POST /api/v1/setup/cloudflare/dns", s.requireAuth(true, s.handleConfigureSetupDNS))
 	mux.HandleFunc("PUT /api/v1/integrations/headscale", s.requireAuth(true, s.handleConfigureHeadscale))
 	mux.HandleFunc("POST /api/v1/agents/{id}/headscale-join", s.requireAuth(true, s.handleCreateHeadscaleJoin))
 	mux.HandleFunc("GET /api/v1/actions", s.requireAuth(false, s.handleListActions))
@@ -118,11 +121,34 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
+	cloudflare := IntegrationView{Kind: "cloudflare", Status: "disabled"}
+	publicAddresses := make([]networking.Candidate, 0)
+	if cookie, cookieErr := request.Cookie("vastora_session"); cookieErr == nil && s.store.ValidateSession(request.Context(), cookie.Value, "", false) == nil {
+		cloudflare, err = s.store.Integration(request.Context(), "cloudflare")
+		if err != nil {
+			writeError(writer, http.StatusInternalServerError, err)
+			return
+		}
+		candidates, discoverErr := networking.Discover(s.store.now().UTC())
+		if discoverErr != nil {
+			writeError(writer, http.StatusInternalServerError, discoverErr)
+			return
+		}
+		for _, candidate := range candidates {
+			if candidate.Kind == networking.KindPublic {
+				publicAddresses = append(publicAddresses, candidate)
+			}
+		}
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"administratorConfigured":   status.AdministratorConfigured,
 		"onboardingComplete":        status.OnboardingComplete,
 		"suggestedAgentConnectUrl":  s.setupAgentConnectURL,
 		"builtinHeadscaleAvailable": s.headscaleInstaller != nil,
+		"cloudflareOAuthAvailable":  s.store.CloudflareOAuthAvailable(),
+		"cloudflareConfigured":      cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
+		"cloudflareZone":            cloudflare.Endpoint,
+		"publicAddressCandidates":   publicAddresses,
 	})
 }
 
@@ -386,18 +412,65 @@ func (s *Server) handleListIntegrations(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusOK, map[string]any{"integrations": values})
 }
 
-func (s *Server) handleConfigureCloudflare(writer http.ResponseWriter, request *http.Request) {
-	var input CloudflareInput
+func (s *Server) handleStartCloudflareOAuth(writer http.ResponseWriter, _ *http.Request) {
+	value, err := s.store.StartCloudflareOAuth()
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, value)
+}
+
+func (s *Server) handlePollCloudflareOAuth(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		SessionID string `json:"sessionId"`
+	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	value, err := s.store.ConfigureCloudflare(request.Context(), input)
+	value, err := s.store.PollCloudflareOAuth(request.Context(), input.SessionID)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, value)
+}
+
+func (s *Server) handleCompleteCloudflareOAuth(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		SessionID string `json:"sessionId"`
+		ZoneID    string `json:"zoneId"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.CompleteCloudflareOAuth(request.Context(), input.SessionID, input.ZoneID)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
+func (s *Server) handleConfigureSetupDNS(writer http.ResponseWriter, request *http.Request) {
+	var input SetupDNSInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	candidates, err := networking.Discover(s.store.now().UTC())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	value, err := s.store.ConfigureSetupDNS(request.Context(), input, candidates)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"records": value})
 }
 
 func (s *Server) handleConfigureHeadscale(writer http.ResponseWriter, request *http.Request) {

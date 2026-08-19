@@ -5,9 +5,11 @@ const source = await readFile(
   new URL("../deploy/installer-worker/worker.js", import.meta.url),
   "utf8",
 );
-const worker = (
-  await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`)
-).default;
+const workerModule = await import(
+  `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
+);
+const worker = workerModule.default;
+const { OAuthSession } = workerModule;
 const originalWarn = console.warn;
 const originalError = console.error;
 const workerLogs = [];
@@ -43,6 +45,41 @@ function executionContext() {
 
 function request(path = "/install.sh", method = "GET") {
   return new Request(`https://vastora.petauron.com${path}`, { method });
+}
+
+async function oauthCommitment(secret) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(secret));
+  return Buffer.from(digest).toString("base64url");
+}
+
+function oauthEnvironment() {
+  const sessions = new Map();
+  return {
+    OAUTH_SESSIONS: {
+      idFromName(name) {
+        return name;
+      },
+      get(id) {
+        if (!sessions.has(id)) {
+          const values = new Map();
+          const storage = {
+            alarm: null,
+            async get(key) { return values.get(key); },
+            async put(key, value) { values.set(key, value); },
+            async setAlarm(value) { this.alarm = value; },
+            async deleteAll() { values.clear(); },
+          };
+          sessions.set(id, { object: new OAuthSession({ storage }), storage });
+        }
+        return {
+          fetch: (input, init) => sessions.get(id).object.fetch(
+            input instanceof Request ? input : new Request(input, init),
+          ),
+        };
+      },
+    },
+    sessions,
+  };
 }
 
 {
@@ -90,6 +127,60 @@ function request(path = "/install.sh", method = "GET") {
 {
   const response = await worker.fetch(request("/install.sh", "POST"), {}, executionContext().context);
   assert.equal(response.status, 405);
+}
+
+{
+  const env = oauthEnvironment();
+  const secret = "relay-secret-with-at-least-thirty-two-bytes";
+  const stateID = "oauth-session-id-1234567890123456";
+  const state = `v1.${stateID}.${await oauthCommitment(secret)}`;
+  const callback = await worker.fetch(
+    request(`/oauth/cloudflare/callback?code=one-time-code&state=${encodeURIComponent(state)}`),
+    env,
+    executionContext().context,
+  );
+  assert.equal(callback.status, 200);
+  assert.match(await callback.text(), /Cloudflare 已连接/);
+
+  const pollRequest = request(`/oauth/cloudflare/sessions/${encodeURIComponent(state)}`);
+  pollRequest.headers.set("Authorization", `Bearer ${secret}`);
+  const poll = await worker.fetch(pollRequest, env, executionContext().context);
+  assert.equal(poll.status, 200);
+  assert.deepEqual(await poll.json(), { status: "authorized", code: "one-time-code" });
+
+  const replay = await worker.fetch(pollRequest, env, executionContext().context);
+  assert.equal(replay.status, 202);
+  assert.deepEqual(await replay.json(), { status: "pending" });
+}
+
+{
+  const env = oauthEnvironment();
+  const secret = "another-relay-secret-with-thirty-two-bytes";
+  const stateID = "oauth-session-id-6543210987654321";
+  const state = `v1.${stateID}.${await oauthCommitment(secret)}`;
+  const callback = await worker.fetch(
+    request(`/oauth/cloudflare/callback?error=access_denied&error_description=${encodeURIComponent("Denied <script>alert(1)</script>")}&state=${encodeURIComponent(state)}`),
+    env,
+    executionContext().context,
+  );
+  assert.equal(callback.status, 400);
+  const body = await callback.text();
+  assert.doesNotMatch(body, /<script>alert/);
+  assert.match(body, /&lt;script&gt;/);
+
+  const pollRequest = request(`/oauth/cloudflare/sessions/${encodeURIComponent(state)}`);
+  pollRequest.headers.set("Authorization", "Bearer wrong-secret");
+  assert.equal((await worker.fetch(pollRequest, env, executionContext().context)).status, 401);
+}
+
+{
+  const response = await worker.fetch(
+    request("/oauth/cloudflare/callback?code=test&state=invalid"),
+    oauthEnvironment(),
+    executionContext().context,
+  );
+  assert.equal(response.status, 400);
+  assert.equal(response.headers.get("cache-control"), "no-store");
 }
 
 assert.deepEqual(workerLogs.map(([level]) => level), ["warn", "error"]);

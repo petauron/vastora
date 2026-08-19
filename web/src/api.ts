@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, DashboardData, DashboardStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
+import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, DashboardData, DashboardStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -95,7 +95,10 @@ export const api = {
   createPublication: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; dnsProvider: "manual" | "cloudflare" | "headscale"; confirmHighRisk?: boolean }) => request<Publication>("/api/v1/publications", { method: "POST", body: JSON.stringify(input) }),
   stopPublication: (id: string) => request<{ stopped: boolean }>(`/api/v1/publications/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
   verifyPublication: (id: string) => request<Publication>(`/api/v1/publications/${encodeURIComponent(id)}/verify`, { method: "POST", body: "{}" }),
-  configureCloudflare: (input: { accountId: string; zoneId: string; apiToken: string }) => request<Integration>("/api/v1/integrations/cloudflare", { method: "PUT", body: JSON.stringify(input) }),
+  startCloudflareOAuth: () => request<CloudflareOAuthStart>("/api/v1/integrations/cloudflare/oauth/start", { method: "POST", body: "{}" }),
+  pollCloudflareOAuth: (sessionId: string) => request<CloudflareOAuthPoll>("/api/v1/integrations/cloudflare/oauth/poll", { method: "POST", body: JSON.stringify({ sessionId }) }),
+  completeCloudflareOAuth: (sessionId: string, zoneId: string) => request<Integration>("/api/v1/integrations/cloudflare/oauth/complete", { method: "POST", body: JSON.stringify({ sessionId, zoneId }) }),
+  configureSetupDNS: (input: { centerUrl: string; headscaleUrl?: string; publicAddress: string }) => request<{ records: Array<{ id: string; type: "A" | "AAAA"; name: string; content: string }> }>("/api/v1/setup/cloudflare/dns", { method: "POST", body: JSON.stringify(input) }),
   configureHeadscale: (input: { mode: "builtin" | "external"; url: string; apiKey?: string }) => request<Integration>("/api/v1/integrations/headscale", { method: "PUT", body: JSON.stringify(input) }),
   createHeadscaleJoin: (agentId: string) => request<HeadscaleJoin>(`/api/v1/agents/${encodeURIComponent(agentId)}/headscale-join`, { method: "POST", body: "{}" }),
   createSource: (source: {

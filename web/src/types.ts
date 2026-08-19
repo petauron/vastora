@@ -46,6 +46,10 @@ export type SetupStatus = {
   onboardingComplete: boolean;
   suggestedAgentConnectUrl: string;
   builtinHeadscaleAvailable: boolean;
+  cloudflareOAuthAvailable: boolean;
+  cloudflareConfigured: boolean;
+  cloudflareZone?: string;
+  publicAddressCandidates: NetworkCandidate[];
 };
 export type SiteInput = { name: string; code: string; description: string; timezone: string; domainSuffix: string; gatewayNodes: string[] };
 export type InitialSetupInput = {
@@ -130,7 +134,10 @@ export type PublicationKind = "lan_gateway" | "headscale_gateway" | "public_dire
 export type DNSRecordInstruction = { type: "A" | "AAAA" | "CNAME"; name: string; value: string; proxy: boolean };
 export type Publication = { id: string; serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; dnsProvider: "manual" | "cloudflare" | "headscale"; dnsRecordId?: string; dnsRecord?: DNSRecordInstruction; tlsEnabled: boolean; desiredRevision: number; appliedRevision: number; status: "pending" | "applying" | "ready" | "degraded" | "failed" | "stopped"; lastError?: string; accessUrl?: string; createdAt: string; updatedAt: string };
 export type Route = { id: string; publicationId: string; siteId: string; serviceId: string; gatewayNodeId: string; hostname: string; protocol: string; upstreams: string[]; tlsEnabled: boolean; status: string; desiredRevision: number; appliedRevision: number; lastError?: string; createdAt: string; updatedAt: string };
-export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "managed"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string };
+export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string };
+export type CloudflareZone = { id: string; name: string; accountId: string; accountName: string };
+export type CloudflareOAuthStart = { sessionId: string; authorizationUrl: string; expiresAt: string };
+export type CloudflareOAuthPoll = { status: "pending" | "authorized"; zones?: CloudflareZone[] };
 export type HeadscaleJoin = { agentId: string; command: string; expiresAt: string };
 export type Action = { id: string; taskId: string; agentId: string; kind: string; revision: number; event: "queued" | "claimed" | "lease_expired" | "succeeded" | "failed"; message?: string; createdAt: string };
 
