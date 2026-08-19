@@ -33,6 +33,10 @@ test -x "$temporary_dir/setup.sh"
 test -x "$temporary_dir/upgrade.sh"
 test -f "$temporary_dir/compose.yaml"
 test ! -e "$temporary_dir/headscale"
+if grep -Eq 'headscale/(config\.yaml|policy\.hujson)' "$project_dir/install.sh"; then
+  echo "Public installer still requires removed Headscale configuration files" >&2
+  exit 1
+fi
 grep -Fq '127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}' "$temporary_dir/compose.yaml"
 grep -Fq 'network_mode: host' "$temporary_dir/compose.yaml"
 if sed -n '/^  center:/,/^  headscale:/p' "$temporary_dir/compose.yaml" | grep -Fq '    ports:'; then
