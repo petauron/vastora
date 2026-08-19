@@ -118,7 +118,7 @@ fi
 install -d -m 0755 "$(dirname "$install_dir")"
 staging="$(mktemp -d "${install_dir}.new.XXXXXX")"
 tar -xzf "$archive" -C "$staging"
-for required_file in setup.sh upgrade.sh compose.yaml release.env headscale/config.yaml headscale/policy.hujson; do
+for required_file in setup.sh upgrade.sh compose.yaml release.env; do
   if [ ! -f "$staging/$required_file" ]; then
     echo "The Center release is incomplete: missing $required_file" >&2
     exit 1
