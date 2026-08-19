@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStaticHandlerKeepsRequestsInsideStaticRoot(t *testing.T) {
@@ -148,9 +149,11 @@ func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	if status["administratorConfigured"] != false || status["onboardingComplete"] != false || status["suggestedAgentConnectUrl"] != "https://center.example.com" {
 		t.Fatalf("unexpected fresh setup status: %#v", status)
 	}
-	if _, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple"); err != nil {
+	session, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")
+	if err != nil {
 		t.Fatal(err)
 	}
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access-secret", RefreshToken: "refresh-secret", ExpiresAt: time.Now().Add(time.Hour)})
 	payload, _ := json.Marshal(InitialSetupInput{
 		Site:    SiteInput{Name: "Home", Code: "home", Timezone: "Asia/Singapore"},
 		Network: CenterNetworkInput{AgentConnectionMode: "lan", AgentConnectURL: "https://center.example.com"},
@@ -169,6 +172,19 @@ func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	}
 	if status["administratorConfigured"] != true || status["onboardingComplete"] != true {
 		t.Fatalf("unexpected completed setup status: %#v", status)
+	}
+	if status["cloudflareConfigured"] != false || status["cloudflareZone"] != "" {
+		t.Fatalf("unauthenticated setup status exposed Cloudflare configuration: %#v", status)
+	}
+	authorizedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil)
+	authorizedRequest.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+	statusResponse = httptest.NewRecorder()
+	server.handleSetupStatus(statusResponse, authorizedRequest)
+	if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["cloudflareConfigured"] != true || status["cloudflareZone"] != "example.com" {
+		t.Fatalf("authenticated setup status hid Cloudflare configuration: %#v", status)
 	}
 }
 

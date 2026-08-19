@@ -17,12 +17,6 @@ import (
 
 const cloudflareAPIURL = "https://api.cloudflare.com/client/v4"
 
-type CloudflareInput struct {
-	AccountID string `json:"accountId"`
-	ZoneID    string `json:"zoneId"`
-	APIToken  string `json:"apiToken"`
-}
-
 type IntegrationView struct {
 	Kind      string    `json:"kind"`
 	Mode      string    `json:"mode,omitempty"`
@@ -52,55 +46,6 @@ type cloudflareEnvelope struct {
 	Success bool              `json:"success"`
 	Errors  []cloudflareError `json:"errors"`
 	Result  json.RawMessage   `json:"result"`
-}
-
-func (s *Store) ConfigureCloudflare(ctx context.Context, input CloudflareInput) (IntegrationView, error) {
-	input.AccountID = strings.TrimSpace(input.AccountID)
-	input.ZoneID = strings.TrimSpace(input.ZoneID)
-	input.APIToken = strings.TrimSpace(input.APIToken)
-	existingSecretID, existingToken, err := s.integrationSecret(ctx, "cloudflare")
-	if err != nil {
-		return IntegrationView{}, err
-	}
-	replacingSecret := input.APIToken != ""
-	if !replacingSecret {
-		input.APIToken = existingToken
-	}
-	if input.AccountID == "" || input.ZoneID == "" || len(input.APIToken) < 20 {
-		return IntegrationView{}, errors.New("center: Cloudflare Account, Zone, and API Token are required")
-	}
-	client := cloudflareClient{accountID: input.AccountID, zoneID: input.ZoneID, token: input.APIToken, baseURL: cloudflareAPIURL, http: &http.Client{Timeout: 20 * time.Second}}
-	zoneName, err := client.verify(ctx)
-	if err != nil {
-		return IntegrationView{}, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return IntegrationView{}, err
-	}
-	defer tx.Rollback()
-	secretID := existingSecretID
-	if replacingSecret {
-		secretID, err = s.putSecret(ctx, tx, []byte(input.APIToken), "integration:cloudflare")
-		if err != nil {
-			return IntegrationView{}, err
-		}
-	}
-	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, account_id, zone_id, secret_id, status, created_at, updated_at)
-		VALUES('cloudflare', 'managed', ?, ?, ?, ?, 'configured', ?, ?)
-		ON CONFLICT(kind) DO UPDATE SET mode = 'managed', endpoint = excluded.endpoint, account_id = excluded.account_id, zone_id = excluded.zone_id, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, zoneName, input.AccountID, input.ZoneID, secretID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
-		return IntegrationView{}, fmt.Errorf("center: save Cloudflare integration: %w", err)
-	}
-	if replacingSecret && existingSecretID != "" && existingSecretID != secretID {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, existingSecretID); err != nil {
-			return IntegrationView{}, fmt.Errorf("center: replace Cloudflare API token: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return IntegrationView{}, err
-	}
-	return s.Integration(ctx, "cloudflare")
 }
 
 func (s *Store) integrationSecret(ctx context.Context, kind string) (string, string, error) {
@@ -148,17 +93,36 @@ func (s *Store) ListIntegrations(ctx context.Context) ([]IntegrationView, error)
 }
 
 func (s *Store) cloudflare(ctx context.Context) (cloudflareClient, error) {
+	s.cloudflareTokenMu.Lock()
+	defer s.cloudflareTokenMu.Unlock()
 	var accountID, zoneID, secretID string
-	if err := s.db.QueryRowContext(ctx, `SELECT account_id, zone_id, secret_id FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&accountID, &zoneID, &secretID); errors.Is(err, sql.ErrNoRows) {
+	var mode string
+	if err := s.db.QueryRowContext(ctx, `SELECT mode, account_id, zone_id, secret_id FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&mode, &accountID, &zoneID, &secretID); errors.Is(err, sql.ErrNoRows) {
 		return cloudflareClient{}, errors.New("center: Cloudflare integration is not configured")
 	} else if err != nil {
 		return cloudflareClient{}, err
 	}
-	token, err := s.getSecret(ctx, secretID, "integration:cloudflare")
+	if mode != "oauth" {
+		return cloudflareClient{}, errors.New("center: reconnect Cloudflare with OAuth before using it")
+	}
+	encoded, err := s.getSecret(ctx, secretID, "integration:cloudflare")
 	if err != nil {
 		return cloudflareClient{}, err
 	}
-	return cloudflareClient{accountID: accountID, zoneID: zoneID, token: string(token), baseURL: cloudflareAPIURL, http: &http.Client{Timeout: 20 * time.Second}}, nil
+	var token cloudflareOAuthToken
+	if err := json.Unmarshal(encoded, &token); err != nil || token.AccessToken == "" || token.RefreshToken == "" {
+		return cloudflareClient{}, errors.New("center: reconnect Cloudflare with OAuth before using it")
+	}
+	if !s.now().UTC().Before(token.ExpiresAt.Add(-2 * time.Minute)) {
+		token, err = s.refreshCloudflareToken(ctx, token.RefreshToken)
+		if err != nil {
+			return cloudflareClient{}, err
+		}
+		if err := s.saveCloudflareOAuthToken(ctx, secretID, token); err != nil {
+			return cloudflareClient{}, err
+		}
+	}
+	return cloudflareClient{accountID: accountID, zoneID: zoneID, token: token.AccessToken, baseURL: s.cloudflareOAuth.APIURL, http: s.cloudflareOAuth.HTTPClient}, nil
 }
 
 func (s *Store) ensureCloudflareTunnel(ctx context.Context, agentID string) error {

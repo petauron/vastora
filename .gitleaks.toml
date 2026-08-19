@@ -4,3 +4,8 @@ useDefault = true
 [[allowlists]]
 description = "Ignore generated local Vastora development state"
 paths = ['''^\.vastora/''']
+
+[[allowlists]]
+description = "Cloudflare OAuth public client identifier"
+paths = ['''^internal/center/cloudflare_oauth\.go$''']
+regexes = ['''565bf36df0a8deb0fde1bd27367a44bd''']

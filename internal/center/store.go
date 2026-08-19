@@ -37,6 +37,10 @@ type Store struct {
 	key                       []byte
 	headscaleAllowedEndpoints []string
 	headscaleHTTPClient       *http.Client
+	cloudflareOAuth           cloudflareOAuthConfig
+	cloudflareOAuthMu         sync.Mutex
+	cloudflareOAuthSessions   map[string]*cloudflareOAuthSession
+	cloudflareTokenMu         sync.Mutex
 	publicationCleanupMu      sync.Mutex
 	now                       func() time.Time
 }
@@ -156,6 +160,8 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		db: db, dataDir: dataDir, key: key,
 		headscaleAllowedEndpoints: headscaleAllowedEndpoints,
 		headscaleHTTPClient:       &http.Client{Timeout: 20 * time.Second},
+		cloudflareOAuth:           defaultCloudflareOAuthConfig(),
+		cloudflareOAuthSessions:   make(map[string]*cloudflareOAuthSession),
 		now:                       time.Now,
 	}
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
