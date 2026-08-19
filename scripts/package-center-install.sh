@@ -66,12 +66,9 @@ temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-center-package.XXXXXX")"
 cleanup() { rm -rf "$temporary_dir"; }
 trap cleanup EXIT HUP INT TERM
 
-install -d -m 0755 "$temporary_dir/headscale"
 install -m 0755 "$project_dir/deploy/center/setup.sh" "$temporary_dir/setup.sh"
 install -m 0755 "$project_dir/deploy/center/upgrade.sh" "$temporary_dir/upgrade.sh"
 install -m 0644 "$project_dir/deploy/center/compose.yaml" "$temporary_dir/compose.yaml"
-install -m 0644 "$project_dir/deploy/center/headscale/config.yaml" "$temporary_dir/headscale/config.yaml"
-install -m 0644 "$project_dir/deploy/center/headscale/policy.hujson" "$temporary_dir/headscale/policy.hujson"
 {
   printf 'VASTORA_VERSION=%s\n' "$version"
   printf 'VASTORA_CENTER_IMAGE=%s\n' "$image"

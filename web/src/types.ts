@@ -45,12 +45,13 @@ export type SetupStatus = {
   administratorConfigured: boolean;
   onboardingComplete: boolean;
   suggestedAgentConnectUrl: string;
+  builtinHeadscaleAvailable: boolean;
 };
 export type SiteInput = { name: string; code: string; description: string; timezone: string; domainSuffix: string; gatewayNodes: string[] };
 export type InitialSetupInput = {
   site: SiteInput;
   network: { agentConnectionMode: AgentConnectionMode; agentConnectUrl: string };
-  headscale?: { mode: "builtin" | "external"; url: string; apiKey: string };
+  headscale?: { mode: "builtin" | "external"; url: string; apiKey?: string };
 };
 
 export type DiagnosticCount = { total: number; healthy: number; warning: number; failed: number; disabled?: number };

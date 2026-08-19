@@ -15,37 +15,43 @@ services:
       - /app/web/dist
       - --official-catalog
       - /app/catalog/catalog.json
+      - --deployer-socket
+      - /run/vastora-deployer/deployer.sock
     network_mode: host
     volumes:
       - center-data:/var/lib/vastora
+      - deployer-socket:/run/vastora-deployer
     security_opt:
       - no-new-privileges:true
 
-  headscale:
-    image: ghcr.io/juanfont/headscale:0.29.3@sha256:0e7f1c6e4ce6c2a2a001103ecd3fa645a045adf30ac8a5234fe037b43000cd72
+  deployer:
+    image: ${VASTORA_CENTER_IMAGE:?set VASTORA_CENTER_IMAGE to a pinned Center image}
     restart: unless-stopped
-    profiles: ["headscale"]
-    command: serve
+    user: "0:0"
+    command:
+      - deployer
+      - serve
+      - --socket
+      - /run/vastora-deployer/deployer.sock
+      - --headscale-config-dir
+      - /var/lib/vastora-headscale-config
+      - --center-origin
+      - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}
+    network_mode: host
     read_only: true
     tmpfs:
-      - /var/run/headscale
-    ports:
-      - "127.0.0.1:8081:8080"
+      - /tmp
     volumes:
-      - headscale-data:/var/lib/headscale
-      - center-data:/var/lib/vastora-shared:ro
-      - ${VASTORA_HEADSCALE_CONFIG:-./headscale/config.yaml}:/etc/headscale/config.yaml:ro
-      - ./headscale/policy.hujson:/etc/headscale/policy.hujson:ro
-      - ./tls:/run/vastora-tls:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - deployer-socket:/run/vastora-deployer
+      - headscale-config:/var/lib/vastora-headscale-config
     security_opt:
       - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "headscale", "health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
 volumes:
   center-data:
   headscale-data:
+  headscale-config:
+  headscale-caddy-data:
+  headscale-caddy-config:
+  deployer-socket:

@@ -25,6 +25,8 @@ import (
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/center"
+	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/deployer"
 )
 
 func main() {
@@ -48,6 +50,8 @@ func run(arguments []string) error {
 		return runCenter(arguments[1:])
 	case "agent":
 		return runAgent(arguments[1:])
+	case "deployer":
+		return runDeployer(arguments[1:])
 	case "help", "-h", "--help":
 		printUsage(os.Stdout)
 		return nil
@@ -150,6 +154,7 @@ func runCenter(arguments []string) error {
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
 		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing the linux-amd64 Agent binary")
 		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
+		deployerSocket := flags.String("deployer-socket", "", "Unix socket for the restricted infrastructure deployment helper")
 		var headscaleAllowedURLs stringListFlag
 		flags.Var(&headscaleAllowedURLs, "headscale-allowed-url", "authorized Headscale control-plane URL (repeat for multiple URLs)")
 		tlsCert := flags.String("tls-cert", "", "PEM certificate path")
@@ -191,11 +196,18 @@ func runCenter(arguments []string) error {
 		go store.RunPublicationCleanup(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center publication cleanup: %v\n", err)
 		})
-		handler := center.NewServer(store, *webDir, *tlsCert != "").
+		centerServer := center.NewServer(store, *webDir, *tlsCert != "").
 			WithOfficialCatalog(catalogPayload).
 			WithAgentBinaries(*agentBinariesDir).
-			WithSetupAgentConnectURL(normalizedAgentConnectURL).
-			Handler()
+			WithSetupAgentConnectURL(normalizedAgentConnectURL)
+		if *deployerSocket != "" {
+			installer, err := deployapi.NewClient(*deployerSocket)
+			if err != nil {
+				return err
+			}
+			centerServer.WithHeadscaleInstaller(installer)
+		}
+		handler := centerServer.Handler()
 		server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 		fmt.Printf("Center listening on %s\n", *listen)
 		if *tlsCert != "" {
@@ -257,6 +269,33 @@ func runCenter(arguments []string) error {
 	default:
 		return errors.New("unknown center command")
 	}
+}
+
+func runDeployer(arguments []string) error {
+	if len(arguments) == 0 || arguments[0] != "serve" {
+		return errors.New("deployer serve is required")
+	}
+	flags := flag.NewFlagSet("deployer serve", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	socket := flags.String("socket", "/run/vastora-deployer/deployer.sock", "Unix socket exposed to Center")
+	dockerSocket := flags.String("docker-socket", "unix:///var/run/docker.sock", "Docker Engine socket")
+	configDir := flags.String("headscale-config-dir", "/var/lib/vastora-headscale-config", "persisted generated Headscale configuration")
+	centerOrigin := flags.String("center-origin", "127.0.0.1:8080", "loopback Center origin used by the HTTPS gateway")
+	centerUID := flags.Int("center-uid", 65532, "Center user ID allowed to connect")
+	centerGID := flags.Int("center-gid", 65532, "Center group ID allowed to connect")
+	if err := flags.Parse(arguments[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("deployer serve does not accept positional arguments")
+	}
+	installer := deployer.DockerHeadscaleInstaller{
+		Socket:       *dockerSocket,
+		ConfigDir:    *configDir,
+		CenterOrigin: *centerOrigin,
+	}
+	fmt.Printf("Deployment helper listening on %s\n", *socket)
+	return deployer.ServeUnix(*socket, *centerUID, *centerGID, deployer.NewServer(installer).Handler())
 }
 
 func runAgent(arguments []string) error {
@@ -902,6 +941,7 @@ Usage:
   vastora center agent-token create --data-dir DIR --site-id SITE
   vastora center backup --data-dir DIR --output FILE --password-file FILE
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE
+  vastora deployer serve --socket /run/vastora-deployer/deployer.sock
   vastora agent init --data-dir DIR
   vastora agent enroll --data-dir DIR --center-url URL --token-file FILE [--name NAME]
   vastora agent install --center-url URL --token-file FILE [--name NAME]

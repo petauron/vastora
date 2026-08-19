@@ -110,7 +110,7 @@ describe("network and app views", () => {
   });
 
   it("starts first-run onboarding with a real location and the browser timezone", () => {
-    const container = render(<SetupWizard language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} suggestedAgentConnectUrl="" />);
+    const container = render(<SetupWizard builtinHeadscaleAvailable language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} suggestedAgentConnectUrl="" />);
     expect(container.textContent).toContain("创建第一个位置");
     expect(container.textContent).toContain("位置通常是一处家庭、办公室或数据中心");
     expect(container.querySelector<HTMLInputElement>("#setup-timezone")?.value).not.toBe("");
@@ -123,6 +123,9 @@ describe("network and app views", () => {
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
     expect(container.textContent).toContain("安装向导通过 SSH 隧道打开");
     expect(container.textContent).toContain("不要填写本机浏览器中的 127.0.0.1:18082");
+    act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+    expect(container.textContent).toContain("向导会自动完成安装");
+    expect(container.querySelector("#setup-headscale-key")).toBeNull();
   });
 
   it("uses the saved Center address when adding a node and keeps editing advanced", () => {
@@ -169,7 +172,7 @@ describe("network and app views", () => {
   it("does not ask for integration secrets again when editing", () => {
     const data = dashboard();
     data.integrations = [
-      { kind: "headscale", mode: "builtin", endpoint: "https://headscale.example.com:8443", secretSet: true, status: "configured" },
+      { kind: "headscale", mode: "external", endpoint: "https://headscale.example.com:8443", secretSet: true, status: "configured" },
       { kind: "cloudflare", mode: "managed", endpoint: "example.com", accountId: "a".repeat(32), zoneId: "b".repeat(32), secretSet: true, status: "configured" }
     ];
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -177,6 +180,18 @@ describe("network and app views", () => {
     act(() => editButtons[0]?.click());
     expect(document.querySelector<HTMLInputElement>("#headscale-key")?.required).toBe(false);
     expect(document.body.textContent).toContain("留空会继续使用原 Key");
+  });
+
+  it("installs bundled Headscale without asking for a key or a shell command", () => {
+    const data = dashboard();
+    data.integrations = [];
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const setup = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("设置"));
+    act(() => setup?.click());
+    expect(document.body.textContent).toContain("无需命令和 API Key");
+    expect(document.body.textContent).toContain("安装并连接");
+    expect(document.querySelector("#headscale-key")).toBeNull();
+    expect(document.body.textContent).not.toContain("docker compose exec headscale");
   });
 
   it("requires a secure Agent-reachable Center address", () => {

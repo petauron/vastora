@@ -96,7 +96,7 @@ export const api = {
   stopPublication: (id: string) => request<{ stopped: boolean }>(`/api/v1/publications/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
   verifyPublication: (id: string) => request<Publication>(`/api/v1/publications/${encodeURIComponent(id)}/verify`, { method: "POST", body: "{}" }),
   configureCloudflare: (input: { accountId: string; zoneId: string; apiToken: string }) => request<Integration>("/api/v1/integrations/cloudflare", { method: "PUT", body: JSON.stringify(input) }),
-  configureHeadscale: (input: { mode: "builtin" | "external"; url: string; apiKey: string }) => request<Integration>("/api/v1/integrations/headscale", { method: "PUT", body: JSON.stringify(input) }),
+  configureHeadscale: (input: { mode: "builtin" | "external"; url: string; apiKey?: string }) => request<Integration>("/api/v1/integrations/headscale", { method: "PUT", body: JSON.stringify(input) }),
   createHeadscaleJoin: (agentId: string) => request<HeadscaleJoin>(`/api/v1/agents/${encodeURIComponent(agentId)}/headscale-join`, { method: "POST", body: "{}" }),
   createSource: (source: {
     id: string;

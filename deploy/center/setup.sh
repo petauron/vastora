@@ -93,13 +93,13 @@ trap - EXIT HUP INT TERM
 echo "Validating the loopback-only deployment..."
 docker compose config --quiet
 echo "Downloading the immutable Center image..."
-if ! docker compose pull center; then
+if ! docker compose pull center deployer; then
   echo "The release image could not be downloaded. Deployment files were kept at $script_dir." >&2
   echo "Check registry access, then run: cd '$script_dir' && docker compose pull center" >&2
   exit 1
 fi
-echo "Starting Center without opening a public port..."
-if ! docker compose up -d center; then
+echo "Starting Center and its restricted deployment helper without opening a public port..."
+if ! docker compose up -d deployer center; then
   echo "Center did not start. Run: cd '$script_dir' && docker compose logs center" >&2
   exit 1
 fi
@@ -132,5 +132,6 @@ echo
 echo "Then open:"
 echo "  http://127.0.0.1:18082"
 echo
-echo "The wizard creates the administrator and configures the location and network."
-echo "Headscale and public Gateway are enabled later; installation never claims public 443."
+echo "The wizard creates the administrator, location, and network."
+echo "It can install built-in Headscale and its HTTPS gateway on ports 80 and 8443."
+echo "Installation never claims public port 443."
