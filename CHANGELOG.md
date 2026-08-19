@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.4](https://github.com/petauron/vastora/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) (2026-08-19)
+
+
+### Bug Fixes
+
+* harden upgrades and runtime lifecycle ([#28](https://github.com/petauron/vastora/issues/28)) ([7912d1c](https://github.com/petauron/vastora/commit/7912d1c41d83d7634a4e69d8cd23afddf22ddad4))
+
 ## [0.1.0-alpha.3](https://github.com/petauron/vastora/compare/v0.1.0-alpha.2...v0.1.0-alpha.3) (2026-08-18)
 
 
