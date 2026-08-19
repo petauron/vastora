@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.6](https://github.com/petauron/vastora/compare/v0.1.0-alpha.5...v0.1.0-alpha.6) (2026-08-19)
+
+
+### Bug Fixes
+
+* accept generated Center install bundle ([#37](https://github.com/petauron/vastora/issues/37)) ([1eae32c](https://github.com/petauron/vastora/commit/1eae32cd637a3af0bc7215c52e92c7ee59120667))
+* verify packaged release metadata path ([#36](https://github.com/petauron/vastora/issues/36)) ([b73d9f6](https://github.com/petauron/vastora/commit/b73d9f6b77090ef943c68da6447829b92ae2ca5e))
+
 ## [0.1.0-alpha.5](https://github.com/petauron/vastora/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) (2026-08-19)
 
 
