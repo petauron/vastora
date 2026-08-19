@@ -30,7 +30,7 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
 			t.Fatal(err)
 		}
-		if input.CenterURL != "https://center.example.com:8443" || input.HeadscaleURL != "https://headscale.example.com:8443" {
+		if input.CenterURL != "https://center.example.com" || input.HeadscaleURL != "https://headscale.example.com" {
 			t.Fatalf("unexpected input: %#v", input)
 		}
 		_ = json.NewEncoder(writer).Encode(HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"})
@@ -42,7 +42,7 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := client.InstallHeadscale(context.Background(), HeadscaleInstallRequest{
-		CenterURL: "https://center.example.com:8443", HeadscaleURL: "https://headscale.example.com:8443",
+		CenterURL: "https://center.example.com", HeadscaleURL: "https://headscale.example.com",
 	})
 	if err != nil {
 		t.Fatal(err)

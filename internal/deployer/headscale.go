@@ -79,7 +79,7 @@ func (installer DockerHeadscaleInstaller) InstallHeadscale(ctx context.Context, 
 		return deployapi.HeadscaleInstallResult{}, err
 	}
 	if !gatewayExists {
-		if err := ensurePortsAvailable(80, 8443); err != nil {
+		if err := ensurePortsAvailable(80, 443); err != nil {
 			return deployapi.HeadscaleInstallResult{}, err
 		}
 	}
@@ -386,7 +386,7 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, timeo
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:8443")
+			return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:443")
 		},
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: parsed.Hostname()},
 	}
@@ -395,7 +395,7 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, timeo
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://127.0.0.1:8443"+healthPath, nil)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://127.0.0.1"+healthPath, nil)
 		if err != nil {
 			return err
 		}

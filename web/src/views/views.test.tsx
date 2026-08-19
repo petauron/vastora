@@ -136,7 +136,7 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("登录 Cloudflare");
     expect(container.textContent).toContain("Center 地址");
     expect(container.textContent).toContain("私网地址");
-    const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("端口、Headscale 来源"));
+    const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("Headscale 来源"));
     expect(advanced?.open).toBe(false);
     expect(container.querySelector("#setup-headscale-key")).toBeNull();
   });
@@ -159,6 +159,24 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("你准备在哪里使用 Vastora");
     expect(container.querySelector<HTMLInputElement>('input[value="headscale"]')?.checked).toBe(true);
     expect(window.sessionStorage.getItem("vastora.initial-setup.v1")).not.toContain("apiKey");
+  });
+
+  it("moves an unfinished built-in setup draft from public 8443 to standard HTTPS", () => {
+    window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
+      step: 2,
+      name: "DMIT",
+      timezone: "Asia/Singapore",
+      domainSuffix: "example.com",
+      mode: "headscale",
+      agentConnectUrl: "https://center.example.com:8443",
+      headscaleMode: "builtin",
+      headscaleUrl: "https://headscale.example.com:8443",
+      dnsMode: "manual",
+      publicAddress: "203.0.113.10"
+    }));
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} suggestedAgentConnectUrl="" />);
+    expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://center.example.com");
+    expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://headscale.example.com");
   });
 
   it("opens Cloudflare in a normal tab and offers recovery actions", async () => {

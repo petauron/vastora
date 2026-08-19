@@ -17,14 +17,14 @@ func normalizePublicURL(value string) (string, error) {
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
 		return "", errors.New("deployer: built-in services require an HTTPS URL without a path")
 	}
-	if parsed.Port() != "8443" {
-		return "", errors.New("deployer: built-in services must use HTTPS port 8443 so application port 443 remains free")
+	if port := parsed.Port(); port != "" && port != "443" {
+		return "", errors.New("deployer: built-in services must use the standard HTTPS port 443")
 	}
 	hostname := strings.ToLower(parsed.Hostname())
 	if !validDNSName(hostname) {
 		return "", errors.New("deployer: built-in services require a valid DNS hostname")
 	}
-	return "https://" + hostname + ":8443", nil
+	return "https://" + hostname, nil
 }
 
 func validDNSName(value string) bool {
@@ -126,7 +126,7 @@ func renderHeadscalePolicy() []byte {
     {
       "src": ["tag:vastora-agent"],
       "dst": ["tag:vastora-center"],
-      "ip": ["443,8443"]
+      "ip": ["443"]
     }
   ]
 }

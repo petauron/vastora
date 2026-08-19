@@ -133,5 +133,5 @@ echo "Then open:"
 echo "  http://127.0.0.1:18082"
 echo
 echo "The wizard creates the administrator, location, and network."
-echo "It can install built-in Headscale and its HTTPS gateway on ports 80 and 8443."
+echo "It can install built-in Headscale and its standard HTTPS gateway on ports 80 and 443."
 echo "Installation never claims public port 443."

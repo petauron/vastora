@@ -165,7 +165,7 @@ func TestConfigureSetupDNSRollsBackNewRecordsOnConflict(t *testing.T) {
 	store.cloudflareOAuth = cloudflareOAuthConfig{ClientID: "oauth-client", APIURL: server.URL, HTTPClient: server.Client()}
 	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access-secret", RefreshToken: "refresh-secret", ExpiresAt: time.Now().Add(time.Hour)})
 	candidates := []networking.Candidate{{Address: "203.0.113.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}
-	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.example.com:8443", HeadscaleURL: "https://headscale.example.com:8443", PublicAddress: "203.0.113.10"}, candidates)
+	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.example.com", HeadscaleURL: "https://headscale.example.com", PublicAddress: "203.0.113.10"}, candidates)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("conflicting DNS record was accepted: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestConfigureSetupDNSRejectsAnUnreportedPublicAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.example.com:8443", PublicAddress: "203.0.113.10"}, nil)
+	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.example.com", PublicAddress: "203.0.113.10"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "not assigned") {
 		t.Fatalf("unreported public address was accepted: %v", err)
 	}

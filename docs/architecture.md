@@ -137,6 +137,12 @@ existing HTTPS Headscale API. Center creates Vastora users/tags and one-hour,
 single-use pre-auth keys, but it does not embed Headscale logic into the Center
 process.
 
+Bundled setup starts the Center HTTPS gateway on public ports `80` and `443`.
+Center and Headscale share that gateway through separate hostnames, so their
+public URLs use standard HTTPS without explicit ports. Loopback `8443` is only
+an internal Caddy backend when an Agent enables the optional shared-443 HAProxy
+frontend; it is never an administrator-facing service URL.
+
 Built-in Headscale reads stable sorted A/AAAA records from a Center-generated
 `dns.extra_records_path` file. External Headscale installations use manual DNS
 unless that file is managed by the operator.
