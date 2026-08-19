@@ -121,11 +121,18 @@ describe("network and app views", () => {
       location.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
-    expect(container.textContent).toContain("安装向导通过 SSH 隧道打开");
-    expect(container.textContent).toContain("不要填写本机浏览器中的 127.0.0.1:18082");
+    expect(container.textContent).toContain("当前是临时访问地址");
+    expect(container.textContent).toContain("自动填写服务器能够访问的正式地址");
+    expect(container.textContent).toContain("你准备在哪里使用 Vastora");
+    expect(container.textContent).toContain("同一网络");
+    expect(container.textContent).toContain("随时随地");
     act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
-    expect(container.textContent).toContain("向导会自动完成安装");
-    expect(container.textContent).toContain("使用 Cloudflare 登录");
+    expect(container.textContent).toContain("设置安全连接");
+    expect(container.textContent).toContain("登录 Cloudflare");
+    expect(container.textContent).toContain("Center 地址");
+    expect(container.textContent).toContain("私网地址");
+    const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("端口、Headscale 来源"));
+    expect(advanced?.open).toBe(false);
     expect(container.querySelector("#setup-headscale-key")).toBeNull();
   });
 

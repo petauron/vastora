@@ -139,7 +139,7 @@ func (s *Store) StartCloudflareOAuth() (CloudflareOAuthStart, error) {
 		"client_id":             {config.ClientID},
 		"redirect_uri":          {cloudflareOAuthRedirectURI},
 		"response_type":         {"code"},
-		"scope":                 {"account.read zone.read dns.write argotunnel.write offline_access"},
+		"scope":                 {"account-settings.read zone.read dns.write argotunnel.write offline_access"},
 		"state":                 {state},
 		"code_challenge":        {oauthSHA256(verifier)},
 		"code_challenge_method": {"S256"},
