@@ -4,44 +4,79 @@ const releaseAssets = new Set([
   "vastora-center-install.tar.gz",
   "vastora-center-install.tar.gz.sha256",
 ]);
-const cacheKey = new Request("https://vastora-installer.internal/selected-release");
+const currentCacheKey = new Request("https://vastora-installer.internal/current-release");
+const lastKnownCacheKey = new Request("https://vastora-installer.internal/last-known-release");
+const versionURL = `https://raw.githubusercontent.com/${repository}/main/version.txt`;
+
+function releaseAssetURL(tag, asset) {
+  return `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${asset}`;
+}
+
+function cachedSelection(result, maxAge) {
+  return Response.json(result, {
+    headers: { "Cache-Control": `public, max-age=${maxAge}` },
+  });
+}
+
+async function requestedRelease() {
+  const versionResponse = await fetch(versionURL, {
+    headers: { "User-Agent": "vastora-installer-worker" },
+  });
+  if (!versionResponse.ok) {
+    throw new Error(`Version pointer returned ${versionResponse.status}`);
+  }
+
+  const version = (await versionResponse.text()).trim();
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+    throw new Error("Version pointer is invalid");
+  }
+
+  const tag = `v${version}`;
+  const assetResponses = await Promise.all(
+    [...releaseAssets].map((asset) =>
+      fetch(releaseAssetURL(tag, asset), {
+        method: "HEAD",
+        redirect: "manual",
+        headers: { "User-Agent": "vastora-installer-worker" },
+      }),
+    ),
+  );
+  if (!assetResponses.every((response) => response.ok || response.status === 302)) {
+    throw new Error("Requested release assets are incomplete");
+  }
+
+  return { tag };
+}
 
 async function selectedRelease(ctx) {
   const cache = caches.default;
-  const cached = await cache.match(cacheKey);
+  const cached = await cache.match(currentCacheKey);
   if (cached) return cached.json();
 
-  const response = await fetch(
-    `https://api.github.com/repos/${repository}/releases?per_page=20`,
-    {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "vastora-installer-worker",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    },
-  );
-  if (!response.ok) throw new Error(`GitHub releases returned ${response.status}`);
-
-  const releases = await response.json();
-  const release = releases.find((candidate) => {
-    if (candidate.draft || !/^v[0-9A-Za-z._-]+$/.test(candidate.tag_name)) return false;
-    const names = new Set(candidate.assets.map((asset) => asset.name));
-    return [...releaseAssets].every((name) => names.has(name));
-  });
-  if (!release) throw new Error("No complete Vastora release is available");
-
-  const result = { tag: release.tag_name };
-  const cachedResponse = Response.json(result, {
-    headers: { "Cache-Control": "public, max-age=300" },
-  });
-  ctx.waitUntil(cache.put(cacheKey, cachedResponse));
-  return result;
+  try {
+    const result = await requestedRelease();
+    ctx.waitUntil(
+      Promise.all([
+        cache.put(currentCacheKey, cachedSelection(result, 60)),
+        cache.put(lastKnownCacheKey, cachedSelection(result, 604800)),
+      ]),
+    );
+    return result;
+  } catch (error) {
+    const lastKnown = await cache.match(lastKnownCacheKey);
+    if (lastKnown) {
+      console.warn("Using the last known installer release", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return lastKnown.json();
+    }
+    throw error;
+  }
 }
 
 function responseHeaders() {
   return {
-    "Cache-Control": "public, max-age=300",
+    "Cache-Control": "public, max-age=60",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
   };
@@ -67,7 +102,7 @@ export default {
 
     try {
       const release = await selectedRelease(ctx);
-      const location = `https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag)}/${asset}`;
+      const location = releaseAssetURL(release.tag, asset);
       return new Response(null, {
         status: 302,
         headers: { ...responseHeaders(), Location: location },
@@ -76,7 +111,12 @@ export default {
       console.error("Unable to select installer release", error);
       return new Response("No complete Vastora release is currently available.\n", {
         status: 503,
-        headers: { ...responseHeaders(), "Retry-After": "300" },
+        headers: {
+          ...responseHeaders(),
+          "Cache-Control": "no-store",
+          "Cloudflare-CDN-Cache-Control": "no-store",
+          "Retry-After": "60",
+        },
       });
     }
   },
