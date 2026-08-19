@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.9](https://github.com/petauron/vastora/compare/v0.1.0-alpha.8...v0.1.0-alpha.9) (2026-08-19)
+
+
+### Bug Fixes
+
+* make Cloudflare authorization recoverable ([#43](https://github.com/petauron/vastora/issues/43)) ([db1d177](https://github.com/petauron/vastora/commit/db1d177988706ba813c8bd04cb88a3e471b57d3a))
+
 ## [0.1.0-alpha.8](https://github.com/petauron/vastora/compare/v0.1.0-alpha.7...v0.1.0-alpha.8) (2026-08-19)
 
 
