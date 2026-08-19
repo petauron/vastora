@@ -159,17 +159,21 @@ jobs:
           gh release edit "$RELEASE_TAG" --draft=false
 
       - name: Verify public installer endpoint
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: |
           temporary_dir="$(mktemp -d)"
-          curl --retry 5 --retry-all-errors -fsSL \
+          curl --connect-timeout 10 --max-time 30 --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 -fsSL \
             https://vastora.petauron.com/install.sh \
             -o "$temporary_dir/install.sh"
-          curl --retry 5 --retry-all-errors -fsSL \
+          curl --connect-timeout 10 --max-time 30 --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 -fsSL \
             https://vastora.petauron.com/vastora-center-install.tar.gz \
             -o "$temporary_dir/vastora-center-install.tar.gz"
-          curl --retry 5 --retry-all-errors -fsSL \
+          curl --connect-timeout 10 --max-time 30 --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 -fsSL \
             https://vastora.petauron.com/vastora-center-install.tar.gz.sha256 \
             -o "$temporary_dir/vastora-center-install.tar.gz.sha256"
           sh -n "$temporary_dir/install.sh"
           cd "$temporary_dir"
           sha256sum --check vastora-center-install.tar.gz.sha256
+          actual_version="$(tar -xOzf vastora-center-install.tar.gz release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')"
+          test "$actual_version" = "$EXPECTED_VERSION"

@@ -30,6 +30,7 @@ deployment-check:
 	sh -n deploy/center/upgrade.sh
 	sh -n scripts/package-center-install.sh
 	sh -n scripts/test-center-install.sh
+	node scripts/test-installer-worker.mjs
 	./install.sh --help >/dev/null
 	deploy/center/setup.sh --help >/dev/null
 	deploy/center/upgrade.sh --help >/dev/null
