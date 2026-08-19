@@ -2,14 +2,16 @@
 
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardData } from "../App";
+import { api } from "../api";
 import { AppsView } from "./AppsView";
 import { HomeView } from "./HomeView";
 import { NetworkView } from "./NetworkView";
 import { NodesView, agentInstallCommand, validCenterURL } from "./NodesView";
 import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
+import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,6 +20,9 @@ afterEach(() => {
   if (root) act(() => root?.unmount());
   root = undefined;
   document.body.replaceChildren();
+  window.sessionStorage.clear();
+  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 const dashboard = (): DashboardData => ({
@@ -134,6 +139,50 @@ describe("network and app views", () => {
     const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("端口、Headscale 来源"));
     expect(advanced?.open).toBe(false);
     expect(container.querySelector("#setup-headscale-key")).toBeNull();
+  });
+
+  it("keeps a non-sensitive setup draft after a reload", () => {
+    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, language: "zh-CN" as const, onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }], suggestedAgentConnectUrl: "" };
+    let container = render(<SetupWizard {...props} />);
+    const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "DMIT");
+      location.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+    act(() => root?.unmount());
+    root = undefined;
+    document.body.replaceChildren();
+
+    container = render(<SetupWizard {...props} />);
+    expect(container.textContent).toContain("你准备在哪里使用 Vastora");
+    expect(container.querySelector<HTMLInputElement>('input[value="headscale"]')?.checked).toBe(true);
+    expect(window.sessionStorage.getItem("vastora.initial-setup.v1")).not.toContain("apiKey");
+  });
+
+  it("opens Cloudflare in a normal tab and offers recovery actions", async () => {
+    vi.useFakeTimers();
+    const popupDocument = document.implementation.createHTMLDocument("Cloudflare");
+    const replace = vi.fn();
+    const close = vi.fn();
+    const popup = { close, document: popupDocument, location: { replace }, opener: window } as unknown as Window;
+    const open = vi.spyOn(window, "open").mockReturnValue(popup);
+    vi.spyOn(api, "startCloudflareOAuth").mockResolvedValue({ sessionId: "session", authorizationUrl: "https://dash.cloudflare.test/oauth2/auth", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    vi.spyOn(api, "pollCloudflareOAuth").mockResolvedValue({ status: "pending" });
+    const container = render(<CloudflareOAuthConnect available connected={false} language="zh-CN" onConnected={() => undefined} />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("登录 Cloudflare"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(replace).toHaveBeenCalledWith("https://dash.cloudflare.test/oauth2/auth");
+    expect(container.textContent).toContain("Cloudflare 首次加载可能需要几秒");
+    expect(container.textContent).toContain("重新打开登录页");
+    expect(container.textContent).toContain("复制登录链接");
+    expect(container.textContent).toContain("取消");
   });
 
   it("uses the saved Center address when adding a node and keeps editing advanced", () => {
