@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.0-alpha.5](https://github.com/petauron/vastora/compare/v0.1.0-alpha.4...v0.1.0-alpha.5) (2026-08-19)
+
+
+### Features
+
+* install Headscale from the setup wizard ([#34](https://github.com/petauron/vastora/issues/34)) ([069eb36](https://github.com/petauron/vastora/commit/069eb361a196297db3104fc28e67e2e91ee16fea))
+
+
+### Bug Fixes
+
+* make installer release selection resilient ([#33](https://github.com/petauron/vastora/issues/33)) ([bc9fae1](https://github.com/petauron/vastora/commit/bc9fae1ecc2ded174d1e21b50628a9eeae93cf13))
+* resolve draft release target commit ([#32](https://github.com/petauron/vastora/issues/32)) ([f2a0d20](https://github.com/petauron/vastora/commit/f2a0d20e3606dfdbe2061c5003c84e1bf7d75b32))
+* resolve draft releases from the release list ([#31](https://github.com/petauron/vastora/issues/31)) ([72720dd](https://github.com/petauron/vastora/commit/72720dda2885b14653d3f9a808b416fee9226411))
+* verify release checksum from dist directory ([#30](https://github.com/petauron/vastora/issues/30)) ([f86e35a](https://github.com/petauron/vastora/commit/f86e35a44fac6ac31600306f9e7c4db540e8ff51))
+
 ## [0.1.0-alpha.4](https://github.com/petauron/vastora/compare/v0.1.0-alpha.3...v0.1.0-alpha.4) (2026-08-19)
 
 
