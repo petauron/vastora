@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -27,6 +28,12 @@ type Server struct {
 	setupAgentConnectURL string
 	secureCookies        bool
 	officialCatalog      []byte
+	headscaleInstaller   deployapi.HeadscaleInstaller
+}
+
+func (s *Server) WithHeadscaleInstaller(installer deployapi.HeadscaleInstaller) *Server {
+	s.headscaleInstaller = installer
+	return s
 }
 
 func NewServer(store *Store, staticDir string, secureCookies bool) *Server {
@@ -112,9 +119,10 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"administratorConfigured":  status.AdministratorConfigured,
-		"onboardingComplete":       status.OnboardingComplete,
-		"suggestedAgentConnectUrl": s.setupAgentConnectURL,
+		"administratorConfigured":   status.AdministratorConfigured,
+		"onboardingComplete":        status.OnboardingComplete,
+		"suggestedAgentConnectUrl":  s.setupAgentConnectURL,
+		"builtinHeadscaleAvailable": s.headscaleInstaller != nil,
 	})
 }
 
@@ -143,7 +151,7 @@ func (s *Server) handleSetupComplete(writer http.ResponseWriter, request *http.R
 		return
 	}
 	if input.Network.AgentConnectionMode == "headscale" && input.Headscale != nil {
-		if _, err := s.store.ConfigureHeadscale(request.Context(), *input.Headscale); err != nil {
+		if _, err := s.configureHeadscale(request.Context(), *input.Headscale, input.Network.AgentConnectURL); err != nil {
 			writeError(writer, http.StatusBadRequest, err)
 			return
 		}
@@ -398,12 +406,37 @@ func (s *Server) handleConfigureHeadscale(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	value, err := s.store.ConfigureHeadscale(request.Context(), input)
+	network, err := s.store.CenterNetworkConfig(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.configureHeadscale(request.Context(), input, network.AgentConnectURL)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, value)
+}
+
+func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, centerURL string) (IntegrationView, error) {
+	if strings.TrimSpace(input.Mode) != "builtin" {
+		return s.store.ConfigureHeadscale(ctx, input)
+	}
+	if s.headscaleInstaller == nil {
+		return IntegrationView{}, errors.New("center: this installation does not include the Headscale deployment helper")
+	}
+	if strings.TrimSpace(input.APIKey) != "" {
+		return IntegrationView{}, errors.New("center: built-in Headscale creates its API key automatically")
+	}
+	result, err := s.headscaleInstaller.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
+		CenterURL:    centerURL,
+		HeadscaleURL: input.URL,
+	})
+	if err != nil {
+		return IntegrationView{}, err
+	}
+	return s.store.ConfigureBuiltinHeadscale(ctx, result.Endpoint, result.APIKey)
 }
 
 func (s *Server) handleCreateHeadscaleJoin(writer http.ResponseWriter, request *http.Request) {

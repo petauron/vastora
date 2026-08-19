@@ -31,14 +31,19 @@ grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$temporary_dir/release.env"
 test -x "$temporary_dir/setup.sh"
 test -x "$temporary_dir/upgrade.sh"
 test -f "$temporary_dir/compose.yaml"
-test -f "$temporary_dir/headscale/config.yaml"
-test -f "$temporary_dir/headscale/policy.hujson"
+test ! -e "$temporary_dir/headscale"
 grep -Fq '127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}' "$temporary_dir/compose.yaml"
 grep -Fq 'network_mode: host' "$temporary_dir/compose.yaml"
 if sed -n '/^  center:/,/^  headscale:/p' "$temporary_dir/compose.yaml" | grep -Fq '    ports:'; then
   echo "Center install bundle still publishes a Docker port" >&2
   exit 1
 fi
+if sed -n '/^  center:/,/^  deployer:/p' "$temporary_dir/compose.yaml" | grep -Fq '/var/run/docker.sock'; then
+  echo "Center service must not mount the Docker socket" >&2
+  exit 1
+fi
+grep -Fq -- '--deployer-socket' "$temporary_dir/compose.yaml"
+grep -Fq '/var/run/docker.sock:/var/run/docker.sock' "$temporary_dir/compose.yaml"
 if grep -Fq '${VASTORA_CENTER_PORT:-443}:8080' "$temporary_dir/compose.yaml"; then
   echo "Center install bundle still claims public port 443" >&2
   exit 1
@@ -48,10 +53,8 @@ grep -Fq 'Public port 443: unchanged' "$temporary_dir/setup.sh"
 
 fake_bin="$temporary_dir/fake-bin"
 existing="$temporary_dir/existing"
-install -d "$fake_bin" "$existing/headscale"
+install -d "$fake_bin" "$existing"
 install -m 0644 "$temporary_dir/compose.yaml" "$existing/compose.yaml"
-install -m 0644 "$temporary_dir/headscale/config.yaml" "$existing/headscale/config.yaml"
-install -m 0644 "$temporary_dir/headscale/policy.hujson" "$existing/headscale/policy.hujson"
 printf '%s\n' 'old setup' > "$existing/setup.sh"
 printf '%s\n' 'VASTORA_VERSION=old' 'VASTORA_CENTER_IMAGE=old-image' > "$existing/release.env"
 printf '%s\n' 'VASTORA_CENTER_IMAGE=old-image' 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' 'VASTORA_CUSTOM_VALUE=preserved' > "$existing/.env"

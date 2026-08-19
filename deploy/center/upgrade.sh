@@ -30,7 +30,7 @@ if [ ! -f "$install_dir/.env" ] || [ ! -f "$install_dir/compose.yaml" ]; then
   echo "$install_dir is not a complete Center installation." >&2
   exit 1
 fi
-for required_file in setup.sh upgrade.sh compose.yaml release.env headscale/config.yaml headscale/policy.hujson; do
+for required_file in setup.sh upgrade.sh compose.yaml release.env; do
   if [ ! -f "$source_dir/$required_file" ]; then
     echo "The upgrade bundle is incomplete: missing $required_file" >&2
     exit 1
@@ -69,7 +69,7 @@ files_changed=no
 center_started=no
 
 restore_files() {
-  for relative in setup.sh upgrade.sh compose.yaml release.env headscale/config.yaml headscale/policy.hujson .env; do
+  for relative in setup.sh upgrade.sh compose.yaml release.env .env; do
     if [ -f "$backup_dir/$relative" ]; then
       install -d -m 0755 "$(dirname "$install_dir/$relative")"
       install -m 0644 "$backup_dir/$relative" "$install_dir/$relative"
@@ -107,23 +107,19 @@ chmod 0600 "$candidate_env"
 echo "Validating the new deployment with the existing configuration..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" config --quiet
 echo "Downloading the immutable Center image..."
-docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center
+docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center deployer
 
-install -d -m 0755 "$backup_dir/headscale"
-for relative in setup.sh upgrade.sh compose.yaml release.env headscale/config.yaml headscale/policy.hujson .env; do
+for relative in setup.sh upgrade.sh compose.yaml release.env .env; do
   if [ -f "$install_dir/$relative" ]; then
     install -d -m 0755 "$(dirname "$backup_dir/$relative")"
     install -m 0644 "$install_dir/$relative" "$backup_dir/$relative"
   fi
 done
 
-install -d -m 0755 "$install_dir/headscale"
 install -m 0755 "$source_dir/setup.sh" "$install_dir/setup.sh"
 install -m 0755 "$source_dir/upgrade.sh" "$install_dir/upgrade.sh"
 install -m 0644 "$source_dir/compose.yaml" "$install_dir/compose.yaml"
 install -m 0644 "$source_dir/release.env" "$install_dir/release.env"
-install -m 0644 "$source_dir/headscale/config.yaml" "$install_dir/headscale/config.yaml"
-install -m 0644 "$source_dir/headscale/policy.hujson" "$install_dir/headscale/policy.hujson"
 install -m 0600 "$candidate_env" "$install_dir/.env"
 files_changed=yes
 
@@ -133,7 +129,7 @@ if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
 echo "Starting the updated Center..."
 cd "$install_dir"
 center_started=yes
-docker compose up -d center
+docker compose up -d --remove-orphans deployer center
 
 attempt=0
 until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do

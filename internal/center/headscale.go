@@ -38,12 +38,29 @@ type headscaleClient struct {
 }
 
 func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (IntegrationView, error) {
+	return s.configureHeadscale(ctx, input, false)
+}
+
+func (s *Store) ConfigureBuiltinHeadscale(ctx context.Context, endpoint, apiKey string) (IntegrationView, error) {
+	return s.configureHeadscale(ctx, HeadscaleInput{Mode: "builtin", URL: endpoint, APIKey: apiKey}, true)
+}
+
+func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, trustedBuiltin bool) (IntegrationView, error) {
 	input.Mode = strings.TrimSpace(input.Mode)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	if input.Mode != "builtin" && input.Mode != "external" {
 		return IntegrationView{}, errors.New("center: Headscale mode must be builtin or external")
 	}
-	endpoint, err := s.authorizedHeadscaleEndpoint(input.URL)
+	if trustedBuiltin != (input.Mode == "builtin") {
+		return IntegrationView{}, errors.New("center: built-in Headscale must be installed by the deployment helper")
+	}
+	var endpoint string
+	var err error
+	if trustedBuiltin {
+		endpoint, err = normalizeHeadscaleEndpoint(input.URL)
+	} else {
+		endpoint, err = s.authorizedHeadscaleEndpoint(input.URL)
+	}
 	if err != nil {
 		return IntegrationView{}, err
 	}
@@ -137,8 +154,8 @@ func (s *Store) createHeadscaleJoin(ctx context.Context, agentID string, gateway
 }
 
 func (s *Store) headscale(ctx context.Context) (headscaleClient, error) {
-	var endpoint, secretID string
-	if err := s.db.QueryRowContext(ctx, `SELECT endpoint, secret_id FROM network_integrations WHERE kind = 'headscale' AND status = 'configured'`).Scan(&endpoint, &secretID); errors.Is(err, sql.ErrNoRows) {
+	var mode, endpoint, secretID string
+	if err := s.db.QueryRowContext(ctx, `SELECT mode, endpoint, secret_id FROM network_integrations WHERE kind = 'headscale' AND status = 'configured'`).Scan(&mode, &endpoint, &secretID); errors.Is(err, sql.ErrNoRows) {
 		return headscaleClient{}, errors.New("center: Headscale integration is not configured")
 	} else if err != nil {
 		return headscaleClient{}, err
@@ -147,7 +164,12 @@ func (s *Store) headscale(ctx context.Context) (headscaleClient, error) {
 	if err != nil {
 		return headscaleClient{}, err
 	}
-	allowedEndpoint, err := s.authorizedHeadscaleEndpoint(endpoint)
+	allowedEndpoint := ""
+	if mode == "builtin" {
+		allowedEndpoint, err = normalizeHeadscaleEndpoint(endpoint)
+	} else {
+		allowedEndpoint, err = s.authorizedHeadscaleEndpoint(endpoint)
+	}
 	if err != nil {
 		return headscaleClient{}, err
 	}
