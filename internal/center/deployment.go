@@ -691,7 +691,9 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	_ = s.cleanupStoppedPublications(ctx, publicationCleanups)
+	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
+		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
 	return nil
 }
 

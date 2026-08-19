@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
@@ -36,6 +37,7 @@ type Store struct {
 	key                       []byte
 	headscaleAllowedEndpoints []string
 	headscaleHTTPClient       *http.Client
+	publicationCleanupMu      sync.Mutex
 	now                       func() time.Time
 }
 
@@ -259,6 +261,24 @@ func (s *Store) ValidateSession(ctx context.Context, sessionToken, csrfToken str
 	}
 	if mutation && subtle.ConstantTimeCompare([]byte(storedCSRF), []byte(csrfToken)) != 1 {
 		return errors.New("center: CSRF token is invalid")
+	}
+	return nil
+}
+
+func (s *Store) Logout(ctx context.Context, sessionToken string) error {
+	if sessionToken == "" {
+		return errors.New("center: authentication required")
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash = ?`, tokenHash(sessionToken))
+	if err != nil {
+		return fmt.Errorf("center: revoke session: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("center: revoke session: %w", err)
+	}
+	if changed != 1 {
+		return errors.New("center: session is invalid")
 	}
 	return nil
 }
@@ -741,7 +761,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	_ = s.cleanupStoppedPublications(ctx, publicationCleanups)
+	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
+		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
 	return nil
 }
 
@@ -781,19 +803,70 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	byID := make(map[string]int, len(agents))
 	for index := range agents {
-		candidates, err := s.networkCandidates(ctx, agents[index].ID)
-		if err != nil {
-			return nil, err
-		}
-		agents[index].NetworkCandidates = candidates
-		profile, err := s.networkProfile(ctx, agents[index].ID)
-		if err != nil {
-			return nil, err
-		}
-		agents[index].NetworkProfile = profile
+		byID[agents[index].ID] = index
+		agents[index].NetworkCandidates = []networking.Candidate{}
 	}
-	return agents, rows.Err()
+	candidateRows, err := s.db.QueryContext(ctx, `SELECT agent_id, address, interface_name, family, kind, observed_at FROM agent_network_candidates ORDER BY agent_id, kind, interface_name, address`)
+	if err != nil {
+		return nil, fmt.Errorf("center: list network candidates: %w", err)
+	}
+	for candidateRows.Next() {
+		var agentID, observed string
+		var candidate networking.Candidate
+		if err := candidateRows.Scan(&agentID, &candidate.Address, &candidate.Interface, &candidate.Family, &candidate.Kind, &observed); err != nil {
+			candidateRows.Close()
+			return nil, err
+		}
+		candidate.ObservedAt, err = time.Parse(time.RFC3339Nano, observed)
+		if err != nil {
+			candidateRows.Close()
+			return nil, errors.New("center: invalid network candidate timestamp")
+		}
+		if index, ok := byID[agentID]; ok {
+			agents[index].NetworkCandidates = append(agents[index].NetworkCandidates, candidate)
+		}
+	}
+	if err := candidateRows.Close(); err != nil {
+		return nil, err
+	}
+	profileRows, err := s.db.QueryContext(ctx, `SELECT agent_id, service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at FROM agent_network_profiles ORDER BY agent_id`)
+	if err != nil {
+		return nil, fmt.Errorf("center: list network profiles: %w", err)
+	}
+	for profileRows.Next() {
+		var agentID, confirmed, observed string
+		var enabled []byte
+		var direct int
+		profile := networking.Profile{}
+		if err := profileRows.Scan(&agentID, &profile.ServiceAddress, &profile.LANAddress, &profile.HeadscaleAddress, &profile.PublicAddress, &enabled, &direct, &confirmed, &observed); err != nil {
+			profileRows.Close()
+			return nil, err
+		}
+		if json.Unmarshal(enabled, &profile.EnabledKinds) != nil {
+			profileRows.Close()
+			return nil, errors.New("center: invalid stored network profile")
+		}
+		profile.DirectPublic = direct == 1
+		profile.ConfirmedAt, err = time.Parse(time.RFC3339Nano, confirmed)
+		if err != nil {
+			profileRows.Close()
+			return nil, errors.New("center: invalid network profile timestamp")
+		}
+		profile.CandidateObserved, err = time.Parse(time.RFC3339Nano, observed)
+		if err != nil {
+			profileRows.Close()
+			return nil, errors.New("center: invalid network observation timestamp")
+		}
+		if index, ok := byID[agentID]; ok {
+			agents[index].NetworkProfile = &profile
+		}
+	}
+	if err := profileRows.Close(); err != nil {
+		return nil, err
+	}
+	return agents, nil
 }
 
 func containsString(values []string, wanted string) bool {

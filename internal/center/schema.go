@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 4
+const centerSchemaVersion = 5
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -188,6 +188,9 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			applied_revision INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'degraded', 'failed', 'stopped')),
 			last_error TEXT NOT NULL DEFAULT '',
+			cleanup_pending INTEGER NOT NULL DEFAULT 0,
+			cleanup_attempt INTEGER NOT NULL DEFAULT 0,
+			cleanup_retry_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			UNIQUE(service_id, kind, hostname)

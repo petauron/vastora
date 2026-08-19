@@ -24,6 +24,22 @@ export type DashboardStatus = {
   agentConnectUrl: string;
 };
 
+export type DashboardData = {
+  status: DashboardStatus;
+  sources: CatalogSource[];
+  apps: AppView[];
+  agents: AgentView[];
+  deployments: Deployment[];
+  organizations: Organization[];
+  sites: Site[];
+  applications: Application[];
+  services: Service[];
+  publications: Publication[];
+  routes: Route[];
+  integrations: Integration[];
+  actions: Action[];
+};
+
 export type AgentConnectionMode = "lan" | "headscale" | "public";
 export type SetupStatus = {
   administratorConfigured: boolean;

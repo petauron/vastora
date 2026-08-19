@@ -3,10 +3,10 @@
 Vastora releases use one public installation command:
 
 ```sh
-curl -LsSf https://github.com/petauron/vastora/releases/latest/download/install.sh | sudo sh -s -- center
+curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center
 ```
 
-The bootstrap downloads the latest Center install bundle and its SHA-256 file,
+The bootstrap downloads the newest complete Center release bundle and its SHA-256 file,
 verifies the archive, installs it under `/opt/vastora/center`, and starts Center
 with host networking on `127.0.0.1:8080`. It publishes no Docker port and does
 not require Git, a domain, a certificate, or an unused public port 443.
@@ -62,6 +62,13 @@ supports `--release-url` for a trusted mirror and `--install-dir` for a custom
 location. `setup.sh` supports `--bootstrap-port` and `--ssh-host` after the `--`
 separator.
 
+Run the same public command to upgrade. It keeps `.env`, replaces only managed
+deployment files, validates and pulls the new immutable image before changing
+anything, then starts Center and waits for health. If the new Center has already
+started, the upgrader never rolls the database or image backward automatically;
+inspect the printed logs and restore Center's pre-migration SQLite backup when a
+manual downgrade is required.
+
 ## Automated releases
 
 Merges to `main` update a Release Please pull request from conventional commit
@@ -69,18 +76,19 @@ messages. Merging that pull request creates a draft release, builds and pushes
 the `linux/amd64` Center image to GHCR, packages the installer
 against the image manifest digest, uploads all three assets, and publishes the
 release only after every step succeeds. Failed builds leave the release as a
-draft, so `releases/latest` never points to incomplete installer assets.
+draft. The Cloudflare Worker behind `vastora.petauron.com` selects the newest
+non-draft release containing all three assets, including prereleases, so it does
+not depend on GitHub's stable-only `releases/latest` endpoint.
 
 The GHCR package must allow unauthenticated pulls. The release job checks that
-before publishing. The planned short installer address is
-`https://vastora.petauron.com/install.sh`; keep using the GitHub Release URL
-until that endpoint has been configured and verified publicly.
+before publishing and then downloads the public short URLs and verifies the
+published checksum.
 
 Repository owners must enable **Settings → Actions → General → Allow GitHub
 Actions to create and approve pull requests** once. The first image publication
 may also require changing the new `vastora-center` package visibility to
 **Public** and rerunning only the failed `publish` job. Until that succeeds, the
-draft release is not exposed through `releases/latest`.
+draft release is not exposed by the installer Worker.
 
 To validate a later Headscale configuration change before restarting:
 

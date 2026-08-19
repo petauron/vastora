@@ -83,7 +83,10 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE application_id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1, last_error = '', updated_at = ? WHERE service_id IN (SELECT id FROM services WHERE application_id = ?) AND status <> 'stopped'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
+			cleanup_pending = CASE WHEN dns_record_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
+			cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ?
+			WHERE service_id IN (SELECT id FROM services WHERE application_id = ?) AND status <> 'stopped'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
 		}
 		if err := s.queueAffectedGateways(ctx, tx, applicationID, now); err != nil {
@@ -167,7 +170,9 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), service.id); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1, last_error = '', updated_at = ? WHERE service_id = ? AND status <> 'stopped'`, now.Format(time.RFC3339Nano), service.id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
+			cleanup_pending = CASE WHEN dns_record_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
+			cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE service_id = ? AND status <> 'stopped'`, now.Format(time.RFC3339Nano), service.id); err != nil {
 			return err
 		}
 		*cleanups = append(*cleanups, values...)

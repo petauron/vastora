@@ -199,19 +199,39 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		}
 	}
 
-	id, err := randomToken(18)
-	if err != nil {
-		return PublicationView{}, err
-	}
 	now := s.now().UTC()
 	tlsEnabled := webService && (input.Kind == publicationPublic || input.Kind == publicationCloudflare)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, dns_provider, tls_enabled, status, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
-		return PublicationView{}, fmt.Errorf("center: create publication: %w", err)
+	id, revision := "", int64(1)
+	var existingStatus string
+	var cleanupPending int
+	err = tx.QueryRowContext(ctx, `SELECT id, status, cleanup_pending, desired_revision FROM publications WHERE service_id = ? AND kind = ? AND hostname = ?`, input.ServiceID, input.Kind, input.Hostname).Scan(&id, &existingStatus, &cleanupPending, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		id, err = randomToken(18)
+		if err != nil {
+			return PublicationView{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, dns_provider, tls_enabled, status, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+			return PublicationView{}, fmt.Errorf("center: create publication: %w", err)
+		}
+		revision = 1
+	} else if err != nil {
+		return PublicationView{}, err
+	} else {
+		if existingStatus != "stopped" {
+			return PublicationView{}, errors.New("center: this service access entry already exists")
+		}
+		if cleanupPending != 0 {
+			return PublicationView{}, errors.New("center: the previous access entry is still removing external resources; retry after cleanup succeeds")
+		}
+		revision++
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET gateway_node_id = ?, dns_provider = ?, dns_record_id = '', tls_enabled = ?, desired_revision = ?, status = 'pending', last_error = '', cleanup_attempt = 0, cleanup_retry_at = '', updated_at = ? WHERE id = ?`, nullableString(gatewayID), input.DNSProvider, tlsEnabled, revision, now.Format(time.RFC3339Nano), id); err != nil {
+			return PublicationView{}, fmt.Errorf("center: reactivate publication: %w", err)
+		}
 	}
-	dnsTaskID := dnsTaskID(id, 1)
+	taskID := dnsTaskID(id, revision)
 	if input.DNSProvider != "manual" {
-		if err := s.recordTaskEvent(ctx, tx, dnsTaskID, gatewayID, "dns.record.apply", 1, "queued", input.DNSProvider+" DNS record queued"); err != nil {
+		if err := s.recordTaskEvent(ctx, tx, taskID, gatewayID, "dns.record.apply", revision, "queued", input.DNSProvider+" DNS record queued"); err != nil {
 			return PublicationView{}, err
 		}
 	}
@@ -230,31 +250,46 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	if err := tx.Commit(); err != nil {
 		return PublicationView{}, err
 	}
-	if input.DNSProvider == "cloudflare" {
-		if err := s.reconcileCloudflarePublication(ctx, id); err != nil {
-			message := strings.TrimSpace(err.Error())
-			if len(message) > 1024 {
-				message = message[:1024]
-			}
-			_, _ = s.db.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`, message, s.now().UTC().Format(time.RFC3339Nano), id)
-			_ = s.recordStandaloneTaskEvent(ctx, dnsTaskID, gatewayID, "dns.record.apply", 1, "failed", message)
-		} else {
-			_ = s.recordStandaloneTaskEvent(ctx, dnsTaskID, gatewayID, "dns.record.apply", 1, "succeeded", "Cloudflare DNS record applied")
-		}
-	}
-	if input.DNSProvider == "headscale" {
-		if err := s.reconcileHeadscaleDNS(ctx); err != nil {
-			message := strings.TrimSpace(err.Error())
-			if len(message) > 1024 {
-				message = message[:1024]
-			}
-			_, _ = s.db.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?`, message, s.now().UTC().Format(time.RFC3339Nano), id)
-			_ = s.recordStandaloneTaskEvent(ctx, dnsTaskID, gatewayID, "dns.record.apply", 1, "failed", message)
-		} else {
-			_ = s.recordStandaloneTaskEvent(ctx, dnsTaskID, gatewayID, "dns.record.apply", 1, "succeeded", "Headscale DNS records applied")
-		}
+	if _, err := s.reconcilePublicationDNS(ctx, id, gatewayID, input.DNSProvider, revision); err != nil {
+		return PublicationView{}, err
 	}
 	return s.Publication(ctx, id)
+}
+
+func (s *Store) reconcilePublicationDNS(ctx context.Context, id, gatewayID, provider string, revision int64) (bool, error) {
+	var operationErr error
+	successMessage := ""
+	switch provider {
+	case "cloudflare":
+		operationErr = s.reconcileCloudflarePublication(ctx, id)
+		successMessage = "Cloudflare DNS record applied"
+	case "headscale":
+		operationErr = s.reconcileHeadscaleDNS(ctx)
+		successMessage = "Headscale DNS records applied"
+	default:
+		return true, nil
+	}
+	taskID := dnsTaskID(id, revision)
+	if operationErr != nil {
+		message := strings.TrimSpace(operationErr.Error())
+		if len(message) > 1024 {
+			message = message[:1024]
+		}
+		if _, err := s.db.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND status <> 'stopped'`, message, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+			return false, errors.Join(operationErr, err)
+		}
+		if err := s.recordStandaloneTaskEvent(ctx, taskID, gatewayID, "dns.record.apply", revision, "failed", message); err != nil {
+			return false, errors.Join(operationErr, err)
+		}
+		return false, nil
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE publications SET status = 'pending', last_error = '', updated_at = ? WHERE id = ? AND status = 'failed'`, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+		return false, err
+	}
+	if err := s.recordStandaloneTaskEvent(ctx, taskID, gatewayID, "dns.record.apply", revision, "succeeded", successMessage); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) StopPublication(ctx context.Context, id string) error {
@@ -263,16 +298,21 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	var kind, dnsProvider, dnsRecordID string
+	var kind, dnsProvider, dnsRecordID, status string
 	var revision int64
 	var gatewayID sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT kind, gateway_node_id, dns_provider, dns_record_id, desired_revision FROM publications WHERE id = ?`, id).Scan(&kind, &gatewayID, &dnsProvider, &dnsRecordID, &revision); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT kind, gateway_node_id, dns_provider, dns_record_id, desired_revision, status FROM publications WHERE id = ?`, id).Scan(&kind, &gatewayID, &dnsProvider, &dnsRecordID, &revision, &status); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: publication not found")
 	} else if err != nil {
 		return err
 	}
+	if status == "stopped" {
+		return errors.New("center: publication is already stopped")
+	}
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1, last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
+		cleanup_pending = CASE WHEN dns_record_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
+		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
 		return err
 	}
 	if gatewayID.Valid {
@@ -291,103 +331,8 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 	return s.cleanupStoppedPublications(ctx, []publicationCleanup{{ID: id, Kind: kind, GatewayID: gatewayID.String, DNSProvider: dnsProvider, DNSRecordID: dnsRecordID, Revision: revision + 1}})
 }
 
-type publicationCleanup struct {
-	ID          string
-	Kind        string
-	GatewayID   string
-	DNSProvider string
-	DNSRecordID string
-	Revision    int64
-}
-
-func publicationCleanups(rows *sql.Rows) ([]publicationCleanup, error) {
-	defer rows.Close()
-	values := []publicationCleanup{}
-	for rows.Next() {
-		var value publicationCleanup
-		if err := rows.Scan(&value.ID, &value.Kind, &value.GatewayID, &value.DNSProvider, &value.DNSRecordID, &value.Revision); err != nil {
-			return nil, err
-		}
-		values = append(values, value)
-	}
-	return values, rows.Err()
-}
-
-func (s *Store) servicePublicationCleanups(ctx context.Context, tx *sql.Tx, serviceID string) ([]publicationCleanup, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, kind, COALESCE(gateway_node_id, ''), dns_provider, dns_record_id, desired_revision + 1
-		FROM publications WHERE service_id = ? AND status <> 'stopped' ORDER BY id`, serviceID)
-	if err != nil {
-		return nil, err
-	}
-	return publicationCleanups(rows)
-}
-
-func (s *Store) applicationPublicationCleanups(ctx context.Context, tx *sql.Tx, applicationID string) ([]publicationCleanup, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, COALESCE(p.gateway_node_id, ''), p.dns_provider, p.dns_record_id, p.desired_revision + 1
-		FROM publications p JOIN services s ON s.id = p.service_id
-		WHERE s.application_id = ? AND p.status <> 'stopped' ORDER BY p.id`, applicationID)
-	if err != nil {
-		return nil, err
-	}
-	return publicationCleanups(rows)
-}
-
-func (s *Store) cleanupStoppedPublications(ctx context.Context, values []publicationCleanup) error {
-	var cleanupErrors []error
-	headscaleValues := []publicationCleanup{}
-	for _, value := range values {
-		if value.DNSRecordID != "" || value.Kind == publicationCloudflare {
-			err := s.removeCloudflarePublication(ctx, value.ID, value.Kind, value.GatewayID, value.DNSRecordID)
-			if recordErr := s.finishPublicationCleanup(ctx, value, "cloudflare", err); recordErr != nil {
-				cleanupErrors = append(cleanupErrors, recordErr)
-			}
-			continue
-		}
-		if value.DNSProvider == "headscale" {
-			headscaleValues = append(headscaleValues, value)
-		}
-	}
-	if len(headscaleValues) != 0 {
-		err := s.reconcileHeadscaleDNS(ctx)
-		for _, value := range headscaleValues {
-			if recordErr := s.finishPublicationCleanup(ctx, value, "headscale", err); recordErr != nil {
-				cleanupErrors = append(cleanupErrors, recordErr)
-			}
-		}
-	}
-	return errors.Join(cleanupErrors...)
-}
-
-func (s *Store) finishPublicationCleanup(ctx context.Context, value publicationCleanup, provider string, operationErr error) error {
-	message := ""
-	if operationErr != nil {
-		message = strings.TrimSpace(operationErr.Error())
-		if len(message) > 1024 {
-			message = message[:1024]
-		}
-	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE publications SET last_error = ?, updated_at = ? WHERE id = ? AND status = 'stopped'`, message, s.now().UTC().Format(time.RFC3339Nano), value.ID); err != nil {
-		if operationErr != nil {
-			return errors.Join(operationErr, err)
-		}
-		return err
-	}
-	return s.recordDNSRemoval(ctx, value.ID, value.GatewayID, value.Revision, provider, operationErr)
-}
-
 func dnsTaskID(publicationID string, revision int64) string {
 	return fmt.Sprintf("dns-%s-r%d", publicationID, revision)
-}
-
-func (s *Store) recordDNSRemoval(ctx context.Context, publicationID, agentID string, revision int64, provider string, operationErr error) error {
-	event, message := "succeeded", provider+" DNS record removed"
-	if operationErr != nil {
-		event, message = "failed", operationErr.Error()
-	}
-	if err := s.recordStandaloneTaskEvent(ctx, dnsTaskID(publicationID, revision), agentID, "dns.record.remove", revision, event, message); err != nil && operationErr == nil {
-		return err
-	}
-	return operationErr
 }
 
 func (s *Store) Publication(ctx context.Context, id string) (PublicationView, error) {
@@ -501,6 +446,19 @@ func (s *Store) VerifyPublication(ctx context.Context, id string) (PublicationVi
 	if publication.Status == "stopped" {
 		return PublicationView{}, errors.New("center: stopped publication cannot be verified")
 	}
+	if publication.Status == "failed" && publication.DNSProvider != "manual" {
+		succeeded, reconcileErr := s.reconcilePublicationDNS(ctx, publication.ID, publication.GatewayNodeID, publication.DNSProvider, publication.DesiredRevision)
+		if reconcileErr != nil {
+			return PublicationView{}, reconcileErr
+		}
+		if !succeeded {
+			return s.Publication(ctx, id)
+		}
+		publication, err = s.Publication(ctx, id)
+		if err != nil {
+			return PublicationView{}, err
+		}
+	}
 	var protocol, endpoint, routeStatus string
 	err = s.db.QueryRowContext(ctx, `SELECT s.protocol, s.endpoint,
 		COALESCE((SELECT r.status FROM routes r WHERE r.publication_id = p.id LIMIT 1), '')
@@ -587,31 +545,101 @@ func (s *Store) markPublicationReady(ctx context.Context, id string) (Publicatio
 }
 
 func (s *Store) ListPublications(ctx context.Context) ([]PublicationView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM publications ORDER BY updated_at DESC, id`)
+	apps, err := s.ListApps(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
+	return s.listPublications(ctx, apps)
+}
+
+func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]PublicationView, error) {
+	homepagePaths := map[string]string{}
+	for _, app := range apps {
+		if app.App.Homepage != nil {
+			homepagePaths[app.Key+"\x00"+app.App.Homepage.Service] = app.App.Homepage.Path
 		}
-		ids = append(ids, id)
 	}
-	if err := rows.Close(); err != nil {
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		p.id, p.service_id, p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.dns_provider, p.dns_record_id,
+		p.tls_enabled, p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at,
+		s.protocol, s.name, a.app_key,
+		COALESCE(n.lan_address, ''), COALESCE(n.headscale_address, ''), COALESCE(n.public_address, ''), COALESCE(t.tunnel_id, '')
+		FROM publications p
+		JOIN services s ON s.id = p.service_id
+		JOIN applications a ON a.id = s.application_id
+		LEFT JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
+		LEFT JOIN cloudflare_tunnels t ON t.agent_id = p.gateway_node_id
+		ORDER BY p.updated_at DESC, p.id`)
+	if err != nil {
 		return nil, err
 	}
-	values := make([]PublicationView, 0, len(ids))
-	for _, id := range ids {
-		value, err := s.Publication(ctx, id)
-		if err != nil {
+	defer rows.Close()
+	values := []PublicationView{}
+	for rows.Next() {
+		var value PublicationView
+		var tls int
+		var created, updated, protocol, serviceName, appKey string
+		var lanAddress, headscaleAddress, publicAddress, tunnelID string
+		if err := rows.Scan(
+			&value.ID, &value.ServiceID, &value.Kind, &value.GatewayNodeID, &value.Hostname, &value.DNSProvider, &value.DNSRecordID,
+			&tls, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated,
+			&protocol, &serviceName, &appKey, &lanAddress, &headscaleAddress, &publicAddress, &tunnelID,
+		); err != nil {
 			return nil, err
+		}
+		value.TLSEnabled = tls == 1
+		value.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
+		if err != nil {
+			return nil, errors.New("center: invalid publication creation timestamp")
+		}
+		value.UpdatedAt, err = time.Parse(time.RFC3339Nano, updated)
+		if err != nil {
+			return nil, errors.New("center: invalid publication update timestamp")
+		}
+		if value.Status == "ready" && (protocol == "http" || protocol == "https") {
+			path := homepagePaths[appKey+"\x00"+serviceName]
+			if path == "" {
+				path = "/"
+			}
+			scheme := "http"
+			if value.TLSEnabled {
+				scheme = "https"
+			}
+			value.AccessURL = (&url.URL{Scheme: scheme, Host: value.Hostname, Path: path}).String()
+		}
+		address := ""
+		switch value.Kind {
+		case publicationLAN:
+			address = lanAddress
+		case publicationHeadscale:
+			address = headscaleAddress
+		case publicationPublic, publicationShared443:
+			address = publicAddress
+		case publicationCloudflare:
+			if tunnelID != "" {
+				value.DNSRecord = &DNSRecordInstruction{Type: "CNAME", Name: value.Hostname, Value: tunnelID + ".cfargotunnel.com", Proxy: true}
+			}
+		default:
+			return nil, errors.New("center: stored publication kind is invalid")
+		}
+		if value.Kind != publicationCloudflare {
+			ip := net.ParseIP(address)
+			if ip == nil {
+				if value.Status == "stopped" {
+					values = append(values, value)
+					continue
+				}
+				return nil, errors.New("center: publication entry address is invalid")
+			}
+			recordType := "AAAA"
+			if ip.To4() != nil {
+				recordType = "A"
+			}
+			value.DNSRecord = &DNSRecordInstruction{Type: recordType, Name: value.Hostname, Value: ip.String()}
 		}
 		values = append(values, value)
 	}
-	return values, nil
+	return values, rows.Err()
 }
 
 func (s *Store) upsertPublicationRoute(ctx context.Context, tx *sql.Tx, publicationID, siteID, serviceID, gatewayID, hostname, protocol, endpoint string, tlsEnabled bool, now time.Time) error {

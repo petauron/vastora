@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-default_release_url="https://github.com/petauron/vastora/releases/latest/download/vastora-center-install.tar.gz"
+default_release_url="https://vastora.petauron.com/vastora-center-install.tar.gz"
 release_url="$default_release_url"
 install_dir="/opt/vastora/center"
 
@@ -13,7 +13,7 @@ Installs the verified Vastora Center release bundle on loopback, then prints an
 SSH tunnel command for the first-run wizard. Agent commands come from Center.
 
 Examples:
-  curl -LsSf https://github.com/petauron/vastora/releases/latest/download/install.sh | sudo sh -s -- center
+  curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center
   ./install.sh center -- --ssh-host center.example.com
 EOF
 }
@@ -58,12 +58,6 @@ case "$install_dir" in
   /*) ;;
   *) echo "The installation directory must be an absolute path." >&2; exit 2 ;;
 esac
-if [ -e "$install_dir" ]; then
-  echo "Center installation already exists at $install_dir; no files were changed." >&2
-  echo "Inspect it there before retrying setup or performing an upgrade." >&2
-  exit 1
-fi
-
 for required in curl tar mktemp install awk dirname mv; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
@@ -124,13 +118,29 @@ fi
 install -d -m 0755 "$(dirname "$install_dir")"
 staging="$(mktemp -d "${install_dir}.new.XXXXXX")"
 tar -xzf "$archive" -C "$staging"
-for required_file in setup.sh compose.yaml release.env headscale/config.yaml headscale/policy.hujson; do
+for required_file in setup.sh upgrade.sh compose.yaml release.env headscale/config.yaml headscale/policy.hujson; do
   if [ ! -f "$staging/$required_file" ]; then
     echo "The Center release is incomplete: missing $required_file" >&2
     exit 1
   fi
 done
 chmod 0755 "$staging/setup.sh"
+chmod 0755 "$staging/upgrade.sh"
+
+if [ -d "$install_dir" ]; then
+  if [ ! -f "$install_dir/.env" ]; then
+    echo "$install_dir exists but is not a managed Center installation; no files were changed." >&2
+    exit 1
+  fi
+  echo "Existing Center installation found; upgrading it in place..."
+  "$staging/upgrade.sh" --install-dir "$install_dir"
+  exit 0
+fi
+if [ -e "$install_dir" ]; then
+  echo "$install_dir exists but is not a directory; no files were changed." >&2
+  exit 1
+fi
+
 mv "$staging" "$install_dir"
 staging=""
 

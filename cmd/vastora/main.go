@@ -186,6 +186,11 @@ func runCenter(arguments []string) error {
 		if err := store.SeedOfficialCatalog(context.Background(), catalogPayload); err != nil {
 			return err
 		}
+		maintenanceContext, stopMaintenance := context.WithCancel(context.Background())
+		defer stopMaintenance()
+		go store.RunPublicationCleanup(maintenanceContext, time.Minute, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center publication cleanup: %v\n", err)
+		})
 		handler := center.NewServer(store, *webDir, *tlsCert != "").
 			WithOfficialCatalog(catalogPayload).
 			WithAgentBinaries(*agentBinariesDir).

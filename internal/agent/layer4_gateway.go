@@ -52,7 +52,9 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 	driver.mu.RUnlock()
 	if err := driver.apply(ctx, desired.Sorted()); err != nil {
 		if previous.Revision > 0 {
-			_ = driver.apply(ctx, previous)
+			if rollbackErr := driver.apply(ctx, previous); rollbackErr != nil {
+				return errors.Join(err, fmt.Errorf("agent: restore previous gateway revision %d: %w", previous.Revision, rollbackErr))
+			}
 		}
 		return err
 	}
