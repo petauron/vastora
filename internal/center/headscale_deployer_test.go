@@ -42,8 +42,8 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	server := NewServer(store, "", false).WithHeadscaleInstaller(installer)
 	payload, _ := json.Marshal(InitialSetupInput{
 		Site:      SiteInput{Name: "DMIT", Code: "dmit", Timezone: "Asia/Singapore"},
-		Network:   CenterNetworkInput{AgentConnectionMode: "headscale", AgentConnectURL: "https://center.example.com:8443"},
-		Headscale: &HeadscaleInput{Mode: "builtin", URL: "https://headscale.example.com:8443"},
+		Network:   CenterNetworkInput{AgentConnectionMode: "headscale", AgentConnectURL: "https://center.example.com"},
+		Headscale: &HeadscaleInput{Mode: "builtin", URL: "https://headscale.example.com"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
@@ -52,7 +52,7 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("setup failed: %d %s", response.Code, response.Body.String())
 	}
-	if installer.input.CenterURL != "https://center.example.com:8443" || installer.input.HeadscaleURL != "https://headscale.example.com:8443" {
+	if installer.input.CenterURL != "https://center.example.com" || installer.input.HeadscaleURL != "https://headscale.example.com" {
 		t.Fatalf("unexpected deployment input: %#v", installer.input)
 	}
 	integration, err := store.Integration(context.Background(), "headscale")
