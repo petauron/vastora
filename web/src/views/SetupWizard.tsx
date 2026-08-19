@@ -51,7 +51,7 @@ type SetupDraft = {
 export function SetupWizard(props: SetupWizardProps) {
   const { language, suggestedAgentConnectUrl, builtinHeadscaleAvailable, cloudflareOAuthAvailable, publicAddressCandidates, onLanguage, onComplete } = props;
   const [draft] = useState(readSetupDraft);
-  const [step, setStep] = useState(draft.step ?? 1);
+  const [step, setStep] = useState<1 | 2 | 3>(draft.step ?? 1);
   const [name, setName] = useState(draft.name ?? "");
   const [timezone, setTimezone] = useState(draft.timezone ?? browserTimezone);
   const [domainSuffix, setDomainSuffix] = useState(draft.domainSuffix ?? "");
