@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.15](https://github.com/petauron/vastora/compare/v0.1.0-alpha.14...v0.1.0-alpha.15) (2026-08-20)
+
+
+### Features
+
+* simplify agent enrollment ([#55](https://github.com/petauron/vastora/issues/55)) ([395929d](https://github.com/petauron/vastora/commit/395929dc22c0650dc99ea0d82f8c9b081bf73443))
+
 ## [0.1.0-alpha.14](https://github.com/petauron/vastora/compare/v0.1.0-alpha.13...v0.1.0-alpha.14) (2026-08-20)
 
 
