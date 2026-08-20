@@ -51,7 +51,8 @@ type SetupDraft = {
 export function SetupWizard(props: SetupWizardProps) {
   const { language, suggestedAgentConnectUrl, builtinHeadscaleAvailable, cloudflareOAuthAvailable, publicAddressCandidates, onLanguage, onComplete } = props;
   const [draft] = useState(readSetupDraft);
-  const initialCloudflareZone = props.cloudflareZone ?? "";
+  const configuredCloudflareZone = props.cloudflareZone ?? "";
+  const initialCloudflareZone = configuredCloudflareZone || inferLegacyCloudflareZone(draft);
   const initialDomainDefaults = vastoraDomainDefaults(initialCloudflareZone);
   const [step, setStep] = useState<1 | 2 | 3>(draft.step ?? 1);
   const [name, setName] = useState(draft.name ?? "");
@@ -65,7 +66,7 @@ export function SetupWizard(props: SetupWizardProps) {
   const [headscaleApiKey, setHeadscaleApiKey] = useState("");
   const [dnsMode, setDNSMode] = useState<"cloudflare" | "manual">(draft.dnsMode ?? (cloudflareOAuthAvailable && publicAddressCandidates.length > 0 ? "cloudflare" : "manual"));
   const [cloudflareConfigured, setCloudflareConfigured] = useState(props.cloudflareConfigured);
-  const [cloudflareZone, setCloudflareZone] = useState(props.cloudflareZone ?? "");
+  const [cloudflareZone, setCloudflareZone] = useState(configuredCloudflareZone);
   const [publicAddress, setPublicAddress] = useState(draft.publicAddress ?? publicAddressCandidates[0]?.address ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -108,9 +109,9 @@ export function SetupWizard(props: SetupWizardProps) {
     const nextDefaults = vastoraDomainDefaults(zone.name);
     setCloudflareConfigured(true);
     setCloudflareZone(nextDefaults.zone);
-    setDomainSuffix((current) => preferNamespacedDefault(current, [cloudflareZone, previousDefaults.namespace], nextDefaults.namespace));
-    setAgentConnectUrl((current) => preferNamespacedDefault(current, [`https://center.${cloudflareZone}`, previousDefaults.centerURL], nextDefaults.centerURL));
-    setHeadscaleUrl((current) => preferNamespacedDefault(current, [`https://headscale.${cloudflareZone}`, previousDefaults.headscaleURL], nextDefaults.headscaleURL));
+    setDomainSuffix((current) => preferNamespacedDefault(current, [cloudflareZone, previousDefaults.namespace, nextDefaults.zone], nextDefaults.namespace));
+    setAgentConnectUrl((current) => preferNamespacedDefault(current, [`https://center.${cloudflareZone}`, previousDefaults.centerURL, `https://center.${nextDefaults.zone}`], nextDefaults.centerURL));
+    setHeadscaleUrl((current) => preferNamespacedDefault(current, [`https://headscale.${cloudflareZone}`, previousDefaults.headscaleURL, `https://headscale.${nextDefaults.zone}`], nextDefaults.headscaleURL));
   };
   const selected = connectionOptions.find((option) => option.mode === mode)!;
 
@@ -207,6 +208,14 @@ function preferNamespacedDefault(value: string | undefined, generatedValues: str
   const normalized = current.toLowerCase().replace(/\/$/, "");
   const generated = generatedValues.some((candidate) => candidate && normalized === candidate.toLowerCase().replace(/\/$/, ""));
   return !current || generated ? nextValue : current;
+}
+
+function inferLegacyCloudflareZone(draft: Partial<SetupDraft>) {
+  const zone = draft.domainSuffix?.trim().toLowerCase().replace(/\.+$/, "") ?? "";
+  if (!zone) return "";
+  const centerURL = draft.agentConnectUrl?.trim().toLowerCase().replace(/\/$/, "") ?? "";
+  const headscaleURL = draft.headscaleUrl?.trim().toLowerCase().replace(/\/$/, "") ?? "";
+  return centerURL === `https://center.${zone}` && headscaleURL === `https://headscale.${zone}` ? zone : "";
 }
 
 function writeSetupDraft(draft: SetupDraft) {
