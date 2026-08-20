@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.19](https://github.com/petauron/vastora/compare/v0.1.0-alpha.18...v0.1.0-alpha.19) (2026-08-20)
+
+
+### Features
+
+* add one-click 3x-ui Reality access ([#64](https://github.com/petauron/vastora/issues/64)) ([367a5fe](https://github.com/petauron/vastora/commit/367a5fef6e2082daecaa9d985a2882dcc47685d6))
+
 ## [0.1.0-alpha.18](https://github.com/petauron/vastora/compare/v0.1.0-alpha.17...v0.1.0-alpha.18) (2026-08-20)
 
 
