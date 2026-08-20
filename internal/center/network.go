@@ -144,7 +144,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		ON CONFLICT(agent_id) DO UPDATE SET service_address = excluded.service_address, lan_address = excluded.lan_address, headscale_address = excluded.headscale_address, public_address = excluded.public_address, enabled_kinds_json = excluded.enabled_kinds_json, direct_public = excluded.direct_public, confirmed_at = excluded.confirmed_at, candidate_observed_at = excluded.candidate_observed_at`, agentID, input.ServiceAddress, input.LANAddress, input.HeadscaleAddress, input.PublicAddress, enabledJSON, input.DirectPublic, input.ConfirmedAt.Format(time.RFC3339Nano), input.CandidateObserved.Format(time.RFC3339Nano)); err != nil {
 		return nil, fmt.Errorf("center: save network profile: %w", err)
 	}
-	if err := autoAssignFirstSiteGateway(ctx, tx, agentID, s.now().UTC()); err != nil {
+	if err := s.autoAssignFirstSiteGateway(ctx, tx, agentID, s.now().UTC()); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -153,7 +153,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	return s.networkProfile(ctx, agentID)
 }
 
-func autoAssignFirstSiteGateway(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
+func (s *Store) autoAssignFirstSiteGateway(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
 	var siteID string
 	var capabilitiesJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, capabilities_json FROM agents WHERE id = ?`, agentID).Scan(&siteID, &capabilitiesJSON); err != nil {
@@ -173,8 +173,5 @@ func autoAssignFirstSiteGateway(ctx context.Context, tx *sql.Tx, agentID string,
 	if gatewayCount != 0 {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO site_gateways(site_id, agent_id, created_at) VALUES(?, ?, ?)`, siteID, agentID, now.Format(time.RFC3339Nano)); err != nil {
-		return fmt.Errorf("center: select first Site gateway: %w", err)
-	}
-	return nil
+	return s.replaceSiteGateways(ctx, tx, siteID, []string{agentID}, now)
 }

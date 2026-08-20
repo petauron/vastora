@@ -332,6 +332,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE application_commands`,
 		`CREATE TABLE publications_v3 (
 			id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'cloudflare_tunnel')),
