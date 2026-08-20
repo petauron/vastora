@@ -125,7 +125,11 @@ export function defaultPublicationHostname(data: AppData, service: Service) {
   const appLabel = dnsLabel(application?.appKey.split("/").at(-1) || application?.name || "app");
   const siblingServices = data.services.filter((value) => value.applicationId === service.applicationId && value.status !== "stopped");
   const serviceLabel = siblingServices.length > 1 ? dnsLabel(service.name) : "";
-  const label = [appLabel, serviceLabel].filter(Boolean).join("-").slice(0, 63).replace(/-+$/, "") || "app";
+  const baseLabel = [appLabel, serviceLabel].filter(Boolean).join("-") || "app";
+  const siteLabel = (dnsLabel(site.name) || dnsLabel(site.code)).slice(0, 32);
+  const baseLength = siteLabel ? Math.max(1, 62 - siteLabel.length) : 63;
+  const scopedBase = baseLabel.slice(0, baseLength).replace(/-+$/, "") || "app";
+  const label = siteLabel ? `${scopedBase}-${siteLabel}` : scopedBase;
   return `${label}.${site.domainSuffix}`.toLowerCase();
 }
 

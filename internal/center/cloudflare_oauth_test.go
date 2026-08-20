@@ -138,7 +138,7 @@ func TestConfigureSetupDNSRollsBackNewRecordsOnConflict(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
-		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records" && request.URL.Query().Get("name") == "center.example.com":
+		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records" && request.URL.Query().Get("name") == "center.vastora.example.com":
 			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
 		case request.Method == http.MethodPost && request.URL.Path == "/zones/zone/dns_records":
 			body, _ := io.ReadAll(request.Body)
@@ -146,8 +146,8 @@ func TestConfigureSetupDNSRollsBackNewRecordsOnConflict(t *testing.T) {
 				t.Fatalf("setup DNS record was unexpectedly proxied: %s", body)
 			}
 			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":{"id":"created-record"}}`))
-		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records" && request.URL.Query().Get("name") == "headscale.example.com":
-			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"existing","type":"A","name":"headscale.example.com","content":"203.0.113.99","proxied":false}]}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records" && request.URL.Query().Get("name") == "headscale.vastora.example.com":
+			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"existing","type":"A","name":"headscale.vastora.example.com","content":"203.0.113.99","proxied":false}]}`))
 		case request.Method == http.MethodDelete && request.URL.Path == "/zones/zone/dns_records/created-record":
 			deleted = true
 			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
@@ -165,7 +165,7 @@ func TestConfigureSetupDNSRollsBackNewRecordsOnConflict(t *testing.T) {
 	store.cloudflareOAuth = cloudflareOAuthConfig{ClientID: "oauth-client", APIURL: server.URL, HTTPClient: server.Client()}
 	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access-secret", RefreshToken: "refresh-secret", ExpiresAt: time.Now().Add(time.Hour)})
 	candidates := []networking.Candidate{{Address: "203.0.113.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}
-	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.example.com", HeadscaleURL: "https://headscale.example.com", PublicAddress: "203.0.113.10"}, candidates)
+	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.vastora.example.com", HeadscaleURL: "https://headscale.vastora.example.com", PublicAddress: "203.0.113.10"}, candidates)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("conflicting DNS record was accepted: %v", err)
 	}

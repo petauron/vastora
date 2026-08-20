@@ -4,7 +4,8 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppData } from "../App";
-import { api } from "../api";
+import { APIError, api } from "../api";
+import { vastoraDomainDefaults } from "../lib/network";
 import { AppsView } from "./AppsView";
 import { HomeView } from "./HomeView";
 import { NetworkView } from "./NetworkView";
@@ -13,7 +14,7 @@ import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { defaultPublicationHostname } from "./appAccess";
-import { CopyButton } from "./shared";
+import { CopyButton, userError } from "./shared";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -77,11 +78,21 @@ describe("network and app views", () => {
 
   it("creates lowercase DNS-safe default service hostnames", () => {
     const data = dashboard();
+    data.sites[0].domainSuffix = "vastora.example.com";
     const service = { id: "manager", applicationId: "running", siteId: "site", name: "Manager 页面", protocol: "http" as const, containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog" as const, management: true, status: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
     data.services = [service];
-    expect(defaultPublicationHostname(data, service)).toBe("komari-agent.home.example");
+    expect(defaultPublicationHostname(data, service)).toBe("komari-agent-home.vastora.example.com");
     data.services.push({ ...service, id: "subscription", name: "订阅服务" });
-    expect(defaultPublicationHostname(data, service)).toBe("komari-agent-manager.home.example");
+    expect(defaultPublicationHostname(data, service)).toBe("komari-agent-manager-home.vastora.example.com");
+  });
+
+  it("keeps Cloudflare zones separate from the Vastora service namespace", () => {
+    expect(vastoraDomainDefaults("Kuddyx.COM.")).toEqual({
+      zone: "kuddyx.com",
+      namespace: "vastora.kuddyx.com",
+      centerURL: "https://center.vastora.kuddyx.com",
+      headscaleURL: "https://headscale.vastora.kuddyx.com"
+    });
   });
 
   it("shows LAN, Headscale, and public networking as simultaneous capabilities", () => {
@@ -225,6 +236,56 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("你准备在哪里使用 Vastora");
     expect(container.querySelector<HTMLInputElement>('input[value="headscale"]')?.checked).toBe(true);
     expect(window.sessionStorage.getItem("vastora.initial-setup.v1")).not.toContain("apiKey");
+  });
+
+  it("upgrades legacy zone-level setup defaults", () => {
+    window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
+      step: 2,
+      name: "Cloudlead",
+      timezone: "Asia/Singapore",
+      domainSuffix: "kuddyx.com",
+      mode: "headscale",
+      agentConnectUrl: "https://center.kuddyx.com",
+      headscaleMode: "builtin",
+      headscaleUrl: "https://headscale.kuddyx.com",
+      dnsMode: "cloudflare",
+      publicAddress: "203.0.113.10"
+    }));
+    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: true, cloudflareOAuthAvailable: true, cloudflareZone: "kuddyx.com", language: "zh-CN" as const, onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }], suggestedAgentConnectUrl: "" };
+    const container = render(<SetupWizard {...props} />);
+
+    expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://center.vastora.kuddyx.com");
+    expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://headscale.vastora.kuddyx.com");
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("返回"))?.click());
+    expect(container.querySelector<HTMLInputElement>("#setup-domain")?.value).toBe("vastora.kuddyx.com");
+    expect(container.textContent).toContain("服务域名空间");
+  });
+
+  it("preserves custom setup hostnames after Cloudflare is connected", () => {
+    window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
+      step: 2,
+      name: "Cloudlead",
+      timezone: "Asia/Singapore",
+      domainSuffix: "services.ops.example.net",
+      mode: "headscale",
+      agentConnectUrl: "https://control.ops.example.net",
+      headscaleMode: "builtin",
+      headscaleUrl: "https://mesh.ops.example.net",
+      dnsMode: "cloudflare",
+      publicAddress: "203.0.113.10"
+    }));
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="kuddyx.com" language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-19T00:00:00Z" }]} suggestedAgentConnectUrl="" />);
+
+    expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://control.ops.example.net");
+    expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://mesh.ops.example.net");
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("返回"))?.click());
+    expect(container.querySelector<HTMLInputElement>("#setup-domain")?.value).toBe("services.ops.example.net");
+  });
+
+  it("explains a conflicting DNS record instead of reporting an invalid form", () => {
+    const error = new APIError("center: DNS record center.vastora.kuddyx.com already exists with a different value", 400, "dns_record_conflict");
+    expect(userError("zh-CN", error)).toContain("已有指向其他服务器的 DNS 记录");
+    expect(userError("en", error)).toContain("did not overwrite");
   });
 
   it("opens Cloudflare in a normal tab and offers recovery actions", async () => {
