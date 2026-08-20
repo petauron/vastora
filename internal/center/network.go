@@ -134,10 +134,44 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		}
 	}
 	enabledJSON, _ := json.Marshal(input.EnabledKinds)
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_network_profiles(agent_id, service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_profiles(agent_id, service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(agent_id) DO UPDATE SET service_address = excluded.service_address, lan_address = excluded.lan_address, headscale_address = excluded.headscale_address, public_address = excluded.public_address, enabled_kinds_json = excluded.enabled_kinds_json, direct_public = excluded.direct_public, confirmed_at = excluded.confirmed_at, candidate_observed_at = excluded.candidate_observed_at`, agentID, input.ServiceAddress, input.LANAddress, input.HeadscaleAddress, input.PublicAddress, enabledJSON, input.DirectPublic, input.ConfirmedAt.Format(time.RFC3339Nano), input.CandidateObserved.Format(time.RFC3339Nano)); err != nil {
 		return nil, fmt.Errorf("center: save network profile: %w", err)
 	}
+	if err := s.autoAssignFirstSiteGateway(ctx, tx, agentID, s.now().UTC()); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
 	return s.networkProfile(ctx, agentID)
+}
+
+func (s *Store) autoAssignFirstSiteGateway(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
+	var siteID string
+	var capabilitiesJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT site_id, capabilities_json FROM agents WHERE id = ?`, agentID).Scan(&siteID, &capabilitiesJSON); err != nil {
+		return fmt.Errorf("center: inspect Agent gateway capability: %w", err)
+	}
+	var capabilities NodeCapabilities
+	if json.Unmarshal(capabilitiesJSON, &capabilities) != nil {
+		return errors.New("center: invalid stored Agent capabilities")
+	}
+	if !capabilities.Gateway {
+		return nil
+	}
+	var gatewayCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_gateways WHERE site_id = ?`, siteID).Scan(&gatewayCount); err != nil {
+		return fmt.Errorf("center: inspect Site gateways: %w", err)
+	}
+	if gatewayCount != 0 {
+		return nil
+	}
+	return s.replaceSiteGateways(ctx, tx, siteID, []string{agentID}, now)
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -257,25 +256,21 @@ func (s *Store) applicationHomepageURL(ctx context.Context, applicationID string
 	if homepage == nil {
 		return "", nil
 	}
-	var protocol, endpoint string
-	err := s.db.QueryRowContext(ctx, `SELECT protocol, endpoint FROM services
-		WHERE application_id = ? AND name = ? AND status IN ('ready', 'publishing')`, applicationID, homepage.Service).Scan(&protocol, &endpoint)
+	var hostname string
+	var tlsEnabled int
+	err := s.db.QueryRowContext(ctx, `SELECT p.hostname, p.tls_enabled FROM services s
+		JOIN publications p ON p.service_id = s.id
+		WHERE s.application_id = ? AND s.name = ? AND s.status IN ('ready', 'publishing') AND p.status = 'ready'
+		ORDER BY CASE p.kind WHEN 'headscale_gateway' THEN 0 WHEN 'lan_gateway' THEN 1 WHEN 'public_direct' THEN 2 WHEN 'cloudflare_tunnel' THEN 3 ELSE 4 END, p.updated_at DESC LIMIT 1`, applicationID, homepage.Service).Scan(&hostname, &tlsEnabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("center: read application homepage service: %w", err)
+		return "", fmt.Errorf("center: read application homepage publication: %w", err)
 	}
-	host, _, err := net.SplitHostPort(endpoint)
-	if err != nil {
-		return "", errors.New("center: stored homepage endpoint is invalid")
+	scheme := "http"
+	if tlsEnabled == 1 {
+		scheme = "https"
 	}
-	ip := net.ParseIP(host)
-	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
-		return "", nil
-	}
-	if protocol != "http" && protocol != "https" {
-		return "", errors.New("center: stored homepage protocol is invalid")
-	}
-	return (&url.URL{Scheme: protocol, Host: endpoint, Path: homepage.Path}).String(), nil
+	return (&url.URL{Scheme: scheme, Host: hostname, Path: homepage.Path}).String(), nil
 }

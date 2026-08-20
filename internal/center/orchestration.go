@@ -25,8 +25,9 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services         []ApplicationServiceResult `json:"services"`
-	GeneratedSecrets map[string]string          `json:"generatedSecrets,omitempty"`
+	Services           []ApplicationServiceResult `json:"services"`
+	GeneratedSecrets   map[string]string          `json:"generatedSecrets,omitempty"`
+	ApplicationCommand *RealityCommandResult      `json:"applicationCommand,omitempty"`
 }
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {
@@ -289,7 +290,7 @@ func desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID string, revi
 	if err := rows.Close(); err != nil {
 		return gateway.DesiredState{}, err
 	}
-	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.hostname, s.endpoint, n.public_address
+	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, n.public_address
 		FROM publications p JOIN services s ON s.id = p.service_id
 		JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
 		WHERE p.gateway_node_id = ? AND p.kind = 'public_shared_443'

@@ -115,7 +115,7 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 		VALUES('vless-service', ?, ?, 'vless', 'tcp', 2443, 2443, '10.0.0.10:2443', 'observed', 'vless/tcp', '10.0.0.10', 'ready', ?, ?)`, applicationID, testSiteID(t, store), now, now); err != nil {
 		t.Fatal(err)
 	}
-	shared, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-service", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", DNSProvider: "manual"})
+	shared, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-service", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", SNIHostname: "www.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,14 +124,14 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 		t.Fatalf("shared 443 did not queue a combined gateway state: %#v", task)
 	}
 	sharedState := task.GatewayState.SharedHTTPS
-	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "127.0.0.1" || sharedState.CaddyPort != 8443 || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "vless.example.test" {
+	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "127.0.0.1" || sharedState.CaddyPort != 8443 || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "www.example.test" {
 		t.Fatalf("unexpected shared 443 desired state: %#v", sharedState)
 	}
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	publication, err := store.Publication(ctx, shared.ID)
-	if err != nil || publication.Status != "applying" {
+	if err != nil || publication.Status != "applying" || publication.Hostname != "vless.example.test" || publication.SNIHostname != "www.example.test" {
 		t.Fatalf("shared publication did not wait for external verification: %#v err=%v", publication, err)
 	}
 }
@@ -153,7 +153,7 @@ func TestShared443RejectsAnApplicationAlreadyUsing443(t *testing.T) {
 		VALUES('vless-443', 'xray-app', ?, 'vless', 'tcp', 443, 443, '10.0.0.20:443', 'observed', 'vless/tcp', '0.0.0.0', 'ready', ?, ?)`, testSiteID(t, store), now, now); err != nil {
 		t.Fatal(err)
 	}
-	_, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-443", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", DNSProvider: "manual"})
+	_, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-443", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", SNIHostname: "www.example.test", DNSProvider: "manual"})
 	if err == nil || !strings.Contains(err.Error(), "away from port 443") {
 		t.Fatalf("shared 443 accepted an occupied local port: %v", err)
 	}
@@ -425,6 +425,95 @@ func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabiliti
 		t.Fatal(err)
 	}
 	return node
+}
+
+func TestFirstConfirmedGatewayIsSelectedForItsSite(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	node := enrollOrchestrationNode(t, store, "first-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.60", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.60", LANAddress: "10.0.0.60", EnabledKinds: []string{networking.KindLAN}})
+	site, err := store.Site(context.Background(), testSiteID(t, store))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(site.GatewayNodes) != 1 || site.GatewayNodes[0] != node.ID {
+		t.Fatalf("first confirmed gateway was not selected: %#v", site.GatewayNodes)
+	}
+}
+
+func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.61", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}, {Address: "203.0.113.61", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.61", LANAddress: "10.0.0.61", PublicAddress: "203.0.113.61", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at) VALUES('three-x-ui', '3x-ui', ?, ?, ?, '', 'running', 'docker', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: "three-x-ui", Name: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.Kind != "application.command" || task.ApplicationCommand == nil {
+		t.Fatalf("unexpected command task: %#v", task)
+	}
+	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#MacBook"
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{InboundID: 9, Name: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI}}
+	encoded, _ := json.Marshal(result)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.ApplicationCommand(ctx, command.ID)
+	if err != nil || completed.State != "succeeded" || !completed.ResultAvailable || completed.SNIHostname != "www.example.com" {
+		t.Fatalf("unexpected completed command: %#v err=%v", completed, err)
+	}
+	publications, err := store.ListPublications(ctx)
+	if err != nil || len(publications) != 1 || publications[0].Hostname != "reality.edge.site.example.test" || publications[0].SNIHostname != "www.example.com" {
+		t.Fatalf("connection hostname and SNI were not kept separate: %#v err=%v", publications, err)
+	}
+	link, err := store.ConsumeApplicationCommandResult(ctx, command.ID)
+	if err != nil || link != shareURI {
+		t.Fatalf("one-time link = %q, err=%v", link, err)
+	}
+	if _, err := store.ConsumeApplicationCommandResult(ctx, command.ID); err == nil {
+		t.Fatal("one-time link was revealed twice")
+	}
+}
+
+func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
+	input := RealityCommandTask{Name: "MacBook", ConnectHostname: "reality.edge.site.example.test"}
+	valid := RealityCommandResult{
+		InboundID:       9,
+		Name:            "MacBook",
+		Listen:          "10.0.0.61",
+		Port:            35443,
+		Target:          "www.example.com:443",
+		SNIHostname:     "www.example.com",
+		ConnectHostname: "reality.edge.site.example.test",
+		ShareURI:        "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#MacBook",
+	}
+	if err := validateRealityCommandResult(input, valid); err != nil {
+		t.Fatalf("valid result rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*RealityCommandResult){
+		"connection hostname": func(value *RealityCommandResult) {
+			value.ShareURI = strings.Replace(value.ShareURI, "reality.edge.site.example.test", "attacker.example.test", 1)
+		},
+		"camouflage SNI": func(value *RealityCommandResult) {
+			value.ShareURI = strings.Replace(value.ShareURI, "sni=www.example.com", "sni=attacker.example.test", 1)
+		},
+		"missing public key": func(value *RealityCommandResult) {
+			value.ShareURI = strings.Replace(value.ShareURI, "pbk=public-key", "pbk=", 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := valid
+			mutate(&candidate)
+			if err := validateRealityCommandResult(input, candidate); err == nil {
+				t.Fatal("tampered result was accepted")
+			}
+		})
+	}
 }
 
 func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {

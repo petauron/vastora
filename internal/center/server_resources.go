@@ -85,6 +85,48 @@ func (s *Server) handleListApplications(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusOK, map[string]any{"applications": values})
 }
 
+func (s *Server) handleCreateRealityCommand(writer http.ResponseWriter, request *http.Request) {
+	var input RealityCommandInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.CreateRealityCommand(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, value)
+}
+
+func (s *Server) handleApplicationCommand(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.ApplicationCommand(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
+func (s *Server) handleLatestApplicationCommand(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.LatestApplicationCommand(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
+func (s *Server) handleRevealApplicationCommand(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.ConsumeApplicationCommandResult(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, map[string]string{"shareUri": value})
+}
+
 func (s *Server) handleListServices(writer http.ResponseWriter, request *http.Request) {
 	values, err := s.store.ListServices(request.Context())
 	if err != nil {

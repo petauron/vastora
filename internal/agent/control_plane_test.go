@@ -24,7 +24,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 			t.Fatalf("missing 3x-ui Bearer token: %q", request.Header.Get("Authorization"))
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":7,"remark":"vless","protocol":"vless","port":443,"listen":"0.0.0.0","enable":true,"streamSettings":{"network":"tcp"}},{"id":8,"remark":"disabled","protocol":"vmess","port":8443,"listen":"127.0.0.1","enable":false,"streamSettings":{"network":"ws"}}]}`))
+		_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":7,"remark":"vless","protocol":"vless","port":443,"listen":"0.0.0.0","enable":true,"streamSettings":{"network":"tcp","security":"reality"}},{"id":8,"remark":"disabled","protocol":"vmess","port":8443,"listen":"127.0.0.1","enable":false,"streamSettings":{"network":"ws"}}]}`))
 	}))
 	defer server.Close()
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
@@ -49,7 +49,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 	if requestCount != 1 || len(observed) != 2 {
 		t.Fatalf("unexpected 3x-ui observation: requests=%d values=%#v", requestCount, observed)
 	}
-	if observed[0].Name != "inbound-7" || observed[0].AppProtocol != "vless/tcp" || observed[0].Protocol != "tcp" || !observed[0].Enabled || observed[0].Port != 443 {
+	if observed[0].Name != "inbound-7" || observed[0].AppProtocol != "vless/tcp/reality" || observed[0].Protocol != "tcp" || !observed[0].Enabled || observed[0].Port != 443 {
 		t.Fatalf("enabled inbound was not synchronized: %#v", observed[0])
 	}
 	if observed[1].Name != "inbound-8" || observed[1].AppProtocol != "vmess/ws" || observed[1].Enabled {

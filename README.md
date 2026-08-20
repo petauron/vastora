@@ -56,8 +56,9 @@ configured Agent address is reused automatically when adding nodes.
 When a Cloudflare zone such as `example.com` is selected, the wizard keeps that
 root zone separate and defaults Vastora to the `vastora.example.com` namespace.
 Center and bundled Headscale use `center.vastora.example.com` and
-`headscale.vastora.example.com`; app hostnames include the app and location,
-for example `cpa-home.vastora.example.com`. Existing DNS records outside this
+`headscale.vastora.example.com`; app hostnames use a visible hierarchy such as
+`manager.cpa.home.vastora.example.com`, and node-specific raw entries use names
+such as `reality.edge-1.home.vastora.example.com`. Existing DNS records outside this
 namespace are not overwritten.
 
 Create an encrypted control-plane backup with a password stored in a local
