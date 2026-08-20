@@ -17,30 +17,12 @@ import (
 const agentInstallScript = `#!/bin/sh
 set -eu
 
-center_url=""
-token=""
-name=""
-roles="worker,gateway"
-capabilities="docker,gateway,tunnel"
-
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --center-url) center_url="$2"; shift 2 ;;
-    --token) token="$2"; shift 2 ;;
-    --name) name="$2"; shift 2 ;;
-    --roles) roles="$2"; shift 2 ;;
-    --capabilities) capabilities="$2"; shift 2 ;;
-    *) echo "Unknown argument: $1" >&2; exit 2 ;;
-  esac
-done
+center_url=@@CENTER_URL@@
+token=@@TOKEN@@
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run this installer with sudo." >&2
   exit 1
-fi
-if [ -z "$center_url" ] || [ -z "$token" ] || [ -z "$name" ]; then
-  echo "--center-url, --token, and --name are required." >&2
-  exit 2
 fi
 
 for required in curl systemctl docker sha256sum awk; do
@@ -59,6 +41,8 @@ case "$(uname -m)" in
   *) echo "Vastora Agent currently supports only Ubuntu 24.04 on amd64." >&2; exit 1 ;;
 esac
 
+@@HEADSCALE_BOOTSTRAP@@
+
 temporary="$(mktemp -t vastora-agent.XXXXXX)"
 headers="$(mktemp -t vastora-agent-headers.XXXXXX)"
 trap 'rm -f "$temporary" "$headers"' EXIT HUP INT TERM
@@ -68,7 +52,7 @@ case "$center_url" in
   *) echo "Center must use HTTPS; only loopback development addresses may use HTTP." >&2; exit 1 ;;
 esac
 echo "Downloading the Vastora Agent for $arch..."
-curl --proto "=$curl_protocol" --proto-redir '=https' --tlsv1.2 --max-filesize 268435456 -fsSL \
+curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 268435456 -fsS \
   -D "$headers" -H "Authorization: Bearer $token" \
   "${center_url%/}/api/v1/agent-binaries/linux/$arch" -o "$temporary"
 expected_digest="$(awk 'tolower($1) == "x-vastora-sha256:" {gsub("\\r", "", $2); value=tolower($2)} END {print value}' "$headers")"
@@ -85,8 +69,25 @@ if [ -z "$expected_version" ] || [ "$("$temporary" version)" != "$expected_versi
 fi
 install -m 0755 "$temporary" /usr/local/bin/vastora
 echo "Registering this node and starting the system service..."
-printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --name "$name" --roles "$roles" --capabilities "$capabilities"
+printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file -
 `
+
+func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, token string) string {
+	headscaleBootstrap := ":"
+	if profile.HeadscaleCommand != "" {
+		headscaleBootstrap = `if ! command -v tailscale >/dev/null 2>&1; then
+  echo "Tailscale must be installed before joining this private network." >&2
+  exit 1
+fi
+echo "Joining the private network..."
+` + strings.TrimPrefix(profile.HeadscaleCommand, "sudo ")
+	}
+	return strings.NewReplacer(
+		"@@CENTER_URL@@", shellQuote(profile.CenterURL),
+		"@@TOKEN@@", shellQuote(token),
+		"@@HEADSCALE_BOOTSTRAP@@", headscaleBootstrap,
+	).Replace(agentInstallScript)
+}
 
 func (s *Store) ValidateAgentEnrollment(ctx context.Context, token string) error {
 	if strings.TrimSpace(token) == "" {
@@ -116,10 +117,21 @@ func (s *Server) agentInstallerAvailable() bool {
 	return true
 }
 
-func (s *Server) handleAgentInstallScript(writer http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleAgentInstallScript(writer http.ResponseWriter, request *http.Request) {
+	writer.Header().Set("Cache-Control", "no-store")
+	token := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
+	if token == "" || !strings.HasPrefix(request.Header.Get("Authorization"), "Bearer ") {
+		writeError(writer, http.StatusUnauthorized, errors.New("center: agent enrollment token is required"))
+		return
+	}
+	profile, err := s.store.AgentEnrollmentInstallProfile(request.Context(), token)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
 	writer.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
-	writer.Header().Set("Cache-Control", "public, max-age=300")
-	_, _ = writer.Write([]byte(agentInstallScript))
+	writer.Header().Set("Content-Disposition", `attachment; filename="vastora-agent-install.sh"`)
+	_, _ = writer.Write([]byte(renderAgentInstallScript(profile, token)))
 }
 
 func (s *Server) handleAgentBinary(writer http.ResponseWriter, request *http.Request) {

@@ -39,6 +39,14 @@ type Capabilities struct {
 	Logs    bool `json:"logs"`
 }
 
+type Enrollment struct {
+	ID           string       `json:"id"`
+	Credential   string       `json:"credential"`
+	Name         string       `json:"name"`
+	Roles        []string     `json:"roles"`
+	Capabilities Capabilities `json:"capabilities"`
+}
+
 type DeploymentTask struct {
 	Kind           string                `json:"kind"`
 	ID             string                `json:"id"`
@@ -83,27 +91,27 @@ type ApplicationEndpointObservation struct {
 	Enabled     bool   `json:"enabled"`
 }
 
-func (c Client) Enroll(ctx context.Context, store *Store, centerURL, name, enrollmentToken string) error {
+func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken string) (Enrollment, error) {
 	baseURL, err := normalizeCenterURL(centerURL)
 	if err != nil {
-		return err
+		return Enrollment{}, err
 	}
 	if strings.TrimSpace(enrollmentToken) == "" {
-		return errors.New("agent: enrollment token is required")
+		return Enrollment{}, errors.New("agent: enrollment token is required")
 	}
-	var response struct {
-		ID         string `json:"id"`
-		Credential string `json:"credential"`
-	}
+	var response Enrollment
 	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]string{
-		"token": enrollmentToken, "name": name, "version": Version,
+		"token": enrollmentToken, "version": Version,
 	}, "", &response); err != nil {
-		return err
+		return Enrollment{}, err
 	}
-	if response.ID == "" || response.Credential == "" {
-		return errors.New("agent: Center returned an incomplete enrollment response")
+	if response.ID == "" || response.Credential == "" || strings.TrimSpace(response.Name) == "" || len(response.Roles) == 0 {
+		return Enrollment{}, errors.New("agent: Center returned an incomplete enrollment response")
 	}
-	return store.SaveConnection(ctx, Connection{AgentID: response.ID, Name: name, CenterURL: baseURL, Credential: response.Credential})
+	if err := store.SaveConnection(ctx, Connection{AgentID: response.ID, Name: response.Name, CenterURL: baseURL, Credential: response.Credential}); err != nil {
+		return Enrollment{}, err
+	}
+	return response, nil
 }
 
 func (c Client) Heartbeat(ctx context.Context, store *Store) error {

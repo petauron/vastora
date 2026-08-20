@@ -47,9 +47,12 @@
   remote installer as root still trusts the official installer origin and
   release account; operators may download and inspect `install.sh` first.
 - Center-generated Agent installers use ten-minute, single-use enrollment
-  tokens. Agent binaries require that token, carry Center-provided version and
-  SHA-256 headers, and are executed only after both integrity and version checks
-  pass.
+  tokens. Node name, site, roles, capabilities, connection address, and optional
+  Headscale bootstrap are bound to the token by Center; sensitive bootstrap
+  material is encrypted at rest and omitted from the enrollment response. The
+  installer and Agent binary both require that token. Binaries carry
+  Center-provided version and SHA-256 headers and execute only after both
+  integrity and version checks pass.
 
 ## Non-goals for v0.1
 

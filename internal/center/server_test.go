@@ -346,11 +346,11 @@ func TestDiagnosticsSummarizeHealthWithoutSecrets(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := store.CreateAgentEnrollment(context.Background(), testSiteID(t, store))
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "retired", CenterURL: "https://center.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := store.EnrollAgent(context.Background(), enrollment.Token, "retired", "test")
+	node, err := store.EnrollAgent(context.Background(), enrollment.Token, "test")
 	if err != nil {
 		t.Fatal(err)
 	}

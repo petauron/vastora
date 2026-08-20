@@ -351,17 +351,17 @@ describe("network and app views", () => {
 
   it("generates a TLS-restricted one-line Agent installer", () => {
     const command = agentInstallCommand({
-      capabilities: "docker,gateway",
       centerURL: "https://center.example.com",
       enrollment: { token: "one-time-token", siteId: "site", expiresAt: "2026-08-18T00:10:00Z" },
-      installerAvailable: true,
-      name: "home-node",
-      roles: "worker,gateway"
+      installerAvailable: true
     });
-    expect(command).toContain("curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL");
+    expect(command).toContain("curl --proto '=https' --tlsv1.2 -fsS");
     expect(command).toContain("https://center.example.com/install/agent.sh");
-    expect(command).toContain("sudo sh -s --");
-    expect(command).toContain("--token 'one-time-token'");
+    expect(command).toContain("-H 'Authorization: Bearer one-time-token'");
+    expect(command).toContain("| sudo sh");
+    expect(command).not.toContain("--name");
+    expect(command).not.toContain("--roles");
+    expect(command).not.toContain("--capabilities");
   });
 
   it("generates one safe command for node purpose changes and Agent updates", () => {

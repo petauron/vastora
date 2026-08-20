@@ -58,8 +58,11 @@ only to the server loopback interface, and the administrator opens the first-run
 wizard through an SSH tunnel. Domain, TLS, Headscale, and public Gateway setup
 therefore do not block installation or claim public port 443. Each running
 Center then serves its own Agent installer and architecture-specific Agent binaries.
-Agent enrollment, site assignment, roles, Headscale pre-authentication, and the
-short-lived credential therefore remain specific to that Center instead of a
+The administrator chooses the node name, site, purpose, and connection method
+before Center issues a short-lived credential. Center binds those choices to
+the credential and returns an authenticated installer, so the copied command
+does not expose editable role, capability, or Headscale arguments. Enrollment
+and its bootstrap material remain specific to that Center instead of a
 universal public Agent command.
 
 ## Address discovery and confirmation

@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,16 +15,34 @@ import (
 )
 
 type AgentEnrollment struct {
-	Token              string    `json:"token"`
-	SiteID             string    `json:"siteId"`
-	ExpiresAt          time.Time `json:"expiresAt"`
-	HeadscaleCommand   string    `json:"headscaleCommand,omitempty"`
-	HeadscaleExpiresAt time.Time `json:"headscaleExpiresAt,omitempty"`
+	Token     string    `json:"token"`
+	SiteID    string    `json:"siteId"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type AgentEnrollmentSpec struct {
+	SiteID       string
+	Name         string
+	CenterURL    string
+	Gateway      bool
+	Tunnel       bool
+	UseHeadscale bool
+}
+
+type AgentEnrollmentInstallProfile struct {
+	Name             string
+	CenterURL        string
+	Roles            []string
+	Capabilities     NodeCapabilities
+	HeadscaleCommand string
 }
 
 type AgentCredential struct {
-	ID         string `json:"id"`
-	Credential string `json:"credential"`
+	ID           string           `json:"id"`
+	Credential   string           `json:"credential"`
+	Name         string           `json:"name"`
+	Roles        []string         `json:"roles"`
+	Capabilities NodeCapabilities `json:"capabilities"`
 }
 
 type AgentView struct {
@@ -43,13 +62,28 @@ type AgentView struct {
 	GatewayHealthy       bool                   `json:"gatewayHealthy"`
 }
 
-func (s *Store) CreateAgentEnrollment(ctx context.Context, siteID string) (AgentEnrollment, error) {
-	siteID = strings.TrimSpace(siteID)
-	if siteID == "" {
+func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
+	spec.SiteID = strings.TrimSpace(spec.SiteID)
+	spec.Name = strings.TrimSpace(spec.Name)
+	if spec.Name == "" || len(spec.Name) > 128 {
+		return AgentEnrollment{}, errors.New("center: agent name must be 1 to 128 characters")
+	}
+	centerURL, err := NormalizeAgentConnectURL(spec.CenterURL)
+	if err != nil {
+		return AgentEnrollment{}, err
+	}
+	roles := []string{"worker"}
+	if spec.Gateway {
+		roles = append(roles, "gateway")
+	}
+	capabilities := NodeCapabilities{Docker: true, Gateway: spec.Gateway, Tunnel: spec.Tunnel}
+	rolesJSON, _ := json.Marshal(roles)
+	capabilitiesJSON, _ := json.Marshal(capabilities)
+	if spec.SiteID == "" {
 		return AgentEnrollment{}, errors.New("center: enrollment site is required")
 	}
 	var siteExists int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE id = ? AND status = 'active'`, siteID).Scan(&siteExists); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE id = ? AND status = 'active'`, spec.SiteID).Scan(&siteExists); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: inspect enrollment site: %w", err)
 	}
 	if siteExists != 1 {
@@ -59,19 +93,104 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, siteID string) (Agent
 	if err != nil {
 		return AgentEnrollment{}, err
 	}
-	enrollment := AgentEnrollment{Token: token, SiteID: siteID, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, expires_at) VALUES(?, ?, ?)`, tokenHash(token), siteID, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
+	bootstrapCommand := ""
+	if spec.UseHeadscale {
+		join, err := s.CreateHeadscaleBootstrap(ctx, spec.Gateway)
+		if err != nil {
+			return AgentEnrollment{}, err
+		}
+		bootstrapCommand = join.Command
+	}
+	enrollment := AgentEnrollment{Token: token, SiteID: spec.SiteID, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentEnrollment{}, fmt.Errorf("center: begin agent enrollment: %w", err)
+	}
+	defer tx.Rollback()
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE expires_at <= ? AND bootstrap_secret_id IS NOT NULL)`, now); err != nil {
+		return AgentEnrollment{}, fmt.Errorf("center: delete expired Agent bootstrap secrets: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_tokens WHERE expires_at <= ?`, now); err != nil {
+		return AgentEnrollment{}, fmt.Errorf("center: delete expired Agent enrollments: %w", err)
+	}
+	var bootstrapSecretID sql.NullString
+	if bootstrapCommand != "" {
+		secretID, err := s.putSecret(ctx, tx, []byte(bootstrapCommand), agentEnrollmentSecretContext(token))
+		if err != nil {
+			return AgentEnrollment{}, err
+		}
+		bootstrapSecretID = sql.NullString{String: secretID, Valid: true}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, bootstrap_secret_id, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash(token), spec.SiteID, spec.Name, centerURL, rolesJSON, capabilitiesJSON, bootstrapSecretID, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: create agent enrollment: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return AgentEnrollment{}, fmt.Errorf("center: commit agent enrollment: %w", err)
 	}
 	return enrollment, nil
 }
 
-func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, name, version string) (AgentCredential, error) {
-	name = strings.TrimSpace(name)
-	version = strings.TrimSpace(version)
-	if name == "" || len(name) > 128 {
-		return AgentCredential{}, errors.New("center: agent name must be 1 to 128 characters")
+func (s *Store) AgentEnrollmentInstallProfile(ctx context.Context, token string) (AgentEnrollmentInstallProfile, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token is invalid")
 	}
+	var profile AgentEnrollmentInstallProfile
+	var rolesJSON, capabilitiesJSON []byte
+	var expiresAt string
+	var usedAt, bootstrapSecretID sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT name, center_url, roles_json, capabilities_json, bootstrap_secret_id, expires_at, used_at FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(token)).Scan(&profile.Name, &profile.CenterURL, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID, &expiresAt, &usedAt)
+	if errors.Is(err, sql.ErrNoRows) || usedAt.Valid {
+		return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token is invalid")
+	}
+	if err != nil {
+		return AgentEnrollmentInstallProfile{}, fmt.Errorf("center: read agent enrollment: %w", err)
+	}
+	expires, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil || !expires.After(s.now()) {
+		return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token has expired")
+	}
+	if err := decodeAgentEnrollmentRuntime(rolesJSON, capabilitiesJSON, &profile); err != nil {
+		return AgentEnrollmentInstallProfile{}, err
+	}
+	if normalized, err := NormalizeAgentConnectURL(profile.CenterURL); err != nil || normalized != profile.CenterURL {
+		return AgentEnrollmentInstallProfile{}, errors.New("center: stored Agent connection URL is invalid")
+	}
+	if bootstrapSecretID.Valid {
+		command, err := s.getSecret(ctx, bootstrapSecretID.String, agentEnrollmentSecretContext(token))
+		if err != nil {
+			return AgentEnrollmentInstallProfile{}, err
+		}
+		profile.HeadscaleCommand = string(command)
+	}
+	return profile, nil
+}
+
+func decodeAgentEnrollmentRuntime(rolesJSON, capabilitiesJSON []byte, profile *AgentEnrollmentInstallProfile) error {
+	if json.Unmarshal(rolesJSON, &profile.Roles) != nil || json.Unmarshal(capabilitiesJSON, &profile.Capabilities) != nil {
+		return errors.New("center: stored Agent enrollment profile is invalid")
+	}
+	if len(profile.Roles) == 0 || len(profile.Roles) > 2 || !containsString(profile.Roles, "worker") {
+		return errors.New("center: stored Agent enrollment roles are invalid")
+	}
+	for _, role := range profile.Roles {
+		if role != "worker" && role != "gateway" {
+			return errors.New("center: stored Agent enrollment roles are invalid")
+		}
+	}
+	if !profile.Capabilities.Docker || profile.Capabilities.Gateway != containsString(profile.Roles, "gateway") || profile.Capabilities.Metrics || profile.Capabilities.Logs {
+		return errors.New("center: stored Agent enrollment capabilities are invalid")
+	}
+	return nil
+}
+
+func agentEnrollmentSecretContext(token string) string {
+	return "agent-enrollment:" + hex.EncodeToString(tokenHash(token))
+}
+
+func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version string) (AgentCredential, error) {
+	version = strings.TrimSpace(version)
 	if version == "" || len(version) > 128 {
 		return AgentCredential{}, errors.New("center: agent version is required")
 	}
@@ -80,9 +199,10 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, name, version 
 		return AgentCredential{}, fmt.Errorf("center: begin agent enrollment: %w", err)
 	}
 	defer tx.Rollback()
-	var expiresAt, siteID string
-	var usedAt sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT expires_at, used_at, site_id FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(enrollmentToken)).Scan(&expiresAt, &usedAt, &siteID)
+	var expiresAt, siteID, name string
+	var rolesJSON, capabilitiesJSON []byte
+	var usedAt, bootstrapSecretID sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT expires_at, used_at, site_id, name, roles_json, capabilities_json, bootstrap_secret_id FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(enrollmentToken)).Scan(&expiresAt, &usedAt, &siteID, &name, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID)
 	if errors.Is(err, sql.ErrNoRows) || usedAt.Valid {
 		return AgentCredential{}, errors.New("center: agent enrollment token is invalid")
 	}
@@ -93,6 +213,10 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, name, version 
 	if err != nil || !expires.After(s.now()) {
 		return AgentCredential{}, errors.New("center: agent enrollment token has expired")
 	}
+	profile := AgentEnrollmentInstallProfile{Name: name}
+	if err := decodeAgentEnrollmentRuntime(rolesJSON, capabilitiesJSON, &profile); err != nil {
+		return AgentCredential{}, err
+	}
 	id, err := randomToken(18)
 	if err != nil {
 		return AgentCredential{}, err
@@ -102,7 +226,7 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, name, version 
 		return AgentCredential{}, err
 	}
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, 'active', ?, ?, ?, '[]', '{}')`, id, name, tokenHash(credential), version, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`, id, name, tokenHash(credential), version, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID, rolesJSON, capabilitiesJSON); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: save agent: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash(enrollmentToken))
@@ -113,10 +237,15 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, name, version 
 	if err != nil || changed != 1 {
 		return AgentCredential{}, errors.New("center: agent enrollment token is invalid")
 	}
+	if bootstrapSecretID.Valid {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, bootstrapSecretID.String); err != nil {
+			return AgentCredential{}, fmt.Errorf("center: delete consumed Agent bootstrap secret: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: commit agent enrollment: %w", err)
 	}
-	return AgentCredential{ID: id, Credential: credential}, nil
+	return AgentCredential{ID: id, Credential: credential, Name: name, Roles: profile.Roles, Capabilities: profile.Capabilities}, nil
 }
 
 func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string, heartbeat NodeHeartbeat) error {

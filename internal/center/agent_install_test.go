@@ -36,7 +36,7 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 		t.Fatalf("unauthenticated binary download status = %d", response.Code)
 	}
 
-	enrollment, err := store.CreateAgentEnrollment(context.Background(), testSiteID(t, store))
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "downloaded-agent", CenterURL: "https://center.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("arm64 binary download status = %d", response.Code)
 	}
-	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "downloaded-agent", "test"); err != nil {
+	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test"); err != nil {
 		t.Fatalf("binary download consumed enrollment token: %v", err)
 	}
 }
@@ -81,11 +81,11 @@ func TestEnrolledAgentCanDownloadAuthenticatedUpdate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(binaries, "linux-amd64"), payload, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := store.CreateAgentEnrollment(context.Background(), testSiteID(t, store))
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "update-node", CenterURL: "https://center.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "update-node", "old-version")
+	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "old-version")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,14 +123,37 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	handler := NewServer(store, "", false).Handler()
 	request := httptest.NewRequest(http.MethodGet, "/install/agent.sh", nil)
 	response := httptest.NewRecorder()
-	NewServer(store, "", false).Handler().ServeHTTP(response, request)
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated installer status = %d", response.Code)
+	}
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "bound-node", CenterURL: "https://center.example.com", Gateway: true, Tunnel: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/install/agent.sh", nil)
+	request.Header.Set("Authorization", "Bearer "+enrollment.Token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("authenticated installer status = %d, body = %q", response.Code, response.Body.String())
+	}
 	script := response.Body.String()
-	for _, expected := range []string{"command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "supports only Ubuntu 24.04 on amd64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url"} {
+	for _, expected := range []string{"center_url='https://center.example.com'", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "supports only Ubuntu 24.04 on amd64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("installer is missing %q:\n%s", expected, script)
 		}
+	}
+	for _, hidden := range []string{"--name", "--roles", "--capabilities"} {
+		if strings.Contains(script, hidden) {
+			t.Fatalf("installer exposes Center-owned option %q", hidden)
+		}
+	}
+	if response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("installer cache policy = %q", response.Header().Get("Cache-Control"))
 	}
 	command := exec.Command("sh", "-n")
 	command.Stdin = strings.NewReader(script)

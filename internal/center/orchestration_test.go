@@ -403,11 +403,11 @@ func configureBuiltinHeadscaleForTest(t *testing.T, store *Store) {
 func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabilities NodeCapabilities, candidates []networking.Candidate, profile networking.Profile) AgentCredential {
 	t.Helper()
 	ctx := context.Background()
-	enrollment, err := store.CreateAgentEnrollment(ctx, testSiteID(t, store))
+	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: name, CenterURL: "https://center.example.com", Gateway: capabilities.Gateway, Tunnel: capabilities.Tunnel})
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := store.EnrollAgent(ctx, enrollment.Token, name, "test")
+	node, err := store.EnrollAgent(ctx, enrollment.Token, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,24 +435,24 @@ func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrollment, err := store.CreateAgentEnrollment(ctx, site.ID)
+	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: site.ID, Name: "sg-node", CenterURL: "https://center.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if enrollment.SiteID != site.ID {
 		t.Fatalf("enrollment site = %q, want %q", enrollment.SiteID, site.ID)
 	}
-	if _, err := store.EnrollAgent(ctx, enrollment.Token, "sg-node", "test"); err != nil {
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test"); err != nil {
 		t.Fatal(err)
 	}
 	agents, err := store.ListAgents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(agents) != 1 || agents[0].SiteID != site.ID {
+	if len(agents) != 1 || agents[0].SiteID != site.ID || agents[0].Name != "sg-node" || !agents[0].Capabilities.Docker || !containsString(agents[0].Roles, "worker") {
 		t.Fatalf("Agent did not join selected Site: %#v", agents)
 	}
-	if _, err := store.EnrollAgent(ctx, enrollment.Token, "duplicate", "test"); err == nil {
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test"); err == nil {
 		t.Fatal("single-use enrollment token was accepted twice")
 	}
 }
