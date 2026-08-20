@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,8 +18,12 @@ import (
 )
 
 const (
-	defaultHAProxyImage     = "docker.io/library/haproxy:3.2.7-alpine@sha256:a9b408a818f5d0d9a6a042ec2957921038399f7a515f8b7bfef2054ef7f4ce05"
-	defaultHAProxyContainer = "vastora-gateway-haproxy"
+	defaultHAProxyImage      = "docker.io/library/haproxy:3.2.7-alpine@sha256:a9b408a818f5d0d9a6a042ec2957921038399f7a515f8b7bfef2054ef7f4ce05"
+	defaultHAProxyContainer  = "vastora-gateway-haproxy"
+	haproxyConfigurationDir  = "/usr/local/etc/haproxy"
+	haproxyConfigurationPath = haproxyConfigurationDir + "/haproxy.cfg"
+	haproxyConfigurationEnv  = "VASTORA_HAPROXY_CONFIG"
+	haproxyBootstrapCommand  = "umask 077\nprintf '%s' \"$" + haproxyConfigurationEnv + "\" > " + haproxyConfigurationPath + "\nexec haproxy -W -db -f " + haproxyConfigurationPath
 )
 
 type Layer4Provisioner interface {
@@ -139,11 +141,25 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 	if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("agent: replace HAProxy container: %w", err)
 	}
-	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+	created, err := docker.ContainerCreate(ctx, haproxyContainerCreateOptions(settings, configuration))
+	if err != nil {
+		return fmt.Errorf("agent: create HAProxy container: %w", err)
+	}
+	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
+		return fmt.Errorf("agent: start HAProxy container: %w", err)
+	}
+	return provisioner.waitHealthy(ctx, docker, created.ID)
+}
+
+func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, configuration []byte) client.ContainerCreateOptions {
+	return client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image: settings.Image,
-			User:  "0:0",
-			Cmd:   []string{"haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"},
+			Image:      settings.Image,
+			User:       "0:0",
+			Entrypoint: []string{"/bin/sh", "-ec"},
+			Cmd:        []string{haproxyBootstrapCommand},
+			Env:        []string{haproxyConfigurationEnv + "=" + string(configuration)},
 			Labels: map[string]string{
 				"io.vastora.managed":   "true",
 				"io.vastora.component": "layer4-gateway",
@@ -155,22 +171,14 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 			ReadonlyRootfs: true,
 			CapDrop:        []string{"ALL"},
 			CapAdd:         []string{"NET_BIND_SERVICE"},
-			Tmpfs:          map[string]string{"/run": "rw,noexec,nosuid,size=16m"},
-			SecurityOpt:    []string{"no-new-privileges:true"},
+			Tmpfs: map[string]string{
+				"/run":                  "rw,noexec,nosuid,size=16m",
+				haproxyConfigurationDir: "rw,noexec,nosuid,size=1m,mode=0700",
+			},
+			SecurityOpt: []string{"no-new-privileges:true"},
 		},
 		Name: settings.Container,
-	})
-	if err != nil {
-		return fmt.Errorf("agent: create HAProxy container: %w", err)
 	}
-	if err := copyHAProxyConfiguration(ctx, docker, created.ID, configuration); err != nil {
-		_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
-		return err
-	}
-	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return fmt.Errorf("agent: start HAProxy container: %w", err)
-	}
-	return provisioner.waitHealthy(ctx, docker, created.ID)
 }
 
 func (provisioner DockerLayer4Provisioner) Remove(ctx context.Context) error {
@@ -271,24 +279,6 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 		}
 	}
 	return []byte(configuration.String()), nil
-}
-
-func copyHAProxyConfiguration(ctx context.Context, docker *client.Client, containerID string, configuration []byte) error {
-	var archive bytes.Buffer
-	writer := tar.NewWriter(&archive)
-	if err := writer.WriteHeader(&tar.Header{Name: "haproxy.cfg", Mode: 0o644, Size: int64(len(configuration)), ModTime: time.Unix(0, 0)}); err != nil {
-		return err
-	}
-	if _, err := writer.Write(configuration); err != nil {
-		return err
-	}
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	if _, err := docker.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{DestinationPath: "/usr/local/etc/haproxy", Content: bytes.NewReader(archive.Bytes())}); err != nil {
-		return fmt.Errorf("agent: install HAProxy configuration: %w", err)
-	}
-	return nil
 }
 
 type ManagedGatewayProvisioner struct {
