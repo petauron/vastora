@@ -349,16 +349,22 @@ describe("network and app views", () => {
     expect(advanced?.open).toBe(false);
   });
 
-  it("generates a TLS-restricted one-line Agent installer", () => {
+  it("downloads and directly runs the executable Agent installer", () => {
     const command = agentInstallCommand({
       centerURL: "https://center.example.com",
       enrollment: { token: "one-time-token", siteId: "site", expiresAt: "2026-08-18T00:10:00Z" },
       installerAvailable: true
     });
-    expect(command).toContain("curl --proto '=https' --tlsv1.2 -fsS");
+    expect(command).toContain("curl -fsSL");
     expect(command).toContain("https://center.example.com/install/agent.sh");
-    expect(command).toContain("-H 'Authorization: Bearer one-time-token'");
-    expect(command).toContain("| sudo sh");
+    expect(command).toContain("-o /tmp/vastora-agent-install.sh");
+    expect(command).toContain("chmod +x /tmp/vastora-agent-install.sh");
+    expect(command).toContain("/tmp/vastora-agent-install.sh 'one-time-token'");
+    expect(command).not.toContain("sudo");
+    expect(command).not.toContain("| sh");
+    expect(command).not.toContain("Authorization: Bearer");
+    expect(command).not.toContain("--proto");
+    expect(command).not.toContain("--tlsv1.2");
     expect(command).not.toContain("--name");
     expect(command).not.toContain("--roles");
     expect(command).not.toContain("--capabilities");

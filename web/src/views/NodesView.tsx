@@ -21,8 +21,10 @@ import { Switch } from "@/components/ui/switch";
 export { validCenterURL } from "../lib/network";
 
 export function agentInstallCommand({ centerURL, enrollment, installerAvailable }: { centerURL: string; enrollment: AgentEnrollment; installerAvailable: boolean }) {
-  const curlSecurity = centerURL.startsWith("https://") ? "--proto '=https' --tlsv1.2" : "--proto '=http'";
-  if (installerAvailable) return `curl ${curlSecurity} -fsS -H ${shellQuote(`Authorization: Bearer ${enrollment.token}`)} ${shellQuote(`${centerURL.replace(/\/$/, "")}/install/agent.sh`)} | sudo sh`;
+  if (installerAvailable) {
+    const installer = "/tmp/vastora-agent-install.sh";
+    return `curl -fsSL ${shellQuote(`${centerURL.replace(/\/$/, "")}/install/agent.sh`)} -o ${installer} && chmod +x ${installer} && ${installer} ${shellQuote(enrollment.token)}`;
+  }
   return `printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file -`;
 }
 

@@ -14,11 +14,47 @@ import (
 	"time"
 )
 
+const agentInstallLoaderScript = `#!/bin/sh
+set -eu
+
+token="${1:-}"
+if [ -z "$token" ]; then
+  echo "Usage: ./vastora-agent-install.sh <one-time-token>" >&2
+  exit 1
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  if ! command -v sudo >/dev/null 2>&1; then
+    echo "Root privileges are required and sudo is not installed." >&2
+    exit 1
+  fi
+  exec sudo "$0" "$token"
+fi
+
+center_url=@@CENTER_URL@@
+case "$center_url" in
+  https://*) curl_protocol="https" ;;
+  http://127.0.0.1:*|http://127.0.0.1|http://localhost:*|http://localhost) curl_protocol="http" ;;
+  *) echo "Center must use HTTPS; only loopback development addresses may use HTTP." >&2; exit 1 ;;
+esac
+
+installer="$(mktemp -t vastora-agent-installer.XXXXXX)"
+trap 'rm -f "$installer"' EXIT HUP INT TERM
+curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
+  -H "Authorization: Bearer $token" \
+  "${center_url%/}/install/agent.sh" -o "$installer"
+printf '%s\n' "$token" | sh "$installer"
+`
+
 const agentInstallScript = `#!/bin/sh
 set -eu
 
 center_url=@@CENTER_URL@@
-token=@@TOKEN@@
+IFS= read -r token
+if [ -z "$token" ]; then
+  echo "The one-time Agent token is required." >&2
+  exit 1
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run this installer with sudo." >&2
@@ -72,7 +108,11 @@ echo "Registering this node and starting the system service..."
 printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file -
 `
 
-func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, token string) string {
+func renderAgentInstallLoader(centerURL string) string {
+	return strings.ReplaceAll(agentInstallLoaderScript, "@@CENTER_URL@@", shellQuote(centerURL))
+}
+
+func renderAgentInstallScript(profile AgentEnrollmentInstallProfile) string {
 	headscaleBootstrap := ":"
 	if profile.HeadscaleCommand != "" {
 		headscaleBootstrap = `if ! command -v tailscale >/dev/null 2>&1; then
@@ -84,7 +124,6 @@ echo "Joining the private network..."
 	}
 	return strings.NewReplacer(
 		"@@CENTER_URL@@", shellQuote(profile.CenterURL),
-		"@@TOKEN@@", shellQuote(token),
 		"@@HEADSCALE_BOOTSTRAP@@", headscaleBootstrap,
 	).Replace(agentInstallScript)
 }
@@ -121,7 +160,14 @@ func (s *Server) handleAgentInstallScript(writer http.ResponseWriter, request *h
 	writer.Header().Set("Cache-Control", "no-store")
 	token := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
 	if token == "" || !strings.HasPrefix(request.Header.Get("Authorization"), "Bearer ") {
-		writeError(writer, http.StatusUnauthorized, errors.New("center: agent enrollment token is required"))
+		centerURL, err := agentInstallerRequestURL(request)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, err)
+			return
+		}
+		writer.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+		writer.Header().Set("Content-Disposition", `inline; filename="vastora-agent-install.sh"`)
+		_, _ = writer.Write([]byte(renderAgentInstallLoader(centerURL)))
 		return
 	}
 	profile, err := s.store.AgentEnrollmentInstallProfile(request.Context(), token)
@@ -131,7 +177,22 @@ func (s *Server) handleAgentInstallScript(writer http.ResponseWriter, request *h
 	}
 	writer.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	writer.Header().Set("Content-Disposition", `attachment; filename="vastora-agent-install.sh"`)
-	_, _ = writer.Write([]byte(renderAgentInstallScript(profile, token)))
+	_, _ = writer.Write([]byte(renderAgentInstallScript(profile)))
+}
+
+func agentInstallerRequestURL(request *http.Request) (string, error) {
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := strings.TrimSpace(strings.Split(request.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded != "" {
+		scheme = forwarded
+	}
+	centerURL, err := NormalizeAgentConnectURL(scheme + "://" + request.Host)
+	if err != nil {
+		return "", errors.New("center: installer URL must use HTTPS; only loopback development addresses may use HTTP")
+	}
+	return centerURL, nil
 }
 
 func (s *Server) handleAgentBinary(writer http.ResponseWriter, request *http.Request) {
