@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.17](https://github.com/petauron/vastora/compare/v0.1.0-alpha.16...v0.1.0-alpha.17) (2026-08-20)
+
+
+### Features
+
+* support co-located Center and Agent ([#59](https://github.com/petauron/vastora/issues/59)) ([c75cac9](https://github.com/petauron/vastora/commit/c75cac9e5132c4fae9ff409e9e3555bb52553e21))
+
+
+### Bug Fixes
+
+* use triggering commit for release validation ([#60](https://github.com/petauron/vastora/issues/60)) ([86a6f15](https://github.com/petauron/vastora/commit/86a6f1530f187ba9a8995f6ce3971b218bab7eb4))
+
 ## [0.1.0-alpha.16](https://github.com/petauron/vastora/compare/v0.1.0-alpha.15...v0.1.0-alpha.16) (2026-08-20)
 
 
