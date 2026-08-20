@@ -215,6 +215,8 @@ func errorCode(status int, message string) string {
 		return "authentication_required"
 	case strings.Contains(normalized, "already installed"):
 		return "already_installed"
+	case strings.Contains(normalized, "dns record") && strings.Contains(normalized, "already exists"):
+		return "dns_record_conflict"
 	case strings.Contains(normalized, "cloudflare"):
 		return "cloudflare_error"
 	case strings.Contains(normalized, "gateway") && (strings.Contains(normalized, "unavailable") || strings.Contains(normalized, "required")):

@@ -3,7 +3,7 @@ import { CheckIcon, ChevronDownIcon, Globe2Icon, HouseIcon, LanguagesIcon, MapPi
 import { api } from "../api";
 import type { AgentConnectionMode, CloudflareZone, InitialSetupInput, NetworkCandidate } from "../types";
 import type { Language } from "../translations";
-import { browserTimezone, validCenterURL } from "../lib/network";
+import { browserTimezone, validCenterURL, vastoraDomainDefaults } from "../lib/network";
 import { Brand, copy, userError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -51,15 +51,17 @@ type SetupDraft = {
 export function SetupWizard(props: SetupWizardProps) {
   const { language, suggestedAgentConnectUrl, builtinHeadscaleAvailable, cloudflareOAuthAvailable, publicAddressCandidates, onLanguage, onComplete } = props;
   const [draft] = useState(readSetupDraft);
+  const initialCloudflareZone = props.cloudflareZone ?? "";
+  const initialDomainDefaults = vastoraDomainDefaults(initialCloudflareZone);
   const [step, setStep] = useState<1 | 2 | 3>(draft.step ?? 1);
   const [name, setName] = useState(draft.name ?? "");
   const [timezone, setTimezone] = useState(draft.timezone ?? browserTimezone);
-  const [domainSuffix, setDomainSuffix] = useState(draft.domainSuffix ?? "");
+  const [domainSuffix, setDomainSuffix] = useState(() => preferNamespacedDefault(draft.domainSuffix, [initialCloudflareZone], initialDomainDefaults.namespace));
   const [code] = useState(() => `site-${crypto.randomUUID().slice(0, 8)}`);
   const [mode, setMode] = useState<AgentConnectionMode>(draft.mode ?? "lan");
-  const [agentConnectUrl, setAgentConnectUrl] = useState(draft.agentConnectUrl ?? suggestedAgentConnectUrl);
+  const [agentConnectUrl, setAgentConnectUrl] = useState(() => preferNamespacedDefault(draft.agentConnectUrl ?? suggestedAgentConnectUrl, [`https://center.${initialCloudflareZone}`], initialDomainDefaults.centerURL));
   const [headscaleMode, setHeadscaleMode] = useState<"builtin" | "external">(draft.headscaleMode ?? "builtin");
-  const [headscaleUrl, setHeadscaleUrl] = useState(draft.headscaleUrl ?? "");
+  const [headscaleUrl, setHeadscaleUrl] = useState(() => preferNamespacedDefault(draft.headscaleUrl, [`https://headscale.${initialCloudflareZone}`], initialDomainDefaults.headscaleURL));
   const [headscaleApiKey, setHeadscaleApiKey] = useState("");
   const [dnsMode, setDNSMode] = useState<"cloudflare" | "manual">(draft.dnsMode ?? (cloudflareOAuthAvailable && publicAddressCandidates.length > 0 ? "cloudflare" : "manual"));
   const [cloudflareConfigured, setCloudflareConfigured] = useState(props.cloudflareConfigured);
@@ -102,11 +104,13 @@ export function SetupWizard(props: SetupWizardProps) {
     } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
   const connectedCloudflare = (zone: CloudflareZone) => {
+    const previousDefaults = vastoraDomainDefaults(cloudflareZone);
+    const nextDefaults = vastoraDomainDefaults(zone.name);
     setCloudflareConfigured(true);
-    setCloudflareZone(zone.name);
-    if (!domainSuffix) setDomainSuffix(zone.name);
-    if (!agentConnectUrl) setAgentConnectUrl(`https://center.${zone.name}`);
-    if (!headscaleUrl) setHeadscaleUrl(`https://headscale.${zone.name}`);
+    setCloudflareZone(nextDefaults.zone);
+    setDomainSuffix((current) => preferNamespacedDefault(current, [cloudflareZone, previousDefaults.namespace], nextDefaults.namespace));
+    setAgentConnectUrl((current) => preferNamespacedDefault(current, [`https://center.${cloudflareZone}`, previousDefaults.centerURL], nextDefaults.centerURL));
+    setHeadscaleUrl((current) => preferNamespacedDefault(current, [`https://headscale.${cloudflareZone}`, previousDefaults.headscaleURL], nextDefaults.headscaleURL));
   };
   const selected = connectionOptions.find((option) => option.mode === mode)!;
 
@@ -128,7 +132,7 @@ export function SetupWizard(props: SetupWizardProps) {
 }
 
 function LocationStep({ language, name, timezone, domainSuffix, onName, onTimezone, onDomainSuffix, onSubmit }: { language: Language; name: string; timezone: string; domainSuffix: string; onName: (value: string) => void; onTimezone: (value: string) => void; onDomainSuffix: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <form onSubmit={onSubmit}><CardHeader><CardTitle>{copy(language, "创建第一个位置", "Create your first location")}</CardTitle><CardDescription>{copy(language, "位置通常是一处家庭、办公室或数据中心，用来归类同一网络中的节点。", "A location is usually a home, office, or data center and groups nodes on the same network.")}</CardDescription></CardHeader><CardContent><FieldGroup><Field><FieldLabel htmlFor="setup-location-name">{copy(language, "位置名称", "Location name")}</FieldLabel><Input autoFocus id="setup-location-name" maxLength={128} onChange={(event) => onName(event.target.value)} placeholder={copy(language, "例如：新加坡机房", "For example: Singapore data center")} required value={name} /></Field><Field><FieldLabel htmlFor="setup-timezone">{copy(language, "时区", "Time zone")}</FieldLabel><Input id="setup-timezone" list="vastora-timezones" onChange={(event) => onTimezone(event.target.value)} required value={timezone} /><TimezoneOptions /><FieldDescription>{copy(language, "已读取当前浏览器的时区。日志和计划任务会按此显示。", "Detected from this browser. Logs and schedules use this time zone.")}</FieldDescription></Field><Field><FieldLabel htmlFor="setup-domain">{copy(language, "默认域名（可选）", "Default domain (optional)")}</FieldLabel><Input id="setup-domain" onChange={(event) => onDomainSuffix(event.target.value.toLowerCase())} placeholder="example.com" value={domainSuffix} /><FieldDescription>{copy(language, "连接 Cloudflare 后会自动使用所选域名，也可以在这里提前填写。", "The selected Cloudflare zone is used automatically, or enter one here now.")}</FieldDescription></Field></FieldGroup></CardContent><CardFooter className="justify-end"><Button disabled={!name || !timezone} type="submit">{copy(language, "继续", "Continue")}</Button></CardFooter></form>;
+  return <form onSubmit={onSubmit}><CardHeader><CardTitle>{copy(language, "创建第一个位置", "Create your first location")}</CardTitle><CardDescription>{copy(language, "位置通常是一处家庭、办公室或数据中心，用来归类同一网络中的节点。", "A location is usually a home, office, or data center and groups nodes on the same network.")}</CardDescription></CardHeader><CardContent><FieldGroup><Field><FieldLabel htmlFor="setup-location-name">{copy(language, "位置名称", "Location name")}</FieldLabel><Input autoFocus id="setup-location-name" maxLength={128} onChange={(event) => onName(event.target.value)} placeholder={copy(language, "例如：新加坡机房", "For example: Singapore data center")} required value={name} /></Field><Field><FieldLabel htmlFor="setup-timezone">{copy(language, "时区", "Time zone")}</FieldLabel><Input id="setup-timezone" list="vastora-timezones" onChange={(event) => onTimezone(event.target.value)} required value={timezone} /><TimezoneOptions /><FieldDescription>{copy(language, "已读取当前浏览器的时区。日志和计划任务会按此显示。", "Detected from this browser. Logs and schedules use this time zone.")}</FieldDescription></Field><Field><FieldLabel htmlFor="setup-domain">{copy(language, "服务域名空间（可选）", "Service domain namespace (optional)")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="setup-domain" onChange={(event) => onDomainSuffix(event.target.value.toLowerCase())} placeholder="vastora.example.com" spellCheck={false} value={domainSuffix} /><FieldDescription>{copy(language, "连接 Cloudflare 后默认使用 vastora.根域名；Center、私网和应用都会放在这个空间下。", "After Cloudflare is connected, Vastora uses vastora.your-domain by default for Center, private networking, and apps.")}</FieldDescription></Field></FieldGroup></CardContent><CardFooter className="justify-end"><Button disabled={!name || !timezone} type="submit">{copy(language, "继续", "Continue")}</Button></CardFooter></form>;
 }
 
 function ConnectionMode({ language, mode, onMode }: { language: Language; mode: AgentConnectionMode; onMode: (mode: AgentConnectionMode) => void }) {
@@ -157,7 +161,7 @@ function SetupOutcome({ language, number, titleZh, titleEn, descriptionZh, descr
 
 function ReviewStep({ language, busy, error, name, timezone, domainSuffix, mode, selected, agentConnectUrl, headscaleMode, headscaleUrl, dnsMode, cloudflareZone, onBack, onFinish }: { language: Language; busy: boolean; error: string; name: string; timezone: string; domainSuffix: string; mode: AgentConnectionMode; selected: (typeof connectionOptions)[number]; agentConnectUrl: string; headscaleMode: "builtin" | "external"; headscaleUrl: string; dnsMode: "cloudflare" | "manual"; cloudflareZone: string; onBack: () => void; onFinish: () => Promise<void> }) {
   const installsHeadscale = mode === "headscale" && headscaleMode === "builtin";
-  return <><CardHeader><CardTitle>{copy(language, "确认首次设置", "Review initial setup")}</CardTitle><CardDescription>{copy(language, "完成后将直接进入“添加节点”。位置可在主页修改，单个节点也可覆盖连接地址。", "After finishing, Vastora opens Add node. Locations remain editable, and individual nodes can override the address.")}</CardDescription></CardHeader><CardContent className="flex flex-col gap-5"><Alert><CheckIcon /><AlertTitle>{copy(language, "已准备好", "Ready to finish")}</AlertTitle><AlertDescription>{installsHeadscale ? copy(language, "下一步会先确认 DNS，再安装安全私网与 HTTPS 网关，通常需要一到三分钟。网关会使用标准 443。", "The next step confirms DNS, then installs the secure private network and its HTTPS gateway. It usually takes one to three minutes and uses standard port 443.") : copy(language, "不会自动安装应用或开放公网端口。", "No apps are installed and no public ports are opened automatically.")}</AlertDescription></Alert><dl className="grid gap-4 rounded-xl border p-4 text-sm sm:grid-cols-2"><Summary icon={MapPinIcon} label={copy(language, "位置", "Location")} value={name} /><Summary icon={NetworkIcon} label={copy(language, "接入环境", "Connection")} value={copy(language, selected.zh, selected.en)} /><Summary icon={Globe2Icon} label={copy(language, "Agent 连接地址", "Agent address")} value={agentConnectUrl} wide />{mode === "headscale" ? <Summary icon={ShieldCheckIcon} label={copy(language, "安全私网", "Secure private network")} value={headscaleMode === "builtin" ? copy(language, `自动安装 · ${headscaleUrl}`, `Automatic install · ${headscaleUrl}`) : headscaleUrl} wide /> : null}{installsHeadscale ? <Summary icon={Globe2Icon} label="DNS" value={dnsMode === "cloudflare" ? `Cloudflare · ${cloudflareZone}` : copy(language, "手动配置", "Manual")} wide /> : null}<Summary icon={HouseIcon} label={copy(language, "时区", "Time zone")} value={timezone} /><Summary icon={Globe2Icon} label={copy(language, "默认域名", "Default domain")} value={domainSuffix || copy(language, "未设置", "Not set")} /></dl>{busy && installsHeadscale ? <Alert><Spinner /><AlertTitle>{copy(language, "正在安装安全私网", "Installing secure private network")}</AlertTitle><AlertDescription>{copy(language, "正在配置 DNS、下载固定版本、启动服务并申请 HTTPS 证书。请保持页面打开。", "Configuring DNS, downloading the fixed version, starting services, and obtaining HTTPS certificates. Keep this page open.")}</AlertDescription></Alert> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</CardContent><CardFooter className="justify-between"><Button disabled={busy} onClick={onBack} variant="outline">{copy(language, "返回", "Back")}</Button><Button disabled={busy} onClick={() => void onFinish()}>{busy ? <Spinner data-icon="inline-start" /> : null}{busy && installsHeadscale ? copy(language, "正在安装…", "Installing…") : copy(language, "完成并添加节点", "Finish and add a node")}</Button></CardFooter></>;
+  return <><CardHeader><CardTitle>{copy(language, "确认首次设置", "Review initial setup")}</CardTitle><CardDescription>{copy(language, "完成后将直接进入“添加节点”。位置可在主页修改，单个节点也可覆盖连接地址。", "After finishing, Vastora opens Add node. Locations remain editable, and individual nodes can override the address.")}</CardDescription></CardHeader><CardContent className="flex flex-col gap-5"><Alert><CheckIcon /><AlertTitle>{copy(language, "已准备好", "Ready to finish")}</AlertTitle><AlertDescription>{installsHeadscale ? copy(language, "下一步会先确认 DNS，再安装安全私网与 HTTPS 网关，通常需要一到三分钟。网关会使用标准 443。", "The next step confirms DNS, then installs the secure private network and its HTTPS gateway. It usually takes one to three minutes and uses standard port 443.") : copy(language, "不会自动安装应用或开放公网端口。", "No apps are installed and no public ports are opened automatically.")}</AlertDescription></Alert><dl className="grid gap-4 rounded-xl border p-4 text-sm sm:grid-cols-2"><Summary icon={MapPinIcon} label={copy(language, "位置", "Location")} value={name} /><Summary icon={NetworkIcon} label={copy(language, "接入环境", "Connection")} value={copy(language, selected.zh, selected.en)} /><Summary icon={Globe2Icon} label={copy(language, "Agent 连接地址", "Agent address")} value={agentConnectUrl} wide />{mode === "headscale" ? <Summary icon={ShieldCheckIcon} label={copy(language, "安全私网", "Secure private network")} value={headscaleMode === "builtin" ? copy(language, `自动安装 · ${headscaleUrl}`, `Automatic install · ${headscaleUrl}`) : headscaleUrl} wide /> : null}{installsHeadscale ? <Summary icon={Globe2Icon} label="DNS" value={dnsMode === "cloudflare" ? `Cloudflare · ${cloudflareZone}` : copy(language, "手动配置", "Manual")} wide /> : null}<Summary icon={HouseIcon} label={copy(language, "时区", "Time zone")} value={timezone} /><Summary icon={Globe2Icon} label={copy(language, "服务域名空间", "Service domain namespace")} value={domainSuffix || copy(language, "未设置", "Not set")} /></dl>{busy && installsHeadscale ? <Alert><Spinner /><AlertTitle>{copy(language, "正在安装安全私网", "Installing secure private network")}</AlertTitle><AlertDescription>{copy(language, "正在配置 DNS、下载固定版本、启动服务并申请 HTTPS 证书。请保持页面打开。", "Configuring DNS, downloading the fixed version, starting services, and obtaining HTTPS certificates. Keep this page open.")}</AlertDescription></Alert> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</CardContent><CardFooter className="justify-between"><Button disabled={busy} onClick={onBack} variant="outline">{copy(language, "返回", "Back")}</Button><Button disabled={busy} onClick={() => void onFinish()}>{busy ? <Spinner data-icon="inline-start" /> : null}{busy && installsHeadscale ? copy(language, "正在安装…", "Installing…") : copy(language, "完成并添加节点", "Finish and add a node")}</Button></CardFooter></>;
 }
 
 function SetupProgress({ language, step }: { language: Language; step: number }) { const labels = [copy(language, "位置", "Location"), copy(language, "连接", "Connection"), copy(language, "完成", "Finish")]; return <ol aria-label={copy(language, "设置进度", "Setup progress")} className="grid grid-cols-3 gap-2">{labels.map((label, index) => { const value = index + 1; return <li aria-current={value === step ? "step" : undefined} className="flex items-center gap-2 text-xs" key={label}><span className={`grid size-6 shrink-0 place-items-center rounded-full border font-semibold ${value < step ? "border-primary bg-primary text-primary-foreground" : value === step ? "border-primary text-primary" : "text-muted-foreground"}`}>{value < step ? <CheckIcon aria-hidden="true" className="size-3.5" /> : value}</span><span className={value === step ? "font-medium" : "text-muted-foreground"}>{label}</span></li>; })}</ol>; }
@@ -195,6 +199,14 @@ function stringValue(value: unknown) {
 
 function canonicalStandardHTTPSURL(value: string) {
   return new URL(value).toString().replace(/\/$/, "");
+}
+
+function preferNamespacedDefault(value: string | undefined, generatedValues: string[], nextValue: string) {
+  const current = value?.trim() ?? "";
+  if (!nextValue) return current;
+  const normalized = current.toLowerCase().replace(/\/$/, "");
+  const generated = generatedValues.some((candidate) => candidate && normalized === candidate.toLowerCase().replace(/\/$/, ""));
+  return !current || generated ? nextValue : current;
 }
 
 function writeSetupDraft(draft: SetupDraft) {

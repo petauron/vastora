@@ -12,3 +12,15 @@ export function validCenterURL(value: string) {
 export function browserTimezone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
+
+export function vastoraDomainDefaults(zoneName: string) {
+  const zone = zoneName.trim().toLowerCase().replace(/\.+$/, "");
+  if (!zone) return { zone: "", namespace: "", centerURL: "", headscaleURL: "" };
+  const namespace = `vastora.${zone}`;
+  return {
+    zone,
+    namespace,
+    centerURL: `https://center.${namespace}`,
+    headscaleURL: `https://headscale.${namespace}`
+  };
+}

@@ -13,6 +13,7 @@ func TestErrorCodeUsesStableUserFacingCategories(t *testing.T) {
 	}{
 		{http.StatusUnauthorized, "center: authentication required", "authentication_required"},
 		{http.StatusConflict, "center: app already installed on node", "already_installed"},
+		{http.StatusBadRequest, "center: DNS record center.example.com already exists with a different value", "dns_record_conflict"},
 		{http.StatusBadGateway, "center: Cloudflare authorization failed", "cloudflare_error"},
 		{http.StatusConflict, "center: gateway unavailable", "gateway_unavailable"},
 		{http.StatusBadRequest, "center: invalid input", "invalid_request"},
