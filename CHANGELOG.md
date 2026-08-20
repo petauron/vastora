@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.16](https://github.com/petauron/vastora/compare/v0.1.0-alpha.15...v0.1.0-alpha.16) (2026-08-20)
+
+
+### Bug Fixes
+
+* run Agent installer as an executable ([#57](https://github.com/petauron/vastora/issues/57)) ([9b72800](https://github.com/petauron/vastora/commit/9b728008dbe59b9bfc886424cb065d802fc73e71))
+
 ## [0.1.0-alpha.15](https://github.com/petauron/vastora/compare/v0.1.0-alpha.14...v0.1.0-alpha.15) (2026-08-20)
 
 
