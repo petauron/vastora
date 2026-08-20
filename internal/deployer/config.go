@@ -1,15 +1,26 @@
 package deployer
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
+
+	"github.com/petauron/vastora/internal/networking"
 )
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+type gatewayResolution struct {
+	hostname  string
+	addresses []netip.Addr
+}
 
 func normalizePublicURL(value string) (string, error) {
 	value = strings.TrimRight(strings.TrimSpace(value), "/")
@@ -133,10 +144,76 @@ func renderHeadscalePolicy() []byte {
 `)
 }
 
-func renderCaddyfile(centerURL, centerOrigin, headscaleURL string) []byte {
+func gatewayBindAddresses(ctx context.Context, endpoints ...string) ([]string, error) {
+	candidates, err := networking.Discover(time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("deployer: discover public gateway addresses: %w", err)
+	}
+	resolutions := make([]gatewayResolution, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		parsed, err := url.Parse(endpoint)
+		if err != nil || parsed.Hostname() == "" {
+			return nil, errors.New("deployer: gateway endpoint is invalid")
+		}
+		resolved, err := net.DefaultResolver.LookupNetIP(ctx, "ip", parsed.Hostname())
+		if err != nil {
+			return nil, fmt.Errorf("deployer: resolve gateway hostname %s: %w", parsed.Hostname(), err)
+		}
+		resolutions = append(resolutions, gatewayResolution{hostname: parsed.Hostname(), addresses: resolved})
+	}
+	return selectGatewayBindAddresses(resolutions, candidates)
+}
+
+func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []networking.Candidate) ([]string, error) {
+	public := make(map[netip.Addr]struct{})
+	for _, candidate := range candidates {
+		if candidate.Kind == networking.KindPublic {
+			if address, err := netip.ParseAddr(candidate.Address); err == nil {
+				public[address.Unmap()] = struct{}{}
+			}
+		}
+	}
+	matched := make(map[netip.Addr]struct{})
+	for _, resolution := range resolutions {
+		hostMatched := false
+		for _, address := range resolution.addresses {
+			address = address.Unmap()
+			if _, exists := public[address]; exists {
+				matched[address] = struct{}{}
+				hostMatched = true
+			}
+		}
+		if !hostMatched {
+			return nil, fmt.Errorf("deployer: gateway hostname %s must resolve directly to a public address assigned to this server", resolution.hostname)
+		}
+	}
+	addresses := make([]netip.Addr, 0, len(matched))
+	for address := range matched {
+		addresses = append(addresses, address)
+	}
+	sort.Slice(addresses, func(left, right int) bool { return addresses[left].Compare(addresses[right]) < 0 })
+	result := []string{"127.0.0.1"}
+	for _, address := range addresses {
+		if address.Is6() {
+			result = append(result, "["+address.String()+"]")
+		} else {
+			result = append(result, address.String())
+		}
+	}
+	return result, nil
+}
+
+func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses []string) []byte {
+	centerHTTP := "http://" + strings.TrimPrefix(centerURL, "https://")
+	headscaleHTTP := "http://" + strings.TrimPrefix(headscaleURL, "https://")
 	return []byte(fmt.Sprintf(`{
 	admin off
 	persist_config off
+	default_bind %s
+}
+
+%s, %s {
+	redir https://{host}{uri} 308
 }
 
 %s {
@@ -146,5 +223,5 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string) []byte {
 %s {
 	reverse_proxy 127.0.0.1:8081
 }
-`, centerURL, centerOrigin, headscaleURL))
+`, strings.Join(bindAddresses, " "), centerHTTP, headscaleHTTP, centerURL, centerOrigin, headscaleURL))
 }

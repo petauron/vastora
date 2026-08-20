@@ -71,7 +71,10 @@ control plane while the host Agent remains the only component that manages
 applications and gateway state. Bundled Headscale runs in its own Docker network
 namespace and publishes only its HTTP control port on host loopback. The host
 Tailscale client therefore owns `tailscale0` without sharing a network namespace
-with the Headscale server process. Center records the bundled infrastructure
+with the Headscale server process. The bundled HTTPS gateway binds only to
+loopback and public addresses that both resolve from its configured hostnames
+and exist on the server, leaving LAN and Tailscale addresses available to the
+co-located Agent gateway. Center records the bundled infrastructure
 specification version and asks the restricted deployment helper to reconcile an
 older installation once after an upgrade; persistent Headscale data and the
 existing encrypted API key are retained.
