@@ -44,9 +44,19 @@ func (s *Store) VerifyPublication(ctx context.Context, id string) (PublicationVi
 	if routeStatus != "" && routeStatus != "ready" {
 		return s.recordPublicationVerification(ctx, id, "gateway configuration is not ready")
 	}
-	addresses, lookupErr := net.DefaultResolver.LookupIPAddr(ctx, publication.Hostname)
-	if lookupErr != nil || len(addresses) == 0 {
-		return s.recordPublicationVerification(ctx, id, "DNS record has not propagated")
+	verificationAddress, privateEntry, targetErr := privatePublicationVerificationAddress(publication)
+	if targetErr != nil {
+		return s.recordPublicationVerification(ctx, id, targetErr.Error())
+	}
+	addresses := []net.IPAddr{}
+	if privateEntry {
+		addresses = append(addresses, net.IPAddr{IP: net.ParseIP(verificationAddress)})
+	} else {
+		var lookupErr error
+		addresses, lookupErr = net.DefaultResolver.LookupIPAddr(ctx, publication.Hostname)
+		if lookupErr != nil || len(addresses) == 0 {
+			return s.recordPublicationVerification(ctx, id, "DNS record has not propagated")
+		}
 	}
 	if publication.Kind != publicationCloudflare && publication.DNSRecord != nil {
 		matched := false
@@ -72,7 +82,11 @@ func (s *Store) VerifyPublication(ctx context.Context, id string) (PublicationVi
 		if publication.Kind == publicationShared443 {
 			port = "443"
 		}
-		connection, dialErr := (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(publication.Hostname, port))
+		host := publication.Hostname
+		if verificationAddress != "" {
+			host = verificationAddress
+		}
+		connection, dialErr := (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 		if dialErr != nil {
 			return s.recordPublicationVerification(ctx, id, "public port is not reachable")
 		}
@@ -88,7 +102,8 @@ func (s *Store) VerifyPublication(ctx context.Context, id string) (PublicationVi
 	if err != nil {
 		return PublicationView{}, err
 	}
-	client := &http.Client{Timeout: 12 * time.Second}
+	client, closeClient := publicationVerificationHTTPClient(verificationAddress)
+	defer closeClient()
 	response, requestErr := client.Do(request)
 	if requestErr != nil {
 		return s.recordPublicationVerification(ctx, id, "service health check has not passed: "+requestErr.Error())
@@ -99,6 +114,35 @@ func (s *Store) VerifyPublication(ctx context.Context, id string) (PublicationVi
 		return s.recordPublicationVerification(ctx, id, "service returned "+response.Status)
 	}
 	return s.markPublicationReady(ctx, id)
+}
+
+func privatePublicationVerificationAddress(publication PublicationView) (string, bool, error) {
+	if publication.Kind != publicationLAN && publication.Kind != publicationHeadscale {
+		return "", false, nil
+	}
+	if publication.DNSRecord == nil || net.ParseIP(publication.DNSRecord.Value) == nil {
+		return "", true, errors.New("gateway entry address is not ready")
+	}
+	return net.ParseIP(publication.DNSRecord.Value).String(), true, nil
+}
+
+func publicationVerificationHTTPClient(address string) (*http.Client, func()) {
+	client := &http.Client{Timeout: 12 * time.Second}
+	if address == "" {
+		return client, func() {}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	dialer := &net.Dialer{Timeout: 8 * time.Second}
+	transport.DialContext = func(ctx context.Context, network, target string) (net.Conn, error) {
+		_, port, err := net.SplitHostPort(target)
+		if err != nil {
+			return nil, err
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(address, port))
+	}
+	client.Transport = transport
+	return client, transport.CloseIdleConnections
 }
 
 func (s *Store) recordPublicationVerification(ctx context.Context, id, message string) (PublicationView, error) {
