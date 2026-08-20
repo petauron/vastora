@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.13](https://github.com/petauron/vastora/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2026-08-20)
+
+
+### Bug Fixes
+
+* migrate legacy setup domain drafts ([#51](https://github.com/petauron/vastora/issues/51)) ([2495b0a](https://github.com/petauron/vastora/commit/2495b0a0b22e6c63f566b8c8bbf58cd8cd3880bf))
+
 ## [0.1.0-alpha.12](https://github.com/petauron/vastora/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2026-08-20)
 
 
