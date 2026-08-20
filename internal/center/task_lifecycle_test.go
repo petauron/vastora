@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, second.ID, second.Attempt, false, "expected failure", nil); err != nil {
 		t.Fatal(err)
 	}
-	actions, err := store.ListActions(ctx)
+	actions, err := store.ListActions(ctx, defaultActionLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestDeploymentLifecyclePreventsDuplicateInstallAndControlsDataDeletion(t *t
 	}
 }
 
-func TestUpgradeReusesEncryptedConfigurationAndSecrets(t *testing.T) {
+func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -98,17 +99,102 @@ func TestUpgradeReusesEncryptedConfigurationAndSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, node, "application.apply", json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.30"}]}`))
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "upgrade", Config: json.RawMessage(`{"timezone":"Asia/Singapore","debug":true}`)}); err != nil {
+	configured, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "configure", Config: json.RawMessage(`{"timezone":"Asia/Singapore","debug":true}`)})
+	if err != nil {
 		t.Fatal(err)
 	}
-	upgrade := claimTask(t, store, node)
+	if configured.AppVersion != "7.2.128" {
+		t.Fatalf("configure changed installed version: %#v", configured)
+	}
+	task := claimTask(t, store, node)
 	var config map[string]any
 	var secrets map[string]string
-	if json.Unmarshal(upgrade.Config, &config) != nil || json.Unmarshal(upgrade.Secrets, &secrets) != nil {
-		t.Fatalf("upgrade task returned invalid configuration: %#v", upgrade)
+	if json.Unmarshal(task.Config, &config) != nil || json.Unmarshal(task.Secrets, &secrets) != nil {
+		t.Fatalf("configure task returned invalid configuration: %#v", task)
 	}
 	if config["timezone"] != "Asia/Singapore" || config["debug"] != true || secrets["management_key"] != "management-secret" || secrets["api_key"] != "client-secret" {
-		t.Fatalf("upgrade did not merge encrypted prior values: config=%#v secrets=%#v", config, secrets)
+		t.Fatalf("configure did not merge encrypted prior values: config=%#v secrets=%#v", config, secrets)
+	}
+}
+
+func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "versioned", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.31", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.31", LANAddress: "10.0.0.31", EnabledKinds: []string{networking.KindLAN}})
+	initial := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
+		t.Fatal(err)
+	}
+	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.31"}]}`)
+	completeNextTask(t, store, node, "application.apply", result)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "already at version") {
+		t.Fatalf("same-version upgrade was accepted: %v", err)
+	}
+	seedCatalogVersion(t, store, "7.2.129")
+	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"})
+	if err != nil || upgrade.AppVersion != "7.2.129" {
+		t.Fatalf("newer version was not accepted: %#v err=%v", upgrade, err)
+	}
+	completeNextTask(t, store, node, "application.apply", result)
+	seedCatalogVersion(t, store, "7.2.127")
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "downgrade is not allowed") {
+		t.Fatalf("downgrade was accepted: %v", err)
+	}
+}
+
+func TestFailedChangeRemainsAnInstalledApplication(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "degraded", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.32", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.32", LANAddress: "10.0.0.32", EnabledKinds: []string{networking.KindLAN}})
+	initial := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
+		t.Fatal(err)
+	}
+	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.32"}]}`)
+	completeNextTask(t, store, node, "application.apply", result)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "replacement failed", nil); err != nil {
+		t.Fatal(err)
+	}
+	applications, err := store.ListApplications(ctx)
+	if err != nil || len(applications) != 1 || applications[0].InstalledVersion != "7.2.128" || applications[0].Status != "failed" {
+		t.Fatalf("failed change lost installed state: %#v err=%v", applications, err)
+	}
+}
+
+func TestInstalledAppCanBeUninstalledAfterCatalogRemoval(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "catalog-removed", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.33", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.33", LANAddress: "10.0.0.33", EnabledKinds: []string{networking.KindLAN}})
+	initial := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "application.apply", json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.33"}]}`))
+	if _, err := store.db.ExecContext(ctx, `UPDATE catalog_sources SET enabled = 0`); err != nil {
+		t.Fatal(err)
+	}
+	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall"})
+	if err != nil || uninstall.AppVersion != "7.2.128" {
+		t.Fatalf("installed app became unmanageable after catalog removal: %#v err=%v", uninstall, err)
+	}
+}
+
+func seedCatalogVersion(t *testing.T, store *Store, version string) {
+	t.Helper()
+	payload, err := os.ReadFile("../../catalog/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = bytes.Replace(payload, []byte(`"version": "7.2.128"`), []byte(`"version": "`+version+`"`), 1)
+	if err := store.SeedOfficialCatalog(context.Background(), payload); err != nil {
+		t.Fatal(err)
 	}
 }
 

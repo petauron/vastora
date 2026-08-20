@@ -1,9 +1,10 @@
-import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, DashboardData, DashboardStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
+import type { Action, AgentEnrollment, AgentView, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
 
 export class APIError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly code = "request_failed"
   ) {
     super(message);
   }
@@ -23,9 +24,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("X-CSRF-Token", csrfToken());
   }
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
-  const body = (await response.json().catch(() => ({}))) as T & { error?: string };
+  const body = (await response.json().catch(() => ({}))) as T & { error?: string; code?: string };
   if (!response.ok) {
-    throw new APIError(body.error ?? "Request failed", response.status);
+    throw new APIError(body.error ?? "Request failed", response.status, body.code);
   }
   return body;
 }
@@ -38,8 +39,8 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
   }
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
   if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string };
-    throw new APIError(body.error ?? "Request failed", response.status);
+    const body = await response.json().catch(() => ({})) as { error?: string; code?: string };
+    throw new APIError(body.error ?? "Request failed", response.status, body.code);
   }
   const disposition = response.headers.get("Content-Disposition") ?? "";
   const match = disposition.match(/filename="?([^";]+)"?/i);
@@ -68,8 +69,7 @@ export const api = {
     }),
   logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST", body: "{}" }),
   changePassword: (currentPassword: string, newPassword: string) => request<{ changed: boolean }>("/api/v1/auth/password", { method: "PUT", body: JSON.stringify({ currentPassword, newPassword }) }),
-  status: () => request<DashboardStatus>("/api/v1/status"),
-  dashboard: () => request<DashboardData>("/api/v1/dashboard"),
+  status: () => request<CenterStatus>("/api/v1/status"),
   diagnostics: () => request<Diagnostics>("/api/v1/diagnostics"),
   downloadDiagnostics: () => download("/api/v1/diagnostics", `vastora-diagnostics-${new Date().toISOString().slice(0, 10)}.json`),
   downloadBackup: (password: string) => download("/api/v1/backups", "vastora-center.vastora", { method: "POST", body: JSON.stringify({ password }) }),
@@ -89,8 +89,8 @@ export const api = {
 	routes: () => request<{ routes: Route[] }>("/api/v1/routes"),
 	publications: () => request<{ publications: Publication[] }>("/api/v1/publications"),
 	integrations: () => request<{ integrations: Integration[] }>("/api/v1/integrations"),
-	actions: () => request<{ actions: Action[] }>("/api/v1/actions"),
-  createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation = "install", deleteData = false) => request<Deployment>("/api/v1/deployments", { method: "POST", body: JSON.stringify({ agentId, appKey, config, operation, deleteData }) }),
+	actions: (limit = 50) => request<{ actions: Action[] }>(`/api/v1/actions?limit=${encodeURIComponent(String(limit))}`),
+  createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation: Deployment["operation"] = "install", deleteData = false) => request<Deployment>("/api/v1/deployments", { method: "POST", body: JSON.stringify({ agentId, appKey, config, operation, deleteData }) }),
   confirmNetworkProfile: (agentId: string, profile: NetworkProfile) => request<NetworkProfile>(`/api/v1/agents/${encodeURIComponent(agentId)}/network-profile`, { method: "PUT", body: JSON.stringify(profile) }),
   createPublication: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; dnsProvider: "manual" | "cloudflare" | "headscale"; confirmHighRisk?: boolean }) => request<Publication>("/api/v1/publications", { method: "POST", body: JSON.stringify(input) }),
   stopPublication: (id: string) => request<{ stopped: boolean }>(`/api/v1/publications/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),

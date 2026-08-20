@@ -169,6 +169,8 @@ Center backup contains Center SQLite and its encryption key. Agent credentials,
 applied state, Headscale data, Caddy data, cloudflared runtime state, and
 application volumes have separate host-local backup boundaries.
 
-Vastora currently supports only its current schema. Structural changes require
-rebuilding the development Center database and re-enrolling Agents; there are no
-compatibility layers or in-place migrations during pre-alpha development.
+Released and pre-alpha Center schemas follow the same rule: structural changes
+advance through tested, forward-only migrations after Center creates a backup.
+Vastora does not retain obsolete compatibility layers or implement automatic
+database downgrades. Rebuilding a development database remains an explicit
+operator choice, not a substitute for a required migration.

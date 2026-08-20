@@ -4,7 +4,7 @@ import { api } from "../api";
 import type { AgentConnectionMode, CloudflareZone, InitialSetupInput, NetworkCandidate } from "../types";
 import type { Language } from "../translations";
 import { browserTimezone, validCenterURL } from "../lib/network";
-import { Brand, copy } from "./shared";
+import { Brand, copy, userError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -79,7 +79,7 @@ export function SetupWizard(props: SetupWizardProps) {
     if (mode === "headscale") {
       if (!validHeadscaleURL(headscaleUrl)) { setError(copy(language, "私网地址应类似 https://headscale.example.com，不能包含账号、密码或路径。", "The private-network address should look like https://headscale.example.com and cannot contain credentials or a path.")); return; }
       if (headscaleMode === "builtin" && (!builtinHeadscaleAvailable || new URL(headscaleUrl).port !== "" || new URL(agentConnectUrl).port !== "")) { setError(copy(language, "自动安装的 Center 和私网地址使用标准 HTTPS，不需要填写端口。", "Automatically installed Center and private-network addresses use standard HTTPS without an explicit port.")); return; }
-      if (headscaleMode === "external" && headscaleApiKey.trim().length < 20) { setError(copy(language, "已有 Headscale 需要有效的 API Key。", "An existing Headscale server requires a valid API key.")); return; }
+      if (headscaleMode === "external" && headscaleApiKey.trim().length < 20) { setError(copy(language, "已有私网服务需要有效的 API Key。", "An existing private-network service requires a valid API key.")); return; }
       if (headscaleMode === "builtin" && dnsMode === "cloudflare" && (!cloudflareConfigured || !publicAddress)) { setError(copy(language, "请先登录 Cloudflare。服务器公网地址已经自动选择，也可以在高级设置中修改。", "Sign in to Cloudflare first. The server public address is selected automatically and can be changed in Advanced settings.")); return; }
       if (headscaleMode === "builtin") {
         setAgentConnectUrl(canonicalStandardHTTPSURL(agentConnectUrl));
@@ -99,7 +99,7 @@ export function SetupWizard(props: SetupWizardProps) {
       if (builtinGateway && dnsMode === "cloudflare") await api.configureSetupDNS({ centerUrl: centerURL, headscaleUrl: privateNetworkURL, publicAddress });
       await onComplete(input);
       clearSetupDraft();
-    } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Request failed"); } finally { setBusy(false); }
+    } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
   const connectedCloudflare = (zone: CloudflareZone) => {
     setCloudflareConfigured(true);
@@ -157,7 +157,7 @@ function SetupOutcome({ language, number, titleZh, titleEn, descriptionZh, descr
 
 function ReviewStep({ language, busy, error, name, timezone, domainSuffix, mode, selected, agentConnectUrl, headscaleMode, headscaleUrl, dnsMode, cloudflareZone, onBack, onFinish }: { language: Language; busy: boolean; error: string; name: string; timezone: string; domainSuffix: string; mode: AgentConnectionMode; selected: (typeof connectionOptions)[number]; agentConnectUrl: string; headscaleMode: "builtin" | "external"; headscaleUrl: string; dnsMode: "cloudflare" | "manual"; cloudflareZone: string; onBack: () => void; onFinish: () => Promise<void> }) {
   const installsHeadscale = mode === "headscale" && headscaleMode === "builtin";
-  return <><CardHeader><CardTitle>{copy(language, "确认首次设置", "Review initial setup")}</CardTitle><CardDescription>{copy(language, "完成后将直接进入“添加节点”。位置可在主页修改，单个节点也可覆盖连接地址。", "After finishing, Vastora opens Add node. Locations remain editable, and individual nodes can override the address.")}</CardDescription></CardHeader><CardContent className="flex flex-col gap-5"><Alert><CheckIcon /><AlertTitle>{copy(language, "已准备好", "Ready to finish")}</AlertTitle><AlertDescription>{installsHeadscale ? copy(language, "下一步会先确认 DNS，再安装 Headscale 与 HTTPS 网关，通常需要一到三分钟。网关会使用标准 443。", "The next step confirms DNS, then installs Headscale and its HTTPS gateway. It usually takes one to three minutes and uses standard port 443.") : copy(language, "不会自动安装应用或开放公网端口。", "No apps are installed and no public ports are opened automatically.")}</AlertDescription></Alert><dl className="grid gap-4 rounded-xl border p-4 text-sm sm:grid-cols-2"><Summary icon={MapPinIcon} label={copy(language, "位置", "Location")} value={name} /><Summary icon={NetworkIcon} label={copy(language, "接入环境", "Connection")} value={copy(language, selected.zh, selected.en)} /><Summary icon={Globe2Icon} label={copy(language, "Agent 连接地址", "Agent address")} value={agentConnectUrl} wide />{mode === "headscale" ? <Summary icon={ShieldCheckIcon} label="Headscale" value={headscaleMode === "builtin" ? copy(language, `自动安装 · ${headscaleUrl}`, `Automatic install · ${headscaleUrl}`) : headscaleUrl} wide /> : null}{installsHeadscale ? <Summary icon={Globe2Icon} label="DNS" value={dnsMode === "cloudflare" ? `Cloudflare · ${cloudflareZone}` : copy(language, "手动配置", "Manual")} wide /> : null}<Summary icon={HouseIcon} label={copy(language, "时区", "Time zone")} value={timezone} /><Summary icon={Globe2Icon} label={copy(language, "默认域名", "Default domain")} value={domainSuffix || copy(language, "未设置", "Not set")} /></dl>{busy && installsHeadscale ? <Alert><Spinner /><AlertTitle>{copy(language, "正在安装 Headscale", "Installing Headscale")}</AlertTitle><AlertDescription>{copy(language, "正在配置 DNS、下载固定版本、启动服务并申请 HTTPS 证书。请保持页面打开。", "Configuring DNS, downloading the fixed version, starting services, and obtaining HTTPS certificates. Keep this page open.")}</AlertDescription></Alert> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</CardContent><CardFooter className="justify-between"><Button disabled={busy} onClick={onBack} variant="outline">{copy(language, "返回", "Back")}</Button><Button disabled={busy} onClick={() => void onFinish()}>{busy ? <Spinner data-icon="inline-start" /> : null}{busy && installsHeadscale ? copy(language, "正在安装…", "Installing…") : copy(language, "完成并添加节点", "Finish and add a node")}</Button></CardFooter></>;
+  return <><CardHeader><CardTitle>{copy(language, "确认首次设置", "Review initial setup")}</CardTitle><CardDescription>{copy(language, "完成后将直接进入“添加节点”。位置可在主页修改，单个节点也可覆盖连接地址。", "After finishing, Vastora opens Add node. Locations remain editable, and individual nodes can override the address.")}</CardDescription></CardHeader><CardContent className="flex flex-col gap-5"><Alert><CheckIcon /><AlertTitle>{copy(language, "已准备好", "Ready to finish")}</AlertTitle><AlertDescription>{installsHeadscale ? copy(language, "下一步会先确认 DNS，再安装安全私网与 HTTPS 网关，通常需要一到三分钟。网关会使用标准 443。", "The next step confirms DNS, then installs the secure private network and its HTTPS gateway. It usually takes one to three minutes and uses standard port 443.") : copy(language, "不会自动安装应用或开放公网端口。", "No apps are installed and no public ports are opened automatically.")}</AlertDescription></Alert><dl className="grid gap-4 rounded-xl border p-4 text-sm sm:grid-cols-2"><Summary icon={MapPinIcon} label={copy(language, "位置", "Location")} value={name} /><Summary icon={NetworkIcon} label={copy(language, "接入环境", "Connection")} value={copy(language, selected.zh, selected.en)} /><Summary icon={Globe2Icon} label={copy(language, "Agent 连接地址", "Agent address")} value={agentConnectUrl} wide />{mode === "headscale" ? <Summary icon={ShieldCheckIcon} label={copy(language, "安全私网", "Secure private network")} value={headscaleMode === "builtin" ? copy(language, `自动安装 · ${headscaleUrl}`, `Automatic install · ${headscaleUrl}`) : headscaleUrl} wide /> : null}{installsHeadscale ? <Summary icon={Globe2Icon} label="DNS" value={dnsMode === "cloudflare" ? `Cloudflare · ${cloudflareZone}` : copy(language, "手动配置", "Manual")} wide /> : null}<Summary icon={HouseIcon} label={copy(language, "时区", "Time zone")} value={timezone} /><Summary icon={Globe2Icon} label={copy(language, "默认域名", "Default domain")} value={domainSuffix || copy(language, "未设置", "Not set")} /></dl>{busy && installsHeadscale ? <Alert><Spinner /><AlertTitle>{copy(language, "正在安装安全私网", "Installing secure private network")}</AlertTitle><AlertDescription>{copy(language, "正在配置 DNS、下载固定版本、启动服务并申请 HTTPS 证书。请保持页面打开。", "Configuring DNS, downloading the fixed version, starting services, and obtaining HTTPS certificates. Keep this page open.")}</AlertDescription></Alert> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</CardContent><CardFooter className="justify-between"><Button disabled={busy} onClick={onBack} variant="outline">{copy(language, "返回", "Back")}</Button><Button disabled={busy} onClick={() => void onFinish()}>{busy ? <Spinner data-icon="inline-start" /> : null}{busy && installsHeadscale ? copy(language, "正在安装…", "Installing…") : copy(language, "完成并添加节点", "Finish and add a node")}</Button></CardFooter></>;
 }
 
 function SetupProgress({ language, step }: { language: Language; step: number }) { const labels = [copy(language, "位置", "Location"), copy(language, "连接", "Connection"), copy(language, "完成", "Finish")]; return <ol aria-label={copy(language, "设置进度", "Setup progress")} className="grid grid-cols-3 gap-2">{labels.map((label, index) => { const value = index + 1; return <li aria-current={value === step ? "step" : undefined} className="flex items-center gap-2 text-xs" key={label}><span className={`grid size-6 shrink-0 place-items-center rounded-full border font-semibold ${value < step ? "border-primary bg-primary text-primary-foreground" : value === step ? "border-primary text-primary" : "text-muted-foreground"}`}>{value < step ? <CheckIcon aria-hidden="true" className="size-3.5" /> : value}</span><span className={value === step ? "font-medium" : "text-muted-foreground"}>{label}</span></li>; })}</ol>; }
@@ -172,16 +172,15 @@ function readSetupDraft(): Partial<SetupDraft> {
     const mode = connectionOptions.some((option) => option.mode === parsed.mode) ? parsed.mode : undefined;
     const headscaleMode = parsed.headscaleMode === "builtin" || parsed.headscaleMode === "external" ? parsed.headscaleMode : undefined;
     const dnsMode = parsed.dnsMode === "cloudflare" || parsed.dnsMode === "manual" ? parsed.dnsMode : undefined;
-    const builtinHeadscaleDraft = mode === "headscale" && headscaleMode !== "external";
     return {
       step: parsed.step === 2 ? 2 : 1,
       name: typeof parsed.name === "string" ? parsed.name : undefined,
       timezone: typeof parsed.timezone === "string" ? parsed.timezone : undefined,
       domainSuffix: typeof parsed.domainSuffix === "string" ? parsed.domainSuffix : undefined,
       mode,
-      agentConnectUrl: builtinHeadscaleDraft ? standardizeLegacyGatewayURL(parsed.agentConnectUrl) : stringValue(parsed.agentConnectUrl),
+      agentConnectUrl: stringValue(parsed.agentConnectUrl),
       headscaleMode,
-      headscaleUrl: builtinHeadscaleDraft ? standardizeLegacyGatewayURL(parsed.headscaleUrl) : stringValue(parsed.headscaleUrl),
+      headscaleUrl: stringValue(parsed.headscaleUrl),
       dnsMode,
       publicAddress: typeof parsed.publicAddress === "string" ? parsed.publicAddress : undefined
     };
@@ -192,20 +191,6 @@ function readSetupDraft(): Partial<SetupDraft> {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : undefined;
-}
-
-function standardizeLegacyGatewayURL(value: unknown) {
-  if (typeof value !== "string") return undefined;
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol === "https:" && parsed.port === "8443") {
-      parsed.port = "";
-      return parsed.toString().replace(/\/$/, "");
-    }
-  } catch {
-    return value;
-  }
-  return value;
 }
 
 function canonicalStandardHTTPSURL(value: string) {

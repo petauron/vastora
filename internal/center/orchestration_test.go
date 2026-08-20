@@ -193,7 +193,7 @@ func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
 	if strings.Contains(string(after), "cpa.tail.example.test") || strings.TrimSpace(string(after)) != "[]" {
 		t.Fatalf("uninstall left stale Headscale DNS: %s", after)
 	}
-	actions, err := store.ListActions(ctx)
+	actions, err := store.ListActions(ctx, defaultActionLimit)
 	if err != nil {
 		t.Fatal(err)
 	}

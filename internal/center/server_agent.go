@@ -1,0 +1,174 @@
+package center
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/petauron/vastora/internal/networking"
+)
+
+func (s *Server) handleListAgents(writer http.ResponseWriter, request *http.Request) {
+	agents, err := s.store.ListAgents(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"agents": agents})
+}
+
+func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		SiteID       string `json:"siteId"`
+		UseHeadscale bool   `json:"useHeadscale"`
+		Gateway      bool   `json:"gateway"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), input.SiteID)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if input.UseHeadscale {
+		join, err := s.store.CreateHeadscaleBootstrap(request.Context(), input.Gateway)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, err)
+			return
+		}
+		enrollment.HeadscaleCommand = join.Command
+		enrollment.HeadscaleExpiresAt = join.ExpiresAt
+	}
+	writeJSON(writer, http.StatusCreated, enrollment)
+}
+
+func (s *Server) handleUpdateAgent(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		SiteID string `json:"siteId"`
+		Name   string `json:"name"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.UpdateAgent(request.Context(), request.PathValue("id"), input.Name, input.SiteID); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"updated": true})
+}
+
+func (s *Server) handleDisableAgent(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.DisableAgent(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"disabled": true})
+}
+
+func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request *http.Request) {
+	var input networking.Profile
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	profile, err := s.store.ConfirmNetworkProfile(request.Context(), request.PathValue("id"), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, profile)
+}
+
+func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		Token   string `json:"token"`
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Name, input.Version)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, credential)
+}
+
+func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		Version                      string                           `json:"version"`
+		AppliedInstallations         int                              `json:"appliedInstallations"`
+		Roles                        []string                         `json:"roles"`
+		Capabilities                 NodeCapabilities                 `json:"capabilities"`
+		NetworkCandidates            []networking.Candidate           `json:"networkCandidates"`
+		ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
+		ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
+		GatewayHealthy               bool                             `json:"gatewayHealthy"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	credential := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
+	if credential == "" || !strings.HasPrefix(request.Header.Get("Authorization"), "Bearer ") {
+		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
+		return
+	}
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy}); err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"connected": true})
+}
+
+func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	task, err := s.store.ClaimNextTask(request.Context(), request.PathValue("id"), credential)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"task": task})
+}
+
+func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input struct {
+		Attempt   int64           `json:"attempt"`
+		Succeeded bool            `json:"succeeded"`
+		Error     string          `json:"error"`
+		Result    json.RawMessage `json:"result"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.CompleteTask(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result); err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"completed": true})
+}
+
+func agentCredential(request *http.Request) (string, error) {
+	credential := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
+	if credential == "" || !strings.HasPrefix(request.Header.Get("Authorization"), "Bearer ") {
+		return "", errors.New("center: agent authentication required")
+	}
+	return credential, nil
+}

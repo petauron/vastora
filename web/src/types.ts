@@ -13,19 +13,17 @@ export type CatalogSource = {
   lastError?: string;
 };
 
-export type DashboardStatus = {
+export type CenterStatus = {
   version: string;
-  catalogSources: number;
-  catalogApps: number;
-  agents: number;
-  deployments: number;
   agentInstallerAvailable: boolean;
   agentConnectionMode: AgentConnectionMode;
   agentConnectUrl: string;
 };
 
-export type DashboardData = {
-  status: DashboardStatus;
+export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "settings";
+
+export type AppData = {
+  status: CenterStatus;
   sources: CatalogSource[];
   apps: AppView[];
   agents: AgentView[];
@@ -128,7 +126,7 @@ export type AppView = {
 
 export type Organization = { id: string; name: string; createdAt: string; updatedAt: string };
 export type Site = { id: string; organizationId: string; name: string; code: string; description: string; timezone: string; domainSuffix: string; status: string; gatewayNodes: string[]; gatewayStatus: string; createdAt: string; updatedAt: string };
-export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; createdAt: string; updatedAt: string };
+export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; installedVersion?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
 export type Service = { id: string; applicationId: string; siteId: string; name: string; protocol: "http" | "https" | "tcp" | "udp"; containerPort: number; hostPort: number; endpoint: string; source: "catalog" | "observed"; appProtocol?: string; management: boolean; observedListen?: string; status: string; lastError?: string; createdAt: string; updatedAt: string };
 export type PublicationKind = "lan_gateway" | "headscale_gateway" | "public_direct" | "public_shared_443" | "cloudflare_tunnel";
 export type DNSRecordInstruction = { type: "A" | "AAAA" | "CNAME"; name: string; value: string; proxy: boolean };
@@ -147,7 +145,7 @@ export type Deployment = {
   appKey: string;
   appVersion: string;
   state: "pending" | "running" | "succeeded" | "failed";
-  operation: "install" | "upgrade" | "uninstall";
+  operation: "install" | "upgrade" | "configure" | "uninstall";
   deleteData: boolean;
   accessUrl?: string;
   error?: string;

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 5
+const centerSchemaVersion = 6
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -275,7 +275,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			manifest_json BLOB NOT NULL,
 			config_json BLOB NOT NULL,
 			secret_id TEXT REFERENCES secrets(id),
-			operation TEXT NOT NULL CHECK(operation IN ('install', 'upgrade', 'uninstall')),
+			operation TEXT NOT NULL CHECK(operation IN ('install', 'upgrade', 'configure', 'uninstall')),
 			delete_data INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'succeeded', 'failed')),
 			attempt INTEGER NOT NULL DEFAULT 0,

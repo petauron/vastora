@@ -84,16 +84,19 @@ type SiteView struct {
 }
 
 type ApplicationView struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	NodeID    string    `json:"nodeId"`
-	SiteID    string    `json:"siteId"`
-	AppKey    string    `json:"appKey"`
-	Image     string    `json:"image"`
-	Status    string    `json:"status"`
-	Runtime   string    `json:"runtime"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	NodeID           string    `json:"nodeId"`
+	SiteID           string    `json:"siteId"`
+	AppKey           string    `json:"appKey"`
+	Image            string    `json:"image"`
+	Status           string    `json:"status"`
+	Runtime          string    `json:"runtime"`
+	InstalledVersion string    `json:"installedVersion,omitempty"`
+	AvailableVersion string    `json:"availableVersion,omitempty"`
+	UpdateAvailable  bool      `json:"updateAvailable"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type ServiceView struct {

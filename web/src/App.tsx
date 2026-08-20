@@ -1,17 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { AppWindowIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, ServerIcon, SettingsIcon, type LucideIcon } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { AppWindowIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
 import { APIError, api } from "./api";
-import type { DashboardData, SetupStatus } from "./types";
+import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
+import type { AppData, Screen, SetupStatus } from "./types";
 import type { Language } from "./translations";
-import { ActivityView } from "./views/ActivityView";
-import { AppsView } from "./views/AppsView";
-import { HomeView } from "./views/HomeView";
-import { NetworkView } from "./views/NetworkView";
-import { NodesView } from "./views/NodesView";
-import { SettingsView } from "./views/SettingsView";
-import { SetupWizard } from "./views/SetupWizard";
-import { Brand, PageHeading, copy } from "./views/shared";
-import { Alert, AlertTitle } from "@/components/ui/alert";
+import { Brand, PageHeading, copy, userError } from "./views/shared";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -21,9 +15,7 @@ import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupConte
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
-export type { DashboardData } from "./types";
-
-export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "settings";
+export type { AppData, Screen } from "./types";
 type Phase = "loading" | "setup-admin" | "setup-wizard" | "login" | "ready" | "unavailable";
 export type Mutate = (operation: () => Promise<unknown>, success?: string) => Promise<void>;
 
@@ -41,23 +33,73 @@ const navigation = [
   { id: "activity" as const, icon: HistoryIcon, zh: "活动", en: "Activity" }
 ];
 
+const ActivityView = lazy(() => import("./views/ActivityView").then((module) => ({ default: module.ActivityView })));
+const AppsView = lazy(() => import("./views/AppsView").then((module) => ({ default: module.AppsView })));
+const HomeView = lazy(() => import("./views/HomeView").then((module) => ({ default: module.HomeView })));
+const NetworkView = lazy(() => import("./views/NetworkView").then((module) => ({ default: module.NetworkView })));
+const NodesView = lazy(() => import("./views/NodesView").then((module) => ({ default: module.NodesView })));
+const SettingsView = lazy(() => import("./views/SettingsView").then((module) => ({ default: module.SettingsView })));
+const SetupWizard = lazy(() => import("./views/SetupWizard").then((module) => ({ default: module.SetupWizard })));
+
 export function App() {
   const [language, setLanguageState] = useState<Language>(preferredLanguage);
   const [phase, setPhase] = useState<Phase>("loading");
-  const [screen, setScreen] = useState<Screen>("home");
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [screen, setScreen] = useState<Screen>(screenFromPath);
+  const [data, setData] = useState<AppData | null>(null);
+  const [loadedScreens, setLoadedScreens] = useState<Set<Screen>>(() => new Set());
+  const [loadingScreen, setLoadingScreen] = useState<Screen | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [addFirstNode, setAddFirstNode] = useState(false);
-  const [notice, setNotice] = useState<{ message: string; error?: boolean } | null>(null);
+  const [notice, setNotice] = useState<{ message: string; detail?: string; error?: boolean } | null>(null);
+  const [connection, setConnection] = useState<"connected" | "reconnecting">("connected");
+  const [connectionError, setConnectionError] = useState<unknown>(null);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const focusAfterNavigation = useRef(false);
 
   const setLanguage = (next: Language) => {
     window.localStorage.setItem("vastora.language", next);
     setLanguageState(next);
   };
 
-  const loadDashboard = useCallback(async () => {
-    setData(await api.dashboard());
+  const loadScreen = useCallback(async (target: Screen) => {
+    setLoadingScreen(target);
+    try {
+      const patch = await loadScreenData(target);
+      setData((current) => ({ ...(current ?? emptyAppData(patch.status)), ...patch }));
+      setLoadedScreens((current) => {
+        if (current.has(target)) return current;
+        return new Set(current).add(target);
+      });
+      setConnection("connected");
+      setConnectionError(null);
+      setLastSync(new Date());
+    } catch (error) {
+      if (!(error instanceof APIError && error.status === 401)) {
+        setConnection("reconnecting");
+        setConnectionError(error);
+      }
+      throw error;
+    } finally {
+      setLoadingScreen((current) => current === target ? null : current);
+    }
   }, []);
+
+  const handleLoadError = useCallback((error: unknown) => {
+    if (error instanceof APIError && error.status === 401) {
+      setPhase("login");
+    }
+  }, []);
+
+  const navigate = useCallback((target: Screen, replace = false) => {
+    const path = pathForScreen(target);
+    if (window.location.pathname !== path) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", path);
+    }
+    focusAfterNavigation.current = true;
+    setScreen(target);
+    void loadScreen(target).catch(handleLoadError);
+  }, [handleLoadError, loadScreen]);
 
   const initialize = useCallback(async () => {
     setPhase("loading");
@@ -82,7 +124,9 @@ export function App() {
         return;
       }
       try {
-        await loadDashboard();
+        const target = screenFromPath();
+        await loadScreen(target);
+        setScreen(target);
         setPhase("ready");
       } catch (error) {
         if (error instanceof APIError && error.status === 401) {
@@ -92,28 +136,47 @@ export function App() {
         throw error;
       }
     } catch (error) {
-      setNotice({ message: error instanceof Error ? error.message : "Center unavailable", error: true });
+      setNotice({ message: userError(preferredLanguage(), error), detail: error instanceof Error ? error.message : undefined, error: true });
       setPhase("unavailable");
     }
-  }, [loadDashboard]);
+  }, [loadScreen]);
 
   useEffect(() => { void initialize(); }, [initialize]);
   useEffect(() => { document.documentElement.lang = language; }, [language]);
+  useEffect(() => {
+    const onPopState = () => {
+      const target = screenFromPath();
+      focusAfterNavigation.current = true;
+      setScreen(target);
+      if (phase === "ready") void loadScreen(target).catch(handleLoadError);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [phase, handleLoadError, loadScreen]);
+  useEffect(() => {
+    if (phase !== "ready" || !focusAfterNavigation.current || !loadedScreens.has(screen)) return;
+    focusAfterNavigation.current = false;
+    window.requestAnimationFrame(() => mainRef.current?.focus());
+  }, [loadedScreens, phase, screen]);
+  useEffect(() => {
+    const label = navigation.find((item) => item.id === screen);
+    document.title = `${label ? copy(language, label.zh, label.en) : copy(language, "设置", "Settings")} · Vastora`;
+  }, [language, screen]);
   useEffect(() => {
     if (phase !== "ready") return;
     let cancelled = false;
     let timer = 0;
     const poll = async () => {
       if (document.visibilityState === "visible") {
-        try { await loadDashboard(); } catch (error) {
+        try { await loadScreen(screen); } catch (error) {
           if (error instanceof APIError && error.status === 401 && !cancelled) setPhase("login");
         }
       }
-      if (!cancelled) timer = window.setTimeout(() => void poll(), 5000);
+      if (!cancelled) timer = window.setTimeout(() => void poll(), screen === "home" || screen === "settings" ? 30000 : 5000);
     };
-    timer = window.setTimeout(() => void poll(), 5000);
+    timer = window.setTimeout(() => void poll(), screen === "home" || screen === "settings" ? 30000 : 5000);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [phase, loadDashboard]);
+  }, [phase, screen, loadScreen]);
 
   const mutate = useCallback<Mutate>(async (operation, success) => {
     try {
@@ -123,12 +186,16 @@ export function App() {
         setPhase("login");
         return;
       }
-      setNotice({ message: error instanceof Error ? error.message : "Request failed", error: true });
+      if (!(error instanceof APIError)) {
+        setConnection("reconnecting");
+        setConnectionError(error);
+      }
+      setNotice({ message: userError(language, error), detail: error instanceof Error ? error.message : undefined, error: true });
       throw error;
     }
     setNotice(success ? { message: success } : null);
     try {
-      await loadDashboard();
+      await loadScreen(screen);
     } catch (error) {
       if (error instanceof APIError && error.status === 401) {
         setPhase("login");
@@ -137,7 +204,7 @@ export function App() {
         setNotice({ message: success ? `${success} ${refreshMessage}` : refreshMessage });
       }
     }
-  }, [language, loadDashboard]);
+  }, [language, screen, loadScreen]);
 
   if (phase === "loading") return <CenteredState language={language} loading />;
   if (phase === "unavailable") return <CenteredState language={language} message={notice?.message} onRetry={initialize} />;
@@ -146,7 +213,7 @@ export function App() {
     setSetupStatus(await api.setupStatus());
     setPhase("setup-wizard");
   }} />;
-  if (phase === "setup-wizard") return <SetupWizard
+  if (phase === "setup-wizard") return <Suspense fallback={<CenteredState language={language} loading />}><SetupWizard
     builtinHeadscaleAvailable={setupStatus?.builtinHeadscaleAvailable ?? false}
     cloudflareConfigured={setupStatus?.cloudflareConfigured ?? false}
     cloudflareOAuthAvailable={setupStatus?.cloudflareOAuthAvailable ?? false}
@@ -158,10 +225,19 @@ export function App() {
     onComplete={async (input) => {
       await api.completeSetup(input);
       setSetupStatus(await api.setupStatus());
-      try { await loadDashboard(); setScreen("nodes"); setAddFirstNode(true); setPhase("ready"); } catch (error) { setNotice({ message: error instanceof Error ? error.message : "Center unavailable", error: true }); setPhase("unavailable"); }
+      try {
+        window.history.replaceState({}, "", pathForScreen("nodes"));
+        setScreen("nodes");
+        await loadScreen("nodes");
+        setAddFirstNode(true);
+        setPhase("ready");
+      } catch (error) {
+        setNotice({ message: userError(language, error), detail: error instanceof Error ? error.message : undefined, error: true });
+        setPhase("unavailable");
+      }
     }}
-  />;
-  if (phase === "login") return <CredentialPage language={language} mode="login" onLanguage={setLanguage} onSubmit={async (username, password) => { await api.login(username, password); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } await loadDashboard(); setPhase("ready"); }} />;
+  /></Suspense>;
+  if (phase === "login") return <CredentialPage language={language} mode="login" onLanguage={setLanguage} onSubmit={async (username, password) => { await api.login(username, password); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); await loadScreen(target); setScreen(target); setPhase("ready"); }} />;
   if (!data) return <CenteredState language={language} onRetry={initialize} />;
 
   const currentLabel = navigation.find((item) => item.id === screen);
@@ -172,21 +248,21 @@ export function App() {
         <Sidebar collapsible="icon">
           <SidebarHeader className="px-3 pb-3 pt-5">
             <Brand />
-            <div className="mt-3 flex items-center gap-2 px-2 text-xs text-muted-foreground"><span className="size-2 rounded-full bg-success" aria-hidden="true" />{copy(language, "Center 连接正常", "Center connected")}</div>
+            <div className="mt-3 flex items-center gap-2 px-2 text-xs text-muted-foreground"><span className={`size-2 rounded-full ${connection === "connected" ? "bg-success" : "bg-destructive"}`} aria-hidden="true" />{connection === "connected" ? copy(language, "Center 连接正常", "Center connected") : copy(language, "正在重新连接", "Reconnecting")}</div>
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {navigation.map((item) => {
-                    return <SidebarMenuItem key={item.id}><NavigationButton active={screen === item.id} icon={item.icon} label={copy(language, item.zh, item.en)} onSelect={() => setScreen(item.id)} /></SidebarMenuItem>;
+                    return <SidebarMenuItem key={item.id}><NavigationButton active={screen === item.id} icon={item.icon} label={copy(language, item.zh, item.en)} onSelect={() => navigate(item.id)} /></SidebarMenuItem>;
                   })}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter className="border-t border-sidebar-border p-3">
-            <SidebarMenu><SidebarMenuItem><NavigationButton active={screen === "settings"} icon={SettingsIcon} label={copy(language, "设置", "Settings")} onSelect={() => setScreen("settings")} /></SidebarMenuItem></SidebarMenu>
+            <SidebarMenu><SidebarMenuItem><NavigationButton active={screen === "settings"} icon={SettingsIcon} label={copy(language, "设置", "Settings")} onSelect={() => navigate("settings")} /></SidebarMenuItem></SidebarMenu>
           </SidebarFooter>
         </Sidebar>
         <SidebarInset>
@@ -194,17 +270,22 @@ export function App() {
             <SidebarTrigger />
             <span className="text-sm font-medium text-muted-foreground">{currentLabel ? copy(language, currentLabel.zh, currentLabel.en) : copy(language, "设置", "Settings")}</span>
             <div className="flex-1" />
+            {loadingScreen === screen ? <span aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner />{copy(language, "正在更新", "Updating")}</span> : null}
             <NativeSelect aria-label={copy(language, "界面语言", "Interface language")} onChange={(event) => setLanguage(event.target.value as Language)} size="sm" value={language}><option value="zh-CN">简体中文</option><option value="en">English</option></NativeSelect>
           </header>
-          <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content">
-            {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}><CircleCheckIcon /><AlertTitle>{notice.message}</AlertTitle></Alert> : null}
-            {screen === "home" ? <HomeView data={data} language={language} onNavigate={setScreen} mutate={mutate} /> : null}
-            {screen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={setScreen} startAdding={addFirstNode} /> : null}
-            {screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
-            {screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
-            {screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}
-            {screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onLogout={async () => { await api.logout(); setData(null); setPhase("login"); }} /> : null}
-          </main>
+          <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content" ref={mainRef} tabIndex={-1}>
+            {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><WifiOffIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
+            {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle>{notice.message}</AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
+            <Suspense fallback={<ScreenLoading language={language} />}>
+              {!loadedScreens.has(screen) ? <ScreenLoading language={language} /> : null}
+              {loadedScreens.has(screen) && screen === "home" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}
+              {loadedScreens.has(screen) && screen === "nodes" ? <NodesView data={data} language={language} mutate={mutate} onAddFirstNodeHandled={() => setAddFirstNode(false)} onNavigate={navigate} startAdding={addFirstNode} /> : null}
+              {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
+              {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
+              {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}
+              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} /> : null}
+            </Suspense>
+          </div>
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>
@@ -223,7 +304,7 @@ function CredentialPage({ language, mode, onLanguage, onSubmit }: { language: La
   const [error, setError] = useState("");
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setBusy(true); setError("");
-    try { await onSubmit(username, password); } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Request failed"); } finally { setBusy(false); }
+    try { await onSubmit(username, password); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
   return (
     <main className="grid min-h-svh place-items-center bg-muted/35 p-5">
@@ -244,10 +325,17 @@ function CenteredState({ language, loading, message, onRetry }: { language: Lang
   return <main className="grid min-h-svh place-items-center p-6"><div className="flex w-full max-w-sm flex-col gap-5"><Brand /><Card><CardHeader><CardTitle>{loading ? copy(language, "正在连接…", "Connecting…") : copy(language, "无法连接 Center", "Center unavailable")}</CardTitle><CardDescription>{message}</CardDescription></CardHeader>{onRetry ? <CardContent><Button onClick={() => void onRetry()} variant="outline">{copy(language, "重试", "Retry")}</Button></CardContent> : null}</Card></div></main>;
 }
 
+function ScreenLoading({ language }: { language: Language }) {
+  return <div aria-live="polite" className="flex min-h-48 items-center justify-center gap-3 rounded-2xl border bg-card text-sm text-muted-foreground"><Spinner />{copy(language, "正在准备页面…", "Preparing this page…")}</div>;
+}
+
 export function EmptyPage({ language, title, description }: { language: Language; title?: string; description?: string }) {
   return <section className="flex flex-col gap-6"><PageHeading title={title ?? copy(language, "暂无内容", "Nothing here yet")} description={description} /></section>;
 }
 
 export function SignOutButton({ language, onLogout }: { language: Language; onLogout: () => Promise<void> }) {
-  return <Button onClick={() => void onLogout()} variant="outline"><LogOutIcon data-icon="inline-start" />{copy(language, "退出登录", "Sign out")}</Button>;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const signOut = async () => { setBusy(true); setError(""); try { await onLogout(); } catch (signOutError) { setError(userError(language, signOutError)); } finally { setBusy(false); } };
+  return <div className="flex flex-col items-end gap-2"><Button disabled={busy} onClick={() => void signOut()} variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <LogOutIcon data-icon="inline-start" />}{copy(language, "退出登录", "Sign out")}</Button>{error ? <span className="max-w-64 text-right text-xs text-destructive" role="alert">{error}</span> : null}</div>;
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/gateway"
+	"golang.org/x/mod/semver"
 )
 
 type ApplicationServiceResult struct {
@@ -421,7 +422,24 @@ func gatewayRouteTaskID(agentID string, revision int64) string {
 }
 
 func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at FROM applications ORDER BY name, id`)
+	apps, err := s.ListApps(ctx)
+	if err != nil {
+		return nil, err
+	}
+	availableVersions := make(map[string]string, len(apps))
+	for _, app := range apps {
+		availableVersions[app.Key] = app.App.Version
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.name, a.node_id, a.site_id, a.app_key, a.image, a.status, a.runtime,
+		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
+		a.created_at, a.updated_at
+		FROM applications a
+		LEFT JOIN deployments latest ON latest.rowid = (
+			SELECT candidate.rowid FROM deployments candidate
+			WHERE candidate.agent_id = a.node_id AND candidate.app_key = a.app_key AND candidate.state = 'succeeded'
+			ORDER BY candidate.created_at DESC, candidate.rowid DESC LIMIT 1
+		)
+		ORDER BY a.name, a.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -430,9 +448,11 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 	for rows.Next() {
 		var value ApplicationView
 		var created, updated string
-		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &created, &updated); err != nil {
+		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.InstalledVersion, &created, &updated); err != nil {
 			return nil, err
 		}
+		value.AvailableVersion = availableVersions[value.AppKey]
+		value.UpdateAvailable = value.InstalledVersion != "" && semver.Compare(canonicalAppVersion(value.AvailableVersion), canonicalAppVersion(value.InstalledVersion)) > 0
 		value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 		result = append(result, value)

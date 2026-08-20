@@ -47,7 +47,7 @@ func (s *Store) Diagnostics(ctx context.Context) (Diagnostics, error) {
 	if err != nil {
 		return Diagnostics{}, err
 	}
-	actions, err := s.ListActions(ctx)
+	actions, err := s.ListActions(ctx, maxActionLimit)
 	if err != nil {
 		return Diagnostics{}, err
 	}
@@ -157,14 +157,4 @@ func (s *Server) handleCreateBackup(writer http.ResponseWriter, request *http.Re
 	writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	writer.Header().Set("Content-Type", "application/vnd.vastora.backup")
 	http.ServeContent(writer, request, name, stat.ModTime(), file)
-}
-
-func countActiveAgents(agents []AgentView) int {
-	count := 0
-	for _, agent := range agents {
-		if agent.Status == "active" {
-			count++
-		}
-	}
-	return count
 }

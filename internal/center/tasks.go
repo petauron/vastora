@@ -9,7 +9,11 @@ import (
 	"time"
 )
 
-const taskLeaseDuration = 5 * time.Minute
+const (
+	taskLeaseDuration  = 5 * time.Minute
+	defaultActionLimit = 50
+	maxActionLimit     = 100
+)
 
 type ActionView struct {
 	ID        string    `json:"id"`
@@ -115,8 +119,14 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 	return tx.Commit()
 }
 
-func (s *Store) ListActions(ctx context.Context) ([]ActionView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, agent_id, kind, revision, event, message, created_at FROM task_events ORDER BY created_at DESC LIMIT 500`)
+func (s *Store) ListActions(ctx context.Context, limit int) ([]ActionView, error) {
+	if limit <= 0 {
+		limit = defaultActionLimit
+	}
+	if limit > maxActionLimit {
+		limit = maxActionLimit
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, agent_id, kind, revision, event, message, created_at FROM task_events ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("center: list actions: %w", err)
 	}
