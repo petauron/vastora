@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.18](https://github.com/petauron/vastora/compare/v0.1.0-alpha.17...v0.1.0-alpha.18) (2026-08-20)
+
+
+### Bug Fixes
+
+* reserve private addresses for co-located gateways ([#62](https://github.com/petauron/vastora/issues/62)) ([1cd2ca5](https://github.com/petauron/vastora/commit/1cd2ca54a593276faf04e0c049663a724b5130e4))
+
 ## [0.1.0-alpha.17](https://github.com/petauron/vastora/compare/v0.1.0-alpha.16...v0.1.0-alpha.17) (2026-08-20)
 
 
