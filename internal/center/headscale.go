@@ -19,7 +19,11 @@ import (
 	"time"
 )
 
-const headscaleDNSFile = "headscale-extra-records.json"
+const (
+	headscaleDNSFile               = "headscale-extra-records.json"
+	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
+	builtinHeadscaleRuntimeVersion = "bridge-loopback-v1"
+)
 
 type HeadscaleInput struct {
 	Mode   string `json:"mode"`
@@ -45,6 +49,29 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 
 func (s *Store) ConfigureBuiltinHeadscale(ctx context.Context, endpoint, apiKey string) (IntegrationView, error) {
 	return s.configureHeadscale(ctx, HeadscaleInput{Mode: "builtin", URL: endpoint, APIKey: apiKey}, true)
+}
+
+func (s *Store) builtinHeadscaleRuntime(ctx context.Context) (string, string, bool, error) {
+	var endpoint, runtime string
+	err := s.db.QueryRowContext(ctx, `SELECT integrations.endpoint, COALESCE(settings.value, '')
+		FROM network_integrations integrations
+		LEFT JOIN settings ON settings.key = ?
+		WHERE integrations.kind = 'headscale' AND integrations.mode = 'builtin' AND integrations.status = 'configured'`, builtinHeadscaleRuntimeSetting).Scan(&endpoint, &runtime)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("center: read built-in Headscale runtime: %w", err)
+	}
+	return endpoint, runtime, true, nil
+}
+
+func (s *Store) markBuiltinHeadscaleRuntime(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, builtinHeadscaleRuntimeSetting, builtinHeadscaleRuntimeVersion); err != nil {
+		return fmt.Errorf("center: save built-in Headscale runtime: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, trustedBuiltin bool) (IntegrationView, error) {

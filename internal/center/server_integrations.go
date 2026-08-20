@@ -116,7 +116,36 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	return s.store.ConfigureBuiltinHeadscale(ctx, result.Endpoint, result.APIKey)
+	value, err := s.store.ConfigureBuiltinHeadscale(ctx, result.Endpoint, result.APIKey)
+	if err != nil {
+		return IntegrationView{}, err
+	}
+	if err := s.store.markBuiltinHeadscaleRuntime(ctx); err != nil {
+		return IntegrationView{}, err
+	}
+	return value, nil
+}
+
+// ReconcileBuiltinHeadscale applies the current fixed runtime specification to
+// an existing bundled installation without rotating its stored API key.
+func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) error {
+	if s.headscaleInstaller == nil {
+		return nil
+	}
+	endpoint, runtime, configured, err := s.store.builtinHeadscaleRuntime(ctx)
+	if err != nil || !configured || runtime == builtinHeadscaleRuntimeVersion {
+		return err
+	}
+	network, err := s.store.CenterNetworkConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.headscaleInstaller.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
+		CenterURL: network.AgentConnectURL, HeadscaleURL: endpoint,
+	}); err != nil {
+		return err
+	}
+	return s.store.markBuiltinHeadscaleRuntime(ctx)
 }
 
 func (s *Server) handleCreateHeadscaleJoin(writer http.ResponseWriter, request *http.Request) {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/deployapi"
 )
@@ -46,65 +48,81 @@ type DockerHeadscaleInstaller struct {
 }
 
 func (installer DockerHeadscaleInstaller) InstallHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
-	settings, centerURL, headscaleURL, err := installer.settings(input)
+	endpoint, apiKey, err := installer.applyHeadscale(ctx, input, true)
 	if err != nil {
 		return deployapi.HeadscaleInstallResult{}, err
+	}
+	return deployapi.HeadscaleInstallResult{Endpoint: endpoint, APIKey: apiKey}, nil
+}
+
+func (installer DockerHeadscaleInstaller) ReconcileHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest) error {
+	_, _, err := installer.applyHeadscale(ctx, input, false)
+	return err
+}
+
+func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest, createAPIKey bool) (string, string, error) {
+	settings, centerURL, headscaleURL, err := installer.settings(input)
+	if err != nil {
+		return "", "", err
 	}
 	docker, err := client.New(client.WithHost(settings.Socket))
 	if err != nil {
-		return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: connect Docker: %w", err)
+		return "", "", fmt.Errorf("deployer: connect Docker: %w", err)
 	}
 	defer docker.Close()
 	if err := writeAtomic(filepath.Join(settings.ConfigDir, "config.yaml"), renderHeadscaleConfig(headscaleURL), 0o644); err != nil {
-		return deployapi.HeadscaleInstallResult{}, err
+		return "", "", err
 	}
 	if err := writeAtomic(filepath.Join(settings.ConfigDir, "policy.hujson"), renderHeadscalePolicy(), 0o644); err != nil {
-		return deployapi.HeadscaleInstallResult{}, err
+		return "", "", err
 	}
 	for _, image := range []string{settings.HeadscaleImage, settings.CaddyImage} {
 		pull, err := docker.ImagePull(ctx, image, client.ImagePullOptions{})
 		if err != nil {
-			return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: pull fixed infrastructure image: %w", err)
+			return "", "", fmt.Errorf("deployer: pull fixed infrastructure image: %w", err)
 		}
 		_, _ = io.Copy(io.Discard, pull)
 		_ = pull.Close()
 	}
 	for _, name := range []string{settings.HeadscaleDataVolume, settings.HeadscaleConfigVolume, settings.CaddyDataVolume, settings.CaddyConfigVolume} {
 		if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name}); err != nil {
-			return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: create volume %s: %w", name, err)
+			return "", "", fmt.Errorf("deployer: create volume %s: %w", name, err)
 		}
 	}
 	gatewayExists, err := managedContainerExists(ctx, docker, DefaultGatewayContainer, "center-headscale-gateway")
 	if err != nil {
-		return deployapi.HeadscaleInstallResult{}, err
+		return "", "", err
 	}
 	if !gatewayExists {
 		if err := ensurePortsAvailable(80, 443); err != nil {
-			return deployapi.HeadscaleInstallResult{}, err
+			return "", "", err
 		}
 	}
 	if err := settings.replaceHeadscale(ctx, docker); err != nil {
-		return deployapi.HeadscaleInstallResult{}, err
+		return "", "", err
 	}
 	if err := waitForURL(ctx, settings.HTTPClient, "http://127.0.0.1:8081/health", 90*time.Second); err != nil {
-		return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: Headscale did not become healthy: %w", err)
+		return "", "", fmt.Errorf("deployer: Headscale did not become healthy: %w", err)
 	}
-	apiKey, err := createHeadscaleAPIKey(ctx, docker, DefaultHeadscaleContainer)
-	if err != nil {
-		return deployapi.HeadscaleInstallResult{}, err
+	apiKey := ""
+	if createAPIKey {
+		apiKey, err = createHeadscaleAPIKey(ctx, docker, DefaultHeadscaleContainer)
+		if err != nil {
+			return "", "", err
+		}
 	}
 	if err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL)); err != nil {
-		return deployapi.HeadscaleInstallResult{}, err
+		return "", "", err
 	}
 	for _, health := range []struct {
 		endpoint string
 		path     string
 	}{{centerURL, "/healthz"}, {headscaleURL, "/health"}} {
 		if err := waitForLocalGateway(ctx, health.endpoint, health.path, 3*time.Minute); err != nil {
-			return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err)
+			return "", "", fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err)
 		}
 	}
-	return deployapi.HeadscaleInstallResult{Endpoint: headscaleURL, APIKey: apiKey}, nil
+	return headscaleURL, apiKey, nil
 }
 
 func (installer DockerHeadscaleInstaller) settings(input deployapi.HeadscaleInstallRequest) (DockerHeadscaleInstaller, string, string, error) {
@@ -159,24 +177,9 @@ func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, 
 	if err := removeManagedContainer(ctx, docker, DefaultHeadscaleContainer, "center-headscale"); err != nil {
 		return err
 	}
+	config, hostConfig := installer.headscaleContainerConfig()
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{
-			Image:  installer.HeadscaleImage,
-			Cmd:    []string{"serve"},
-			Labels: map[string]string{"io.vastora.managed": "true", "io.vastora.component": "center-headscale"},
-		},
-		HostConfig: &container.HostConfig{
-			NetworkMode:    container.NetworkMode("host"),
-			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
-			ReadonlyRootfs: true,
-			Tmpfs:          map[string]string{"/var/run/headscale": "rw,noexec,nosuid,size=16m,mode=1777"},
-			Mounts: []mount.Mount{
-				{Type: mount.TypeVolume, Source: installer.HeadscaleDataVolume, Target: "/var/lib/headscale"},
-				{Type: mount.TypeVolume, Source: installer.HeadscaleConfigVolume, Target: "/etc/headscale", ReadOnly: true},
-				{Type: mount.TypeVolume, Source: installer.CenterDataVolume, Target: "/var/lib/vastora-shared", ReadOnly: true},
-			},
-		},
-		Name: DefaultHeadscaleContainer,
+		Config: config, HostConfig: hostConfig, Name: DefaultHeadscaleContainer,
 	})
 	if err != nil {
 		return fmt.Errorf("deployer: create Headscale container: %w", err)
@@ -185,6 +188,29 @@ func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, 
 		return fmt.Errorf("deployer: start Headscale container: %w", err)
 	}
 	return nil
+}
+
+func (installer DockerHeadscaleInstaller) headscaleContainerConfig() (*container.Config, *container.HostConfig) {
+	port := dockernetwork.MustParsePort("8081/tcp")
+	return &container.Config{
+			Image:        installer.HeadscaleImage,
+			Cmd:          []string{"serve"},
+			Labels:       map[string]string{"io.vastora.managed": "true", "io.vastora.component": "center-headscale"},
+			ExposedPorts: dockernetwork.PortSet{port: struct{}{}},
+		}, &container.HostConfig{
+			NetworkMode:    container.NetworkMode("bridge"),
+			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
+			ReadonlyRootfs: true,
+			Tmpfs:          map[string]string{"/var/run/headscale": "rw,noexec,nosuid,size=16m,mode=1777"},
+			PortBindings: dockernetwork.PortMap{
+				port: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "8081"}},
+			},
+			Mounts: []mount.Mount{
+				{Type: mount.TypeVolume, Source: installer.HeadscaleDataVolume, Target: "/var/lib/headscale"},
+				{Type: mount.TypeVolume, Source: installer.HeadscaleConfigVolume, Target: "/etc/headscale", ReadOnly: true},
+				{Type: mount.TypeVolume, Source: installer.CenterDataVolume, Target: "/var/lib/vastora-shared", ReadOnly: true},
+			},
+		}
 }
 
 func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, docker *client.Client, caddyfile []byte) error {

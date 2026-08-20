@@ -110,6 +110,13 @@ func runCenter(arguments []string) error {
 				return err
 			}
 			centerServer.WithHeadscaleInstaller(installer)
+			go func() {
+				reconcileContext, cancel := context.WithTimeout(maintenanceContext, 8*time.Minute)
+				defer cancel()
+				if err := centerServer.ReconcileBuiltinHeadscale(reconcileContext); err != nil {
+					fmt.Fprintf(os.Stderr, "Center built-in Headscale reconciliation: %v\n", err)
+				}
+			}()
 		}
 		handler := centerServer.Handler()
 		server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second}

@@ -42,7 +42,7 @@ func validDNSName(value string) bool {
 
 func renderHeadscaleConfig(endpoint string) []byte {
 	return []byte(fmt.Sprintf(`server_url: %s
-listen_addr: 127.0.0.1:8081
+listen_addr: 0.0.0.0:8081
 metrics_listen_addr: ""
 grpc_listen_addr: 127.0.0.1:50443
 grpc_allow_insecure: false

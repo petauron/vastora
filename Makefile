@@ -29,13 +29,16 @@ deployment-check:
 	sh -n deploy/center/setup.sh
 	sh -n deploy/center/upgrade.sh
 	sh -n scripts/package-center-install.sh
+	sh -n scripts/validate-release-metadata.sh
 	sh -n scripts/test-center-install.sh
+	sh -n scripts/test-release-metadata.sh
 	node scripts/test-installer-worker.mjs
 	./install.sh --help >/dev/null
 	deploy/center/setup.sh --help >/dev/null
 	deploy/center/upgrade.sh --help >/dev/null
 	scripts/package-center-install.sh --help >/dev/null
 	scripts/test-center-install.sh
+	scripts/test-release-metadata.sh
 
 security-check:
 	gitleaks detect --no-git --redact --source .

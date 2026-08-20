@@ -18,7 +18,6 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     permissions:
-      actions: write
       contents: write
       issues: write
       pull-requests: write
@@ -68,15 +67,33 @@ jobs:
             echo "release_version=${RELEASE_TAG#v}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Run CI for release pull request
+      - name: Resolve release pull request
+        id: release_pr
         if: steps.release.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
           head_branch="$(printf '%s' "$RELEASE_PR" | jq -er '.headBranchName')"
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$head_branch"
-          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$head_branch"
+          pull_number="$(printf '%s' "$RELEASE_PR" | jq -er '.number')"
+          base_sha="$(gh api "/repos/$GITHUB_REPOSITORY/pulls/$pull_number" --jq '.base.sha')"
+          {
+            echo "head_branch=$head_branch"
+            echo "base_sha=$base_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out release pull request
+        if: steps.release.outputs.prs_created == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release_pr.outputs.head_branch }}
+          fetch-depth: 0
+
+      - name: Validate release pull request metadata
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          BASE_SHA: ${{ steps.release_pr.outputs.base_sha }}
+        run: scripts/validate-release-metadata.sh "$BASE_SHA"
 
   publish:
     needs: prepare

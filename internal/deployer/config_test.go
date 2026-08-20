@@ -2,8 +2,11 @@ package deployer
 
 import (
 	"net"
+	"net/netip"
 	"strings"
 	"testing"
+
+	dockernetwork "github.com/moby/moby/api/types/network"
 )
 
 func TestBundledServiceURLsUseStandardHTTPS(t *testing.T) {
@@ -42,7 +45,7 @@ func TestPortPreflightReportsAConflict(t *testing.T) {
 
 func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T) {
 	headscale := string(renderHeadscaleConfig("https://headscale.example.com"))
-	if !strings.Contains(headscale, "listen_addr: 127.0.0.1:8081") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
+	if !strings.Contains(headscale, "listen_addr: 0.0.0.0:8081") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
 	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com"))
@@ -52,5 +55,26 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	policy := string(renderHeadscalePolicy())
 	if strings.Contains(policy, "8443") || !strings.Contains(policy, `"ip": ["443"]`) {
 		t.Fatalf("Headscale policy exposes the wrong Center ports:\n%s", policy)
+	}
+}
+
+func TestHeadscaleContainerIsolatedFromHostTailscale(t *testing.T) {
+	installer := DockerHeadscaleInstaller{
+		HeadscaleImage:        DefaultHeadscaleImage,
+		HeadscaleDataVolume:   "headscale-data",
+		HeadscaleConfigVolume: "headscale-config",
+		CenterDataVolume:      "center-data",
+	}
+	config, hostConfig := installer.headscaleContainerConfig()
+	if string(hostConfig.NetworkMode) != "bridge" {
+		t.Fatalf("Headscale network mode = %q, want bridge", hostConfig.NetworkMode)
+	}
+	port := dockernetwork.MustParsePort("8081/tcp")
+	bindings := hostConfig.PortBindings[port]
+	if len(bindings) != 1 || bindings[0].HostIP != netip.MustParseAddr("127.0.0.1") || bindings[0].HostPort != "8081" {
+		t.Fatalf("Headscale HTTP bindings = %#v", bindings)
+	}
+	if _, exposed := config.ExposedPorts[port]; !exposed {
+		t.Fatalf("Headscale HTTP port is not exposed: %#v", config.ExposedPorts)
 	}
 }

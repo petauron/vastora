@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const agentTailscaleVersion = "1.102.3"
+
 const agentInstallLoaderScript = `#!/bin/sh
 set -eu
 
@@ -115,12 +117,32 @@ func renderAgentInstallLoader(centerURL string) string {
 func renderAgentInstallScript(profile AgentEnrollmentInstallProfile) string {
 	headscaleBootstrap := ":"
 	if profile.HeadscaleCommand != "" {
-		headscaleBootstrap = `if ! command -v tailscale >/dev/null 2>&1; then
-  echo "Tailscale must be installed before joining this private network." >&2
+		headscaleBootstrap = `tailscale_version=@@TAILSCALE_VERSION@@
+if ! command -v tailscale >/dev/null 2>&1; then
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "Vastora can install Tailscale automatically only on Ubuntu 24.04." >&2
+    exit 1
+  fi
+  echo "Installing Tailscale $tailscale_version..."
+  install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
+  curl --proto '=https' --tlsv1.2 --max-filesize 1048576 -fsS \
+    https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+    -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+  curl --proto '=https' --tlsv1.2 --max-filesize 1048576 -fsS \
+    https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
+    -o /etc/apt/sources.list.d/tailscale.list
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "tailscale=$tailscale_version" tailscale-archive-keyring
+fi
+installed_tailscale_version="$(tailscale version | awk 'NR == 1 {print $1}')"
+if [ "$installed_tailscale_version" != "$tailscale_version" ]; then
+  echo "Vastora requires Tailscale $tailscale_version; found $installed_tailscale_version." >&2
   exit 1
 fi
+systemctl enable --now tailscaled
 echo "Joining the private network..."
 ` + strings.TrimPrefix(profile.HeadscaleCommand, "sudo ")
+		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_VERSION@@", shellQuote(agentTailscaleVersion))
 	}
 	return strings.NewReplacer(
 		"@@CENTER_URL@@", shellQuote(profile.CenterURL),
