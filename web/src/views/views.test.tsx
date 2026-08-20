@@ -251,7 +251,7 @@ describe("network and app views", () => {
       dnsMode: "cloudflare",
       publicAddress: "203.0.113.10"
     }));
-    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: true, cloudflareOAuthAvailable: true, cloudflareZone: "kuddyx.com", language: "zh-CN" as const, onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }], suggestedAgentConnectUrl: "" };
+    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, language: "zh-CN" as const, onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }], suggestedAgentConnectUrl: "" };
     const container = render(<SetupWizard {...props} />);
 
     expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://center.vastora.kuddyx.com");
