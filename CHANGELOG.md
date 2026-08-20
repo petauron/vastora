@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.12](https://github.com/petauron/vastora/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) (2026-08-20)
+
+
+### Features
+
+* namespace Vastora service hostnames ([#49](https://github.com/petauron/vastora/issues/49)) ([a3da00d](https://github.com/petauron/vastora/commit/a3da00d0303cce157e088a3b63b5abdb68f66bff))
+
 ## [0.1.0-alpha.11](https://github.com/petauron/vastora/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2026-08-20)
 
 
