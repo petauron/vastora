@@ -190,6 +190,29 @@ func TestShared443MovesCaddyHTTPSToLoopback(t *testing.T) {
 	}
 }
 
+func TestHAProxyContainerBootstrapsConfigurationInWritableTmpfs(t *testing.T) {
+	configuration := []byte("global\n  maxconn 4096\n")
+	options := haproxyContainerCreateOptions(
+		DockerLayer4Provisioner{Image: defaultHAProxyImage, Container: defaultHAProxyContainer},
+		configuration,
+	)
+	if !options.HostConfig.ReadonlyRootfs {
+		t.Fatal("HAProxy container root filesystem must remain read-only")
+	}
+	if tmpfs := options.HostConfig.Tmpfs[haproxyConfigurationDir]; !strings.Contains(tmpfs, "rw") {
+		t.Fatalf("HAProxy configuration directory is not writable tmpfs: %q", tmpfs)
+	}
+	if got, want := strings.Join(options.Config.Entrypoint, " "), "/bin/sh -ec"; got != want {
+		t.Fatalf("unexpected HAProxy bootstrap entrypoint: got %q want %q", got, want)
+	}
+	if got, want := options.Config.Env, []string{haproxyConfigurationEnv + "=" + string(configuration)}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("HAProxy configuration was not passed to its bootstrap process: %#v", got)
+	}
+	if len(options.Config.Cmd) != 1 || !strings.Contains(options.Config.Cmd[0], "exec haproxy") || !strings.Contains(options.Config.Cmd[0], haproxyConfigurationPath) {
+		t.Fatalf("HAProxy bootstrap command does not install and launch the configuration: %#v", options.Config.Cmd)
+	}
+}
+
 func TestCaddyConfigurationKeepsLANAndHeadscaleListenersSeparate(t *testing.T) {
 	state := gatewayState(1, 8317)
 	state.Listeners = append(state.Listeners, gateway.Listener{Kind: "lan", Address: "192.168.1.2", HTTPPort: 80, HTTPSPort: 443})
