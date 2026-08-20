@@ -22,7 +22,7 @@ import (
 const (
 	headscaleDNSFile               = "headscale-extra-records.json"
 	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
-	builtinHeadscaleRuntimeVersion = "bridge-loopback-v1"
+	builtinHeadscaleRuntimeVersion = "scoped-center-gateway-v2"
 )
 
 type HeadscaleInput struct {

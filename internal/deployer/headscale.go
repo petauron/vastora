@@ -65,6 +65,10 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	if err != nil {
 		return "", "", err
 	}
+	bindAddresses, err := gatewayBindAddresses(ctx, centerURL, headscaleURL)
+	if err != nil {
+		return "", "", err
+	}
 	docker, err := client.New(client.WithHost(settings.Socket))
 	if err != nil {
 		return "", "", fmt.Errorf("deployer: connect Docker: %w", err)
@@ -111,7 +115,7 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			return "", "", err
 		}
 	}
-	if err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL)); err != nil {
+	if err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, bindAddresses)); err != nil {
 		return "", "", err
 	}
 	for _, health := range []struct {

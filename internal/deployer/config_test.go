@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	dockernetwork "github.com/moby/moby/api/types/network"
+	"github.com/petauron/vastora/internal/networking"
 )
 
 func TestBundledServiceURLsUseStandardHTTPS(t *testing.T) {
@@ -48,13 +49,37 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	if !strings.Contains(headscale, "listen_addr: 0.0.0.0:8081") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
-	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com"))
-	if !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
+	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"127.0.0.1", "203.0.113.10"}))
+	if !strings.Contains(caddy, "default_bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "http://center.example.com, http://headscale.example.com") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
 		t.Fatalf("unexpected Caddy configuration:\n%s", caddy)
 	}
 	policy := string(renderHeadscalePolicy())
 	if strings.Contains(policy, "8443") || !strings.Contains(policy, `"ip": ["443"]`) {
 		t.Fatalf("Headscale policy exposes the wrong Center ports:\n%s", policy)
+	}
+}
+
+func TestGatewayBindsOnlyResolvedLocalPublicAddresses(t *testing.T) {
+	resolutions := []gatewayResolution{
+		{hostname: "center.example.com", addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20"), netip.MustParseAddr("198.51.100.5")}},
+		{hostname: "headscale.example.com", addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20"), netip.MustParseAddr("2001:db8::20")}},
+	}
+	candidates := []networking.Candidate{
+		{Address: "203.0.113.20", Kind: networking.KindPublic},
+		{Address: "2001:db8::20", Kind: networking.KindPublic},
+		{Address: "100.64.0.1", Kind: networking.KindHeadscale},
+		{Address: "192.168.1.10", Kind: networking.KindLAN},
+	}
+	addresses, err := selectGatewayBindAddresses(resolutions, candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"127.0.0.1", "203.0.113.20", "[2001:db8::20]"}
+	if strings.Join(addresses, ",") != strings.Join(want, ",") {
+		t.Fatalf("gateway bind addresses = %#v, want %#v", addresses, want)
+	}
+	if _, err := selectGatewayBindAddresses([]gatewayResolution{{hostname: "wrong.example.com", addresses: []netip.Addr{netip.MustParseAddr("198.51.100.5")}}}, candidates); err == nil || !strings.Contains(err.Error(), "must resolve directly") {
+		t.Fatalf("non-local DNS address was accepted: %v", err)
 	}
 }
 
