@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,6 +31,7 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 		_ = json.NewEncoder(writer).Encode(map[string]any{"users": []any{}})
 	}))
 	defer headscale.Close()
+	headscaleEndpoint := fmt.Sprintf("https://example.com:%d", headscale.Listener.Addr().(*net.TCPAddr).Port)
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +41,7 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	if _, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple"); err != nil {
 		t.Fatal(err)
 	}
-	installer := &fakeBuiltinHeadscaleInstaller{endpoint: headscale.URL}
+	installer := &fakeBuiltinHeadscaleInstaller{endpoint: headscaleEndpoint}
 	server := NewServer(store, "", false).WithHeadscaleInstaller(installer)
 	payload, _ := json.Marshal(InitialSetupInput{
 		Site:      SiteInput{Name: "DMIT", Code: "dmit", Timezone: "Asia/Singapore"},
@@ -59,8 +62,15 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if integration.Mode != "builtin" || integration.Endpoint != headscale.URL || !integration.SecretSet {
+	if integration.Mode != "builtin" || integration.Endpoint != headscaleEndpoint || !integration.SecretSet {
 		t.Fatalf("unexpected saved integration: %#v", integration)
+	}
+	client, err := store.headscale(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.verify(context.Background()); err != nil {
+		t.Fatalf("stored built-in Headscale did not use the local gateway: %v", err)
 	}
 	if _, err := store.ConfigureHeadscale(context.Background(), HeadscaleInput{Mode: "builtin", URL: headscale.URL, APIKey: "user-supplied-key-is-not-accepted"}); err == nil {
 		t.Fatal("Store accepted a user-supplied built-in Headscale key")

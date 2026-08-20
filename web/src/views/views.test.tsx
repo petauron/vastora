@@ -288,6 +288,31 @@ describe("network and app views", () => {
     expect(userError("en", error)).toContain("did not overwrite");
   });
 
+  it("keeps the technical reason when initial setup fails", async () => {
+    const failure = new APIError("center: verify Headscale: dial tcp: lookup headscale.example.com: no such host", 400, "invalid_request");
+    const onComplete = vi.fn().mockRejectedValue(failure);
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable={false} language="zh-CN" onComplete={onComplete} onLanguage={() => undefined} publicAddressCandidates={[]} suggestedAgentConnectUrl="https://center.example.com" />);
+    const fill = (selector: string, value: string) => {
+      const input = container.querySelector<HTMLInputElement>(selector)!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    act(() => fill("#setup-location-name", "Cloudlead"));
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+    act(() => fill("#setup-headscale-url", "https://headscale.example.com"));
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("完成并添加节点"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(onComplete).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("安全私网地址的 DNS 尚未生效");
+    expect(container.textContent).toContain("查看技术详情");
+    expect(container.textContent).toContain("lookup headscale.example.com: no such host");
+  });
+
   it("opens Cloudflare in a normal tab and offers recovery actions", async () => {
     vi.useFakeTimers();
     const popupDocument = document.implementation.createHTMLDocument("Cloudflare");

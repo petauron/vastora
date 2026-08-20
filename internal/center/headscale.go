@@ -3,11 +3,13 @@ package center
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -75,7 +77,14 @@ func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, tr
 	if len(input.APIKey) < 20 {
 		return IntegrationView{}, errors.New("center: Headscale API key is required")
 	}
-	client := headscaleClient{baseURL: endpoint, apiKey: input.APIKey, http: s.headscaleHTTPClient}
+	httpClient := s.headscaleHTTPClient
+	if trustedBuiltin {
+		httpClient, err = builtinHeadscaleHTTPClient(endpoint, httpClient)
+		if err != nil {
+			return IntegrationView{}, err
+		}
+	}
+	client := headscaleClient{baseURL: endpoint, apiKey: input.APIKey, http: httpClient}
 	if err := client.verify(ctx); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: verify Headscale: %w", err)
 	}
@@ -173,7 +182,45 @@ func (s *Store) headscale(ctx context.Context) (headscaleClient, error) {
 	if err != nil {
 		return headscaleClient{}, err
 	}
-	return headscaleClient{baseURL: allowedEndpoint, apiKey: string(key), http: s.headscaleHTTPClient}, nil
+	httpClient := s.headscaleHTTPClient
+	if mode == "builtin" {
+		httpClient, err = builtinHeadscaleHTTPClient(allowedEndpoint, httpClient)
+		if err != nil {
+			return headscaleClient{}, err
+		}
+	}
+	return headscaleClient{baseURL: allowedEndpoint, apiKey: string(key), http: httpClient}, nil
+}
+
+func builtinHeadscaleHTTPClient(endpoint string, base *http.Client) (*http.Client, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Hostname() == "" {
+		return nil, errors.New("center: built-in Headscale URL is invalid")
+	}
+	port := parsed.Port()
+	if port == "" {
+		port = "443"
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if configured, ok := base.Transport.(*http.Transport); ok {
+		transport = configured.Clone()
+	}
+	transport.Proxy = nil
+	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", port))
+	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if transport.TLSClientConfig != nil {
+		tlsConfig = transport.TLSClientConfig.Clone()
+		if tlsConfig.MinVersion < tls.VersionTLS12 {
+			tlsConfig.MinVersion = tls.VersionTLS12
+		}
+	}
+	tlsConfig.ServerName = parsed.Hostname()
+	transport.TLSClientConfig = tlsConfig
+	client := *base
+	client.Transport = transport
+	return &client, nil
 }
 
 func normalizeHeadscaleEndpoint(value string) (string, error) {
