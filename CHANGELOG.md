@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.14](https://github.com/petauron/vastora/compare/v0.1.0-alpha.13...v0.1.0-alpha.14) (2026-08-20)
+
+
+### Bug Fixes
+
+* avoid bundled headscale DNS race ([#53](https://github.com/petauron/vastora/issues/53)) ([2fc2df7](https://github.com/petauron/vastora/commit/2fc2df7c39a1939c988103523f44fed56e50cb2a))
+
 ## [0.1.0-alpha.13](https://github.com/petauron/vastora/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) (2026-08-20)
 
 
