@@ -124,17 +124,23 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 	}
 	defer store.Close()
 	handler := NewServer(store, "", false).Handler()
-	request := httptest.NewRequest(http.MethodGet, "/install/agent.sh", nil)
+	request := httptest.NewRequest(http.MethodGet, "https://center.example.com/install/agent.sh", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated installer status = %d", response.Code)
+	if response.Code != http.StatusOK {
+		t.Fatalf("public installer status = %d", response.Code)
+	}
+	loader := response.Body.String()
+	for _, expected := range []string{"token=\"${1:-}\"", "exec sudo \"$0\" \"$token\"", "center_url='https://center.example.com'", "Authorization: Bearer $token", "${center_url%/}/install/agent.sh", "printf '%s\\n' \"$token\" | sh \"$installer\""} {
+		if !strings.Contains(loader, expected) {
+			t.Fatalf("installer loader is missing %q:\n%s", expected, loader)
+		}
 	}
 	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "bound-node", CenterURL: "https://center.example.com", Gateway: true, Tunnel: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/install/agent.sh", nil)
+	request = httptest.NewRequest(http.MethodGet, "https://center.example.com/install/agent.sh", nil)
 	request.Header.Set("Authorization", "Bearer "+enrollment.Token)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -142,10 +148,13 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatalf("authenticated installer status = %d, body = %q", response.Code, response.Body.String())
 	}
 	script := response.Body.String()
-	for _, expected := range []string{"center_url='https://center.example.com'", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "supports only Ubuntu 24.04 on amd64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
+	for _, expected := range []string{"center_url='https://center.example.com'", "IFS= read -r token", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "supports only Ubuntu 24.04 on amd64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("installer is missing %q:\n%s", expected, script)
 		}
+	}
+	if strings.Contains(script, enrollment.Token) {
+		t.Fatal("authenticated installer embeds its one-time token")
 	}
 	for _, hidden := range []string{"--name", "--roles", "--capabilities"} {
 		if strings.Contains(script, hidden) {
@@ -159,5 +168,10 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 	command.Stdin = strings.NewReader(script)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("installer is not valid POSIX shell: %v\n%s", err, output)
+	}
+	command = exec.Command("sh", "-n")
+	command.Stdin = strings.NewReader(loader)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("installer loader is not valid POSIX shell: %v\n%s", err, output)
 	}
 }
