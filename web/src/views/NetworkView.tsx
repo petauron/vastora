@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { CableIcon, CloudIcon, CopyIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon } from "lucide-react";
+import { CableIcon, CloudIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { AgentView, HeadscaleJoin, Integration, NetworkKind, NetworkProfile } from "../types";
 import type { Language } from "../translations";
-import { PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
+import { CopyButton, PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -58,7 +58,7 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
         </Card>
       </div>
 
-      {join ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "一次性加入命令", "One-time join command")}</AlertTitle><AlertDescription><p>{copy(language, `请在 ${formatDate(language, join.expiresAt)} 前仅在目标节点运行一次。`, `Run this once on the target node before ${formatDate(language, join.expiresAt)}.`)}</p><div className="mt-3 flex items-start gap-2"><code className="min-w-0 flex-1 break-all rounded-lg bg-muted p-3 text-xs">{join.command}</code><Button aria-label={copy(language, "复制命令", "Copy command")} onClick={() => void navigator.clipboard.writeText(join.command)} size="icon" variant="outline"><CopyIcon /></Button></div></AlertDescription></Alert> : null}
+      {join ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "一次性加入命令", "One-time join command")}</AlertTitle><AlertDescription><p>{copy(language, `请在 ${formatDate(language, join.expiresAt)} 前仅在目标节点运行一次。`, `Run this once on the target node before ${formatDate(language, join.expiresAt)}.`)}</p><div className="mt-3 flex items-start gap-2"><code className="min-w-0 flex-1 break-all rounded-lg bg-muted p-3 text-xs">{join.command}</code><CopyButton label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={join.command} /></div></AlertDescription></Alert> : null}
       {joinError ? <Alert variant="destructive"><AlertTitle>{copy(language, "未能生成加入命令", "Could not create a join command")}</AlertTitle><AlertDescription>{joinError}</AlertDescription></Alert> : null}
 
       <div className="flex flex-col gap-4">

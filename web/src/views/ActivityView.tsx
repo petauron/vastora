@@ -53,7 +53,7 @@ export function groupActions(actions: Action[]) {
 
 function visibleActionMessage(language: Language, action: Action) {
   const localized = actionMessage(language, action.message);
-  if (!action.message || localized !== action.message || /^(install|upgrade|uninstall) /.test(action.message)) return localized;
+  if (!action.message || localized !== action.message || /^(install|upgrade|configure|uninstall) /.test(action.message)) return localized;
   return action.event === "failed" ? userError(language, action.message) : actionKind(language, action.kind);
 }
 
@@ -69,9 +69,9 @@ export function actionKind(language: Language, kind: string) {
 
 export function actionMessage(language: Language, message?: string) {
   if (!message) return "";
-  const operation = /^(install|upgrade|uninstall) (.+)$/.exec(message);
+  const operation = /^(install|upgrade|configure|uninstall) (.+)$/.exec(message);
   if (operation) {
-    const labels: Record<string, [string, string]> = { install: ["安装", "Install"], upgrade: ["升级", "Upgrade"], uninstall: ["卸载", "Uninstall"] };
+    const labels: Record<string, [string, string]> = { install: ["安装", "Install"], upgrade: ["升级", "Upgrade"], configure: ["修改配置", "Configure"], uninstall: ["卸载", "Uninstall"] };
     return `${copy(language, ...labels[operation[1]])} ${operation[2]}`;
   }
   if (message === "task lease expired; queued for retry") return copy(language, "节点响应较慢，系统正在自动重试。", "The node is responding slowly. Vastora is retrying automatically.");

@@ -29,7 +29,7 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 	var configJSON []byte
 	var secretID sql.NullString
 	if err := s.db.QueryRowContext(ctx, `SELECT d.id, d.config_json, d.secret_id FROM deployments d
-		WHERE d.agent_id = ? AND d.app_key = ? AND d.state = 'succeeded' AND d.operation IN ('install', 'upgrade')
+			WHERE d.agent_id = ? AND d.app_key = ? AND d.state = 'succeeded' AND d.operation IN ('install', 'upgrade', 'configure')
 		AND NOT EXISTS (
 			SELECT 1 FROM deployments removed
 			WHERE removed.agent_id = d.agent_id AND removed.app_key = d.app_key
@@ -82,7 +82,7 @@ func (s *Store) withCPASecret(ctx context.Context, agentID string, raw json.RawM
 		return nil, errors.New("center: Keeper requires a successful CPA installation on this Agent")
 	}
 	var deploymentID, secretID string
-	if err := s.db.QueryRowContext(ctx, `SELECT id, secret_id FROM deployments WHERE agent_id = ? AND app_key = ? AND state = 'succeeded' AND operation IN ('install', 'upgrade') AND secret_id IS NOT NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1`, agentID, cpaAppKey).Scan(&deploymentID, &secretID); errors.Is(err, sql.ErrNoRows) {
+	if err := s.db.QueryRowContext(ctx, `SELECT id, secret_id FROM deployments WHERE agent_id = ? AND app_key = ? AND state = 'succeeded' AND operation IN ('install', 'upgrade', 'configure') AND secret_id IS NOT NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1`, agentID, cpaAppKey).Scan(&deploymentID, &secretID); errors.Is(err, sql.ErrNoRows) {
 		return nil, errors.New("center: Keeper requires a successful CPA installation on this Agent")
 	} else if err != nil {
 		return nil, fmt.Errorf("center: read CPA deployment: %w", err)
@@ -105,9 +105,9 @@ func (s *Store) withThreeXUISecrets(ctx context.Context, agentID, operation stri
 	if len(encoded) != 0 && json.Unmarshal(encoded, &values) != nil {
 		return nil, nil, errors.New("center: invalid 3x-ui secret configuration")
 	}
-	if operation == "upgrade" {
+	if operation == "upgrade" || operation == "configure" {
 		var deploymentID, secretID string
-		err := s.db.QueryRowContext(ctx, `SELECT id, secret_id FROM deployments WHERE agent_id = ? AND app_key = ? AND state = 'succeeded' AND operation IN ('install', 'upgrade') AND secret_id IS NOT NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1`, agentID, threeXUIAppKey).Scan(&deploymentID, &secretID)
+		err := s.db.QueryRowContext(ctx, `SELECT id, secret_id FROM deployments WHERE agent_id = ? AND app_key = ? AND state = 'succeeded' AND operation IN ('install', 'upgrade', 'configure') AND secret_id IS NOT NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1`, agentID, threeXUIAppKey).Scan(&deploymentID, &secretID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, errors.New("center: previous 3x-ui credentials were not found")
 		}

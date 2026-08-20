@@ -13,6 +13,7 @@ import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { defaultPublicationHostname } from "./appAccess";
+import { CopyButton } from "./shared";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -33,8 +34,8 @@ const dashboard = (): AppData => ({
   agents: [{ id: "agent", name: "home-server", version: "test", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", family: "ipv4", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
   applications: [
-    { id: "running", name: "Komari Agent", nodeId: "agent", siteId: "site", appKey: "vastora-official/komari-agent", image: "image", status: "running", runtime: "docker", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" },
-    { id: "failed", name: "Failed", nodeId: "agent", siteId: "site", appKey: "vastora-official/failed", image: "image", status: "failed", runtime: "docker", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }
+    { id: "running", name: "Komari Agent", nodeId: "agent", siteId: "site", appKey: "vastora-official/komari-agent", image: "image", status: "running", runtime: "docker", installedVersion: "1.2.60", availableVersion: "1.2.60", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" },
+    { id: "failed", name: "Failed", nodeId: "agent", siteId: "site", appKey: "vastora-official/failed", image: "image", status: "failed", runtime: "docker", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }
   ],
   deployments: [], services: [], publications: []
 });
@@ -105,7 +106,45 @@ describe("network and app views", () => {
     const store = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"));
     act(() => store?.click());
     expect(store?.getAttribute("aria-pressed")).toBe("true");
-    expect(container.textContent).toContain("所有可用节点都已安装此应用");
+    expect(container.textContent).toContain("所有可用节点都已安装或正在安装此应用");
+  });
+
+  it("keeps an installed app manageable after a failed change", () => {
+    const data = dashboard();
+    data.apps[0].app.config = [{ key: "endpoint", label: { en: "Endpoint", "zh-CN": "地址" }, description: { en: "Service endpoint", "zh-CN": "服务地址" }, type: "string", required: true, secret: false }];
+    data.applications = [{ ...data.applications[1], appKey: "vastora-official/komari-agent", name: "Komari Agent", installedVersion: "1.2.60", availableVersion: "1.2.60", updateAvailable: false }];
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).toContain("最近一次操作失败，应用仍保留");
+    expect(container.textContent).toContain("修改配置");
+    expect(container.textContent).toContain("卸载");
+    expect(container.textContent).toContain("版本已是最新");
+  });
+
+  it("offers upgrade only when the catalog contains a newer version", () => {
+    const data = dashboard();
+    data.applications[0] = { ...data.applications[0], installedVersion: "1.2.59", availableVersion: "1.2.60", updateAvailable: true };
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).toContain("升级到 v1.2.60");
+    expect(container.textContent).not.toContain("版本已是最新");
+  });
+
+  it("keeps uninstall available when an installed app leaves the catalog", () => {
+    const data = dashboard();
+    data.apps = [];
+    data.applications = [data.applications[0]];
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).toContain("Komari Agent");
+    expect(container.textContent).toContain("卸载");
+    expect(container.textContent).not.toContain("升级到");
+  });
+
+  it("confirms that a command was copied", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const container = render(<CopyButton label="复制命令" language="zh-CN" value="vastora agent install" />);
+    await act(async () => { container.querySelector("button")?.click(); await Promise.resolve(); });
+    expect(writeText).toHaveBeenCalledWith("vastora agent install");
+    expect(container.textContent).toContain("已复制");
   });
 
   it("offers an automatic shared 443 gateway for raw TLS services", () => {

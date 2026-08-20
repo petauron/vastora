@@ -104,6 +104,10 @@ export function isActiveApplication(status: string) {
   return ["pending", "deploying", "running"].includes(status);
 }
 
+export function isInstalledApplication(application: AppData["applications"][number]) {
+  return Boolean(application.installedVersion);
+}
+
 export function latestOperations(deployments: Deployment[]) {
   const seen = new Set<string>();
   return deployments.filter((deployment) => {
@@ -130,7 +134,7 @@ function dnsLabel(value: string) {
 }
 
 export function operationLabel(language: Language, operation: Deployment["operation"]) {
-  const labels: Record<Deployment["operation"], [string, string]> = { install: ["安装", "Install"], upgrade: ["升级", "Upgrade"], uninstall: ["卸载", "Uninstall"] };
+  const labels: Record<Deployment["operation"], [string, string]> = { install: ["安装", "Install"], upgrade: ["升级", "Upgrade"], configure: ["修改配置", "Configure"], uninstall: ["卸载", "Uninstall"] };
   return copy(language, ...labels[operation]);
 }
 
@@ -139,7 +143,7 @@ export function installBlocker(data: AppData, appKey: string, language: Language
   if (!data.agents.some((agent) => agent.connected)) return copy(language, "没有在线节点。请检查 Agent 服务。", "No node is online. Check the Agent service.");
   if (!data.agents.some((agent) => agent.connected && agent.capabilities.docker)) return copy(language, "在线节点没有 Docker 应用能力。", "Online nodes do not provide Docker app capability.");
   if (!data.agents.some((agent) => agent.connected && agent.capabilities.docker && agent.networkProfile)) return copy(language, "请先在“网络”页面确认节点地址。", "Confirm a node address on the Network page first.");
-  if (data.agents.every((agent) => !canInstall(agent) || data.applications.some((application) => application.nodeId === agent.id && application.appKey === appKey && isActiveApplication(application.status)))) return copy(language, "所有可用节点都已安装此应用。", "This app is already installed on every eligible node.");
+  if (data.agents.every((agent) => !canInstall(agent) || data.applications.some((application) => application.nodeId === agent.id && application.appKey === appKey && (isInstalledApplication(application) || isActiveApplication(application.status))))) return copy(language, "所有可用节点都已安装或正在安装此应用。", "This app is already installed or being installed on every eligible node.");
   return copy(language, "当前没有符合条件的节点。", "No eligible node is currently available.");
 }
 

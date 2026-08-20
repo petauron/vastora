@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from "react";
-import { AppWindowIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, ServerIcon, SettingsIcon, type LucideIcon } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { AppWindowIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import type { AppData, Screen, SetupStatus } from "./types";
@@ -51,6 +51,11 @@ export function App() {
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const [addFirstNode, setAddFirstNode] = useState(false);
   const [notice, setNotice] = useState<{ message: string; detail?: string; error?: boolean } | null>(null);
+  const [connection, setConnection] = useState<"connected" | "reconnecting">("connected");
+  const [connectionError, setConnectionError] = useState<unknown>(null);
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const focusAfterNavigation = useRef(false);
 
   const setLanguage = (next: Language) => {
     window.localStorage.setItem("vastora.language", next);
@@ -66,6 +71,15 @@ export function App() {
         if (current.has(target)) return current;
         return new Set(current).add(target);
       });
+      setConnection("connected");
+      setConnectionError(null);
+      setLastSync(new Date());
+    } catch (error) {
+      if (!(error instanceof APIError && error.status === 401)) {
+        setConnection("reconnecting");
+        setConnectionError(error);
+      }
+      throw error;
     } finally {
       setLoadingScreen((current) => current === target ? null : current);
     }
@@ -74,16 +88,15 @@ export function App() {
   const handleLoadError = useCallback((error: unknown) => {
     if (error instanceof APIError && error.status === 401) {
       setPhase("login");
-      return;
     }
-    setNotice({ message: userError(language, error), detail: error instanceof Error ? error.message : undefined, error: true });
-  }, [language]);
+  }, []);
 
   const navigate = useCallback((target: Screen, replace = false) => {
     const path = pathForScreen(target);
     if (window.location.pathname !== path) {
       window.history[replace ? "replaceState" : "pushState"]({}, "", path);
     }
+    focusAfterNavigation.current = true;
     setScreen(target);
     void loadScreen(target).catch(handleLoadError);
   }, [handleLoadError, loadScreen]);
@@ -133,12 +146,18 @@ export function App() {
   useEffect(() => {
     const onPopState = () => {
       const target = screenFromPath();
+      focusAfterNavigation.current = true;
       setScreen(target);
       if (phase === "ready") void loadScreen(target).catch(handleLoadError);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [phase, handleLoadError, loadScreen]);
+  useEffect(() => {
+    if (phase !== "ready" || !focusAfterNavigation.current || !loadedScreens.has(screen)) return;
+    focusAfterNavigation.current = false;
+    window.requestAnimationFrame(() => mainRef.current?.focus());
+  }, [loadedScreens, phase, screen]);
   useEffect(() => {
     const label = navigation.find((item) => item.id === screen);
     document.title = `${label ? copy(language, label.zh, label.en) : copy(language, "设置", "Settings")} · Vastora`;
@@ -166,6 +185,10 @@ export function App() {
       if (error instanceof APIError && error.status === 401) {
         setPhase("login");
         return;
+      }
+      if (!(error instanceof APIError)) {
+        setConnection("reconnecting");
+        setConnectionError(error);
       }
       setNotice({ message: userError(language, error), detail: error instanceof Error ? error.message : undefined, error: true });
       throw error;
@@ -225,7 +248,7 @@ export function App() {
         <Sidebar collapsible="icon">
           <SidebarHeader className="px-3 pb-3 pt-5">
             <Brand />
-            <div className="mt-3 flex items-center gap-2 px-2 text-xs text-muted-foreground"><span className="size-2 rounded-full bg-success" aria-hidden="true" />{copy(language, "Center 连接正常", "Center connected")}</div>
+            <div className="mt-3 flex items-center gap-2 px-2 text-xs text-muted-foreground"><span className={`size-2 rounded-full ${connection === "connected" ? "bg-success" : "bg-destructive"}`} aria-hidden="true" />{connection === "connected" ? copy(language, "Center 连接正常", "Center connected") : copy(language, "正在重新连接", "Reconnecting")}</div>
           </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
@@ -250,7 +273,8 @@ export function App() {
             {loadingScreen === screen ? <span aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner />{copy(language, "正在更新", "Updating")}</span> : null}
             <NativeSelect aria-label={copy(language, "界面语言", "Interface language")} onChange={(event) => setLanguage(event.target.value as Language)} size="sm" value={language}><option value="zh-CN">简体中文</option><option value="en">English</option></NativeSelect>
           </header>
-          <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content" tabIndex={-1}>
+          <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content" ref={mainRef} tabIndex={-1}>
+            {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><WifiOffIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
             {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle>{notice.message}</AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
             <Suspense fallback={<ScreenLoading language={language} />}>
               {!loadedScreens.has(screen) ? <ScreenLoading language={language} /> : null}
@@ -310,5 +334,8 @@ export function EmptyPage({ language, title, description }: { language: Language
 }
 
 export function SignOutButton({ language, onLogout }: { language: Language; onLogout: () => Promise<void> }) {
-  return <Button onClick={() => void onLogout()} variant="outline"><LogOutIcon data-icon="inline-start" />{copy(language, "退出登录", "Sign out")}</Button>;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const signOut = async () => { setBusy(true); setError(""); try { await onLogout(); } catch (signOutError) { setError(userError(language, signOutError)); } finally { setBusy(false); } };
+  return <div className="flex flex-col items-end gap-2"><Button disabled={busy} onClick={() => void signOut()} variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <LogOutIcon data-icon="inline-start" />}{copy(language, "退出登录", "Sign out")}</Button>{error ? <span className="max-w-64 text-right text-xs text-destructive" role="alert">{error}</span> : null}</div>;
 }

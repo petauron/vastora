@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"golang.org/x/mod/semver"
 )
 
 type DeploymentRequest struct {
@@ -54,7 +55,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation == "" {
 		request.Operation = "install"
 	}
-	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "uninstall" {
+	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
 	var exists int
@@ -71,38 +72,57 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if activeTasks != 0 {
 		return DeploymentView{}, errors.New("center: this app already has an active deployment task on the target Agent")
 	}
-	installed, err := s.HasActiveDeployment(ctx, request.AgentID, request.AppKey)
+	active, err := s.activeDeployment(ctx, request.AgentID, request.AppKey)
 	if err != nil {
 		return DeploymentView{}, err
 	}
-	if request.Operation == "install" && installed {
-		return DeploymentView{}, errors.New("center: app is already installed; use upgrade")
+	if request.Operation == "install" && active.Installed {
+		return DeploymentView{}, errors.New("center: app is already installed; use upgrade or configure")
 	}
-	if (request.Operation == "upgrade" || request.Operation == "uninstall") && !installed {
+	if (request.Operation == "upgrade" || request.Operation == "configure" || request.Operation == "uninstall") && !active.Installed {
 		return DeploymentView{}, errors.New("center: app is not installed on the target Agent")
 	}
-	apps, err := s.ListApps(ctx)
-	if err != nil {
-		return DeploymentView{}, err
-	}
 	var manifest catalog.AppManifest
-	found := false
-	for _, app := range apps {
-		if app.Key == request.AppKey {
-			manifest = app.App
-			found = true
-			break
+	if request.Operation == "install" || request.Operation == "upgrade" {
+		apps, err := s.ListApps(ctx)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+		found := false
+		for _, app := range apps {
+			if app.Key == request.AppKey {
+				manifest = app.App
+				found = true
+				break
+			}
+		}
+		if !found {
+			return DeploymentView{}, errors.New("center: app not found in a verified catalog")
+		}
+	} else if len(active.Manifest) == 0 || json.Unmarshal(active.Manifest, &manifest) != nil || catalog.ValidateApp(manifest) != nil {
+		return DeploymentView{}, errors.New("center: installed application manifest is invalid")
+	}
+	if request.Operation == "upgrade" {
+		comparison := semver.Compare(canonicalAppVersion(manifest.Version), canonicalAppVersion(active.Version))
+		if comparison == 0 {
+			return DeploymentView{}, fmt.Errorf("center: app is already at version %s", active.Version)
+		}
+		if comparison < 0 {
+			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
 		}
 	}
-	if !found {
-		return DeploymentView{}, errors.New("center: app not found in a verified catalog")
+	if request.Operation == "configure" {
+		var changed map[string]json.RawMessage
+		if len(request.Config) == 0 || json.Unmarshal(request.Config, &changed) != nil || len(changed) == 0 {
+			return DeploymentView{}, errors.New("center: configure requires at least one changed setting")
+		}
 	}
 	var config, secrets []byte
 	if request.Operation == "uninstall" {
 		config, secrets = []byte(`{}`), []byte(`{}`)
 	} else {
 		deploymentConfig := request.Config
-		if request.Operation == "upgrade" {
+		if request.Operation == "upgrade" || request.Operation == "configure" {
 			deploymentConfig, err = s.mergePreviousDeploymentConfig(ctx, request.AgentID, request.AppKey, request.Config)
 			if err != nil {
 				return DeploymentView{}, err
@@ -170,6 +190,14 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	return deployment, nil
+}
+
+func canonicalAppVersion(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "v") {
+		return value
+	}
+	return "v" + value
 }
 
 func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {

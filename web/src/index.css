@@ -152,3 +152,17 @@
     animation-iteration-count: 1 !important;
   }
 }
+
+@media (pointer: coarse) {
+  [data-slot="button"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  [data-slot="input"],
+  [data-slot="native-select"] {
+    min-height: 44px;
+  }
+  [data-slot="switch"]::after {
+    inset: -13px -6px;
+  }
+}
