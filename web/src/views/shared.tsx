@@ -19,6 +19,9 @@ export function userError(language: Language, error: unknown) {
   if (code === "dns_record_conflict" || normalized.includes("dns record") && normalized.includes("already exists")) {
     return copy(language, "这个地址已有指向其他服务器的 DNS 记录。Vastora 没有覆盖它；请更换地址或先处理现有记录。", "This hostname already points to another server. Vastora did not overwrite it; choose another hostname or update the existing record first.");
   }
+  if (normalized.includes("verify headscale") && (normalized.includes("lookup") || normalized.includes("no such host"))) {
+    return copy(language, "安全私网地址的 DNS 尚未生效，系统没有保存未完成的设置。请稍后重试。", "DNS for the secure private-network address is not available yet. The incomplete setup was not saved; try again shortly.");
+  }
   if (code === "already_installed" || code === "conflict" || normalized.includes("already installed") || normalized.includes("already exists") || normalized.includes("conflict")) {
     return copy(language, "已有相同配置，请刷新页面后检查当前状态。", "This is already configured. Refresh and check its current status.");
   }
