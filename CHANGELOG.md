@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.21](https://github.com/petauron/vastora/compare/v0.1.0-alpha.20...v0.1.0-alpha.21) (2026-08-20)
+
+
+### Bug Fixes
+
+* bootstrap HAProxy config on writable tmpfs ([#68](https://github.com/petauron/vastora/issues/68)) ([ca6c970](https://github.com/petauron/vastora/commit/ca6c9707fcc165b48d65d63f9d34e0dd1addf20d))
+
 ## [0.1.0-alpha.20](https://github.com/petauron/vastora/compare/v0.1.0-alpha.19...v0.1.0-alpha.20) (2026-08-20)
 
 
