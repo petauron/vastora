@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 7
+const centerSchemaVersion = 8
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -186,6 +186,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'public_shared_443', 'cloudflare_tunnel')),
 			gateway_node_id TEXT REFERENCES agents(id) ON DELETE RESTRICT,
 			hostname TEXT NOT NULL,
+			sni_hostname TEXT NOT NULL DEFAULT '',
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
 			dns_record_id TEXT NOT NULL DEFAULT '',
 			tls_enabled INTEGER NOT NULL DEFAULT 0,
@@ -291,6 +292,23 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE
 		)`,
 		`CREATE UNIQUE INDEX deployments_one_active_task_idx ON deployments(agent_id, app_key) WHERE state IN ('pending', 'running')`,
+		`CREATE TABLE application_commands (
+			id TEXT PRIMARY KEY,
+			application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
+			kind TEXT NOT NULL CHECK(kind IN ('3xui.reality.create')),
+			input_json BLOB NOT NULL,
+			result_json BLOB NOT NULL DEFAULT '{}',
+			result_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
+			state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'succeeded', 'failed')),
+			attempt INTEGER NOT NULL DEFAULT 0,
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX application_commands_one_active_idx ON application_commands(application_id) WHERE state IN ('pending', 'running')`,
 		`CREATE TABLE task_events (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,

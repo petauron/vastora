@@ -24,6 +24,7 @@ type PublicationInput struct {
 	Kind            string `json:"kind"`
 	GatewayNodeID   string `json:"gatewayNodeId,omitempty"`
 	Hostname        string `json:"hostname"`
+	SNIHostname     string `json:"sniHostname,omitempty"`
 	DNSProvider     string `json:"dnsProvider"`
 	ConfirmHighRisk bool   `json:"confirmHighRisk,omitempty"`
 }
@@ -34,6 +35,7 @@ type PublicationView struct {
 	Kind            string                `json:"kind"`
 	GatewayNodeID   string                `json:"gatewayNodeId,omitempty"`
 	Hostname        string                `json:"hostname"`
+	SNIHostname     string                `json:"sniHostname,omitempty"`
 	DNSProvider     string                `json:"dnsProvider"`
 	DNSRecordID     string                `json:"dnsRecordId,omitempty"`
 	TLSEnabled      bool                  `json:"tlsEnabled"`
@@ -59,12 +61,20 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.GatewayNodeID = strings.TrimSpace(input.GatewayNodeID)
 	input.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.Hostname), "."))
+	input.SNIHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.SNIHostname), "."))
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
 	if input.ServiceID == "" || !domainSuffixPattern.MatchString(input.Hostname) {
 		return PublicationView{}, errors.New("center: service and a valid hostname are required")
 	}
 	if !validPublicationKind(input.Kind) {
 		return PublicationView{}, errors.New("center: unsupported publication kind")
+	}
+	if input.Kind == publicationShared443 {
+		if !domainSuffixPattern.MatchString(input.SNIHostname) {
+			return PublicationView{}, errors.New("center: shared 443 requires a valid TLS SNI hostname")
+		}
+	} else if input.SNIHostname != "" {
+		return PublicationView{}, errors.New("center: TLS SNI hostname is only valid for shared 443 access")
 	}
 	if !validPublicationDNS(input.Kind, input.DNSProvider) {
 		return PublicationView{}, errors.New("center: DNS provider is not valid for this publication")
@@ -173,7 +183,7 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 			return PublicationView{}, errors.New("center: a direct raw publication already owns port 443 on this gateway; move that inbound before enabling shared 443")
 		}
 		var duplicate int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND hostname = ? AND status <> 'stopped'`, gatewayID, input.Hostname).Scan(&duplicate); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND sni_hostname = ? AND status <> 'stopped'`, gatewayID, input.SNIHostname).Scan(&duplicate); err != nil {
 			return PublicationView{}, err
 		}
 		if duplicate != 0 {
@@ -205,8 +215,8 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		if err != nil {
 			return PublicationView{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, dns_provider, tls_enabled, status, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.SNIHostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return PublicationView{}, fmt.Errorf("center: create publication: %w", err)
 		}
 		revision = 1
@@ -220,7 +230,7 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 			return PublicationView{}, errors.New("center: the previous access entry is still removing external resources; retry after cleanup succeeds")
 		}
 		revision++
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET gateway_node_id = ?, dns_provider = ?, dns_record_id = '', tls_enabled = ?, desired_revision = ?, status = 'pending', last_error = '', cleanup_attempt = 0, cleanup_retry_at = '', updated_at = ? WHERE id = ?`, nullableString(gatewayID), input.DNSProvider, tlsEnabled, revision, now.Format(time.RFC3339Nano), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET gateway_node_id = ?, sni_hostname = ?, dns_provider = ?, dns_record_id = '', tls_enabled = ?, desired_revision = ?, status = 'pending', last_error = '', cleanup_attempt = 0, cleanup_retry_at = '', updated_at = ? WHERE id = ?`, nullableString(gatewayID), input.SNIHostname, input.DNSProvider, tlsEnabled, revision, now.Format(time.RFC3339Nano), id); err != nil {
 			return PublicationView{}, fmt.Errorf("center: reactivate publication: %w", err)
 		}
 	}
@@ -295,8 +305,8 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	var gatewayID sql.NullString
 	var tls int
 	var created, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT id, service_id, kind, gateway_node_id, hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at FROM publications WHERE id = ?`, id).Scan(
-		&value.ID, &value.ServiceID, &value.Kind, &gatewayID, &value.Hostname, &value.DNSProvider, &value.DNSRecordID, &tls, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at FROM publications WHERE id = ?`, id).Scan(
+		&value.ID, &value.ServiceID, &value.Kind, &gatewayID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID, &tls, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PublicationView{}, errors.New("center: publication not found")
 	}
@@ -362,7 +372,7 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		}
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT
-		p.id, p.service_id, p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.dns_provider, p.dns_record_id,
+		p.id, p.service_id, p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,
 		p.tls_enabled, p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at,
 		s.protocol, s.name, a.app_key,
 		COALESCE(n.lan_address, ''), COALESCE(n.headscale_address, ''), COALESCE(n.public_address, ''), COALESCE(t.tunnel_id, '')
@@ -383,7 +393,7 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		var created, updated, protocol, serviceName, appKey string
 		var lanAddress, headscaleAddress, publicAddress, tunnelID string
 		if err := rows.Scan(
-			&value.ID, &value.ServiceID, &value.Kind, &value.GatewayNodeID, &value.Hostname, &value.DNSProvider, &value.DNSRecordID,
+			&value.ID, &value.ServiceID, &value.Kind, &value.GatewayNodeID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID,
 			&tls, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated,
 			&protocol, &serviceName, &appKey, &lanAddress, &headscaleAddress, &publicAddress, &tunnelID,
 		); err != nil {

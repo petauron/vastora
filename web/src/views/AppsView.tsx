@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { AppWindowIcon, ArrowUpCircleIcon, ExternalLinkIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, RotateCcwIcon, Settings2Icon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
+import { AppWindowIcon, ArrowUpCircleIcon, ExternalLinkIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, RadioTowerIcon, RotateCcwIcon, Settings2Icon, ShieldAlertIcon, Trash2Icon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
-import type { AgentView, Application, AppView, Deployment, Publication, PublicationKind, Service } from "../types";
+import type { AgentView, Application, ApplicationCommand, AppView, Deployment, Publication, PublicationKind, Service } from "../types";
 import type { Language } from "../translations";
-import { canInstall, defaultPublicationHostname, gatewaysForKind, installBlocker, isActiveApplication, isInstalledApplication, latestOperations, localized, operationLabel, publicationIntentOptions, publicationKindLabel, publicationKindsForIntent, publicationOptions, type PublicationIntent } from "./appAccess";
+import { canInstall, defaultPublicationHostname, defaultRealityHostname, gatewaysForKind, installBlocker, isActiveApplication, isInstalledApplication, latestOperations, localized, operationLabel, publicationIntentOptions, publicationKindLabel, publicationKindsForIntent, publicationOptions, type PublicationIntent } from "./appAccess";
 import { CopyButton, HighPrivilegeBadge, PageHeading, StateBadge, TechnicalError, copy, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
   const [publicationService, setPublicationService] = useState<Service | null>(null);
   const [uninstallApplication, setUninstallApplication] = useState<Application | null>(null);
   const [credentials, setCredentials] = useState<Deployment["oneTimeCredentials"]>(undefined);
+  const [realityApplication, setRealityApplication] = useState<Application | null>(null);
   const [section, setSection] = useState<"installed" | "store">(() => data.applications.some(isInstalledApplication) ? "installed" : "store");
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
   const installedApplications = data.applications.filter(isInstalledApplication);
@@ -55,7 +56,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 
       {section === "installed" ? <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "已安装", "Installed")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "每个服务都可以有独立的访问方式。", "Each service can have its own access methods.")}</p></div>
-        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onConfigure={() => openChange(application, "configure")} onPublish={setPublicationService} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openChange(application, "upgrade")} mutate={mutate} />)}</div>}
+        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onConfigure={() => openChange(application, "configure")} onPublish={setPublicationService} onReality={() => setRealityApplication(application)} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openChange(application, "upgrade")} mutate={mutate} />)}</div>}
       </div> : null}
 
       {section === "store" ? <div className="flex flex-col gap-4">
@@ -76,17 +77,18 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
         setDeploymentEditor(null);
       }} />
       <PublicationSheet data={data} language={language} onClose={() => setPublicationService(null)} onSubmit={async (input) => { await mutate(() => api.createPublication(input), copy(language, "访问入口已创建。", "Access point created.")); setPublicationService(null); }} service={publicationService} />
+      <RealitySheet application={realityApplication} data={data} language={language} onClose={() => setRealityApplication(null)} />
       <UninstallSheet application={uninstallApplication} app={uninstallApplication ? catalogByKey.get(uninstallApplication.appKey) : undefined} language={language} onClose={() => setUninstallApplication(null)} onSubmit={async (application, deleteData) => { await mutate(() => api.createDeployment(application.nodeId, application.appKey, {}, "uninstall", deleteData), copy(language, "卸载任务已创建。", "Uninstall task created.")); setUninstallApplication(null); }} />
     </section>
   );
 }
 
-function InstalledAppCard({ application, app, data, language, onConfigure, onPublish, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: AppData; language: Language; onConfigure: () => void; onPublish: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
+function InstalledAppCard({ application, app, data, language, onConfigure, onPublish, onReality, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: AppData; language: Language; onConfigure: () => void; onPublish: (service: Service) => void; onReality: () => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const agent = data.agents.find((value) => value.id === application.nodeId);
   const services = data.services.filter((service) => service.applicationId === application.id && service.status !== "stopped");
   const deployment = data.deployments.find((value) => value.applicationId === application.id && value.state === "succeeded" && value.operation !== "uninstall");
   const activeChange = data.deployments.find((value) => value.applicationId === application.id && (value.state === "pending" || value.state === "running"));
-  return <Card><CardHeader><CardTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}</CardTitle><CardDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</CardDescription><CardAction><StateBadge value={application.status} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3">{activeChange ? <Alert><Spinner /><AlertTitle>{copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}</AlertTitle><AlertDescription>{copy(language, "完成前暂时不能发起其他应用变更。", "Other app changes are unavailable until this finishes.")}</AlertDescription></Alert> : null}{application.status === "failed" ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "最近一次操作失败，应用仍保留", "The last operation failed; the app is still installed")}</AlertTitle><AlertDescription>{copy(language, "原有安装记录和数据仍保留；请查看最近操作，修正后重试或卸载。", "The installed record and data remain available. Review the recent operation, then retry or uninstall.")}</AlertDescription></Alert> : null}{deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开私有主页", "Open private homepage")}</Button> : null}{services.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : services.map((service) => <ServiceRow data={data} key={service.id} language={language} onPublish={() => onPublish(service)} service={service} mutate={mutate} />)}</CardContent><CardFooter className="flex-wrap justify-end gap-2">{application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange)} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter></Card>;
+  return <Card><CardHeader><CardTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}</CardTitle><CardDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</CardDescription><CardAction><StateBadge value={application.status} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3">{activeChange ? <Alert><Spinner /><AlertTitle>{copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}</AlertTitle><AlertDescription>{copy(language, "完成前暂时不能发起其他应用变更。", "Other app changes are unavailable until this finishes.")}</AlertDescription></Alert> : null}{application.status === "failed" ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "最近一次操作失败，应用仍保留", "The last operation failed; the app is still installed")}</AlertTitle><AlertDescription>{copy(language, "原有安装记录和数据仍保留；请查看最近操作，修正后重试或卸载。", "The installed record and data remain available. Review the recent operation, then retry or uninstall.")}</AlertDescription></Alert> : null}{application.appKey === "vastora-official/3x-ui" ? <Button disabled={Boolean(activeChange)} onClick={onReality} size="sm"><RadioTowerIcon data-icon="inline-start" />{copy(language, "一键创建 VLESS REALITY", "Create VLESS REALITY")}</Button> : null}{deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}{services.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : services.map((service) => <ServiceRow data={data} key={service.id} language={language} onPublish={() => onPublish(service)} service={service} mutate={mutate} />)}</CardContent><CardFooter className="flex-wrap justify-end gap-2">{application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange)} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter></Card>;
 }
 
 function ServiceRow({ data, language, service, onPublish, mutate }: { data: AppData; language: Language; service: Service; onPublish: () => void; mutate: Mutate }) {
@@ -97,7 +99,7 @@ function ServiceRow({ data, language, service, onPublish, mutate }: { data: AppD
 function PublicationRow({ publication, language, mutate }: { publication: Publication; language: Language; mutate: Mutate }) {
   const [busy, setBusy] = useState(false);
   const run = async (operation: () => Promise<unknown>, success: string) => { setBusy(true); try { await mutate(operation, success); } catch { /* The shared notice already explains the failure. */ } finally { setBusy(false); } };
-  return <div className="flex flex-col gap-2 rounded-lg bg-muted/60 p-3 text-xs sm:flex-row sm:items-center"><StateBadge value={publication.status} /><div className="min-w-0 flex-1"><p className="truncate font-medium">{publication.hostname}</p><p className="mt-0.5 text-muted-foreground">{publicationKindLabel(language, publication.kind)}</p>{publication.lastError ? <div className="mt-1"><TechnicalError error={publication.lastError} language={language} /></div> : null}{publication.dnsRecord && publication.dnsProvider !== "cloudflare" ? <code className="mt-1 block break-all text-muted-foreground">{publication.dnsRecord.type} {publication.dnsRecord.name} → {publication.dnsRecord.value}</code> : null}</div><div className="flex gap-2">{publication.accessUrl ? <Button aria-label={copy(language, "打开服务", "Open service")} nativeButton={false} render={<a href={publication.accessUrl} rel="noreferrer" target="_blank" />} size="icon-sm" variant="ghost"><ExternalLinkIcon /></Button> : null}{publication.status !== "ready" ? <Button disabled={busy} onClick={() => void run(() => api.verifyPublication(publication.id), copy(language, "入口检查已完成。", "Access point checked."))} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "检查", "Check")}</Button> : null}<Button disabled={busy} onClick={() => void run(() => api.stopPublication(publication.id), copy(language, "入口已停止。", "Access point stopped."))} size="sm" variant="ghost">{copy(language, "停止", "Stop")}</Button></div></div>;
+  return <div className="flex flex-col gap-2 rounded-lg bg-muted/60 p-3 text-xs sm:flex-row sm:items-center"><StateBadge value={publication.status} /><div className="min-w-0 flex-1"><p className="truncate font-medium">{publication.hostname}</p><p className="mt-0.5 text-muted-foreground">{publicationKindLabel(language, publication.kind)}</p>{publication.sniHostname ? <p className="mt-0.5 truncate font-mono text-muted-foreground">SNI → {publication.sniHostname}</p> : null}{publication.lastError ? <div className="mt-1"><TechnicalError error={publication.lastError} language={language} /></div> : null}{publication.dnsRecord && publication.dnsProvider !== "cloudflare" ? <code className="mt-1 block break-all text-muted-foreground">{publication.dnsRecord.type} {publication.dnsRecord.name} → {publication.dnsRecord.value}</code> : null}</div><div className="flex gap-2">{publication.accessUrl ? <Button aria-label={copy(language, "打开服务", "Open service")} nativeButton={false} render={<a href={publication.accessUrl} rel="noreferrer" target="_blank" />} size="icon-sm" variant="ghost"><ExternalLinkIcon /></Button> : null}{publication.status !== "ready" ? <Button disabled={busy} onClick={() => void run(() => api.verifyPublication(publication.id), copy(language, "入口检查已完成。", "Access point checked."))} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "检查", "Check")}</Button> : null}<Button disabled={busy} onClick={() => void run(() => api.stopPublication(publication.id), copy(language, "入口已停止。", "Access point stopped."))} size="sm" variant="ghost">{copy(language, "停止", "Stop")}</Button></div></div>;
 }
 
 function DeploymentSheet({ data, editor, language, onClose, onSubmit }: { data: AppData; editor: DeploymentEditor; language: Language; onClose: () => void; onSubmit: (agent: AgentView, app: AppView, config: Record<string, string | boolean | number>, operation: "install" | "upgrade" | "configure") => Promise<void> }) {
@@ -131,11 +133,12 @@ function ConfigField({ config, field, language, operation, setConfig }: { config
   return <Field><FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel><Input id={`config-${field.key}`} min={field.type === "integer" ? 1 : undefined} onChange={(event) => setConfig((current) => { const next = { ...current }; if (event.target.value === "") delete next[field.key]; else next[field.key] = field.type === "integer" ? Number(event.target.value) : event.target.value; return next; })} placeholder={operation !== "install" ? copy(language, "留空以保持原值", "Leave blank to keep the current value") : undefined} required={operation === "install" && field.required} type={field.secret ? "password" : field.type === "integer" ? "number" : "text"} value={config[field.key] === undefined ? "" : String(config[field.key])} /><FieldDescription>{description}</FieldDescription></Field>;
 }
 
-function PublicationSheet({ data, language, onClose, onSubmit, service }: { data: AppData; language: Language; onClose: () => void; onSubmit: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; dnsProvider: "manual" | "cloudflare" | "headscale"; confirmHighRisk?: boolean }) => Promise<void>; service: Service | null }) {
+function PublicationSheet({ data, language, onClose, onSubmit, service }: { data: AppData; language: Language; onClose: () => void; onSubmit: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; confirmHighRisk?: boolean }) => Promise<void>; service: Service | null }) {
   const [intent, setIntent] = useState<PublicationIntent>("private");
   const [kind, setKind] = useState<PublicationKind>("headscale_gateway");
   const [gatewayID, setGatewayID] = useState("");
   const [hostname, setHostname] = useState("");
+  const [sniHostname, setSNIHostname] = useState("");
   const [dnsProvider, setDNSProvider] = useState<"manual" | "cloudflare" | "headscale">("manual");
   const [highRisk, setHighRisk] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -161,6 +164,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     setKind(nextKind);
     setGatewayID(gatewaysForKind(data, service, nextKind)[0]?.id ?? "");
     setHostname(defaultPublicationHostname(data, service));
+    setSNIHostname("");
     setDNSProvider(defaultDNS(nextKind));
     setHighRisk(false); setError("");
   }, [service?.id]);
@@ -176,9 +180,9 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     const preferred = publicationIntentOptions(data, service, language).find((option) => option.intent === next)?.kind;
     if (preferred) selectKind(preferred);
   };
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!service) return; setBusy(true); setError(""); try { await onSubmit({ serviceId: service.id, kind, gatewayNodeId: gatewayID || undefined, hostname, dnsProvider, confirmHighRisk: highRisk }); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
+  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!service) return; setBusy(true); setError(""); try { await onSubmit({ serviceId: service.id, kind, gatewayNodeId: gatewayID || undefined, hostname, sniHostname: kind === "public_shared_443" ? sniHostname : undefined, dnsProvider, confirmHighRisk: highRisk }); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
   const highRiskRequired = Boolean(service?.management && (kind === "public_direct" || kind === "cloudflare_tunnel"));
-  const canSubmit = Boolean(selectedOption?.enabled && hostname && gatewayID && (!highRiskRequired || highRisk));
+  const canSubmit = Boolean(selectedOption?.enabled && hostname && gatewayID && (kind !== "public_shared_443" || sniHostname) && (!highRiskRequired || highRisk));
   return (
     <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(service)}>
       <SheetContent className="sm:max-w-lg">
@@ -206,6 +210,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
                 <Input id="publication-hostname" onChange={(event) => setHostname(event.target.value.toLowerCase())} placeholder="service.example.com" required value={hostname} />
                 <FieldDescription>{copy(language, "这是以后在浏览器或客户端中使用的地址。", "This is the address used by browsers or clients.")}</FieldDescription>
               </Field>
+              {kind === "public_shared_443" ? <Field><FieldLabel htmlFor="publication-sni">{copy(language, "协议 SNI", "Protocol SNI")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="publication-sni" onChange={(event) => setSNIHostname(event.target.value.toLowerCase())} placeholder="www.example.com" required spellCheck={false} value={sniHostname} /><FieldDescription>{copy(language, "客户端握手中使用的 SNI；它与上面的连接域名是两个不同地址。", "The SNI sent in the client handshake. It is different from the connection hostname above.")}</FieldDescription></Field> : null}
               {intent === "protocol" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "这是高级公网入口", "This is an advanced public access method")}</AlertTitle><AlertDescription>{copy(language, "应用负责协议和端口配置；Vastora 只检查公网能力与运行状态。", "The app controls protocol and ports. Vastora only checks public reachability and runtime status.")}</AlertDescription></Alert> : null}
               {highRiskRequired ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "管理页面公网发布风险较高", "Publishing an admin page publicly is high risk")}</AlertTitle><AlertDescription>{copy(language, "请确认应用已设置强密码。Vastora 第一版不会代管额外的访问认证。", "Confirm that the app has a strong password. Vastora v1 does not manage an additional access login.")}<Field className="mt-3" orientation="horizontal"><FieldLabel htmlFor="confirm-high-risk">{copy(language, "我确认继续公网发布", "I understand and want to publish")}</FieldLabel><Switch checked={highRisk} id="confirm-high-risk" onCheckedChange={setHighRisk} /></Field></AlertDescription></Alert> : null}
               <details className="rounded-xl border p-3">
@@ -235,7 +240,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
                       {kind === "cloudflare_tunnel" ? <option value="cloudflare">Cloudflare Tunnel</option> : null}
                     </NativeSelect>
                   </Field>
-                  {kind === "public_shared_443" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "共享公网 443", "Shared public 443")}</AlertTitle><AlertDescription>{copy(language, "HAProxy 会按 SNI 分流。应用内部端口不能是 443，请先在应用内改为其他端口。", "HAProxy routes by SNI. The app's internal port cannot be 443; change it in the app first.")}</AlertDescription></Alert> : null}
+                  {kind === "public_shared_443" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "共享公网 443", "Shared public 443")}</AlertTitle><AlertDescription>{copy(language, "连接域名只负责解析到节点；HAProxy 会按协议 SNI 分流。应用内部端口不能是 443。", "The connection hostname only resolves to the node. HAProxy routes by protocol SNI, and the app's internal port cannot be 443.")}</AlertDescription></Alert> : null}
                 </div>
               </details>
               {error ? <FieldError role="alert">{error}</FieldError> : null}
@@ -249,6 +254,79 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
       </SheetContent>
     </Sheet>
   );
+}
+
+function RealitySheet({ application, data, language, onClose }: { application: Application | null; data: AppData; language: Language; onClose: () => void }) {
+  const [name, setName] = useState("");
+  const [gatewayID, setGatewayID] = useState("");
+  const [hostname, setHostname] = useState("");
+  const [dnsProvider, setDNSProvider] = useState<"manual" | "cloudflare">("manual");
+  const [target, setTarget] = useState("");
+  const [sniHostname, setSNIHostname] = useState("");
+  const [command, setCommand] = useState<ApplicationCommand | null>(null);
+  const [shareURI, setShareURI] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const gateways = application ? data.agents.filter((agent) => agent.siteId === application.siteId && agent.connected && agent.capabilities.gateway && agent.networkProfile?.directPublic && agent.networkProfile.enabledKinds.includes("public") && data.sites.some((site) => site.id === application.siteId && site.gatewayNodes.includes(agent.id))) : [];
+  const cloudflareReady = data.integrations.some((integration) => integration.kind === "cloudflare" && integration.status === "configured");
+  useEffect(() => {
+    if (!application) return;
+    setName(copy(language, "我的设备", "My device"));
+    setGatewayID(gateways[0]?.id ?? "");
+    setHostname(defaultRealityHostname(data, application));
+    setDNSProvider(cloudflareReady ? "cloudflare" : "manual");
+    setTarget(""); setSNIHostname(""); setCommand(null); setShareURI(""); setBusy(false); setError("");
+    let cancelled = false;
+    void api.latestApplicationCommand(application.id).then((latest) => { if (!cancelled) { setCommand(latest); setGatewayID(latest.gatewayNodeId); setHostname(latest.hostname); setDNSProvider(latest.dnsProvider); } }).catch(() => { /* No resumable operation is the normal first-use state. */ });
+    return () => { cancelled = true; };
+  }, [application?.id]);
+  useEffect(() => {
+    if (!command || command.state === "failed" || command.state === "succeeded") return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const next = await api.applicationCommand(command.id);
+        if (cancelled) return;
+        setCommand(next);
+        if (next.state === "pending" || next.state === "running") timer = window.setTimeout(() => void poll(), 2500);
+      } catch (pollError) {
+        if (!cancelled) {
+          setError(userError(language, pollError));
+          timer = window.setTimeout(() => void poll(), 2500);
+        }
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 2500);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [command?.id, command?.state, language]);
+  const reveal = async () => {
+    if (!command || command.state !== "succeeded" || !command.resultAvailable) return;
+    setBusy(true); setError("");
+    try {
+      setShareURI((await api.revealApplicationCommand(command.id)).shareUri);
+      setCommand({ ...command, resultAvailable: false });
+    } catch (revealError) {
+      setError(userError(language, revealError));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!application) return;
+    setBusy(true); setError("");
+    try {
+      setCommand(await api.createRealityCommand({ applicationId: application.id, name, gatewayNodeId: gatewayID, hostname, dnsProvider, target: target || undefined, sniHostname: sniHostname || undefined }));
+    } catch (submitError) {
+      setError(userError(language, submitError));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const gateway = data.agents.find((agent) => agent.id === gatewayID);
+  const manualRecordType = gateway?.networkProfile?.publicAddress?.includes(":") ? "AAAA" : "A";
+  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(application)}><SheetContent className="sm:max-w-xl"><SheetHeader><SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle><SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、共享 443 网关和 DNS。", "Vastora is configuring 3x-ui, the shared 443 gateway, and DNS on the node.") : copy(language, "只需命名一个客户端。目标站点、密钥、端口和共享 443 会自动配置。", "Name a client. The target, keys, port, and shared 443 access are configured automatically.")}</SheetDescription></SheetHeader>{command ? <div aria-live="polite" className="flex flex-1 flex-col gap-4 px-4"><Alert>{command.state === "pending" || command.state === "running" ? <Spinner /> : <RadioTowerIcon />}<AlertTitle>{command.state === "succeeded" ? copy(language, "REALITY 已创建", "REALITY is ready") : command.state === "failed" ? copy(language, "创建失败", "Creation failed") : copy(language, "正在自动配置…", "Configuring automatically…")}</AlertTitle><AlertDescription>{command.state === "pending" ? copy(language, "等待 Agent 接收任务。", "Waiting for the Agent to receive the task.") : command.state === "running" ? copy(language, "正在节点上扫描可用目标并创建入站。", "Scanning feasible targets and creating the inbound on the node.") : command.state === "succeeded" ? copy(language, `已使用 ${command.sniHostname ?? "已验证目标"}，客户端连接 ${command.hostname}:443。`, `Using ${command.sniHostname ?? "a verified target"}; clients connect to ${command.hostname}:443.`) : command.error}</AlertDescription></Alert>{command.state === "succeeded" && command.resultAvailable && !shareURI ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "客户端链接只显示一次", "The client link is shown once")}</AlertTitle><AlertDescription><p>{copy(language, "准备好立即导入客户端后再显示；显示后 Center 会删除保存的副本。", "Reveal it only when you are ready to import it. Center deletes its saved copy afterward.")}</p><Button className="mt-3" disabled={busy} onClick={() => void reveal()} size="sm">{busy ? <Spinner data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}{copy(language, "显示一次性链接", "Reveal one-time link")}</Button></AlertDescription></Alert> : null}{shareURI ? <div><p className="mb-2 text-sm font-medium">{copy(language, "一次性客户端链接", "One-time client link")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{shareURI}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制链接", "Copy link")} language={language} size="icon" value={shareURI} /></div><p className="mt-2 text-xs text-muted-foreground">{copy(language, "请立即导入客户端并保存；Center 已删除这份一次性链接。", "Import and save it now. Center has deleted its one-time copy.")}</p></div> : null}{command.state === "failed" && command.error ? <FieldError>{userError(language, new Error(command.error))}</FieldError> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}{dnsProvider === "manual" && gateway?.networkProfile?.publicAddress ? <Alert><Globe2Icon /><AlertTitle>{copy(language, "还需添加一条 DNS 记录", "One DNS record is still needed")}</AlertTitle><AlertDescription><code className="break-all">{manualRecordType} {hostname} → {gateway.networkProfile.publicAddress}</code></AlertDescription></Alert> : null}</div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="reality-client-name">{copy(language, "客户端名称", "Client name")}</FieldLabel><Input autoFocus id="reality-client-name" maxLength={64} onChange={(event) => setName(event.target.value)} required value={name} /><FieldDescription>{copy(language, "例如手机、MacBook 或家庭路由器。", "For example, Phone, MacBook, or Home router.")}</FieldDescription></Field><Field><FieldLabel htmlFor="reality-hostname">{copy(language, "连接域名", "Connection hostname")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-hostname" onChange={(event) => setHostname(event.target.value.toLowerCase())} required spellCheck={false} value={hostname} /><FieldDescription>{copy(language, "按“reality.节点.位置.域名空间”自动生成。", "Generated as “reality.node.location.domain-namespace”.")}</FieldDescription></Field><Field><FieldLabel htmlFor="reality-gateway">{copy(language, "公网入口", "Public entry")}</FieldLabel><NativeSelect id="reality-gateway" onChange={(event) => setGatewayID(event.target.value)} required value={gatewayID}><option disabled value="">{copy(language, "没有可用的公网网关", "No public gateway available")}</option>{gateways.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</NativeSelect><FieldDescription>{copy(language, "3x-ui 入站运行在应用节点；所选网关统一占用公网 443 并按 SNI 分流。", "The 3x-ui inbound runs on its app node. This gateway owns public 443 and routes by SNI.")}</FieldDescription></Field><Field><FieldLabel htmlFor="reality-dns">DNS</FieldLabel><NativeSelect id="reality-dns" onChange={(event) => setDNSProvider(event.target.value as "manual" | "cloudflare")} value={dnsProvider}><option value="manual">{copy(language, "手动添加 A/AAAA", "Add A/AAAA manually")}</option>{cloudflareReady ? <option value="cloudflare">{copy(language, "Cloudflare 自动管理", "Manage with Cloudflare")}</option> : null}</NativeSelect></Field><details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-medium">{copy(language, "高级：自定义伪装目标", "Advanced: custom camouflage target")}</summary><div className="mt-4 flex flex-col gap-4"><Field><FieldLabel htmlFor="reality-target">Target</FieldLabel><Input id="reality-target" onChange={(event) => setTarget(event.target.value.toLowerCase())} placeholder="www.example.com:443" value={target} /></Field><Field><FieldLabel htmlFor="reality-sni">SNI</FieldLabel><Input id="reality-sni" onChange={(event) => setSNIHostname(event.target.value.toLowerCase())} placeholder="www.example.com" value={sniHostname} /><FieldDescription>{copy(language, "留空时由应用节点实时扫描并选择可行目标；自定义时两项必须一起填写。", "Leave both empty for a live node-local scan. Custom values must be provided together.")}</FieldDescription></Field></div></details>{gateways.length === 0 ? <FieldError>{copy(language, "此位置还没有已确认公网能力的网关。请先在“网络”中确认公网地址并允许直接公网。", "This location has no gateway with confirmed public ingress. Confirm its public address and direct-public permission in Network first.")}</FieldError> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !name || !gatewayID || !hostname || Boolean(target) !== Boolean(sniHostname)} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <RadioTowerIcon data-icon="inline-start" />}{copy(language, "自动创建", "Create automatically")}</Button></SheetFooter></form>}<SheetFooter>{command ? <Button onClick={onClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button> : null}</SheetFooter></SheetContent></Sheet>;
 }
 
 function UninstallSheet({ application, app, language, onClose, onSubmit }: { application: Application | null; app?: AppView; language: Language; onClose: () => void; onSubmit: (application: Application, deleteData: boolean) => Promise<void> }) {

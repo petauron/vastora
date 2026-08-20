@@ -13,7 +13,7 @@ import { NodesView, agentInstallCommand, validCenterURL } from "./NodesView";
 import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
-import { defaultPublicationHostname } from "./appAccess";
+import { defaultPublicationHostname, defaultRealityHostname } from "./appAccess";
 import { CopyButton, userError } from "./shared";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -40,6 +40,15 @@ const dashboard = (): AppData => ({
   ],
   deployments: [], services: [], publications: []
 });
+
+const realityDashboard = () => {
+  const data = dashboard();
+  data.agents[0].networkProfile = { serviceAddress: "10.0.0.10", publicAddress: "203.0.113.10", enabledKinds: ["lan", "public"], directPublic: true };
+  data.sites[0].domainSuffix = "vastora.example.com";
+  data.apps = [{ key: "vastora-official/3x-ui", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "3x-ui", version: "3.6.0", name: { en: "3x-ui", "zh-CN": "3x-ui" }, description: { en: "Proxy management", "zh-CN": "代理管理" }, hostAccess: true, config: [] } }];
+  data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", installedVersion: "3.6.0", availableVersion: "3.6.0" }];
+  return data;
+};
 
 function render(element: ReactNode) {
   const container = document.createElement("div");
@@ -81,9 +90,10 @@ describe("network and app views", () => {
     data.sites[0].domainSuffix = "vastora.example.com";
     const service = { id: "manager", applicationId: "running", siteId: "site", name: "Manager 页面", protocol: "http" as const, containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog" as const, management: true, status: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
     data.services = [service];
-    expect(defaultPublicationHostname(data, service)).toBe("komari-agent-home.vastora.example.com");
+    expect(defaultPublicationHostname(data, service)).toBe("manager.komari-agent.home.vastora.example.com");
     data.services.push({ ...service, id: "subscription", name: "订阅服务" });
-    expect(defaultPublicationHostname(data, service)).toBe("komari-agent-manager-home.vastora.example.com");
+    expect(defaultPublicationHostname(data, service)).toBe("manager.komari-agent.home.vastora.example.com");
+    expect(defaultRealityHostname(data, data.applications[0])).toBe("reality.home-server.home.vastora.example.com");
   });
 
   it("keeps Cloudflare zones separate from the Vastora service namespace", () => {
@@ -198,7 +208,54 @@ describe("network and app views", () => {
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
     expect(container.textContent).toContain("添加第一台节点");
     expect(container.textContent).toContain("复制一条命令");
+    expect(container.textContent).toContain("当前 Center 主机");
     expect(container.textContent).toContain("添加节点");
+  });
+
+  it("groups nodes by location and shows the location code on the page", () => {
+    const data = dashboard();
+    data.sites.push({ ...data.sites[0], id: "site-sg", name: "Singapore", code: "singapore", gatewayNodes: [] });
+    data.agents.push({ ...data.agents[0], id: "agent-sg", name: "sg-edge", siteId: "site-sg" });
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    expect(container.textContent).toContain("Home");
+    expect(container.textContent).toContain("home");
+    expect(container.textContent).toContain("Singapore");
+    expect(container.textContent).toContain("singapore");
+    expect(container.textContent).toContain("位置：Home");
+    expect(container.textContent).toContain("位置：Singapore");
+  });
+
+  it("offers one-click REALITY with a hierarchical connection hostname", async () => {
+    const data = realityDashboard();
+    vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("一键创建 VLESS REALITY"))?.click();
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("目标站点、密钥、端口和共享 443 会自动配置");
+    expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
+    expect(document.querySelector<HTMLSelectElement>("#reality-gateway")?.value).toBe("agent");
+    expect(document.body.textContent).toContain("高级：自定义伪装目标");
+  });
+
+  it("reveals a REALITY client link only after explicit confirmation", async () => {
+    const data = realityDashboard();
+    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", target: "www.example.com:443", sniHostname: "www.example.com", resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
+    const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("一键创建 VLESS REALITY"))?.click();
+      await Promise.resolve();
+    });
+    expect(reveal).not.toHaveBeenCalled();
+    const revealButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("显示一次性链接"));
+    await act(async () => {
+      revealButton?.click();
+      await Promise.resolve();
+    });
+    expect(reveal).toHaveBeenCalledWith("application-command-1");
+    expect(document.body.textContent).toContain("vless://one-time-client-link");
   });
 
   it("starts first-run onboarding with a real location and the browser timezone", () => {

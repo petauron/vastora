@@ -48,20 +48,21 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
-	Kind           string                `json:"kind"`
-	ID             string                `json:"id"`
-	Attempt        int64                 `json:"attempt"`
-	AppKey         string                `json:"appKey"`
-	Manifest       catalog.AppManifest   `json:"manifest"`
-	Config         json.RawMessage       `json:"config"`
-	Secrets        json.RawMessage       `json:"secrets"`
-	Operation      string                `json:"operation"`
-	DeleteData     bool                  `json:"deleteData"`
-	Revision       int64                 `json:"revision,omitempty"`
-	ApplicationID  string                `json:"applicationId,omitempty"`
-	ServiceAddress string                `json:"serviceAddress,omitempty"`
-	GatewayState   *gateway.DesiredState `json:"gatewayState,omitempty"`
-	TunnelState    *TunnelDesiredState   `json:"tunnelState,omitempty"`
+	Kind               string                `json:"kind"`
+	ID                 string                `json:"id"`
+	Attempt            int64                 `json:"attempt"`
+	AppKey             string                `json:"appKey"`
+	Manifest           catalog.AppManifest   `json:"manifest"`
+	Config             json.RawMessage       `json:"config"`
+	Secrets            json.RawMessage       `json:"secrets"`
+	Operation          string                `json:"operation"`
+	DeleteData         bool                  `json:"deleteData"`
+	Revision           int64                 `json:"revision,omitempty"`
+	ApplicationID      string                `json:"applicationId,omitempty"`
+	ServiceAddress     string                `json:"serviceAddress,omitempty"`
+	GatewayState       *gateway.DesiredState `json:"gatewayState,omitempty"`
+	TunnelState        *TunnelDesiredState   `json:"tunnelState,omitempty"`
+	ApplicationCommand *RealityCommandTask   `json:"applicationCommand,omitempty"`
 }
 
 type Executor interface {
@@ -77,8 +78,29 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services         []ApplicationServiceResult `json:"services"`
-	GeneratedSecrets map[string]string          `json:"generatedSecrets,omitempty"`
+	Services           []ApplicationServiceResult `json:"services"`
+	GeneratedSecrets   map[string]string          `json:"generatedSecrets,omitempty"`
+	ApplicationCommand *RealityCommandResult      `json:"applicationCommand,omitempty"`
+}
+
+type RealityCommandTask struct {
+	Name            string   `json:"name"`
+	ConnectHostname string   `json:"connectHostname"`
+	DNSProvider     string   `json:"dnsProvider"`
+	Target          string   `json:"target,omitempty"`
+	SNIHostname     string   `json:"sniHostname,omitempty"`
+	ExcludedSNI     []string `json:"excludedSni,omitempty"`
+}
+
+type RealityCommandResult struct {
+	InboundID       int    `json:"inboundId"`
+	Name            string `json:"name"`
+	Listen          string `json:"listen"`
+	Port            int    `json:"port"`
+	Target          string `json:"target"`
+	SNIHostname     string `json:"sniHostname"`
+	ConnectHostname string `json:"connectHostname"`
+	ShareURI        string `json:"shareUri"`
 }
 
 type ApplicationEndpointObservation struct {
@@ -197,13 +219,18 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 	for _, inbound := range payload.Object {
 		transport := "tcp"
 		var stream struct {
-			Network string `json:"network"`
+			Network  string `json:"network"`
+			Security string `json:"security"`
 		}
 		if json.Unmarshal(inbound.Stream, &stream) == nil && stream.Network != "" {
 			transport = strings.ToLower(stream.Network)
 		}
 		name := "inbound-" + strconv.Itoa(inbound.ID)
-		result = append(result, ApplicationEndpointObservation{AppKey: threeXUIKey, Name: name, Protocol: "tcp", AppProtocol: strings.ToLower(inbound.Protocol) + "/" + transport, Listen: strings.TrimSpace(inbound.Listen), Port: inbound.Port, Enabled: inbound.Enable})
+		appProtocol := strings.ToLower(inbound.Protocol) + "/" + transport
+		if security := strings.ToLower(strings.TrimSpace(stream.Security)); security != "" && security != "none" {
+			appProtocol += "/" + security
+		}
+		result = append(result, ApplicationEndpointObservation{AppKey: threeXUIKey, Name: name, Protocol: "tcp", AppProtocol: appProtocol, Listen: strings.TrimSpace(inbound.Listen), Port: inbound.Port, Enabled: inbound.Enable})
 	}
 	return result, nil
 }
@@ -247,6 +274,16 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 				err = errors.New("agent: Docker capability is not configured")
 			} else {
 				result, err = c.Executor.Deploy(requestContext, *task)
+			}
+		case "application.command":
+			if task.ApplicationCommand == nil || !c.Capabilities.Docker {
+				err = errors.New("agent: application command received without Docker capability")
+			} else {
+				var commandResult RealityCommandResult
+				commandResult, err = applyRealityCommand(requestContext, store, task.ID, *task.ApplicationCommand)
+				if err == nil {
+					result.ApplicationCommand = &commandResult
+				}
 			}
 		case "gateway.routes.apply":
 			if task.GatewayState == nil || !c.Capabilities.Gateway {

@@ -18,20 +18,21 @@ import (
 )
 
 type AgentTask struct {
-	Kind           string                `json:"kind"`
-	ID             string                `json:"id"`
-	Attempt        int64                 `json:"attempt"`
-	AppKey         string                `json:"appKey"`
-	Manifest       catalog.AppManifest   `json:"manifest"`
-	Config         json.RawMessage       `json:"config"`
-	Secrets        json.RawMessage       `json:"secrets"`
-	Operation      string                `json:"operation"`
-	DeleteData     bool                  `json:"deleteData"`
-	Revision       int64                 `json:"revision,omitempty"`
-	ApplicationID  string                `json:"applicationId,omitempty"`
-	ServiceAddress string                `json:"serviceAddress,omitempty"`
-	GatewayState   *gateway.DesiredState `json:"gatewayState,omitempty"`
-	TunnelState    *TunnelTaskState      `json:"tunnelState,omitempty"`
+	Kind               string                `json:"kind"`
+	ID                 string                `json:"id"`
+	Attempt            int64                 `json:"attempt"`
+	AppKey             string                `json:"appKey"`
+	Manifest           catalog.AppManifest   `json:"manifest"`
+	Config             json.RawMessage       `json:"config"`
+	Secrets            json.RawMessage       `json:"secrets"`
+	Operation          string                `json:"operation"`
+	DeleteData         bool                  `json:"deleteData"`
+	Revision           int64                 `json:"revision,omitempty"`
+	ApplicationID      string                `json:"applicationId,omitempty"`
+	ServiceAddress     string                `json:"serviceAddress,omitempty"`
+	GatewayState       *gateway.DesiredState `json:"gatewayState,omitempty"`
+	TunnelState        *TunnelTaskState      `json:"tunnelState,omitempty"`
+	ApplicationCommand *RealityCommandTask   `json:"applicationCommand,omitempty"`
 }
 
 type TunnelTaskIngress struct {
@@ -66,6 +67,16 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 	err = tx.QueryRowContext(ctx, `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.operation, d.delete_data, d.application_id, COALESCE(p.service_address, ''), d.attempt
 		FROM deployments d LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.agent_id = ? AND d.state = 'pending' ORDER BY d.created_at, d.rowid LIMIT 1`, agentID).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ServiceAddress, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
+		commandTask, commandErr := s.claimApplicationCommand(ctx, tx, agentID)
+		if commandErr != nil {
+			return nil, commandErr
+		}
+		if commandTask != nil {
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return commandTask, nil
+		}
 		var desiredStatus string
 		var generation int64
 		err = tx.QueryRowContext(ctx, `SELECT desired_status, generation, attempt FROM gateway_components
@@ -185,6 +196,9 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return err
+	}
+	if strings.HasPrefix(taskID, "application-command-") {
+		return s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	if revision, gatewayTask := gatewayTaskRevision(taskID); gatewayTask {
 		return s.CompleteGatewayState(ctx, agentID, credential, revision, expectedAttempt, succeeded, taskError)

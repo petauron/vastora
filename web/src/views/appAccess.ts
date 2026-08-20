@@ -123,14 +123,16 @@ export function defaultPublicationHostname(data: AppData, service: Service) {
   const site = data.sites.find((value) => value.id === service.siteId);
   if (!site?.domainSuffix) return "";
   const appLabel = dnsLabel(application?.appKey.split("/").at(-1) || application?.name || "app");
-  const siblingServices = data.services.filter((value) => value.applicationId === service.applicationId && value.status !== "stopped");
-  const serviceLabel = siblingServices.length > 1 ? dnsLabel(service.name) : "";
-  const baseLabel = [appLabel, serviceLabel].filter(Boolean).join("-") || "app";
-  const siteLabel = (dnsLabel(site.name) || dnsLabel(site.code)).slice(0, 32);
-  const baseLength = siteLabel ? Math.max(1, 62 - siteLabel.length) : 63;
-  const scopedBase = baseLabel.slice(0, baseLength).replace(/-+$/, "") || "app";
-  const label = siteLabel ? `${scopedBase}-${siteLabel}` : scopedBase;
-  return `${label}.${site.domainSuffix}`.toLowerCase();
+  const serviceLabel = dnsLabel(service.name) || "service";
+  const siteLabel = dnsLabel(site.code) || dnsLabel(site.name) || "site";
+  return `${serviceLabel}.${appLabel}.${siteLabel}.${site.domainSuffix}`.toLowerCase();
+}
+
+export function defaultRealityHostname(data: AppData, application: AppData["applications"][number]) {
+  const site = data.sites.find((value) => value.id === application.siteId);
+  const agent = data.agents.find((value) => value.id === application.nodeId);
+  if (!site?.domainSuffix) return "";
+  return `reality.${dnsLabel(agent?.name || "node")}.${dnsLabel(site.code) || "site"}.${site.domainSuffix}`.toLowerCase();
 }
 
 function dnsLabel(value: string) {

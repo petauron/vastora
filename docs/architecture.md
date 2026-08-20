@@ -117,13 +117,14 @@ chooses permanent data deletion.
 | `lan_gateway` | HTTP/HTTPS | selected Site Gateway with LAN address | HTTP by default on LAN |
 | `headscale_gateway` | HTTP/HTTPS | selected Site Gateway with Headscale address | HTTP by default inside the tailnet |
 | `public_direct` | Web or raw TCP/UDP | public Gateway for Web; application node for raw ports | HTTPS for Web; app-controlled raw protocol |
-| `public_shared_443` | raw TLS-over-TCP with a distinct SNI | selected public Site Gateway | HAProxy SNI passthrough on public 443; Caddy retains Web TLS |
+| `public_shared_443` | raw TLS-over-TCP with a distinct protocol SNI | selected public Site Gateway | DNS uses the connection hostname; HAProxy routes the separately stored protocol SNI on public 443; Caddy retains Web TLS |
 | `cloudflare_tunnel` | HTTP/HTTPS | selected Tunnel-capable node | Cloudflare HTTPS to a private origin |
 
 Direct-public DNS managed through Cloudflare is always DNS-only. A standard
 Cloudflare Tunnel is not offered for arbitrary VLESS/TCP/UDP clients. Raw 3x-ui
-inbounds remain owned by 3x-ui; Vastora observes their protocol, port, listen
-address, and reachability but does not rewrite them or manage nftables.
+inbounds remain owned by 3x-ui. Vastora can request a new VLESS REALITY inbound
+through Agent's node-local API, then observes its protocol, transport, security,
+port, listen address, and reachability without managing nftables.
 
 ## Gateway and Tunnel desired state
 
@@ -180,6 +181,19 @@ Panel and subscription are separate Web Services. Agent reads enabled inbounds
 through the local Bearer-token API on heartbeat and reports them as observed raw
 Services. The panel is a management Service and cannot be published publicly
 without explicit high-risk confirmation.
+
+The one-click REALITY flow is an authenticated, leased Application command.
+Agent uses 3x-ui's own live target scanner on the application node, accepts only
+a target that passes TLS 1.3, H2, certificate, and X25519 checks, generates the
+keys and client locally, and binds the private inbound to the confirmed service
+address on an unoccupied high port. Center then creates a `public_shared_443`
+Publication: its connection hostname is DNS for the chosen Gateway, while its
+camouflage SNI is the separate HAProxy routing key. The generated VLESS URI is
+encrypted at rest and can be revealed only once. Automatic selection uses the
+node's live reachability and scanner ranking instead of guessing from its ASN;
+an ASN does not prove that a particular target, certificate, or X25519 path is
+usable. Advanced users may supply a target and SNI together, but Agent still
+requires a successful node-local scan and certificate-name match.
 
 ## Offline and backup boundaries
 
