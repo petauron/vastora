@@ -71,15 +71,12 @@ jobs:
         id: release_pr
         if: steps.release.outputs.prs_created == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
           head_branch="$(printf '%s' "$RELEASE_PR" | jq -er '.headBranchName')"
-          pull_number="$(printf '%s' "$RELEASE_PR" | jq -er '.number')"
-          base_sha="$(gh api "/repos/$GITHUB_REPOSITORY/pulls/$pull_number" --jq '.base.sha')"
           {
             echo "head_branch=$head_branch"
-            echo "base_sha=$base_sha"
+            echo "base_sha=$GITHUB_SHA"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check out release pull request
