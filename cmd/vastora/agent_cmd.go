@@ -30,10 +30,7 @@ func runAgent(arguments []string) error {
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
-		name := flags.String("name", "", "agent display name")
 		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
-		rolesValue := flags.String("roles", "worker,gateway", "comma-separated node roles: worker,gateway")
-		capabilitiesValue := flags.String("capabilities", "docker,gateway,tunnel", "comma-separated implemented capabilities: docker,gateway,tunnel")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -46,33 +43,25 @@ func runAgent(arguments []string) error {
 		if *centerURL == "" || *tokenFile == "" {
 			return errors.New("--center-url and --token-file are required")
 		}
-		if *name == "" {
-			*name, _ = os.Hostname()
-		}
-		roles, err := parseNodeRoles(*rolesValue)
-		if err != nil {
-			return err
-		}
-		capabilities, err := parseNodeCapabilities(*capabilitiesValue)
-		if err != nil {
-			return err
-		}
-		if capabilities.Docker && !containsValue(roles, "worker") || capabilities.Gateway && !containsValue(roles, "gateway") || capabilities.Tunnel && !containsValue(roles, "worker") {
-			return errors.New("selected capabilities do not match the node roles")
-		}
 		store, err := agent.Open(*dataDir)
 		if err != nil {
 			return err
 		}
 		defer store.Close()
-		if _, connectionErr := store.Connection(context.Background()); connectionErr != nil {
-			token, tokenErr := readPrivateToken(*tokenFile)
-			if tokenErr != nil {
-				return tokenErr
-			}
-			if err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, *name, token); err != nil {
-				return err
-			}
+		if _, connectionErr := store.Connection(context.Background()); connectionErr == nil {
+			return errors.New("agent is already installed; use agent update or agent configure")
+		}
+		token, err := readPrivateToken(*tokenFile)
+		if err != nil {
+			return err
+		}
+		enrollment, err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, token)
+		if err != nil {
+			return err
+		}
+		roles, capabilities, err := validatedNodeRuntime(strings.Join(enrollment.Roles, ","), nodeCapabilitiesString(enrollment.Capabilities))
+		if err != nil {
+			return fmt.Errorf("center returned an invalid Agent profile: %w", err)
 		}
 		executable, err := os.Executable()
 		if err != nil {
@@ -81,7 +70,7 @@ func runAgent(arguments []string) error {
 		if err := installSystemdAgent(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
 			return err
 		}
-		fmt.Printf("Agent %s installed and started\n", *name)
+		fmt.Printf("Agent %s installed and started\n", enrollment.Name)
 		return nil
 	case "configure":
 		flags := flag.NewFlagSet("agent configure", flag.ContinueOnError)
@@ -162,16 +151,12 @@ func runAgent(arguments []string) error {
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "", "Agent state directory")
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
-		name := flags.String("name", "", "agent display name")
 		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
 		if *dataDir == "" || *centerURL == "" || *tokenFile == "" {
 			return errors.New("--data-dir, --center-url, and --token-file are required")
-		}
-		if *name == "" {
-			*name, _ = os.Hostname()
 		}
 		token, err := readPrivateToken(*tokenFile)
 		if err != nil {
@@ -182,10 +167,11 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		defer store.Close()
-		if err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, *name, token); err != nil {
+		enrollment, err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, token)
+		if err != nil {
 			return err
 		}
-		fmt.Printf("Agent %s enrolled with %s\n", *name, *centerURL)
+		fmt.Printf("Agent %s enrolled with %s\n", enrollment.Name, *centerURL)
 		return nil
 	case "init":
 		flags := flag.NewFlagSet("agent init", flag.ContinueOnError)

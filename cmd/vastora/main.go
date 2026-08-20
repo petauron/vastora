@@ -65,13 +65,13 @@ func printUsage(writer *os.File) {
 Usage:
   vastora version
   vastora center serve --data-dir DIR [--agent-connect-url URL] [--headscale-allowed-url URL] [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
-  vastora center agent-token create --data-dir DIR --site-id SITE
+  vastora center agent-token create --data-dir DIR --site-id SITE --name NAME --center-url URL [--gateway] [--tunnel] [--headscale]
   vastora center backup --data-dir DIR --output FILE --password-file FILE
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE
   vastora deployer serve --socket /run/vastora-deployer/deployer.sock
   vastora agent init --data-dir DIR
-  vastora agent enroll --data-dir DIR --center-url URL --token-file FILE [--name NAME]
-  vastora agent install --center-url URL --token-file FILE [--name NAME]
+  vastora agent enroll --data-dir DIR --center-url URL --token-file FILE
+  vastora agent install --center-url URL --token-file FILE
   vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
   vastora agent update [--data-dir /var/lib/vastora/agent]
   vastora agent serve --data-dir DIR [--listen 127.0.0.1:8090]

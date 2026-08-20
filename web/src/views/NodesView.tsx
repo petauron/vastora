@@ -20,11 +20,10 @@ import { Switch } from "@/components/ui/switch";
 
 export { validCenterURL } from "../lib/network";
 
-export function agentInstallCommand({ capabilities, centerURL, enrollment, installerAvailable, name, roles }: { capabilities: string; centerURL: string; enrollment: AgentEnrollment; installerAvailable: boolean; name: string; roles: string }) {
-  const bootstrap = enrollment.headscaleCommand ? `command -v tailscale >/dev/null 2>&1 || { echo 'Install Tailscale first.' >&2; exit 1; }; ${enrollment.headscaleCommand} && ` : "";
-  const curlSecurity = centerURL.startsWith("https://") ? "--proto '=https' --proto-redir '=https' --tlsv1.2" : "--proto '=http' --proto-redir '=https'";
-  if (installerAvailable) return `${bootstrap}curl ${curlSecurity} -fsSL ${shellQuote(`${centerURL.replace(/\/$/, "")}/install/agent.sh`)} | sudo sh -s -- --center-url ${shellQuote(centerURL)} --token ${shellQuote(enrollment.token)} --name ${shellQuote(name)} --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
-  return `${bootstrap}printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file - --name ${shellQuote(name)} --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
+export function agentInstallCommand({ centerURL, enrollment, installerAvailable }: { centerURL: string; enrollment: AgentEnrollment; installerAvailable: boolean }) {
+  const curlSecurity = centerURL.startsWith("https://") ? "--proto '=https' --tlsv1.2" : "--proto '=http'";
+  if (installerAvailable) return `curl ${curlSecurity} -fsS -H ${shellQuote(`Authorization: Bearer ${enrollment.token}`)} ${shellQuote(`${centerURL.replace(/\/$/, "")}/install/agent.sh`)} | sudo sh`;
+  return `printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file -`;
 }
 
 export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNavigate, startAdding = false }: { data: AppData; language: Language; mutate: Mutate; onAddFirstNodeHandled?: () => void; onNavigate: (screen: Screen) => void; startAdding?: boolean }) {
@@ -67,20 +66,18 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
     setCenterURL(data.status.agentConnectUrl);
     setUseHeadscale(data.status.agentConnectionMode === "headscale");
   }, [open, data.sites, data.status.agentConnectUrl, data.status.agentConnectionMode]);
-  const roles = gateway ? "worker,gateway" : "worker";
-  const capabilities = ["docker", gateway ? "gateway" : "", tunnel ? "tunnel" : ""].filter(Boolean).join(",");
   const headscaleReady = data.integrations.some((integration) => integration.kind === "headscale" && integration.status === "configured");
   const command = useMemo(() => {
     if (!enrollment) return "";
-    return agentInstallCommand({ capabilities, centerURL, enrollment, installerAvailable: data.status.agentInstallerAvailable, name, roles });
-  }, [enrollment, data.status.agentInstallerAvailable, name, centerURL, roles, capabilities]);
+    return agentInstallCommand({ centerURL, enrollment, installerAvailable: data.status.agentInstallerAvailable });
+  }, [enrollment, data.status.agentInstallerAvailable, centerURL]);
   const joinedAgent = enrollment ? data.agents.find((agent) => agent.status === "active" && agent.name === name && !existingAgentIDs.includes(agent.id)) : undefined;
   const close = () => { initialized.current = false; setName(""); setSiteID(""); setCenterURL(""); setGateway(true); setTunnel(false); setEnrollment(null); setExistingAgentIDs([]); setUseHeadscale(false); setError(""); setBusy(false); onClose(); };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setError("");
     if (!validCenterURL(centerURL)) { setError(copy(language, "Center 必须使用 HTTPS；只有 127.0.0.1 或 localhost 可以使用 HTTP。", "Center must use HTTPS. Only 127.0.0.1 or localhost may use HTTP.")); return; }
     setBusy(true);
-    try { setExistingAgentIDs(data.agents.map((agent) => agent.id)); setEnrollment(await api.createAgentEnrollment(siteID, useHeadscale && headscaleReady, gateway)); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
+    try { setExistingAgentIDs(data.agents.map((agent) => agent.id)); setEnrollment(await api.createAgentEnrollment(siteID, name, centerURL, useHeadscale && headscaleReady, gateway, tunnel)); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
   return (
     <Sheet onOpenChange={(next) => { if (!next) close(); }} open={open}>
@@ -90,7 +87,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
           <SheetDescription>{enrollment ? copy(language, "在目标 Linux 设备运行一次下面的命令。", "Run the command below once on the target Linux device.") : copy(language, "填写名称和位置即可，连接方式已根据系统配置自动选择。", "Enter a name and location. The connection method is selected from system settings.")}</SheetDescription>
         </SheetHeader>
         {enrollment ? <div className="flex flex-1 flex-col gap-5 px-4">
-          <Alert><TerminalIcon /><AlertTitle>{copy(language, "在目标设备运行一次", "Run once on the target device")}</AlertTitle><AlertDescription>{data.status.agentInstallerAvailable ? copy(language, enrollment.headscaleCommand ? "需要 Linux、systemd、Docker、curl 和已安装的 Tailscale。命令会先加入安全私网，再安装 Agent。" : "需要 Linux、systemd、Docker 和 curl；命令会自动下载匹配 CPU 的 Agent 单文件。", enrollment.headscaleCommand ? "Linux, systemd, Docker, curl, and Tailscale are required. The command joins the secure private network before installing Agent." : "Linux, systemd, Docker, and curl are required. The command downloads the Agent binary for the detected CPU.") : copy(language, "当前 Center 没有内置 Agent 文件，请先把 vastora 放到 /usr/local/bin/vastora。", "This Center does not include Agent binaries. Put vastora at /usr/local/bin/vastora first.")}</AlertDescription></Alert>
+          <Alert><TerminalIcon /><AlertTitle>{copy(language, "在目标设备运行一次", "Run once on the target device")}</AlertTitle><AlertDescription>{data.status.agentInstallerAvailable ? copy(language, useHeadscale ? "需要 Linux、systemd、Docker、curl 和已安装的 Tailscale。脚本会读取 Center 保存的配置，先加入安全私网，再安装 Agent。" : "需要 Linux、systemd、Docker 和 curl。脚本会读取 Center 保存的配置并自动安装 Agent。", useHeadscale ? "Linux, systemd, Docker, curl, and Tailscale are required. The script reads the configuration saved by Center, joins the private network, and installs Agent." : "Linux, systemd, Docker, and curl are required. The script reads the configuration saved by Center and installs Agent automatically.") : copy(language, "当前 Center 没有内置 Agent 文件，请先把 vastora 放到 /usr/local/bin/vastora。", "This Center does not include Agent binaries. Put vastora at /usr/local/bin/vastora first.")}</AlertDescription></Alert>
           <div className="relative"><code className="block max-h-56 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div>
           <div aria-live="polite" className="flex items-start gap-3 rounded-xl border p-4">{joinedAgent ? <CheckCircle2Icon className="mt-0.5 text-success" /> : <Spinner className="mt-0.5" />}<div><p className="text-sm font-medium">{joinedAgent ? copy(language, `${joinedAgent.name} 已上线`, `${joinedAgent.name} is online`) : copy(language, "正在等待节点上线…", "Waiting for the node to come online…")}</p><p className="mt-1 text-xs text-muted-foreground">{joinedAgent ? copy(language, "下一步确认 Agent 自动发现的网络地址。", "Next, confirm the network addresses discovered by the Agent.") : copy(language, `命令将在 ${formatDate(language, enrollment.expiresAt)} 失效。`, `The command expires at ${formatDate(language, enrollment.expiresAt)}.`)}</p></div></div>
           <Alert><CheckCircle2Icon /><AlertTitle>{copy(language, "凭据仅显示这一次", "Credential is shown only once")}</AlertTitle><AlertDescription>{copy(language, "令牌十分钟后失效且只能使用一次。关闭后如未执行，请重新生成。", "The token expires in ten minutes and works only once. Generate a new one if you close before running it.")}</AlertDescription></Alert>

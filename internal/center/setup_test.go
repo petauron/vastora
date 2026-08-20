@@ -61,7 +61,7 @@ func TestInitialSetupCreatesTheFirstRealSiteAndNetworkDefaults(t *testing.T) {
 	if config.AgentConnectionMode != "public" || config.AgentConnectURL != "https://center.example.com" {
 		t.Fatalf("unexpected saved network config: %#v", config)
 	}
-	if _, err := store.CreateAgentEnrollment(ctx, ""); err == nil {
+	if _, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{Name: "missing-site", CenterURL: "https://center.example.com"}); err == nil {
 		t.Fatal("Agent enrollment guessed a default site")
 	}
 	if _, err := store.CompleteInitialSetup(ctx, InitialSetupInput{Site: SiteInput{Name: "Duplicate", Code: "duplicate", Timezone: "UTC"}, Network: CenterNetworkInput{AgentConnectionMode: "lan", AgentConnectURL: "https://center.example.com"}}); err == nil {

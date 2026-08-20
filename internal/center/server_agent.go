@@ -21,26 +21,23 @@ func (s *Server) handleListAgents(writer http.ResponseWriter, request *http.Requ
 func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		SiteID       string `json:"siteId"`
+		Name         string `json:"name"`
+		CenterURL    string `json:"centerUrl"`
 		UseHeadscale bool   `json:"useHeadscale"`
 		Gateway      bool   `json:"gateway"`
+		Tunnel       bool   `json:"tunnel"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), input.SiteID)
+	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), AgentEnrollmentSpec{
+		SiteID: input.SiteID, Name: input.Name, CenterURL: input.CenterURL,
+		UseHeadscale: input.UseHeadscale, Gateway: input.Gateway, Tunnel: input.Tunnel,
+	})
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
-	}
-	if input.UseHeadscale {
-		join, err := s.store.CreateHeadscaleBootstrap(request.Context(), input.Gateway)
-		if err != nil {
-			writeError(writer, http.StatusBadRequest, err)
-			return
-		}
-		enrollment.HeadscaleCommand = join.Command
-		enrollment.HeadscaleExpiresAt = join.ExpiresAt
 	}
 	writeJSON(writer, http.StatusCreated, enrollment)
 }
@@ -86,14 +83,13 @@ func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request
 func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		Token   string `json:"token"`
-		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Name, input.Version)
+	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Version)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return

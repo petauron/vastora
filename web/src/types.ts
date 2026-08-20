@@ -85,7 +85,7 @@ export type AgentView = {
   gatewayHealthy: boolean;
 };
 
-export type AgentEnrollment = { token: string; siteId: string; expiresAt: string; headscaleCommand?: string; headscaleExpiresAt?: string };
+export type AgentEnrollment = { token: string; siteId: string; expiresAt: string };
 
 export type NetworkKind = "lan" | "headscale" | "public";
 export type NetworkCandidate = { address: string; interface: string; family: "ipv4" | "ipv6"; kind: NetworkKind; observedAt: string };

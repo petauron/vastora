@@ -27,18 +27,23 @@ func runCenter(arguments []string) error {
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "", "Center state directory")
 		siteID := flags.String("site-id", "", "target Site ID")
+		name := flags.String("name", "", "Agent display name")
+		centerURL := flags.String("center-url", "", "Agent-reachable Center URL")
+		gateway := flags.Bool("gateway", false, "allow the Agent to provide service access")
+		tunnel := flags.Bool("tunnel", false, "allow the Agent to run Cloudflare Tunnel")
+		headscale := flags.Bool("headscale", false, "join the configured Headscale network before enrollment")
 		if err := flags.Parse(arguments[2:]); err != nil {
 			return err
 		}
-		if *dataDir == "" || *siteID == "" {
-			return errors.New("--data-dir and --site-id are required")
+		if *dataDir == "" || *siteID == "" || *name == "" || *centerURL == "" {
+			return errors.New("--data-dir, --site-id, --name, and --center-url are required")
 		}
 		store, err := center.Open(*dataDir)
 		if err != nil {
 			return err
 		}
 		defer store.Close()
-		enrollment, err := store.CreateAgentEnrollment(context.Background(), *siteID)
+		enrollment, err := store.CreateAgentEnrollment(context.Background(), center.AgentEnrollmentSpec{SiteID: *siteID, Name: *name, CenterURL: *centerURL, Gateway: *gateway, Tunnel: *tunnel, UseHeadscale: *headscale})
 		if err != nil {
 			return err
 		}

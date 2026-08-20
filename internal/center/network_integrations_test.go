@@ -147,6 +147,29 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 	if !ok || len(tags) != 2 || tags[0] != "tag:vastora-agent" || tags[1] != "tag:vastora-gateway" {
 		t.Fatalf("bootstrap tags = %#v", preAuthBody["aclTags"])
 	}
+	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "private-node", CenterURL: "https://center.example.com", Gateway: true, UseHeadscale: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bootstrapSecretID string
+	var sealed []byte
+	if err := store.db.QueryRow(`SELECT bootstrap_secret_id, sealed FROM agent_enrollment_tokens JOIN secrets ON secrets.id = bootstrap_secret_id WHERE token_hash = ?`, tokenHash(enrollment.Token)).Scan(&bootstrapSecretID, &sealed); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(sealed), "bootstrap-one-time-key") {
+		t.Fatal("Headscale bootstrap key was stored in plaintext")
+	}
+	profile, err := store.AgentEnrollmentInstallProfile(context.Background(), enrollment.Token)
+	if err != nil || !strings.Contains(profile.HeadscaleCommand, "bootstrap-one-time-key") {
+		t.Fatalf("installer profile bootstrap = %q, err = %v", profile.HeadscaleCommand, err)
+	}
+	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test"); err != nil {
+		t.Fatal(err)
+	}
+	var remaining int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM secrets WHERE id = ?`, bootstrapSecretID).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("consumed bootstrap secret count = %d, err = %v", remaining, err)
+	}
 }
 
 func TestConfiguredIntegrationSecretCanBeRetained(t *testing.T) {

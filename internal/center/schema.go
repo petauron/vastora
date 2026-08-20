@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 6
+const centerSchemaVersion = 7
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -100,6 +100,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 		`CREATE TABLE agent_enrollment_tokens (
 			token_hash BLOB PRIMARY KEY,
 			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+			name TEXT NOT NULL,
+			center_url TEXT NOT NULL,
+			roles_json BLOB NOT NULL,
+			capabilities_json BLOB NOT NULL,
+			bootstrap_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
 			expires_at TEXT NOT NULL,
 			used_at TEXT
 		)`,
