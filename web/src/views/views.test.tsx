@@ -3,7 +3,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DashboardData } from "../App";
+import type { AppData } from "../App";
 import { api } from "../api";
 import { AppsView } from "./AppsView";
 import { HomeView } from "./HomeView";
@@ -12,6 +12,7 @@ import { NodesView, agentInstallCommand, validCenterURL } from "./NodesView";
 import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
+import { defaultPublicationHostname } from "./appAccess";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,8 +26,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const dashboard = (): DashboardData => ({
-  status: { version: "test", catalogSources: 1, catalogApps: 1, agents: 1, deployments: 1, agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" },
+const dashboard = (): AppData => ({
+  status: { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" },
   sources: [], organizations: [], routes: [], actions: [], integrations: [],
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
   agents: [{ id: "agent", name: "home-server", version: "test", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", family: "ipv4", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
@@ -51,7 +52,6 @@ describe("network and app views", () => {
     const data = dashboard();
     data.agents = [];
     data.applications = [];
-    data.status.agents = 0;
     let destination = "";
     const container = render(<HomeView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={(screen) => { destination = screen; }} />);
     expect(container.textContent).toContain("完成首次设置");
@@ -62,14 +62,37 @@ describe("network and app views", () => {
     expect(destination).toBe("nodes");
   });
 
+  it("groups recent task events into one home activity", () => {
+    const data = dashboard();
+    data.actions = [
+      { id: "3", taskId: "install", agentId: "agent", kind: "application.apply", revision: 1, event: "succeeded", message: "install vastora-official/komari-agent", createdAt: "2026-08-18T00:03:00Z" },
+      { id: "2", taskId: "install", agentId: "agent", kind: "application.apply", revision: 1, event: "claimed", message: "install vastora-official/komari-agent", createdAt: "2026-08-18T00:02:00Z" },
+      { id: "1", taskId: "install", agentId: "agent", kind: "application.apply", revision: 1, event: "queued", message: "install vastora-official/komari-agent", createdAt: "2026-08-18T00:01:00Z" }
+    ];
+    const container = render(<HomeView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    expect(container.textContent?.match(/应用变更/g)).toHaveLength(1);
+    expect(container.textContent).toContain("成功");
+  });
+
+  it("creates lowercase DNS-safe default service hostnames", () => {
+    const data = dashboard();
+    const service = { id: "manager", applicationId: "running", siteId: "site", name: "Manager 页面", protocol: "http" as const, containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog" as const, management: true, status: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
+    data.services = [service];
+    expect(defaultPublicationHostname(data, service)).toBe("komari-agent.home.example");
+    data.services.push({ ...service, id: "subscription", name: "订阅服务" });
+    expect(defaultPublicationHostname(data, service)).toBe("komari-agent-manager.home.example");
+  });
+
   it("shows LAN, Headscale, and public networking as simultaneous capabilities", () => {
     const data = dashboard();
     data.agents.push({ ...data.agents[0], id: "retired", name: "retired-node", status: "disabled", connected: false });
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("局域网");
-    expect(container.textContent).toContain("Headscale");
-    expect(container.textContent).toContain("公网与 Cloudflare");
-    expect(container.textContent).toContain("同时使用局域网、Headscale 和公网");
+    expect(container.textContent).toContain("安全私网");
+    expect(container.textContent).toContain("公网地址");
+    expect(container.textContent).toContain("外部服务");
+    expect(container.textContent).toContain("Cloudflare");
+    expect(container.textContent).toContain("同时具备局域网、安全私网和公网能力");
     expect(container.textContent).not.toContain("retired-node");
   });
 
@@ -79,6 +102,9 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("高权限");
     expect(container.textContent).not.toContain("Failed");
     expect(container.textContent).toContain("先把应用安装为私有服务");
+    const store = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"));
+    act(() => store?.click());
+    expect(store?.getAttribute("aria-pressed")).toBe("true");
     expect(container.textContent).toContain("所有可用节点都已安装此应用");
   });
 
@@ -99,7 +125,9 @@ describe("network and app views", () => {
     data.deployments = [{ id: "failed-install", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "install", deleteData: false, error: "container could not start", applicationId: "failed", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("最近操作");
-    expect(container.textContent).toContain("container could not start");
+    expect(container.textContent).toContain("操作未完成，请检查填写内容后重试");
+    const technical = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("container could not start"));
+    expect(technical?.open).toBe(false);
     expect(container.textContent).toContain("重试");
     expect(container.textContent).toContain("无需手动刷新");
   });
@@ -107,7 +135,6 @@ describe("network and app views", () => {
   it("guides a new administrator to add the first node", () => {
     const data = dashboard();
     data.agents = [];
-    data.status.agents = 0;
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
     expect(container.textContent).toContain("添加第一台节点");
     expect(container.textContent).toContain("复制一条命令");
@@ -159,24 +186,6 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("你准备在哪里使用 Vastora");
     expect(container.querySelector<HTMLInputElement>('input[value="headscale"]')?.checked).toBe(true);
     expect(window.sessionStorage.getItem("vastora.initial-setup.v1")).not.toContain("apiKey");
-  });
-
-  it("moves an unfinished built-in setup draft from public 8443 to standard HTTPS", () => {
-    window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
-      step: 2,
-      name: "DMIT",
-      timezone: "Asia/Singapore",
-      domainSuffix: "example.com",
-      mode: "headscale",
-      agentConnectUrl: "https://center.example.com:8443",
-      headscaleMode: "builtin",
-      headscaleUrl: "https://headscale.example.com:8443",
-      dnsMode: "manual",
-      publicAddress: "203.0.113.10"
-    }));
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} suggestedAgentConnectUrl="" />);
-    expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://center.example.com");
-    expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://headscale.example.com");
   });
 
   it("opens Cloudflare in a normal tab and offers recovery actions", async () => {

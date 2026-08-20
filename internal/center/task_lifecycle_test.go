@@ -34,7 +34,7 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, second.ID, second.Attempt, false, "expected failure", nil); err != nil {
 		t.Fatal(err)
 	}
-	actions, err := store.ListActions(ctx)
+	actions, err := store.ListActions(ctx, defaultActionLimit)
 	if err != nil {
 		t.Fatal(err)
 	}

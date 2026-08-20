@@ -188,6 +188,48 @@ func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	}
 }
 
+func TestStatusIsLightweightAndDashboardRouteIsRemoved(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, _, err := store.CreateFirstAdmin(ctx, "admin", "correct-horse-battery-staple"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteInitialSetup(ctx, InitialSetupInput{
+		Site:    SiteInput{Name: "Home", Code: "home", Timezone: "Asia/Singapore"},
+		Network: CenterNetworkInput{AgentConnectionMode: "lan", AgentConnectURL: "https://center.example.com"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	NewServer(store, "", false).handleStatus(response, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.String())
+	}
+	var status map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	for _, removed := range []string{"catalogSources", "catalogApps", "agents", "deployments"} {
+		if _, exists := status[removed]; exists {
+			t.Fatalf("lightweight status still includes resource count %q: %#v", removed, status)
+		}
+	}
+	if status["version"] != Version || status["agentConnectionMode"] != "lan" || status["agentConnectUrl"] != "https://center.example.com" {
+		t.Fatalf("unexpected lightweight status: %#v", status)
+	}
+
+	response = httptest.NewRecorder()
+	NewServer(store, "", false).Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("removed dashboard route status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+}
+
 func TestAdministratorCanChangePasswordAndRevokeOtherSessions(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {

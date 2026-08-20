@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { CableIcon, CloudIcon, CopyIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon } from "lucide-react";
 import { api } from "../api";
-import type { DashboardData, Mutate } from "../App";
+import type { AppData, Mutate } from "../App";
 import type { AgentView, HeadscaleJoin, Integration, NetworkKind, NetworkProfile } from "../types";
 import type { Language } from "../translations";
-import { PageHeading, StateBadge, copy, formatDate } from "./shared";
+import { PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -19,11 +19,12 @@ import { Switch } from "@/components/ui/switch";
 
 type IntegrationEditor = "headscale" | "cloudflare" | null;
 
-export function NetworkView({ data, language, mutate }: { data: DashboardData; language: Language; mutate: Mutate }) {
+export function NetworkView({ data, language, mutate }: { data: AppData; language: Language; mutate: Mutate }) {
   const [editor, setEditor] = useState<IntegrationEditor>(null);
   const [profileAgent, setProfileAgent] = useState<AgentView | null>(null);
   const [join, setJoin] = useState<HeadscaleJoin | null>(null);
   const [joinBusy, setJoinBusy] = useState("");
+  const [joinError, setJoinError] = useState("");
   const headscale = integration(data.integrations, "headscale");
   const cloudflare = integration(data.integrations, "cloudflare");
   const activeAgents = data.agents.filter((agent) => agent.status === "active");
@@ -31,27 +32,34 @@ export function NetworkView({ data, language, mutate }: { data: DashboardData; l
 
   const createJoin = async (agent: AgentView) => {
     setJoinBusy(agent.id);
-    try { setJoin(await api.createHeadscaleJoin(agent.id)); } finally { setJoinBusy(""); }
+    setJoinError("");
+    try { setJoin(await api.createHeadscaleJoin(agent.id)); } catch (error) { setJoinError(userError(language, error)); } finally { setJoinBusy(""); }
   };
 
   return (
     <section className="flex flex-col gap-7">
-      <PageHeading title={copy(language, "网络", "Network")} description={copy(language, "一个节点可以同时使用局域网、Headscale 和公网。应用安装后，再为服务选择一个或多个访问入口。", "A node can use LAN, Headscale, and public networking together. Add one or more access points after an app is installed.")} />
+      <PageHeading title={copy(language, "网络", "Network")} description={copy(language, "每台节点可以同时具备局域网、安全私网和公网能力；Vastora 会为服务自动选择合适的入口。", "Each node can use local, secure private, and public networking together. Vastora selects a suitable access method for each service.")} />
       <div className="grid gap-4 lg:grid-cols-3">
-        <CapabilityCard icon={<CableIcon />} title={copy(language, "局域网", "Local network")} description={copy(language, "适合家中或办公室内直接访问。", "Direct access at home or in the office.")} count={enabledCount("lan")} language={language} />
+        <CapabilityCard icon={<CableIcon />} title={copy(language, "局域网", "Local network")} description={copy(language, "家中或办公室内的设备可以直接访问。", "Devices at home or in the office can connect directly.")} count={enabledCount("lan")} language={language} technical={copy(language, "局域网依赖本地路由可达，不会自动开放公网端口。", "Local access depends on LAN routing and never opens a public port automatically.")} />
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><NetworkIcon />Headscale</CardTitle><CardDescription>{copy(language, "把不同网络中的设备安全地放进同一个私网。", "Securely connects devices across different networks.")}</CardDescription><CardAction><StateBadge value={headscale.status} /></CardAction></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">{headscale.status === "configured" ? `${headscale.mode === "builtin" ? copy(language, "内置", "Built-in") : copy(language, "外部", "External")} · ${headscale.endpoint}` : copy(language, "尚未配置控制面。", "No control plane configured.")}</p></CardContent>
+          <CardHeader><CardTitle className="flex items-center gap-2"><NetworkIcon />{copy(language, "安全私网", "Secure private network")}</CardTitle><CardDescription>{copy(language, "让不同地点的设备像在同一局域网中一样安全访问。", "Securely connects devices across locations as if they were on one LAN.")}</CardDescription><CardAction><StateBadge value={headscale.status} /></CardAction></CardHeader>
+          <CardContent><p className="text-sm text-muted-foreground">{headscale.status === "configured" ? copy(language, "安全私网服务已准备好。", "The secure private network is ready.") : copy(language, "尚未设置安全私网。", "The secure private network is not set up.")}</p><details className="mt-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy(language, "技术信息", "Technical details")}</summary><p className="mt-2 break-all">Headscale · {headscale.mode ?? "—"} · {headscale.endpoint ?? "—"}</p></details></CardContent>
           <CardFooter className="justify-between"><span className="text-xs text-muted-foreground">{enabledCount("headscale")} {copy(language, "个节点已连接", "node(s) connected")}</span><Button onClick={() => setEditor("headscale")} size="sm" variant="outline">{headscale.status === "configured" ? copy(language, "修改", "Edit") : copy(language, "设置", "Set up")}</Button></CardFooter>
         </Card>
+        <CapabilityCard icon={<Globe2Icon />} title={copy(language, "公网地址", "Public address")} description={copy(language, "仅用于确实拥有公网入站地址的服务器。", "Only for servers that truly have an inbound public address.")} count={enabledCount("public")} language={language} technical={copy(language, "NAT 出口地址不算公网入站能力；Vastora 不会自动修改防火墙。", "A NAT egress address is not public ingress. Vastora does not change the firewall automatically.")} />
+      </div>
+
+      <div className="flex flex-col gap-4">
+        <div><h2 className="text-lg font-semibold">{copy(language, "外部服务", "Connections")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "可选连接只在需要自动管理域名或公网网页时使用。", "Optional connections are used only for automatic domain management or public websites.")}</p></div>
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Globe2Icon />{copy(language, "公网与 Cloudflare", "Public & Cloudflare")}</CardTitle><CardDescription>{copy(language, "公网直连用于真实公网节点；Tunnel 用于 Web 服务。", "Direct public access is for public nodes; Tunnel is for Web services.")}</CardDescription><CardAction><StateBadge value={cloudflare.status} /></CardAction></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">{cloudflare.status === "configured" ? copy(language, `已连接域名 ${cloudflare.endpoint}`, `Connected zone ${cloudflare.endpoint}`) : copy(language, "Cloudflare 是可选集成。", "Cloudflare is optional.")}</p></CardContent>
-          <CardFooter className="justify-between"><span className="text-xs text-muted-foreground">{enabledCount("public")} {copy(language, "个公网节点", "public node(s)")}</span><Button onClick={() => setEditor("cloudflare")} size="sm" variant="outline">{cloudflare.status === "configured" ? copy(language, "修改", "Edit") : copy(language, "设置", "Set up")}</Button></CardFooter>
+          <CardHeader><CardTitle className="flex items-center gap-2"><CloudIcon />Cloudflare</CardTitle><CardDescription>{copy(language, "自动管理域名解析，并可安全发布公网网页。", "Automatically manages DNS and can securely publish public websites.")}</CardDescription><CardAction><StateBadge value={cloudflare.status} /></CardAction></CardHeader>
+          <CardContent><p className="text-sm text-muted-foreground">{cloudflare.status === "configured" ? copy(language, `已连接域名 ${cloudflare.endpoint}`, `Connected zone ${cloudflare.endpoint}`) : copy(language, "可选，不影响局域网和安全私网使用。", "Optional; local and secure private access work without it.")}</p></CardContent>
+          <CardFooter className="justify-end"><Button onClick={() => setEditor("cloudflare")} size="sm" variant="outline">{cloudflare.status === "configured" ? copy(language, "修改", "Edit") : copy(language, "连接", "Connect")}</Button></CardFooter>
         </Card>
       </div>
 
       {join ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "一次性加入命令", "One-time join command")}</AlertTitle><AlertDescription><p>{copy(language, `请在 ${formatDate(language, join.expiresAt)} 前仅在目标节点运行一次。`, `Run this once on the target node before ${formatDate(language, join.expiresAt)}.`)}</p><div className="mt-3 flex items-start gap-2"><code className="min-w-0 flex-1 break-all rounded-lg bg-muted p-3 text-xs">{join.command}</code><Button aria-label={copy(language, "复制命令", "Copy command")} onClick={() => void navigator.clipboard.writeText(join.command)} size="icon" variant="outline"><CopyIcon /></Button></div></AlertDescription></Alert> : null}
+      {joinError ? <Alert variant="destructive"><AlertTitle>{copy(language, "未能生成加入命令", "Could not create a join command")}</AlertTitle><AlertDescription>{joinError}</AlertDescription></Alert> : null}
 
       <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "节点网络", "Node networks")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "Agent 自动发现地址，你只需要确认建议配置。", "Agents discover addresses automatically; you only confirm the suggestion.")}</p></div>
@@ -71,13 +79,18 @@ function integration(values: Integration[], kind: Integration["kind"]): Integrat
   return values.find((value) => value.kind === kind) ?? { kind, secretSet: false, status: "disabled" };
 }
 
-function CapabilityCard({ icon, title, description, count, language }: { icon: ReactNode; title: string; description: string; count: number; language: Language }) {
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2">{icon}{title}</CardTitle><CardDescription>{description}</CardDescription><CardAction><StateBadge value={count ? "configured" : "disabled"} /></CardAction></CardHeader><CardContent><p className="text-sm text-muted-foreground">{count} {copy(language, "个节点", "node(s)")}</p></CardContent><CardFooter><span className="text-xs text-muted-foreground">{copy(language, "受保护网络默认使用 HTTP。", "Protected networks use HTTP by default.")}</span></CardFooter></Card>;
+function CapabilityCard({ icon, title, description, count, language, technical }: { icon: ReactNode; title: string; description: string; count: number; language: Language; technical: string }) {
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2">{icon}{title}</CardTitle><CardDescription>{description}</CardDescription><CardAction><StateBadge value={count ? "configured" : "disabled"} /></CardAction></CardHeader><CardContent><p className="text-sm text-muted-foreground">{count} {copy(language, "个节点已确认", "node(s) confirmed")}</p><details className="mt-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy(language, "技术信息", "Technical details")}</summary><p className="mt-2 leading-5">{technical}</p></details></CardContent></Card>;
 }
 
 function NodeNetworkCard({ agent, headscaleReady, joinBusy, language, onConfigure, onJoin }: { agent: AgentView; headscaleReady: boolean; joinBusy: boolean; language: Language; onConfigure: () => void; onJoin: () => void }) {
   const profile = agent.networkProfile;
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerIcon />{agent.name}</CardTitle><CardDescription>{agent.connected ? copy(language, "Agent 在线", "Agent online") : copy(language, "Agent 离线", "Agent offline")}</CardDescription><CardAction><StateBadge value={profile ? "configured" : "pending"} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3"><div className="flex flex-wrap gap-2">{profile?.enabledKinds.map((kind) => <Badge key={kind} variant="outline">{kind}</Badge>)}{agent.capabilities.gateway ? <Badge variant="secondary"><RouterIcon data-icon="inline-start" />Gateway</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="secondary"><CloudIcon data-icon="inline-start" />Tunnel</Badge> : null}</div><dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-muted-foreground">{copy(language, "私有服务地址", "Private service address")}</dt><dd className="mt-1 font-mono text-xs">{profile?.serviceAddress || "—"}</dd></div><div><dt className="text-muted-foreground">{copy(language, "发现地址", "Discovered addresses")}</dt><dd className="mt-1">{agent.networkCandidates.length}</dd></div></dl></CardContent><CardFooter className="gap-2"><Button className="flex-1" onClick={onConfigure} size="sm" variant="outline">{profile ? copy(language, "修改", "Edit") : copy(language, "确认网络", "Confirm network")}</Button>{headscaleReady && !profile?.enabledKinds.includes("headscale") ? <Button disabled={joinBusy} onClick={onJoin} size="sm">{joinBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "加入私网", "Join private network")}</Button> : null}</CardFooter></Card>;
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerIcon />{agent.name}</CardTitle><CardDescription>{agent.connected ? copy(language, "Agent 在线", "Agent online") : copy(language, "Agent 离线", "Agent offline")}</CardDescription><CardAction><StateBadge value={profile ? "configured" : "pending"} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3"><div className="flex flex-wrap gap-2">{profile?.enabledKinds.map((kind) => <Badge key={kind} variant="outline">{networkKindLabel(language, kind)}</Badge>)}{agent.capabilities.gateway ? <Badge variant="secondary"><RouterIcon data-icon="inline-start" />{copy(language, "服务入口", "Service access")}</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="secondary"><CloudIcon data-icon="inline-start" />Cloudflare</Badge> : null}</div><dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-muted-foreground">{copy(language, "应用地址", "App address")}</dt><dd className="mt-1 font-mono text-xs">{profile?.serviceAddress || "—"}</dd></div><div><dt className="text-muted-foreground">{copy(language, "发现地址", "Discovered addresses")}</dt><dd className="mt-1">{agent.networkCandidates.length}</dd></div></dl></CardContent><CardFooter className="gap-2"><Button className="flex-1" onClick={onConfigure} size="sm" variant="outline">{profile ? copy(language, "修改", "Edit") : copy(language, "使用推荐配置", "Use recommended setup")}</Button>{headscaleReady && !profile?.enabledKinds.includes("headscale") ? <Button disabled={joinBusy} onClick={onJoin} size="sm">{joinBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "加入安全私网", "Join secure private network")}</Button> : null}</CardFooter></Card>;
+}
+
+function networkKindLabel(language: Language, kind: NetworkKind) {
+  const labels: Record<NetworkKind, [string, string]> = { lan: ["局域网", "Local network"], headscale: ["安全私网", "Secure private network"], public: ["公网地址", "Public address"] };
+  return copy(language, ...labels[kind]);
 }
 
 function suggestedProfile(agent: AgentView): NetworkProfile {
@@ -91,21 +104,58 @@ function NetworkProfileSheet({ agent, language, onClose, onSave }: { agent: Agen
   const [profile, setProfile] = useState<NetworkProfile>({ serviceAddress: "127.0.0.1", enabledKinds: [], directPublic: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { if (agent) { setProfile(suggestedProfile(agent)); setError(""); } }, [agent]);
+  const [customized, setCustomized] = useState(false);
+  useEffect(() => { if (agent) { setProfile(suggestedProfile(agent)); setCustomized(Boolean(agent.networkProfile)); setError(""); } }, [agent]);
   const grouped = useMemo(() => ({ lan: agent?.networkCandidates.filter((candidate) => candidate.kind === "lan") ?? [], headscale: agent?.networkCandidates.filter((candidate) => candidate.kind === "headscale") ?? [], public: agent?.networkCandidates.filter((candidate) => candidate.kind === "public") ?? [] }), [agent]);
-  const toggle = (kind: NetworkKind, enabled: boolean) => setProfile((current) => {
+  const toggle = (kind: NetworkKind, enabled: boolean) => {
+    setCustomized(true);
+    setProfile((current) => {
     const kinds = enabled ? [...new Set([...current.enabledKinds, kind])] : current.enabledKinds.filter((value) => value !== kind);
     return { ...current, enabledKinds: kinds, lanAddress: kind === "lan" && !enabled ? "" : current.lanAddress, headscaleAddress: kind === "headscale" && !enabled ? "" : current.headscaleAddress, publicAddress: kind === "public" && !enabled ? "" : current.publicAddress, directPublic: kind === "public" && !enabled ? false : current.directPublic };
-  });
+    });
+  };
+  const updateProfile = (next: (current: NetworkProfile) => NetworkProfile) => { setCustomized(true); setProfile(next); };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); if (!agent) return; setBusy(true); setError("");
-    try { await onSave(agent, profile); } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Request failed"); } finally { setBusy(false); }
+    try { await onSave(agent, profile); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
-  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(agent)}><SheetContent className="sm:max-w-lg"><SheetHeader><SheetTitle>{copy(language, `配置 ${agent?.name ?? ""} 的网络`, `Configure ${agent?.name ?? ""} network`)}</SheetTitle><SheetDescription>{copy(language, "只选择实际可以从其他设备访问的地址。公网地址必须真实配置在本机网卡上。", "Only select addresses reachable by other devices. A public address must be assigned to a local interface.")}</SheetDescription></SheetHeader><form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="service-address">{copy(language, "应用私有地址", "Private service address")}</FieldLabel><NativeSelect id="service-address" onChange={(event) => setProfile((current) => ({ ...current, serviceAddress: event.target.value }))} value={profile.serviceAddress}><option value="127.0.0.1">127.0.0.1 — {copy(language, "仅本机", "this node only")}</option>{agent?.networkCandidates.filter((candidate) => candidate.kind !== "public").map((candidate) => <option key={candidate.address} value={candidate.address}>{candidate.address} — {candidate.interface}</option>)}</NativeSelect><FieldDescription>{copy(language, "安装应用后若要修改，需要先停止该节点上的应用。", "Stop apps on this node before changing it later.")}</FieldDescription></Field><NetworkKindField candidates={grouped.lan} checked={profile.enabledKinds.includes("lan")} kind="lan" language={language} selected={profile.lanAddress ?? ""} onSelected={(value) => setProfile((current) => ({ ...current, lanAddress: value }))} onToggle={(checked) => toggle("lan", checked)} /><NetworkKindField candidates={grouped.headscale} checked={profile.enabledKinds.includes("headscale")} kind="headscale" language={language} selected={profile.headscaleAddress ?? ""} onSelected={(value) => setProfile((current) => ({ ...current, headscaleAddress: value }))} onToggle={(checked) => toggle("headscale", checked)} /><FieldSet><FieldLegend>{copy(language, "公网直连", "Direct public ingress")}</FieldLegend><FieldDescription>{copy(language, "只在节点拥有真实本机公网地址，并允许入站端口时启用。NAT 出口 IP 不算。", "Enable only for a real local public address that accepts inbound ports. A NAT egress address does not qualify.")}</FieldDescription><Field orientation="horizontal" data-disabled={grouped.public.length === 0}><FieldLabel htmlFor="direct-public">{copy(language, "允许直接公网发布", "Allow direct public publication")}</FieldLabel><Switch checked={profile.directPublic} disabled={grouped.public.length === 0} id="direct-public" onCheckedChange={(checked) => { toggle("public", checked); setProfile((current) => ({ ...current, directPublic: checked, publicAddress: checked ? grouped.public[0]?.address ?? "" : "" })); }} /></Field>{profile.directPublic ? <Field><FieldLabel htmlFor="public-address">{copy(language, "公网地址", "Public address")}</FieldLabel><NativeSelect id="public-address" onChange={(event) => setProfile((current) => ({ ...current, publicAddress: event.target.value }))} value={profile.publicAddress}>{grouped.public.map((candidate) => <option key={candidate.address} value={candidate.address}>{candidate.address} — {candidate.interface}</option>)}</NativeSelect></Field> : null}</FieldSet>{error ? <FieldError>{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "确认配置", "Confirm configuration")}</Button></SheetFooter></form></SheetContent></Sheet>;
+  return (
+    <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(agent)}>
+      <SheetContent className="sm:max-w-lg">
+        <SheetHeader>
+          <SheetTitle>{copy(language, `确认 ${agent?.name ?? ""} 的网络`, `Confirm ${agent?.name ?? ""} network`)}</SheetTitle>
+          <SheetDescription>{agent?.networkProfile ? copy(language, "当前配置可以直接保存，也可以展开高级设置修改地址。", "Save the current setup or open advanced settings to change addresses.") : copy(language, "Agent 已自动发现地址，建议直接使用下面的安全配置。", "The Agent discovered its addresses. The setup below is the recommended safe choice.")}</SheetDescription>
+        </SheetHeader>
+        <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
+          <div className="flex-1 overflow-y-auto px-4">
+            <FieldGroup>
+              <div className="rounded-xl border bg-muted/25 p-4">
+                <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">{agent?.networkProfile ? copy(language, "当前配置", "Current setup") : copy(language, "推荐配置", "Recommended setup")}</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, "应用将使用这个地址与入口通信。", "Apps use this address for service traffic.")}</p></div><Badge variant="secondary">{customized ? copy(language, "已修改", "Customized") : copy(language, "自动发现", "Auto-detected")}</Badge></div>
+                <p className="mt-3 break-all font-mono text-sm">{profile.serviceAddress}</p>
+                <div className="mt-3 flex flex-wrap gap-2">{profile.enabledKinds.map((kind) => <Badge key={kind} variant="outline">{networkKindLabel(language, kind)}</Badge>)}{profile.enabledKinds.length === 0 ? <span className="text-xs text-muted-foreground">{copy(language, "仅此节点可访问", "This node only")}</span> : null}</div>
+              </div>
+              <details className="rounded-xl border p-3">
+                <summary className="cursor-pointer text-sm font-medium">{copy(language, "手动修改地址（高级）", "Edit addresses manually (advanced)")}</summary>
+                <div className="mt-4 flex flex-col gap-5">
+                  <Field><FieldLabel htmlFor="service-address">{copy(language, "应用地址", "App address")}</FieldLabel><NativeSelect id="service-address" onChange={(event) => updateProfile((current) => ({ ...current, serviceAddress: event.target.value }))} value={profile.serviceAddress}><option value="127.0.0.1">127.0.0.1 — {copy(language, "仅本机", "this node only")}</option>{agent?.networkCandidates.filter((candidate) => candidate.kind !== "public").map((candidate) => <option key={candidate.address} value={candidate.address}>{candidate.address} — {candidate.interface}</option>)}</NativeSelect><FieldDescription>{copy(language, "安装应用后若要修改，需要先停止该节点上的应用。", "Stop apps on this node before changing it later.")}</FieldDescription></Field>
+                  <NetworkKindField candidates={grouped.lan} checked={profile.enabledKinds.includes("lan")} kind="lan" language={language} selected={profile.lanAddress ?? ""} onSelected={(value) => updateProfile((current) => ({ ...current, lanAddress: value }))} onToggle={(checked) => toggle("lan", checked)} />
+                  <NetworkKindField candidates={grouped.headscale} checked={profile.enabledKinds.includes("headscale")} kind="headscale" language={language} selected={profile.headscaleAddress ?? ""} onSelected={(value) => updateProfile((current) => ({ ...current, headscaleAddress: value }))} onToggle={(checked) => toggle("headscale", checked)} />
+                  <FieldSet><FieldLegend>{copy(language, "公网地址", "Public address")}</FieldLegend><FieldDescription>{copy(language, "仅当公网地址真实配置在本机网卡并允许入站时开启；NAT 出口地址不算。", "Enable only when an inbound public address is assigned to this interface. A NAT egress address does not qualify.")}</FieldDescription><Field orientation="horizontal" data-disabled={grouped.public.length === 0}><FieldLabel htmlFor="direct-public">{copy(language, "允许直接公网发布", "Allow direct public access")}</FieldLabel><Switch checked={profile.directPublic} disabled={grouped.public.length === 0} id="direct-public" onCheckedChange={(checked) => { setCustomized(true); setProfile((current) => ({ ...current, enabledKinds: checked ? [...new Set([...current.enabledKinds, "public" as NetworkKind])] : current.enabledKinds.filter((value) => value !== "public"), directPublic: checked, publicAddress: checked ? grouped.public[0]?.address ?? "" : "" })); }} /></Field>{profile.directPublic ? <Field><FieldLabel htmlFor="public-address">{copy(language, "使用地址", "Use address")}</FieldLabel><NativeSelect id="public-address" onChange={(event) => updateProfile((current) => ({ ...current, publicAddress: event.target.value }))} value={profile.publicAddress}>{grouped.public.map((candidate) => <option key={candidate.address} value={candidate.address}>{candidate.address} — {candidate.interface}</option>)}</NativeSelect></Field> : null}</FieldSet>
+                  <details className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy(language, "传输技术说明", "Transport details")}</summary><p className="mt-2 leading-5">{copy(language, "局域网和安全私网已由底层网络保护，因此内部 Web 入口可以使用 HTTP；公网网页始终使用 HTTPS。", "Local and secure private networks already protect transport, so internal Web access may use HTTP. Public websites always use HTTPS.")}</p></details>
+                </div>
+              </details>
+              {error ? <FieldError role="alert">{error}</FieldError> : null}
+            </FieldGroup>
+          </div>
+          <SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{customized ? copy(language, "保存配置", "Save setup") : copy(language, "使用推荐配置", "Use recommended setup")}</Button></SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 function NetworkKindField({ candidates, checked, kind, language, selected, onSelected, onToggle }: { candidates: AgentView["networkCandidates"]; checked: boolean; kind: "lan" | "headscale"; language: Language; selected: string; onSelected: (value: string) => void; onToggle: (value: boolean) => void }) {
-  const title = kind === "lan" ? copy(language, "局域网", "Local network") : "Headscale";
+  const title = kind === "lan" ? copy(language, "局域网", "Local network") : copy(language, "安全私网", "Secure private network");
   return <FieldSet data-disabled={candidates.length === 0}><FieldLegend>{title}</FieldLegend><Field orientation="horizontal"><FieldLabel htmlFor={`network-${kind}`}>{copy(language, "启用此网络", "Enable this network")}</FieldLabel><Switch checked={checked} disabled={candidates.length === 0} id={`network-${kind}`} onCheckedChange={(value) => { onToggle(value); if (value && !selected) onSelected(candidates[0]?.address ?? ""); }} /></Field>{checked ? <Field><FieldLabel htmlFor={`address-${kind}`}>{copy(language, "使用地址", "Use address")}</FieldLabel><NativeSelect id={`address-${kind}`} onChange={(event) => onSelected(event.target.value)} value={selected}>{candidates.map((candidate) => <option key={candidate.address} value={candidate.address}>{candidate.address} — {candidate.interface}</option>)}</NativeSelect></Field> : null}</FieldSet>;
 }
 
@@ -131,7 +181,7 @@ function HeadscaleSheet({ integration, language, open, onClose, onSave }: { inte
     event.preventDefault(); setURLTouched(true); setError("");
     if (!validURL) return;
     setBusy(true);
-    try { await onSave({ mode, url, ...(mode === "external" ? { apiKey } : {}) }); } catch (submitError) { setError(submitError instanceof Error ? submitError.message : "Request failed"); } finally { setBusy(false); }
+    try { await onSave({ mode, url, ...(mode === "external" ? { apiKey } : {}) }); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
   const externalKeyRequired = mode === "external" && !integration.secretSet;
   return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={open}><SheetContent className="sm:max-w-lg"><SheetHeader><SheetTitle>{copy(language, "设置 Headscale", "Set up Headscale")}</SheetTitle><SheetDescription>{copy(language, "内置模式由 Vastora 自动安装和维护；外部模式只验证并保存连接信息。", "Vastora installs and maintains bundled mode automatically; external mode only verifies and stores connection details.")}</SheetDescription></SheetHeader><form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="headscale-mode">1. {copy(language, "选择类型", "Choose type")}</FieldLabel><NativeSelect id="headscale-mode" onChange={(event) => setMode(event.target.value as "builtin" | "external")} value={mode}><option value="builtin">{copy(language, "自动安装到 Center 服务器", "Install on the Center server")}</option><option value="external">{copy(language, "连接已有 Headscale", "Connect an existing Headscale")}</option></NativeSelect></Field>{mode === "builtin" ? <Alert><ServerIcon /><AlertTitle>{copy(language, "无需命令和 API Key", "No command or API key needed")}</AlertTitle><AlertDescription>{copy(language, "确保域名已解析到 Center 服务器并开放 80、443。Vastora 会安装固定版本、配置标准 HTTPS 网关，并自动创建和加密保存 API Key。", "Point the hostname to the Center server and open ports 80 and 443. Vastora installs fixed versions, configures the standard HTTPS gateway, and creates and encrypts the API key automatically.")}</AlertDescription></Alert> : null}<Field data-invalid={urlInvalid}><FieldLabel htmlFor="headscale-url">2. {copy(language, "控制面 HTTPS 地址", "HTTPS control-plane URL")}</FieldLabel><Input aria-invalid={urlInvalid} id="headscale-url" onBlur={() => setURLTouched(true)} onChange={(event) => setURL(event.target.value)} placeholder="https://headscale.example.com" required type="url" value={url} />{urlInvalid ? <FieldError>{copy(language, "请输入不含账号、查询参数或片段的 HTTPS 地址。", "Enter an HTTPS URL without credentials, query parameters, or fragments.")}</FieldError> : <FieldDescription>{mode === "builtin" ? copy(language, "内置模式使用独立域名和标准 HTTPS 443。", "Bundled mode uses a separate hostname and standard HTTPS on port 443.") : copy(language, "填写浏览器和节点都能访问的地址。", "Use an address reachable by both browsers and nodes.")}</FieldDescription>}</Field>{mode === "external" ? <Field data-invalid={keyInvalid}><FieldLabel htmlFor="headscale-key">3. API Key</FieldLabel><Input aria-invalid={keyInvalid} autoComplete="new-password" id="headscale-key" minLength={integration.secretSet ? undefined : 20} onChange={(event) => setAPIKey(event.target.value.trim())} required={!integration.secretSet} type="password" value={apiKey} /><FieldDescription>{integration.secretSet ? copy(language, "已安全保存。留空会继续使用原 Key；输入新值才会替换。", "Already stored securely. Leave blank to keep it, or enter a new value to replace it.") : copy(language, "至少 20 个字符，只会加密保存。", "At least 20 characters; stored only in encrypted form.")}</FieldDescription>{keyInvalid ? <FieldError>{copy(language, "Key 至少需要 20 个字符。", "The key must contain at least 20 characters.")}</FieldError> : null}</Field> : null}{busy && mode === "builtin" ? <Alert><Spinner /><AlertTitle>{copy(language, "正在安装 Headscale", "Installing Headscale")}</AlertTitle><AlertDescription>{copy(language, "下载镜像、启动服务和申请 HTTPS 证书可能需要几分钟。", "Downloading images, starting services, and obtaining HTTPS certificates can take a few minutes.")}</AlertDescription></Alert> : null}{error ? <FieldError role="alert">{error} {copy(language, "请确认域名、端口和网络后重试。", "Confirm the hostname, ports, and network, then retry.")}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !url || urlInvalid || keyInvalid || externalKeyRequired && apiKey.length < 20} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{mode === "builtin" ? copy(language, "安装并连接", "Install and connect") : copy(language, "验证并保存", "Verify and save")}</Button></SheetFooter></form></SheetContent></Sheet>;

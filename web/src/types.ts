@@ -13,19 +13,17 @@ export type CatalogSource = {
   lastError?: string;
 };
 
-export type DashboardStatus = {
+export type CenterStatus = {
   version: string;
-  catalogSources: number;
-  catalogApps: number;
-  agents: number;
-  deployments: number;
   agentInstallerAvailable: boolean;
   agentConnectionMode: AgentConnectionMode;
   agentConnectUrl: string;
 };
 
-export type DashboardData = {
-  status: DashboardStatus;
+export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "settings";
+
+export type AppData = {
+  status: CenterStatus;
   sources: CatalogSource[];
   apps: AppView[];
   agents: AgentView[];

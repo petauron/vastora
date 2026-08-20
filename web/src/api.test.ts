@@ -68,4 +68,27 @@ describe("Center API client", () => {
 
     await expect(api.deployments()).rejects.toEqual(new APIError("deployment already active", 409));
   });
+
+  it("preserves stable error codes for localized messages", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ code: "authentication_required", error: "center: authentication required" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" }
+        })
+      )
+    );
+
+    await expect(api.status()).rejects.toEqual(new APIError("center: authentication required", 401, "authentication_required"));
+  });
+
+  it("requests a bounded activity page", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ actions: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.actions(100);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/v1/actions?limit=100");
+  });
 });
