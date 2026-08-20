@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.11](https://github.com/petauron/vastora/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) (2026-08-20)
+
+
+### Features
+
+* simplify Center operations and user flows ([#47](https://github.com/petauron/vastora/issues/47)) ([6f16e4a](https://github.com/petauron/vastora/commit/6f16e4a3d0246c654b711c43cf17d90676a99faf))
+
 ## [0.1.0-alpha.10](https://github.com/petauron/vastora/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) (2026-08-19)
 
 
