@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.20](https://github.com/petauron/vastora/compare/v0.1.0-alpha.19...v0.1.0-alpha.20) (2026-08-20)
+
+
+### Bug Fixes
+
+* verify private services through gateway addresses ([#66](https://github.com/petauron/vastora/issues/66)) ([48883ac](https://github.com/petauron/vastora/commit/48883ac47c8088cad203eb1789d48a0f7b662815))
+
 ## [0.1.0-alpha.19](https://github.com/petauron/vastora/compare/v0.1.0-alpha.18...v0.1.0-alpha.19) (2026-08-20)
 
 
