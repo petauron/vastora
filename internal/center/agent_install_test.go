@@ -175,3 +175,34 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatalf("installer loader is not valid POSIX shell: %v\n%s", err, output)
 	}
 }
+
+func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T) {
+	script := renderAgentInstallScript(AgentEnrollmentInstallProfile{
+		CenterURL:        "https://center.example.com",
+		HeadscaleCommand: "sudo tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
+	})
+	for _, expected := range []string{
+		"tailscale_version='1.102.3'",
+		"Installing Tailscale $tailscale_version...",
+		"https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg",
+		"https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list",
+		"apt-get install -y \"tailscale=$tailscale_version\"",
+		"installed_tailscale_version=",
+		"Vastora requires Tailscale $tailscale_version",
+		"systemctl enable --now tailscaled",
+		"Joining the private network...",
+		"tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("private-network installer is missing %q:\n%s", expected, script)
+		}
+	}
+	if strings.Contains(script, "Tailscale must be installed before") {
+		t.Fatal("private-network installer still requires Tailscale to be installed manually")
+	}
+	command := exec.Command("sh", "-n")
+	command.Stdin = strings.NewReader(script)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("private-network installer is not valid POSIX shell: %v\n%s", err, output)
+	}
+}

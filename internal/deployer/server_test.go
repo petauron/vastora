@@ -12,12 +12,18 @@ import (
 )
 
 type fakeInstaller struct {
-	input deployapi.HeadscaleInstallRequest
+	input          deployapi.HeadscaleInstallRequest
+	reconcileInput deployapi.HeadscaleInstallRequest
 }
 
 func (installer *fakeInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
 	installer.input = input
 	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"}, nil
+}
+
+func (installer *fakeInstaller) ReconcileHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) error {
+	installer.reconcileInput = input
+	return nil
 }
 
 func TestServerExposesOnlyTheFixedHeadscaleOperation(t *testing.T) {
@@ -30,6 +36,13 @@ func TestServerExposesOnlyTheFixedHeadscaleOperation(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || installer.input.HeadscaleURL != "https://headscale.example.com" {
 		t.Fatalf("unexpected response %d %s", response.Code, response.Body.String())
+	}
+	reconcile := httptest.NewRequest(http.MethodPost, "/v1/headscale/reconcile", bytes.NewReader(payload))
+	reconcile.Header.Set("Content-Type", "application/json")
+	reconciled := httptest.NewRecorder()
+	handler.ServeHTTP(reconciled, reconcile)
+	if reconciled.Code != http.StatusOK || installer.reconcileInput.HeadscaleURL != "https://headscale.example.com" {
+		t.Fatalf("unexpected reconciliation response %d %s", reconciled.Code, reconciled.Body.String())
 	}
 	unknown := httptest.NewRecorder()
 	handler.ServeHTTP(unknown, httptest.NewRequest(http.MethodPost, "/v1/docker/run", nil))

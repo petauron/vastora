@@ -14,13 +14,19 @@ import (
 )
 
 type fakeBuiltinHeadscaleInstaller struct {
-	endpoint string
-	input    deployapi.HeadscaleInstallRequest
+	endpoint       string
+	input          deployapi.HeadscaleInstallRequest
+	reconcileInput deployapi.HeadscaleInstallRequest
 }
 
 func (installer *fakeBuiltinHeadscaleInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
 	installer.input = input
 	return deployapi.HeadscaleInstallResult{Endpoint: installer.endpoint, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"}, nil
+}
+
+func (installer *fakeBuiltinHeadscaleInstaller) ReconcileHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) error {
+	installer.reconcileInput = input
+	return nil
 }
 
 func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
@@ -65,6 +71,10 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	if integration.Mode != "builtin" || integration.Endpoint != headscaleEndpoint || !integration.SecretSet {
 		t.Fatalf("unexpected saved integration: %#v", integration)
 	}
+	_, runtime, configured, err := store.builtinHeadscaleRuntime(context.Background())
+	if err != nil || !configured || runtime != builtinHeadscaleRuntimeVersion {
+		t.Fatalf("built-in runtime was not marked current: configured=%v runtime=%q err=%v", configured, runtime, err)
+	}
 	client, err := store.headscale(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -74,5 +84,37 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	}
 	if _, err := store.ConfigureHeadscale(context.Background(), HeadscaleInput{Mode: "builtin", URL: headscale.URL, APIKey: "user-supplied-key-is-not-accepted"}); err == nil {
 		t.Fatal("Store accepted a user-supplied built-in Headscale key")
+	}
+}
+
+func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)`, agentConnectionModeSetting, "headscale", agentConnectURLSetting, "https://center.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at)
+		VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	installer := &fakeBuiltinHeadscaleInstaller{}
+	server := NewServer(store, "", false).WithHeadscaleInstaller(installer)
+	if err := server.ReconcileBuiltinHeadscale(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if installer.reconcileInput.CenterURL != "https://center.example.com" || installer.reconcileInput.HeadscaleURL != "https://headscale.example.com" {
+		t.Fatalf("unexpected reconciliation input: %#v", installer.reconcileInput)
+	}
+	installer.reconcileInput = deployapi.HeadscaleInstallRequest{}
+	if err := server.ReconcileBuiltinHeadscale(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if installer.reconcileInput != (deployapi.HeadscaleInstallRequest{}) {
+		t.Fatal("current built-in runtime was reconciled again")
 	}
 }

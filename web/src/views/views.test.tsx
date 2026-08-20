@@ -108,6 +108,16 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("retired-node");
   });
 
+  it("recognizes a reported Headscale address before the network profile is confirmed", () => {
+    const data = dashboard();
+    data.agents[0].networkProfile = undefined;
+    data.agents[0].networkCandidates = [{ address: "100.64.0.1", interface: "tailscale0", family: "ipv4", kind: "headscale", observedAt: "2026-08-18T00:00:00Z" }];
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).toContain("私网已连接，待确认");
+    expect(container.textContent).toContain("确认推荐配置");
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("加入安全私网"))).toBe(false);
+  });
+
   it("shows only successful applications and marks host-privileged packages", () => {
     const container = render(<AppsView data={dashboard()} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("Komari 探针");

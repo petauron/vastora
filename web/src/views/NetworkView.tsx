@@ -23,17 +23,25 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
   const [editor, setEditor] = useState<IntegrationEditor>(null);
   const [profileAgent, setProfileAgent] = useState<AgentView | null>(null);
   const [join, setJoin] = useState<HeadscaleJoin | null>(null);
+  const [joinAgentID, setJoinAgentID] = useState("");
   const [joinBusy, setJoinBusy] = useState("");
   const [joinError, setJoinError] = useState("");
   const headscale = integration(data.integrations, "headscale");
   const cloudflare = integration(data.integrations, "cloudflare");
   const activeAgents = data.agents.filter((agent) => agent.status === "active");
   const enabledCount = (kind: NetworkKind) => activeAgents.filter((agent) => agent.networkProfile?.enabledKinds.includes(kind)).length;
+  const joinedAgentHasHeadscale = joinAgentID !== "" && data.agents.some((agent) => agent.id === joinAgentID && agent.networkCandidates.some((candidate) => candidate.kind === "headscale"));
+
+  useEffect(() => {
+    if (!joinedAgentHasHeadscale) return;
+    setJoin(null);
+    setJoinAgentID("");
+  }, [joinedAgentHasHeadscale]);
 
   const createJoin = async (agent: AgentView) => {
     setJoinBusy(agent.id);
     setJoinError("");
-    try { setJoin(await api.createHeadscaleJoin(agent.id)); } catch (error) { setJoinError(userError(language, error)); } finally { setJoinBusy(""); }
+    try { setJoin(await api.createHeadscaleJoin(agent.id)); setJoinAgentID(agent.id); } catch (error) { setJoinError(userError(language, error)); } finally { setJoinBusy(""); }
   };
 
   return (
@@ -85,7 +93,8 @@ function CapabilityCard({ icon, title, description, count, language, technical }
 
 function NodeNetworkCard({ agent, headscaleReady, joinBusy, language, onConfigure, onJoin }: { agent: AgentView; headscaleReady: boolean; joinBusy: boolean; language: Language; onConfigure: () => void; onJoin: () => void }) {
   const profile = agent.networkProfile;
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerIcon />{agent.name}</CardTitle><CardDescription>{agent.connected ? copy(language, "Agent 在线", "Agent online") : copy(language, "Agent 离线", "Agent offline")}</CardDescription><CardAction><StateBadge value={profile ? "configured" : "pending"} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3"><div className="flex flex-wrap gap-2">{profile?.enabledKinds.map((kind) => <Badge key={kind} variant="outline">{networkKindLabel(language, kind)}</Badge>)}{agent.capabilities.gateway ? <Badge variant="secondary"><RouterIcon data-icon="inline-start" />{copy(language, "服务入口", "Service access")}</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="secondary"><CloudIcon data-icon="inline-start" />Cloudflare</Badge> : null}</div><dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-muted-foreground">{copy(language, "应用地址", "App address")}</dt><dd className="mt-1 font-mono text-xs">{profile?.serviceAddress || "—"}</dd></div><div><dt className="text-muted-foreground">{copy(language, "发现地址", "Discovered addresses")}</dt><dd className="mt-1">{agent.networkCandidates.length}</dd></div></dl></CardContent><CardFooter className="gap-2"><Button className="flex-1" onClick={onConfigure} size="sm" variant="outline">{profile ? copy(language, "修改", "Edit") : copy(language, "使用推荐配置", "Use recommended setup")}</Button>{headscaleReady && !profile?.enabledKinds.includes("headscale") ? <Button disabled={joinBusy} onClick={onJoin} size="sm">{joinBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "加入安全私网", "Join secure private network")}</Button> : null}</CardFooter></Card>;
+  const headscaleConnected = agent.networkCandidates.some((candidate) => candidate.kind === "headscale");
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerIcon />{agent.name}</CardTitle><CardDescription>{agent.connected ? copy(language, "Agent 在线", "Agent online") : copy(language, "Agent 离线", "Agent offline")}</CardDescription><CardAction>{profile ? <StateBadge value="configured" /> : <Badge variant="outline">{headscaleConnected ? copy(language, "私网已连接，待确认", "Private network connected") : copy(language, "等待确认", "Needs confirmation")}</Badge>}</CardAction></CardHeader><CardContent className="flex flex-col gap-3"><div className="flex flex-wrap gap-2">{profile?.enabledKinds.map((kind) => <Badge key={kind} variant="outline">{networkKindLabel(language, kind)}</Badge>)}{!profile && headscaleConnected ? <Badge variant="secondary"><NetworkIcon data-icon="inline-start" />{copy(language, "安全私网已连接", "Secure private network connected")}</Badge> : null}{agent.capabilities.gateway ? <Badge variant="secondary"><RouterIcon data-icon="inline-start" />{copy(language, "服务入口", "Service access")}</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="secondary"><CloudIcon data-icon="inline-start" />Cloudflare</Badge> : null}</div><dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-muted-foreground">{copy(language, "应用地址", "App address")}</dt><dd className="mt-1 font-mono text-xs">{profile?.serviceAddress || "—"}</dd></div><div><dt className="text-muted-foreground">{copy(language, "发现地址", "Discovered addresses")}</dt><dd className="mt-1">{agent.networkCandidates.length}</dd></div></dl></CardContent><CardFooter className="gap-2"><Button className="flex-1" onClick={onConfigure} size="sm" variant="outline">{profile ? copy(language, "修改", "Edit") : copy(language, "确认推荐配置", "Confirm recommended setup")}</Button>{headscaleReady && !headscaleConnected && !profile?.enabledKinds.includes("headscale") ? <Button disabled={joinBusy} onClick={onJoin} size="sm">{joinBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "加入安全私网", "Join secure private network")}</Button> : null}</CardFooter></Card>;
 }
 
 function networkKindLabel(language: Language, kind: NetworkKind) {

@@ -23,7 +23,7 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 	}
 	defer listener.Close()
 	server := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/v1/headscale/install" {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/headscale/install" && request.URL.Path != "/v1/headscale/reconcile" {
 			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
 		}
 		var input HeadscaleInstallRequest
@@ -33,7 +33,11 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 		if input.CenterURL != "https://center.example.com" || input.HeadscaleURL != "https://headscale.example.com" {
 			t.Fatalf("unexpected input: %#v", input)
 		}
-		_ = json.NewEncoder(writer).Encode(HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"})
+		if request.URL.Path == "/v1/headscale/install" {
+			_ = json.NewEncoder(writer).Encode(HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"})
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ready"})
 	})}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
@@ -49,5 +53,10 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 	}
 	if result.APIKey != "hskey-api-abcdefghijklmnopqrstuvwxyz" {
 		t.Fatal("deployment result was not returned")
+	}
+	if err := client.ReconcileHeadscale(context.Background(), HeadscaleInstallRequest{
+		CenterURL: "https://center.example.com", HeadscaleURL: "https://headscale.example.com",
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

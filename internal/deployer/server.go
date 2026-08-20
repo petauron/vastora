@@ -27,23 +27,25 @@ func (server *Server) Handler() http.Handler {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/headscale/install", server.installHeadscale)
+	mux.HandleFunc("POST /v1/headscale/reconcile", server.reconcileHeadscale)
 	return mux
 }
 
+func (server *Server) reconcileHeadscale(writer http.ResponseWriter, request *http.Request) {
+	input, ok := decodeHeadscaleRequest(writer, request)
+	if !ok {
+		return
+	}
+	if err := server.installer.ReconcileHeadscale(request.Context(), input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "ready"})
+}
+
 func (server *Server) installHeadscale(writer http.ResponseWriter, request *http.Request) {
-	if request.Header.Get("Content-Type") != "application/json" {
-		writeError(writer, http.StatusBadRequest, errors.New("deployer: Content-Type must be application/json"))
-		return
-	}
-	decoder := json.NewDecoder(io.LimitReader(request.Body, 64<<10))
-	decoder.DisallowUnknownFields()
-	var input deployapi.HeadscaleInstallRequest
-	if err := decoder.Decode(&input); err != nil {
-		writeError(writer, http.StatusBadRequest, fmt.Errorf("deployer: decode request: %w", err))
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeError(writer, http.StatusBadRequest, errors.New("deployer: request must contain one JSON value"))
+	input, ok := decodeHeadscaleRequest(writer, request)
+	if !ok {
 		return
 	}
 	result, err := server.installer.InstallHeadscale(request.Context(), input)
@@ -52,6 +54,25 @@ func (server *Server) installHeadscale(writer http.ResponseWriter, request *http
 		return
 	}
 	writeJSON(writer, http.StatusOK, result)
+}
+
+func decodeHeadscaleRequest(writer http.ResponseWriter, request *http.Request) (deployapi.HeadscaleInstallRequest, bool) {
+	if request.Header.Get("Content-Type") != "application/json" {
+		writeError(writer, http.StatusBadRequest, errors.New("deployer: Content-Type must be application/json"))
+		return deployapi.HeadscaleInstallRequest{}, false
+	}
+	decoder := json.NewDecoder(io.LimitReader(request.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	var input deployapi.HeadscaleInstallRequest
+	if err := decoder.Decode(&input); err != nil {
+		writeError(writer, http.StatusBadRequest, fmt.Errorf("deployer: decode request: %w", err))
+		return deployapi.HeadscaleInstallRequest{}, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(writer, http.StatusBadRequest, errors.New("deployer: request must contain one JSON value"))
+		return deployapi.HeadscaleInstallRequest{}, false
+	}
+	return input, true
 }
 
 func ServeUnix(socket string, uid, gid int, handler http.Handler) error {

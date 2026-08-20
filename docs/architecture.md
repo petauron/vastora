@@ -65,6 +65,17 @@ does not expose editable role, capability, or Headscale arguments. Enrollment
 and its bootstrap material remain specific to that Center instead of a
 universal public Agent command.
 
+A host may run Center and Agent together; this is a first-class Vastora
+deployment, not a development-only exception. Center remains the desired-state
+control plane while the host Agent remains the only component that manages
+applications and gateway state. Bundled Headscale runs in its own Docker network
+namespace and publishes only its HTTP control port on host loopback. The host
+Tailscale client therefore owns `tailscale0` without sharing a network namespace
+with the Headscale server process. Center records the bundled infrastructure
+specification version and asks the restricted deployment helper to reconcile an
+older installation once after an upgrade; persistent Headscale data and the
+existing encrypted API key are retained.
+
 ## Address discovery and confirmation
 
 Agent enumerates addresses assigned to local interfaces and reports
@@ -139,6 +150,11 @@ service with its own persistent volume. Operators may instead connect an
 existing HTTPS Headscale API. Center creates Vastora users/tags and one-hour,
 single-use pre-auth keys, but it does not embed Headscale logic into the Center
 process.
+
+The Center host may also be an application node. In that topology its Agent and
+Tailscale client run on the host, while bundled Headscale stays container-network
+isolated and is reached only through the loopback-bound control port and the
+shared HTTPS gateway. Vastora does not require a dedicated Center-only machine.
 
 Bundled setup starts the Center HTTPS gateway on public ports `80` and `443`.
 Center and Headscale share that gateway through separate hostnames, so their
