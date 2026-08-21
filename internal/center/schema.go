@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 8
+const centerSchemaVersion = 9
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -189,6 +189,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			sni_hostname TEXT NOT NULL DEFAULT '',
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
 			dns_record_id TEXT NOT NULL DEFAULT '',
+			certificate_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
+			certificate_not_after TEXT NOT NULL DEFAULT '',
 			tls_enabled INTEGER NOT NULL DEFAULT 0,
 			desired_revision INTEGER NOT NULL DEFAULT 1,
 			applied_revision INTEGER NOT NULL DEFAULT 0,
@@ -200,6 +202,13 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			UNIQUE(service_id, kind, hostname)
+		)`,
+		`CREATE TABLE certificate_authorities (
+			id TEXT PRIMARY KEY,
+			account_uri TEXT NOT NULL,
+			secret_id TEXT NOT NULL REFERENCES secrets(id) ON DELETE RESTRICT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE routes (
 			id TEXT PRIMARY KEY,
@@ -297,7 +306,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
 			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
-			kind TEXT NOT NULL CHECK(kind IN ('3xui.reality.create')),
+			kind TEXT NOT NULL CHECK(kind IN ('3xui.reality.create', '3xui.subscription.configure')),
 			input_json BLOB NOT NULL,
 			result_json BLOB NOT NULL DEFAULT '{}',
 			result_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,

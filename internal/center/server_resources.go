@@ -99,6 +99,20 @@ func (s *Server) handleCreateRealityCommand(writer http.ResponseWriter, request 
 	writeJSON(writer, http.StatusCreated, value)
 }
 
+func (s *Server) handleCreateSubscriptionCommand(writer http.ResponseWriter, request *http.Request) {
+	var input SubscriptionCommandInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.CreateSubscriptionCommand(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, value)
+}
+
 func (s *Server) handleApplicationCommand(writer http.ResponseWriter, request *http.Request) {
 	value, err := s.store.ApplicationCommand(request.Context(), request.PathValue("id"))
 	if err != nil {
@@ -109,7 +123,7 @@ func (s *Server) handleApplicationCommand(writer http.ResponseWriter, request *h
 }
 
 func (s *Server) handleLatestApplicationCommand(writer http.ResponseWriter, request *http.Request) {
-	value, err := s.store.LatestApplicationCommand(request.Context(), request.PathValue("id"))
+	value, err := s.store.LatestApplicationCommand(request.Context(), request.PathValue("id"), request.URL.Query().Get("kind"))
 	if err != nil {
 		writeError(writer, http.StatusNotFound, err)
 		return

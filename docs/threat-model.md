@@ -24,8 +24,13 @@
 - Application Web ports bind to the confirmed private service address rather
   than every host interface. A public address is accepted only when Agent finds
   it on a local interface and an administrator explicitly enables direct ingress.
-- LAN and Headscale Web entries use selected Caddy Gateway nodes. Public Web
+- LAN and Headscale Web entries use selected Caddy Gateway nodes. They may use
+  HTTP inside the private network, or a browser-trusted certificate obtained
+  through Cloudflare DNS-01 without exposing the service publicly. Public Web
   entries require HTTPS. Caddy Admin remains reachable only over its Unix socket.
+- ACME account keys and private HTTPS certificates are encrypted in Center.
+  Certificate keys are absent from desired-state JSON and task-event records,
+  delivered only with a claimed Gateway task, and encrypted at rest by Agent.
 - HAProxy is installed only for an explicit shared-443 Publication. It performs
   TCP ClientHello SNI routing without terminating TLS, uses no Docker socket,
   and binds only the confirmed public address. Unknown SNI traffic is passed to

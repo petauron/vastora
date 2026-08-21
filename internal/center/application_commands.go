@@ -14,7 +14,10 @@ import (
 	"github.com/petauron/vastora/internal/secret"
 )
 
-const realityCommandKind = "3xui.reality.create"
+const (
+	realityCommandKind      = "3xui.reality.create"
+	subscriptionCommandKind = "3xui.subscription.configure"
+)
 
 type RealityCommandInput struct {
 	ApplicationID string `json:"applicationId"`
@@ -44,6 +47,25 @@ type RealityCommandResult struct {
 	SNIHostname     string `json:"sniHostname"`
 	ConnectHostname string `json:"connectHostname"`
 	ShareURI        string `json:"shareUri"`
+}
+
+type SubscriptionCommandInput struct {
+	ApplicationID string `json:"applicationId"`
+	GatewayNodeID string `json:"gatewayNodeId"`
+	Hostname      string `json:"hostname"`
+	Kind          string `json:"kind"`
+	DNSProvider   string `json:"dnsProvider"`
+}
+
+type SubscriptionCommandTask struct {
+	Domain        string `json:"domain"`
+	BaseURI       string `json:"baseUri"`
+	PublicationID string `json:"publicationId"`
+}
+
+type SubscriptionCommandResult struct {
+	Domain  string `json:"domain"`
+	BaseURI string `json:"baseUri"`
 }
 
 type ApplicationCommandView struct {
@@ -206,27 +228,56 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 	if err != nil {
 		return value, err
 	}
-	var input RealityCommandTask
-	var result RealityCommandResult
-	if json.Unmarshal(inputJSON, &input) != nil || json.Unmarshal(resultJSON, &result) != nil {
-		return value, errors.New("center: stored application operation is invalid")
-	}
-	value.Hostname, value.DNSProvider, value.Target, value.SNIHostname = input.ConnectHostname, input.DNSProvider, result.Target, result.SNIHostname
-	if value.Target == "" {
-		value.Target, value.SNIHostname = input.Target, input.SNIHostname
+	switch value.Kind {
+	case realityCommandKind:
+		var input RealityCommandTask
+		var result RealityCommandResult
+		if json.Unmarshal(inputJSON, &input) != nil || json.Unmarshal(resultJSON, &result) != nil {
+			return value, errors.New("center: stored application operation is invalid")
+		}
+		value.Hostname, value.DNSProvider, value.Target, value.SNIHostname = input.ConnectHostname, input.DNSProvider, result.Target, result.SNIHostname
+		if value.Target == "" {
+			value.Target, value.SNIHostname = input.Target, input.SNIHostname
+		}
+	case subscriptionCommandKind:
+		var input SubscriptionCommandTask
+		if json.Unmarshal(inputJSON, &input) != nil || input.Domain == "" || input.BaseURI == "" {
+			return value, errors.New("center: stored subscription operation is invalid")
+		}
+		value.Hostname = input.Domain
+		value.PublicationID = input.PublicationID
+		publication, publicationErr := s.Publication(ctx, input.PublicationID)
+		if publicationErr != nil {
+			return value, errors.New("center: stored subscription publication is invalid")
+		}
+		value.DNSProvider = publication.DNSProvider
+	default:
+		return value, errors.New("center: stored application operation kind is invalid")
 	}
 	value.ResultAvailable = secretID.Valid
 	value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
-	var publicationID sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT p.id FROM publications p JOIN services sv ON sv.id = p.service_id WHERE sv.application_id = ? AND p.kind = 'public_shared_443' AND p.hostname = ? AND p.status <> 'stopped' ORDER BY p.updated_at DESC LIMIT 1`, value.ApplicationID, value.Hostname).Scan(&publicationID)
-	value.PublicationID = publicationID.String
+	if value.Kind == realityCommandKind {
+		var publicationID sql.NullString
+		_ = s.db.QueryRowContext(ctx, `SELECT p.id FROM publications p JOIN services sv ON sv.id = p.service_id WHERE sv.application_id = ? AND p.kind = 'public_shared_443' AND p.hostname = ? AND p.status <> 'stopped' ORDER BY p.updated_at DESC LIMIT 1`, value.ApplicationID, value.Hostname).Scan(&publicationID)
+		value.PublicationID = publicationID.String
+	}
 	return value, nil
 }
 
-func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID string) (ApplicationCommandView, error) {
+func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
+	if kind != realityCommandKind && kind != subscriptionCommandKind {
+		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
+	}
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM application_commands WHERE application_id = ? AND (state IN ('pending', 'running') OR result_secret_id IS NOT NULL) ORDER BY created_at DESC, rowid DESC LIMIT 1`, strings.TrimSpace(applicationID)).Scan(&id)
+	condition := `(state IN ('pending', 'running') OR result_secret_id IS NOT NULL)`
+	if kind == subscriptionCommandKind {
+		condition = `(state IN ('pending', 'running', 'failed') OR (state = 'succeeded' AND EXISTS (
+			SELECT 1 FROM publications p JOIN services s ON s.id = p.service_id
+			WHERE s.application_id = application_commands.application_id AND p.status <> 'stopped' AND s.name = 'subscription'
+		)))`
+	}
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM application_commands WHERE application_id = ? AND kind = ? AND `+condition+` ORDER BY created_at DESC, rowid DESC LIMIT 1`, strings.TrimSpace(applicationID), kind).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: resumable application operation not found")
 	}

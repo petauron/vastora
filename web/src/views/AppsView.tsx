@@ -26,6 +26,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
   const [uninstallApplication, setUninstallApplication] = useState<Application | null>(null);
   const [credentials, setCredentials] = useState<Deployment["oneTimeCredentials"]>(undefined);
   const [realityApplication, setRealityApplication] = useState<Application | null>(null);
+  const [subscriptionApplication, setSubscriptionApplication] = useState<Application | null>(null);
   const [section, setSection] = useState<"installed" | "store">(() => data.applications.some(isInstalledApplication) ? "installed" : "store");
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
   const installedApplications = data.applications.filter(isInstalledApplication);
@@ -56,7 +57,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 
       {section === "installed" ? <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "已安装", "Installed")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "每个服务都可以有独立的访问方式。", "Each service can have its own access methods.")}</p></div>
-        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onConfigure={() => openChange(application, "configure")} onPublish={setPublicationService} onReality={() => setRealityApplication(application)} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openChange(application, "upgrade")} mutate={mutate} />)}</div>}
+        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onConfigure={() => openChange(application, "configure")} onPublish={setPublicationService} onReality={() => setRealityApplication(application)} onSubscription={() => setSubscriptionApplication(application)} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openChange(application, "upgrade")} mutate={mutate} />)}</div>}
       </div> : null}
 
       {section === "store" ? <div className="flex flex-col gap-4">
@@ -78,17 +79,20 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
       }} />
       <PublicationSheet data={data} language={language} onClose={() => setPublicationService(null)} onSubmit={async (input) => { await mutate(() => api.createPublication(input), copy(language, "访问入口已创建。", "Access point created.")); setPublicationService(null); }} service={publicationService} />
       <RealitySheet application={realityApplication} data={data} language={language} onClose={() => setRealityApplication(null)} />
+      <SubscriptionSheet application={subscriptionApplication} data={data} language={language} mutate={mutate} onClose={() => setSubscriptionApplication(null)} />
       <UninstallSheet application={uninstallApplication} app={uninstallApplication ? catalogByKey.get(uninstallApplication.appKey) : undefined} language={language} onClose={() => setUninstallApplication(null)} onSubmit={async (application, deleteData) => { await mutate(() => api.createDeployment(application.nodeId, application.appKey, {}, "uninstall", deleteData), copy(language, "卸载任务已创建。", "Uninstall task created.")); setUninstallApplication(null); }} />
     </section>
   );
 }
 
-function InstalledAppCard({ application, app, data, language, onConfigure, onPublish, onReality, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: AppData; language: Language; onConfigure: () => void; onPublish: (service: Service) => void; onReality: () => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
+function InstalledAppCard({ application, app, data, language, onConfigure, onPublish, onReality, onSubscription, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: AppData; language: Language; onConfigure: () => void; onPublish: (service: Service) => void; onReality: () => void; onSubscription: () => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const agent = data.agents.find((value) => value.id === application.nodeId);
   const services = data.services.filter((service) => service.applicationId === application.id && service.status !== "stopped");
   const deployment = data.deployments.find((value) => value.applicationId === application.id && value.state === "succeeded" && value.operation !== "uninstall");
   const activeChange = data.deployments.find((value) => value.applicationId === application.id && (value.state === "pending" || value.state === "running"));
-  return <Card><CardHeader><CardTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}</CardTitle><CardDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</CardDescription><CardAction><StateBadge value={application.status} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3">{activeChange ? <Alert><Spinner /><AlertTitle>{copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}</AlertTitle><AlertDescription>{copy(language, "完成前暂时不能发起其他应用变更。", "Other app changes are unavailable until this finishes.")}</AlertDescription></Alert> : null}{application.status === "failed" ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "最近一次操作失败，应用仍保留", "The last operation failed; the app is still installed")}</AlertTitle><AlertDescription>{copy(language, "原有安装记录和数据仍保留；请查看最近操作，修正后重试或卸载。", "The installed record and data remain available. Review the recent operation, then retry or uninstall.")}</AlertDescription></Alert> : null}{application.appKey === "vastora-official/3x-ui" ? <Button disabled={Boolean(activeChange)} onClick={onReality} size="sm"><RadioTowerIcon data-icon="inline-start" />{copy(language, "一键创建 VLESS REALITY", "Create VLESS REALITY")}</Button> : null}{deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}{services.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : services.map((service) => <ServiceRow data={data} key={service.id} language={language} onPublish={() => onPublish(service)} service={service} mutate={mutate} />)}</CardContent><CardFooter className="flex-wrap justify-end gap-2">{application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange)} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter></Card>;
+  const subscriptionService = services.find((service) => service.name === "subscription");
+  const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
+  return <Card><CardHeader><CardTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}</CardTitle><CardDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</CardDescription><CardAction><StateBadge value={application.status} /></CardAction></CardHeader><CardContent className="flex flex-col gap-3">{activeChange ? <Alert><Spinner /><AlertTitle>{copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}</AlertTitle><AlertDescription>{copy(language, "完成前暂时不能发起其他应用变更。", "Other app changes are unavailable until this finishes.")}</AlertDescription></Alert> : null}{application.status === "failed" ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "最近一次操作失败，应用仍保留", "The last operation failed; the app is still installed")}</AlertTitle><AlertDescription>{copy(language, "原有安装记录和数据仍保留；请查看最近操作，修正后重试或卸载。", "The installed record and data remain available. Review the recent operation, then retry or uninstall.")}</AlertDescription></Alert> : null}{application.appKey === "vastora-official/3x-ui" ? <div className="grid gap-2 sm:grid-cols-2"><Button disabled={Boolean(activeChange)} onClick={onReality} size="sm"><RadioTowerIcon data-icon="inline-start" />{copy(language, "一键创建 VLESS REALITY", "Create VLESS REALITY")}</Button>{subscriptionService ? <Button disabled={Boolean(activeChange)} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "查看公网订阅", "View public subscription") : copy(language, "开启公网订阅", "Enable public subscription")}</Button> : null}</div> : null}{deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}{services.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : services.map((service) => <ServiceRow data={data} key={service.id} language={language} onPublish={() => onPublish(service)} service={service} mutate={mutate} />)}</CardContent><CardFooter className="flex-wrap justify-end gap-2">{application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange)} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter></Card>;
 }
 
 function ServiceRow({ data, language, service, onPublish, mutate }: { data: AppData; language: Language; service: Service; onPublish: () => void; mutate: Mutate }) {
@@ -133,7 +137,7 @@ function ConfigField({ config, field, language, operation, setConfig }: { config
   return <Field><FieldLabel htmlFor={`config-${field.key}`}>{label}</FieldLabel><Input id={`config-${field.key}`} min={field.type === "integer" ? 1 : undefined} onChange={(event) => setConfig((current) => { const next = { ...current }; if (event.target.value === "") delete next[field.key]; else next[field.key] = field.type === "integer" ? Number(event.target.value) : event.target.value; return next; })} placeholder={operation !== "install" ? copy(language, "留空以保持原值", "Leave blank to keep the current value") : undefined} required={operation === "install" && field.required} type={field.secret ? "password" : field.type === "integer" ? "number" : "text"} value={config[field.key] === undefined ? "" : String(config[field.key])} /><FieldDescription>{description}</FieldDescription></Field>;
 }
 
-function PublicationSheet({ data, language, onClose, onSubmit, service }: { data: AppData; language: Language; onClose: () => void; onSubmit: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; confirmHighRisk?: boolean }) => Promise<void>; service: Service | null }) {
+function PublicationSheet({ data, language, onClose, onSubmit, service }: { data: AppData; language: Language; onClose: () => void; onSubmit: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; tlsEnabled?: boolean; confirmHighRisk?: boolean }) => Promise<void>; service: Service | null }) {
   const [intent, setIntent] = useState<PublicationIntent>("private");
   const [kind, setKind] = useState<PublicationKind>("headscale_gateway");
   const [gatewayID, setGatewayID] = useState("");
@@ -141,6 +145,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
   const [sniHostname, setSNIHostname] = useState("");
   const [dnsProvider, setDNSProvider] = useState<"manual" | "cloudflare" | "headscale">("manual");
   const [highRisk, setHighRisk] = useState(false);
+  const [tlsEnabled, setTLSEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const cloudflareReady = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
@@ -166,12 +171,14 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     setHostname(defaultPublicationHostname(data, service));
     setSNIHostname("");
     setDNSProvider(defaultDNS(nextKind));
+    setTLSEnabled(cloudflareReady && (nextKind === "lan_gateway" || nextKind === "headscale_gateway"));
     setHighRisk(false); setError("");
   }, [service?.id]);
   const selectKind = (next: PublicationKind) => {
     setKind(next); const nodes = service ? gatewaysForKind(data, service, next) : [];
     setGatewayID(nodes[0]?.id ?? "");
     setDNSProvider(defaultDNS(next));
+    setTLSEnabled(cloudflareReady && (next === "lan_gateway" || next === "headscale_gateway"));
     setHighRisk(false);
   };
   const selectIntent = (next: PublicationIntent) => {
@@ -180,9 +187,9 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     const preferred = publicationIntentOptions(data, service, language).find((option) => option.intent === next)?.kind;
     if (preferred) selectKind(preferred);
   };
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!service) return; setBusy(true); setError(""); try { await onSubmit({ serviceId: service.id, kind, gatewayNodeId: gatewayID || undefined, hostname, sniHostname: kind === "public_shared_443" ? sniHostname : undefined, dnsProvider, confirmHighRisk: highRisk }); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
+  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!service) return; setBusy(true); setError(""); try { await onSubmit({ serviceId: service.id, kind, gatewayNodeId: gatewayID || undefined, hostname, sniHostname: kind === "public_shared_443" ? sniHostname : undefined, dnsProvider, tlsEnabled: (kind === "lan_gateway" || kind === "headscale_gateway") && tlsEnabled, confirmHighRisk: highRisk }); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
   const highRiskRequired = Boolean(service?.management && (kind === "public_direct" || kind === "cloudflare_tunnel"));
-  const canSubmit = Boolean(selectedOption?.enabled && hostname && gatewayID && (kind !== "public_shared_443" || sniHostname) && (!highRiskRequired || highRisk));
+  const canSubmit = Boolean(selectedOption?.enabled && hostname && gatewayID && (kind !== "public_shared_443" || sniHostname) && (!tlsEnabled || cloudflareReady) && (!highRiskRequired || highRisk));
   return (
     <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(service)}>
       <SheetContent className="sm:max-w-lg">
@@ -223,6 +230,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
                     </NativeSelect>
                     <FieldDescription>{selectedOption?.reason}</FieldDescription>
                   </Field>
+                  {kind === "lan_gateway" || kind === "headscale_gateway" ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="publication-tls">{copy(language, "浏览器可信 HTTPS", "Browser-trusted HTTPS")}</FieldLabel><FieldDescription>{cloudflareReady ? copy(language, "使用 Cloudflare DNS 验证申请公信证书；服务仍只在私网开放。", "Uses Cloudflare DNS validation for a public-trust certificate while the service remains private.") : copy(language, "连接 Cloudflare 后可开启；否则保留私网 HTTP。", "Connect Cloudflare to enable it; otherwise private HTTP remains available.")}</FieldDescription></div><Switch checked={tlsEnabled} disabled={!cloudflareReady} id="publication-tls" onCheckedChange={setTLSEnabled} /></Field> : null}
                   <Field>
                     <FieldLabel htmlFor="publication-node">{copy(language, "入口节点", "Entry node")}</FieldLabel>
                     <NativeSelect id="publication-node" onChange={(event) => setGatewayID(event.target.value)} required value={gatewayID}>
@@ -256,6 +264,73 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
   );
 }
 
+function SubscriptionSheet({ application, data, language, mutate, onClose }: { application: Application | null; data: AppData; language: Language; mutate: Mutate; onClose: () => void }) {
+  const [kind, setKind] = useState<"cloudflare_tunnel" | "public_direct">("cloudflare_tunnel");
+  const [gatewayID, setGatewayID] = useState("");
+  const [hostname, setHostname] = useState("");
+  const [command, setCommand] = useState<ApplicationCommand | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const service = application ? data.services.find((value) => value.applicationId === application.id && value.name === "subscription" && value.status !== "stopped") : undefined;
+  const publication = service ? data.publications.find((value) => value.serviceId === service.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
+  const cloudflareReady = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
+  const tunnelGateways = application ? data.agents.filter((agent) => agent.siteId === application.siteId && agent.connected && agent.capabilities.tunnel && Boolean(agent.networkProfile)) : [];
+  const directGateways = service ? gatewaysForKind(data, service, "public_direct") : [];
+  const gateways = kind === "cloudflare_tunnel" ? tunnelGateways : directGateways;
+  useEffect(() => {
+    if (!application || !service) return;
+    const preferredKind = publication?.kind === "public_direct" ? "public_direct" : cloudflareReady && tunnelGateways.length ? "cloudflare_tunnel" : "public_direct";
+    const preferredGateways = preferredKind === "cloudflare_tunnel" ? tunnelGateways : directGateways;
+    setKind(preferredKind);
+    setGatewayID(publication?.gatewayNodeId ?? preferredGateways[0]?.id ?? "");
+    setHostname(publication?.hostname ?? defaultPublicationHostname(data, service));
+    setCommand(null); setBusy(false); setError("");
+    if (!publication) return;
+    let cancelled = false;
+    void api.latestApplicationCommand(application.id, "3xui.subscription.configure").then((latest) => { if (!cancelled) setCommand(latest); }).catch(() => { /* A ready publication can outlive its completed command record. */ });
+    return () => { cancelled = true; };
+  }, [application?.id, service?.id, publication?.id]);
+  useEffect(() => {
+    if (!command || command.state === "failed" || command.state === "succeeded") return;
+    let cancelled = false; let timer = 0;
+    const poll = async () => {
+      try {
+        const next = await api.applicationCommand(command.id);
+        if (cancelled) return;
+        setCommand(next);
+        if (next.state === "pending" || next.state === "running") timer = window.setTimeout(() => void poll(), 2500);
+      } catch (pollError) {
+        if (!cancelled) { setError(userError(language, pollError)); timer = window.setTimeout(() => void poll(), 2500); }
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 2500);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [command?.id, command?.state, language]);
+  const selectKind = (next: "cloudflare_tunnel" | "public_direct") => {
+    setKind(next);
+    const nextGateways = next === "cloudflare_tunnel" ? tunnelGateways : directGateways;
+    setGatewayID(nextGateways[0]?.id ?? "");
+  };
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!application) return;
+    setBusy(true); setError("");
+    try {
+      let created: ApplicationCommand | undefined;
+      await mutate(async () => { created = await api.createSubscriptionCommand({ applicationId: application.id, gatewayNodeId: gatewayID, hostname, kind, dnsProvider: kind === "cloudflare_tunnel" || cloudflareReady ? "cloudflare" : "manual" }); }, copy(language, "公网订阅配置已开始。", "Public subscription setup started."));
+      if (created) setCommand(created);
+    } catch (submitError) {
+      setError(userError(language, submitError));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const baseURI = `https://${hostname}/sub/`;
+  const ready = publication?.status === "ready";
+  const configured = command?.state === "succeeded";
+  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(application)}><SheetContent className="sm:max-w-lg"><SheetHeader><SheetTitle>{copy(language, "公网订阅", "Public subscription")}</SheetTitle><SheetDescription>{copy(language, "Vastora 会发布独立订阅服务，并把公网域名自动写入 3x-ui。管理面板仍只在私网开放。", "Vastora publishes the separate subscription service and writes its public hostname into 3x-ui. The admin panel stays private.")}</SheetDescription></SheetHeader>{command || publication ? <div aria-live="polite" className="flex flex-1 flex-col gap-4 px-4"><Alert>{ready ? <Globe2Icon /> : command?.state === "failed" ? <ShieldAlertIcon /> : <Spinner />}<AlertTitle>{ready ? copy(language, "公网订阅已开启", "Public subscription is enabled") : command?.state === "failed" ? copy(language, "开启失败", "Could not enable subscription") : configured ? copy(language, "3x-ui 已配置，等待入口就绪", "3x-ui configured; waiting for access") : copy(language, "正在自动配置…", "Configuring automatically…")}</AlertTitle><AlertDescription>{ready ? copy(language, "新增客户端后，3x-ui 会生成使用这个 HTTPS 域名的专属订阅链接。", "After adding a client, 3x-ui generates its personal subscription link using this HTTPS hostname.") : command?.state === "failed" ? command.error : configured ? copy(language, "域名和 HTTPS 正在生效；页面会自动更新。", "The hostname and HTTPS are coming online; this page updates automatically.") : copy(language, "正在创建 HTTPS 入口并同步 3x-ui 设置。", "Creating the HTTPS access point and syncing 3x-ui settings.")}</AlertDescription></Alert>{ready ? <div><p className="mb-2 text-sm font-medium">{copy(language, "订阅服务地址", "Subscription service address")}</p><div className="relative"><code className="block break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{baseURI}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制地址", "Copy address")} language={language} size="icon" value={baseURI} /></div><p className="mt-2 text-xs text-muted-foreground">{copy(language, "这是服务基址；每个客户端的完整链接还会包含各自的订阅 ID，请在 3x-ui 客户端列表中复制。", "This is the service base. Each full client link also contains its subscription ID; copy it from the 3x-ui client list.")}</p></div> : null}{command?.state === "failed" && command.error ? <FieldError>{userError(language, new Error(command.error))}</FieldError> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Alert><Globe2Icon /><AlertTitle>{copy(language, "推荐使用 Cloudflare 安全通道", "Cloudflare secure tunnel is recommended")}</AlertTitle><AlertDescription>{copy(language, "无需开放新的公网端口，并自动提供 HTTPS。", "It needs no new public port and provides HTTPS automatically.")}</AlertDescription></Alert><Field><FieldLabel htmlFor="subscription-hostname">{copy(language, "订阅域名", "Subscription hostname")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="subscription-hostname" onChange={(event) => setHostname(event.target.value.toLowerCase())} required spellCheck={false} value={hostname} /><FieldDescription>{copy(language, "只用于订阅下载，不会公开 3x-ui 管理页面。", "Used only for subscription downloads; it does not publish the 3x-ui admin page.")}</FieldDescription></Field><details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-medium">{copy(language, "高级设置", "Advanced settings")}</summary><div className="mt-4 flex flex-col gap-4"><Field><FieldLabel htmlFor="subscription-kind">{copy(language, "公网方式", "Public method")}</FieldLabel><NativeSelect id="subscription-kind" onChange={(event) => selectKind(event.target.value as "cloudflare_tunnel" | "public_direct")} value={kind}>{cloudflareReady && tunnelGateways.length ? <option value="cloudflare_tunnel">Cloudflare Tunnel · HTTPS</option> : null}<option disabled={!directGateways.length} value="public_direct">{copy(language, "公网网关 · HTTPS", "Public gateway · HTTPS")}</option></NativeSelect></Field><Field><FieldLabel htmlFor="subscription-gateway">{copy(language, "入口节点", "Entry node")}</FieldLabel><NativeSelect id="subscription-gateway" onChange={(event) => setGatewayID(event.target.value)} required value={gatewayID}><option disabled value="">{copy(language, "没有可用节点", "No node available")}</option>{gateways.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</NativeSelect></Field></div></details>{!cloudflareReady ? <FieldError>{copy(language, "请先连接 Cloudflare，才能自动管理订阅域名和 HTTPS。", "Connect Cloudflare first to manage the subscription hostname and HTTPS automatically.")}</FieldError> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !cloudflareReady || !gatewayID || !hostname} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <Globe2Icon data-icon="inline-start" />}{copy(language, "开启公网订阅", "Enable public subscription")}</Button></SheetFooter></form>}<SheetFooter>{command || publication ? <Button onClick={onClose}>{copy(language, "关闭", "Close")}</Button> : null}</SheetFooter></SheetContent></Sheet>;
+}
+
 function RealitySheet({ application, data, language, onClose }: { application: Application | null; data: AppData; language: Language; onClose: () => void }) {
   const [name, setName] = useState("");
   const [gatewayID, setGatewayID] = useState("");
@@ -277,7 +352,7 @@ function RealitySheet({ application, data, language, onClose }: { application: A
     setDNSProvider(cloudflareReady ? "cloudflare" : "manual");
     setTarget(""); setSNIHostname(""); setCommand(null); setShareURI(""); setBusy(false); setError("");
     let cancelled = false;
-    void api.latestApplicationCommand(application.id).then((latest) => { if (!cancelled) { setCommand(latest); setGatewayID(latest.gatewayNodeId); setHostname(latest.hostname); setDNSProvider(latest.dnsProvider); } }).catch(() => { /* No resumable operation is the normal first-use state. */ });
+    void api.latestApplicationCommand(application.id, "3xui.reality.create").then((latest) => { if (!cancelled) { setCommand(latest); setGatewayID(latest.gatewayNodeId); setHostname(latest.hostname); setDNSProvider(latest.dnsProvider); } }).catch(() => { /* No resumable operation is the normal first-use state. */ });
     return () => { cancelled = true; };
   }, [application?.id]);
   useEffect(() => {

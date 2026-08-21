@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -26,27 +27,29 @@ type PublicationInput struct {
 	Hostname        string `json:"hostname"`
 	SNIHostname     string `json:"sniHostname,omitempty"`
 	DNSProvider     string `json:"dnsProvider"`
+	TLSEnabled      bool   `json:"tlsEnabled,omitempty"`
 	ConfirmHighRisk bool   `json:"confirmHighRisk,omitempty"`
 }
 
 type PublicationView struct {
-	ID              string                `json:"id"`
-	ServiceID       string                `json:"serviceId"`
-	Kind            string                `json:"kind"`
-	GatewayNodeID   string                `json:"gatewayNodeId,omitempty"`
-	Hostname        string                `json:"hostname"`
-	SNIHostname     string                `json:"sniHostname,omitempty"`
-	DNSProvider     string                `json:"dnsProvider"`
-	DNSRecordID     string                `json:"dnsRecordId,omitempty"`
-	TLSEnabled      bool                  `json:"tlsEnabled"`
-	DesiredRevision int64                 `json:"desiredRevision"`
-	AppliedRevision int64                 `json:"appliedRevision"`
-	Status          string                `json:"status"`
-	LastError       string                `json:"lastError,omitempty"`
-	AccessURL       string                `json:"accessUrl,omitempty"`
-	DNSRecord       *DNSRecordInstruction `json:"dnsRecord,omitempty"`
-	CreatedAt       time.Time             `json:"createdAt"`
-	UpdatedAt       time.Time             `json:"updatedAt"`
+	ID                   string                `json:"id"`
+	ServiceID            string                `json:"serviceId"`
+	Kind                 string                `json:"kind"`
+	GatewayNodeID        string                `json:"gatewayNodeId,omitempty"`
+	Hostname             string                `json:"hostname"`
+	SNIHostname          string                `json:"sniHostname,omitempty"`
+	DNSProvider          string                `json:"dnsProvider"`
+	DNSRecordID          string                `json:"dnsRecordId,omitempty"`
+	TLSEnabled           bool                  `json:"tlsEnabled"`
+	DesiredRevision      int64                 `json:"desiredRevision"`
+	AppliedRevision      int64                 `json:"appliedRevision"`
+	Status               string                `json:"status"`
+	LastError            string                `json:"lastError,omitempty"`
+	AccessURL            string                `json:"accessUrl,omitempty"`
+	CertificateExpiresAt *time.Time            `json:"certificateExpiresAt,omitempty"`
+	DNSRecord            *DNSRecordInstruction `json:"dnsRecord,omitempty"`
+	CreatedAt            time.Time             `json:"createdAt"`
+	UpdatedAt            time.Time             `json:"updatedAt"`
 }
 
 type DNSRecordInstruction struct {
@@ -125,6 +128,9 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		return PublicationView{}, errors.New("center: stored service endpoint is invalid")
 	}
 	webService := protocol == "http" || protocol == "https"
+	if input.TLSEnabled && !webService {
+		return PublicationView{}, errors.New("center: HTTPS is available only for Web services")
+	}
 	if !webService && input.Kind != publicationPublic && input.Kind != publicationShared443 {
 		return PublicationView{}, errors.New("center: raw TCP/UDP services only support direct public or shared 443 publication")
 	}
@@ -204,19 +210,67 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		}
 	}
 
+	privateTLS := webService && input.TLSEnabled && (input.Kind == publicationLAN || input.Kind == publicationHeadscale)
+	var certificate managedCertificate
+	if privateTLS {
+		var existingStatus string
+		var cleanupPending int
+		duplicateErr := tx.QueryRowContext(ctx, `SELECT status, cleanup_pending FROM publications WHERE service_id = ? AND kind = ? AND hostname = ?`, input.ServiceID, input.Kind, input.Hostname).Scan(&existingStatus, &cleanupPending)
+		if duplicateErr == nil && existingStatus != "stopped" {
+			return PublicationView{}, errors.New("center: this service access entry already exists")
+		}
+		if duplicateErr == nil && cleanupPending != 0 {
+			return PublicationView{}, errors.New("center: the previous access entry is still removing external resources; retry after cleanup succeeds")
+		}
+		if duplicateErr != nil && !errors.Is(duplicateErr, sql.ErrNoRows) {
+			return PublicationView{}, duplicateErr
+		}
+		var zoneName string
+		if err := tx.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&zoneName); errors.Is(err, sql.ErrNoRows) {
+			return PublicationView{}, errors.New("center: connect Cloudflare before enabling trusted private HTTPS")
+		} else if err != nil {
+			return PublicationView{}, err
+		}
+		if input.Hostname != zoneName && !strings.HasSuffix(input.Hostname, "."+zoneName) {
+			return PublicationView{}, errors.New("center: private HTTPS hostname must belong to the configured Cloudflare Zone")
+		}
+		if err := tx.Rollback(); err != nil {
+			return PublicationView{}, err
+		}
+		certificate, err = s.obtainPrivateCertificate(ctx, input.Hostname)
+		if err != nil {
+			return PublicationView{}, err
+		}
+		tx, err = s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return PublicationView{}, err
+		}
+		defer tx.Rollback()
+	}
 	now := s.now().UTC()
-	tlsEnabled := webService && (input.Kind == publicationPublic || input.Kind == publicationCloudflare)
+	tlsEnabled := webService && (input.Kind == publicationPublic || input.Kind == publicationCloudflare || privateTLS)
 	id, revision := "", int64(1)
 	var existingStatus string
 	var cleanupPending int
-	err = tx.QueryRowContext(ctx, `SELECT id, status, cleanup_pending, desired_revision FROM publications WHERE service_id = ? AND kind = ? AND hostname = ?`, input.ServiceID, input.Kind, input.Hostname).Scan(&id, &existingStatus, &cleanupPending, &revision)
+	var previousCertificateID sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT id, status, cleanup_pending, desired_revision, certificate_secret_id FROM publications WHERE service_id = ? AND kind = ? AND hostname = ?`, input.ServiceID, input.Kind, input.Hostname).Scan(&id, &existingStatus, &cleanupPending, &revision, &previousCertificateID)
 	if errors.Is(err, sql.ErrNoRows) {
 		id, err = randomToken(18)
 		if err != nil {
 			return PublicationView{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.SNIHostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		var certificateID any
+		certificateNotAfter := ""
+		if privateTLS {
+			encoded, _ := json.Marshal(certificate)
+			value, secretErr := s.putSecret(ctx, tx, encoded, "publication-certificate:"+id)
+			if secretErr != nil {
+				return PublicationView{}, secretErr
+			}
+			certificateID, certificateNotAfter = value, certificate.NotAfter.Format(time.RFC3339Nano)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, certificate_secret_id, certificate_not_after, tls_enabled, status, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.SNIHostname, input.DNSProvider, certificateID, certificateNotAfter, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return PublicationView{}, fmt.Errorf("center: create publication: %w", err)
 		}
 		revision = 1
@@ -230,8 +284,23 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 			return PublicationView{}, errors.New("center: the previous access entry is still removing external resources; retry after cleanup succeeds")
 		}
 		revision++
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET gateway_node_id = ?, sni_hostname = ?, dns_provider = ?, dns_record_id = '', tls_enabled = ?, desired_revision = ?, status = 'pending', last_error = '', cleanup_attempt = 0, cleanup_retry_at = '', updated_at = ? WHERE id = ?`, nullableString(gatewayID), input.SNIHostname, input.DNSProvider, tlsEnabled, revision, now.Format(time.RFC3339Nano), id); err != nil {
+		var certificateID any
+		certificateNotAfter := ""
+		if privateTLS {
+			encoded, _ := json.Marshal(certificate)
+			value, secretErr := s.putSecret(ctx, tx, encoded, "publication-certificate:"+id)
+			if secretErr != nil {
+				return PublicationView{}, secretErr
+			}
+			certificateID, certificateNotAfter = value, certificate.NotAfter.Format(time.RFC3339Nano)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET gateway_node_id = ?, sni_hostname = ?, dns_provider = ?, dns_record_id = '', certificate_secret_id = ?, certificate_not_after = ?, tls_enabled = ?, desired_revision = ?, status = 'pending', last_error = '', cleanup_attempt = 0, cleanup_retry_at = '', updated_at = ? WHERE id = ?`, nullableString(gatewayID), input.SNIHostname, input.DNSProvider, certificateID, certificateNotAfter, tlsEnabled, revision, now.Format(time.RFC3339Nano), id); err != nil {
 			return PublicationView{}, fmt.Errorf("center: reactivate publication: %w", err)
+		}
+		if previousCertificateID.Valid {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, previousCertificateID.String); err != nil {
+				return PublicationView{}, err
+			}
 		}
 	}
 	taskID := dnsTaskID(id, revision)
@@ -269,8 +338,8 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 	defer tx.Rollback()
 	var kind, dnsProvider, dnsRecordID, status string
 	var revision int64
-	var gatewayID sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT kind, gateway_node_id, dns_provider, dns_record_id, desired_revision, status FROM publications WHERE id = ?`, id).Scan(&kind, &gatewayID, &dnsProvider, &dnsRecordID, &revision, &status); errors.Is(err, sql.ErrNoRows) {
+	var gatewayID, certificateSecretID sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT kind, gateway_node_id, dns_provider, dns_record_id, desired_revision, status, certificate_secret_id FROM publications WHERE id = ?`, id).Scan(&kind, &gatewayID, &dnsProvider, &dnsRecordID, &revision, &status, &certificateSecretID); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: publication not found")
 	} else if err != nil {
 		return err
@@ -279,10 +348,15 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 		return errors.New("center: publication is already stopped")
 	}
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', certificate_secret_id = NULL, certificate_not_after = '', desired_revision = desired_revision + 1,
 		cleanup_pending = CASE WHEN dns_record_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
 		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
 		return err
+	}
+	if certificateSecretID.Valid {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, certificateSecretID.String); err != nil {
+			return err
+		}
 	}
 	if gatewayID.Valid {
 		if kind != publicationCloudflare {
@@ -305,8 +379,9 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	var gatewayID sql.NullString
 	var tls int
 	var created, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at FROM publications WHERE id = ?`, id).Scan(
-		&value.ID, &value.ServiceID, &value.Kind, &gatewayID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID, &tls, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated)
+	var certificateNotAfter string
+	err := s.db.QueryRowContext(ctx, `SELECT id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, dns_record_id, tls_enabled, certificate_not_after, desired_revision, applied_revision, status, last_error, created_at, updated_at FROM publications WHERE id = ?`, id).Scan(
+		&value.ID, &value.ServiceID, &value.Kind, &gatewayID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID, &tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PublicationView{}, errors.New("center: publication not found")
 	}
@@ -315,6 +390,13 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	}
 	value.GatewayNodeID = gatewayID.String
 	value.TLSEnabled = tls == 1
+	if certificateNotAfter != "" {
+		expiresAt, parseErr := time.Parse(time.RFC3339Nano, certificateNotAfter)
+		if parseErr != nil {
+			return PublicationView{}, errors.New("center: stored private HTTPS certificate expiry is invalid")
+		}
+		value.CertificateExpiresAt = &expiresAt
+	}
 	value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	if value.Status == "ready" {
@@ -349,6 +431,9 @@ func (s *Store) publicationAccessURL(ctx context.Context, publication Publicatio
 			break
 		}
 	}
+	if appKey == threeXUIAppKey && serviceName == "subscription" {
+		path = "/sub/"
+	}
 	scheme := "http"
 	if publication.TLSEnabled {
 		scheme = "https"
@@ -371,9 +456,10 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 			homepagePaths[app.Key+"\x00"+app.App.Homepage.Service] = app.App.Homepage.Path
 		}
 	}
+	homepagePaths[threeXUIAppKey+"\x00subscription"] = "/sub/"
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		p.id, p.service_id, p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,
-		p.tls_enabled, p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at,
+		p.tls_enabled, p.certificate_not_after, p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at,
 		s.protocol, s.name, a.app_key,
 		COALESCE(n.lan_address, ''), COALESCE(n.headscale_address, ''), COALESCE(n.public_address, ''), COALESCE(t.tunnel_id, '')
 		FROM publications p
@@ -390,16 +476,23 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 	for rows.Next() {
 		var value PublicationView
 		var tls int
-		var created, updated, protocol, serviceName, appKey string
+		var created, updated, certificateNotAfter, protocol, serviceName, appKey string
 		var lanAddress, headscaleAddress, publicAddress, tunnelID string
 		if err := rows.Scan(
 			&value.ID, &value.ServiceID, &value.Kind, &value.GatewayNodeID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID,
-			&tls, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated,
+			&tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated,
 			&protocol, &serviceName, &appKey, &lanAddress, &headscaleAddress, &publicAddress, &tunnelID,
 		); err != nil {
 			return nil, err
 		}
 		value.TLSEnabled = tls == 1
+		if certificateNotAfter != "" {
+			expiresAt, parseErr := time.Parse(time.RFC3339Nano, certificateNotAfter)
+			if parseErr != nil {
+				return nil, errors.New("center: stored private HTTPS certificate expiry is invalid")
+			}
+			value.CertificateExpiresAt = &expiresAt
+		}
 		value.CreatedAt, err = time.Parse(time.RFC3339Nano, created)
 		if err != nil {
 			return nil, errors.New("center: invalid publication creation timestamp")

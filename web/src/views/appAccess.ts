@@ -13,8 +13,8 @@ export function publicationOptions(data: AppData, service: Service | null, langu
     const headscale = available("headscale_gateway");
     const direct = available("public_direct");
     const tunnel = available("cloudflare_tunnel") && cloudflare;
-    options.push({ kind: "lan_gateway", enabled: lan, reason: lan ? "HTTP · LAN Gateway" : copy(language, "没有可用的局域网 Gateway", "No LAN Gateway is available") });
-    options.push({ kind: "headscale_gateway", enabled: headscale, reason: headscale ? "HTTP · Headscale Gateway" : copy(language, "没有可用的 Headscale Gateway", "No Headscale Gateway is available") });
+    options.push({ kind: "lan_gateway", enabled: lan, reason: lan ? cloudflare ? "HTTPS · LAN Gateway" : copy(language, "HTTP · 连接 Cloudflare 后可启用 HTTPS", "HTTP · connect Cloudflare to enable HTTPS") : copy(language, "没有可用的局域网 Gateway", "No LAN Gateway is available") });
+    options.push({ kind: "headscale_gateway", enabled: headscale, reason: headscale ? cloudflare ? "HTTPS · Headscale Gateway" : copy(language, "HTTP · 连接 Cloudflare 后可启用 HTTPS", "HTTP · connect Cloudflare to enable HTTPS") : copy(language, "没有可用的 Headscale Gateway", "No Headscale Gateway is available") });
     options.push({ kind: "public_direct", enabled: direct, reason: direct ? "HTTPS · Public Gateway" : copy(language, "没有已批准的公网 Gateway", "No approved public Gateway is available") });
     options.push({ kind: "cloudflare_tunnel", enabled: tunnel, reason: tunnel ? "HTTPS · Cloudflare Tunnel" : copy(language, "请先连接 Cloudflare 并启用 Tunnel 节点", "Connect Cloudflare and enable a Tunnel node first") });
   } else {

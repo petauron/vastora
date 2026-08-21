@@ -18,21 +18,23 @@ import (
 )
 
 type AgentTask struct {
-	Kind               string                `json:"kind"`
-	ID                 string                `json:"id"`
-	Attempt            int64                 `json:"attempt"`
-	AppKey             string                `json:"appKey"`
-	Manifest           catalog.AppManifest   `json:"manifest"`
-	Config             json.RawMessage       `json:"config"`
-	Secrets            json.RawMessage       `json:"secrets"`
-	Operation          string                `json:"operation"`
-	DeleteData         bool                  `json:"deleteData"`
-	Revision           int64                 `json:"revision,omitempty"`
-	ApplicationID      string                `json:"applicationId,omitempty"`
-	ServiceAddress     string                `json:"serviceAddress,omitempty"`
-	GatewayState       *gateway.DesiredState `json:"gatewayState,omitempty"`
-	TunnelState        *TunnelTaskState      `json:"tunnelState,omitempty"`
-	ApplicationCommand *RealityCommandTask   `json:"applicationCommand,omitempty"`
+	Kind                string                   `json:"kind"`
+	ID                  string                   `json:"id"`
+	Attempt             int64                    `json:"attempt"`
+	AppKey              string                   `json:"appKey"`
+	Manifest            catalog.AppManifest      `json:"manifest"`
+	Config              json.RawMessage          `json:"config"`
+	Secrets             json.RawMessage          `json:"secrets"`
+	Operation           string                   `json:"operation"`
+	DeleteData          bool                     `json:"deleteData"`
+	Revision            int64                    `json:"revision,omitempty"`
+	ApplicationID       string                   `json:"applicationId,omitempty"`
+	ServiceAddress      string                   `json:"serviceAddress,omitempty"`
+	GatewayState        *gateway.DesiredState    `json:"gatewayState,omitempty"`
+	GatewayCertificates []gateway.Certificate    `json:"gatewayCertificates,omitempty"`
+	TunnelState         *TunnelTaskState         `json:"tunnelState,omitempty"`
+	ApplicationCommand  *RealityCommandTask      `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandTask `json:"subscriptionCommand,omitempty"`
 }
 
 type TunnelTaskIngress struct {
@@ -128,7 +130,11 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 		if json.Unmarshal(desiredJSON, &state) != nil || state.Validate() != nil || state.Revision != revision {
 			return nil, errors.New("center: invalid stored gateway desired state")
 		}
-		task = AgentTask{Kind: "gateway.routes.apply", ID: gatewayRouteTaskID(agentID, revision), Attempt: attempt + 1, Revision: revision, GatewayState: &state}
+		certificates, err := s.gatewayCertificates(ctx, tx, agentID)
+		if err != nil {
+			return nil, err
+		}
+		task = AgentTask{Kind: "gateway.routes.apply", ID: gatewayRouteTaskID(agentID, revision), Attempt: attempt + 1, Revision: revision, GatewayState: &state, GatewayCertificates: certificates}
 		now := s.now().UTC()
 		claimed, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND attempt = ? AND status IN ('pending', 'failed')`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, revision, attempt)
 		if err != nil {

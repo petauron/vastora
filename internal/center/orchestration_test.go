@@ -3,6 +3,8 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -477,6 +479,119 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	}
 	if _, err := store.ConsumeApplicationCommandResult(ctx, command.ID); err == nil {
 		t.Fatal("one-time link was revealed twice")
+	}
+}
+
+func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
+		{Address: "10.0.0.62", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN},
+		{Address: "203.0.113.62", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic},
+	}, networking.Profile{ServiceAddress: "10.0.0.62", LANAddress: "10.0.0.62", PublicAddress: "203.0.113.62", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at) VALUES('three-x-ui-subscription', '3x-ui', ?, ?, ?, '', 'running', 'docker', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, service := range []struct {
+		id, name string
+		port     int
+		manager  int
+	}{{"three-x-ui-panel", "panel", 2053, 1}, {"three-x-ui-subscription", "subscription", 2096, 0}} {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, management, status, created_at, updated_at) VALUES(?, 'three-x-ui-subscription', ?, ?, 'http', ?, ?, ?, 'catalog', ?, 'ready', ?, ?)`, service.id, testSiteID(t, store), service.name, service.port, service.port, net.JoinHostPort("10.0.0.62", fmt.Sprint(service.port)), service.manager, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Hostname: "subscribe.edge.example.test", Kind: publicationPublic, DNSProvider: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.Kind != "application.command" || task.SubscriptionCommand == nil || task.ApplicationCommand != nil {
+		t.Fatalf("unexpected subscription task: %#v", task)
+	}
+	if task.SubscriptionCommand.Domain != "subscribe.edge.example.test" || task.SubscriptionCommand.BaseURI != "https://subscribe.edge.example.test/sub/" {
+		t.Fatalf("unexpected subscription settings: %#v", task.SubscriptionCommand)
+	}
+	result, _ := json.Marshal(ApplicationTaskResult{SubscriptionCommand: &SubscriptionCommandResult{Domain: task.SubscriptionCommand.Domain, BaseURI: task.SubscriptionCommand.BaseURI}})
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.ApplicationCommand(ctx, command.ID)
+	if err != nil || completed.State != "succeeded" || completed.PublicationID == "" {
+		t.Fatalf("unexpected completed subscription command: %#v err=%v", completed, err)
+	}
+	publication, err := store.Publication(ctx, completed.PublicationID)
+	if err != nil || publication.ServiceID != "three-x-ui-subscription" || publication.TLSEnabled != true {
+		t.Fatalf("subscription publication = %#v, err=%v", publication, err)
+	}
+	var panelPublications int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id = 'three-x-ui-panel' AND status <> 'stopped'`).Scan(&panelPublications); err != nil {
+		t.Fatal(err)
+	}
+	if panelPublications != 0 {
+		t.Fatal("3x-ui management panel was published with the subscription service")
+	}
+}
+
+func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "private-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.63", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.63", LANAddress: "10.0.0.63", EnabledKinds: []string{networking.KindLAN}})
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	applicationID := installCPA(t, store, node, "10.0.0.63")
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
+		t.Fatalf("services = %#v, err=%v", services, err)
+	}
+	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.private.example.test", DNSProvider: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate := managedCertificate{CertificatePEM: "TEST CERTIFICATE", PrivateKeyPEM: "TEST PRIVATE KEY", NotAfter: time.Now().UTC().Add(24 * time.Hour)}
+	encoded, _ := json.Marshal(certificate)
+	secretID, err := store.putSecret(ctx, tx, encoded, "publication-certificate:"+publication.ID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE publications SET certificate_secret_id = ?, certificate_not_after = ?, tls_enabled = 1 WHERE id = ?`, secretID, certificate.NotAfter.Format(time.RFC3339Nano), publication.ID)
+	}
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `UPDATE routes SET tls_enabled = 1 WHERE publication_id = ?`, publication.ID)
+	}
+	if err == nil {
+		err = store.queueGatewayState(ctx, tx, node.ID, time.Now().UTC())
+	}
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var desiredJSON []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_json FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&desiredJSON); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(desiredJSON), "PRIVATE KEY") {
+		t.Fatal("gateway desired state contains a certificate private key")
+	}
+	actions, err := store.ListActions(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionJSON, _ := json.Marshal(actions)
+	if strings.Contains(string(actionJSON), "PRIVATE KEY") {
+		t.Fatal("task events contain a certificate private key")
+	}
+	task := claimTask(t, store, node)
+	if task.Kind != "gateway.routes.apply" || len(task.GatewayCertificates) != 1 || task.GatewayCertificates[0].PrivateKeyPEM != "TEST PRIVATE KEY" {
+		t.Fatalf("certificate was not delivered only with the Agent task: %#v", task)
 	}
 }
 
