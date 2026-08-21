@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.22](https://github.com/petauron/vastora/compare/v0.1.0-alpha.21...v0.1.0-alpha.22) (2026-08-21)
+
+
+### Features
+
+* add private HTTPS and 3x-ui subscriptions ([#70](https://github.com/petauron/vastora/issues/70)) ([913d205](https://github.com/petauron/vastora/commit/913d20521e769a396c96622b29ec46108e849173))
+
 ## [0.1.0-alpha.21](https://github.com/petauron/vastora/compare/v0.1.0-alpha.20...v0.1.0-alpha.21) (2026-08-20)
 
 
