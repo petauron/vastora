@@ -2,10 +2,18 @@ package agent
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/moby/moby/api/types/mount"
 	"github.com/petauron/vastora/internal/gateway"
@@ -17,7 +25,7 @@ type fakeGatewayDriver struct {
 	healthFail bool
 }
 
-func (driver *fakeGatewayDriver) ApplyConfiguration(_ context.Context, desired gateway.DesiredState) error {
+func (driver *fakeGatewayDriver) ApplyConfiguration(_ context.Context, desired gateway.DesiredState, _ []gateway.Certificate) error {
 	if driver.fail {
 		return errors.New("Caddy rejected configuration")
 	}
@@ -50,6 +58,40 @@ func gatewayState(revision int64, port int) gateway.DesiredState {
 	}
 }
 
+func testGatewayCertificate(t *testing.T, hostname string) gateway.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: hostname},
+		DNSNames:     []string{hostname},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(time.Hour),
+	}, &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: hostname},
+		DNSNames:     []string{hostname},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(time.Hour),
+	}, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gateway.Certificate{
+		Hostname:       hostname,
+		CertificatePEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		PrivateKeyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})),
+	}
+}
+
 func TestGatewayHealthFailureDoesNotAdvanceLastKnownGood(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -58,11 +100,11 @@ func TestGatewayHealthFailureDoesNotAdvanceLastKnownGood(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	driver := &fakeGatewayDriver{}
-	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(1, 3000)); err != nil {
+	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(1, 3000), nil); err != nil {
 		t.Fatal(err)
 	}
 	driver.healthFail = true
-	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(2, 3100)); err == nil {
+	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(2, 3100), nil); err == nil {
 		t.Fatal("unhealthy Caddy revision was accepted")
 	}
 	persisted, err := store.GatewayState(ctx)
@@ -82,17 +124,17 @@ func TestGatewayRevisionIsIdempotentAndFailureKeepsLastKnownGood(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	driver := &fakeGatewayDriver{}
-	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(1, 3000)); err != nil {
+	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(1, 3000), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(1, 3000)); err != nil {
+	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(1, 3000), nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(driver.applied) != 1 {
 		t.Fatalf("duplicate revision was applied %d times", len(driver.applied))
 	}
 	driver.fail = true
-	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(2, 3100)); err == nil {
+	if err := applyGatewayDesiredState(ctx, store, driver, gatewayState(2, 3100), nil); err == nil {
 		t.Fatal("failed Caddy load was accepted")
 	}
 	persisted, err := store.GatewayState(ctx)
@@ -112,7 +154,7 @@ func TestGatewayRestoresAfterAgentOrCaddyRestartWithoutCenter(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	initial := &fakeGatewayDriver{}
-	if err := applyGatewayDesiredState(ctx, store, initial, gatewayState(7, 3000)); err != nil {
+	if err := applyGatewayDesiredState(ctx, store, initial, gatewayState(7, 3000), nil); err != nil {
 		t.Fatal(err)
 	}
 	restarted := &fakeGatewayDriver{}
@@ -125,7 +167,7 @@ func TestGatewayRestoresAfterAgentOrCaddyRestartWithoutCenter(t *testing.T) {
 }
 
 func TestCaddyConfigurationUsesOnlyGatewayListenersAndMeshUpstreams(t *testing.T) {
-	payload, err := caddyConfiguration(gatewayState(1, 3000), "unix//run/vastora/caddy-admin.sock")
+	payload, err := caddyConfiguration(gatewayState(1, 3000), nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,18 +190,37 @@ func TestCaddyConfigurationUsesOnlyGatewayListenersAndMeshUpstreams(t *testing.T
 func TestCaddyHTTPSRouteEnablesTLSAndRedirectsPlaintext(t *testing.T) {
 	state := gatewayState(1, 3000)
 	state.Routes[0].TLSEnabled = true
-	payload, err := caddyConfiguration(state, "unix//run/vastora/caddy-admin.sock")
+	certificate := testGatewayCertificate(t, state.Routes[0].Hostname)
+	payload, err := caddyConfiguration(state, []gateway.Certificate{certificate}, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
 	encoded := string(payload)
-	for _, wanted := range []string{`"listen":["100.64.0.2:80"]`, `"listen":["100.64.0.2:443"]`, `"tls_connection_policies":[{}]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
+	for _, wanted := range []string{`"listen":["100.64.0.2:80"]`, `"listen":["100.64.0.2:443"]`, `"tls_connection_policies":[{}]`, `"load_pem"`, `"tags":["vastora-cpa.apps.example.test"]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
 		if !strings.Contains(encoded, wanted) {
 			t.Fatalf("HTTPS Caddy configuration missing %s: %s", wanted, encoded)
 		}
 	}
+	if strings.Contains(encoded, "automation") {
+		t.Fatalf("private HTTPS unexpectedly delegated certificate issuance to Caddy: %s", encoded)
+	}
 	if strings.Count(encoded, `"handler":"reverse_proxy"`) != 1 {
 		t.Fatalf("HTTP redirect listener unexpectedly proxies application traffic: %s", encoded)
+	}
+}
+
+func TestGatewayRejectsMismatchedOrWrongHostnameCertificates(t *testing.T) {
+	first := testGatewayCertificate(t, "first.example.test")
+	second := testGatewayCertificate(t, "second.example.test")
+	mismatched := first
+	mismatched.PrivateKeyPEM = second.PrivateKeyPEM
+	if err := gateway.ValidateCertificates([]gateway.Certificate{mismatched}); err == nil {
+		t.Fatal("mismatched certificate and private key were accepted")
+	}
+	wrongHostname := first
+	wrongHostname.Hostname = "other.example.test"
+	if err := gateway.ValidateCertificates([]gateway.Certificate{wrongHostname}); err == nil {
+		t.Fatal("certificate for another hostname was accepted")
 	}
 }
 
@@ -170,7 +231,7 @@ func TestShared443MovesCaddyHTTPSToLoopback(t *testing.T) {
 		Routes:      []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
 		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 8443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
 	}
-	payload, err := caddyConfiguration(state, "unix//run/vastora/caddy-admin.sock")
+	payload, err := caddyConfiguration(state, nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +278,7 @@ func TestCaddyConfigurationKeepsLANAndHeadscaleListenersSeparate(t *testing.T) {
 	state := gatewayState(1, 8317)
 	state.Listeners = append(state.Listeners, gateway.Listener{Kind: "lan", Address: "192.168.1.2", HTTPPort: 80, HTTPSPort: 443})
 	state.Routes = append(state.Routes, gateway.Route{ID: "keeper-route", Hostname: "keeper.lan.example.test", Protocol: "http", ListenerKind: "lan", Upstreams: []gateway.Upstream{{Address: "192.168.1.10", Port: 8080}}})
-	payload, err := caddyConfiguration(state, "unix//run/vastora/caddy-admin.sock")
+	payload, err := caddyConfiguration(state, nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +293,7 @@ func TestCaddyConfigurationKeepsLANAndHeadscaleListenersSeparate(t *testing.T) {
 func TestCaddyHTTPSServiceUsesTLSUpstreamTransport(t *testing.T) {
 	state := gatewayState(1, 8443)
 	state.Routes[0].Protocol = "https"
-	payload, err := caddyConfiguration(state, "unix//run/vastora/caddy-admin.sock")
+	payload, err := caddyConfiguration(state, nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
 		t.Fatal(err)
 	}

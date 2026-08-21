@@ -27,6 +27,7 @@ type Store struct {
 	cloudflareOAuthMu         sync.Mutex
 	cloudflareOAuthSessions   map[string]*cloudflareOAuthSession
 	cloudflareTokenMu         sync.Mutex
+	certificateMu             sync.Mutex
 	publicationCleanupMu      sync.Mutex
 	now                       func() time.Time
 }

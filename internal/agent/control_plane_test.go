@@ -88,7 +88,7 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := gateway.DesiredState{Revision: 3, Listeners: []gateway.Listener{{Kind: "lan", Address: "192.0.2.10", HTTPPort: 80, HTTPSPort: 443}}}
-	if _, err := store.RecordGatewayState(context.Background(), state); err != nil {
+	if _, err := store.RecordGatewayState(context.Background(), state, nil); err != nil {
 		t.Fatal(err)
 	}
 	driver := &fakeGatewayDriver{}

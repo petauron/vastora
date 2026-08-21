@@ -24,8 +24,9 @@ type CaddyGatewayDriver struct {
 	AdminSocketPath string
 	HTTPClient      *http.Client
 
-	mu    sync.RWMutex
-	state gateway.DesiredState
+	mu           sync.RWMutex
+	state        gateway.DesiredState
+	certificates []gateway.Certificate
 }
 
 func NewCaddyGatewayDriver(adminURL string) (*CaddyGatewayDriver, error) {
@@ -57,11 +58,14 @@ func NewCaddyGatewayDriver(adminURL string) (*CaddyGatewayDriver, error) {
 	return &CaddyGatewayDriver{AdminURL: parsed.String(), AdminListen: parsed.Host, HTTPClient: &http.Client{Timeout: 15 * time.Second}}, nil
 }
 
-func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState) error {
+func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	if err := desired.Validate(); err != nil {
 		return err
 	}
-	configuration, err := caddyConfiguration(desired.Sorted(), driver.AdminListen)
+	if err := gateway.ValidateCertificates(certificates); err != nil {
+		return err
+	}
+	configuration, err := caddyConfiguration(desired.Sorted(), certificates, driver.AdminListen)
 	if err != nil {
 		return err
 	}
@@ -85,6 +89,7 @@ func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desire
 	}
 	driver.mu.Lock()
 	driver.state = desired.Sorted()
+	driver.certificates = append([]gateway.Certificate(nil), certificates...)
 	driver.mu.Unlock()
 	return nil
 }
@@ -92,6 +97,7 @@ func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desire
 func (driver *CaddyGatewayDriver) ApplyRoute(ctx context.Context, route gateway.Route) error {
 	driver.mu.RLock()
 	next := driver.state.Sorted()
+	certificates := append([]gateway.Certificate(nil), driver.certificates...)
 	driver.mu.RUnlock()
 	found := false
 	for index := range next.Routes {
@@ -108,12 +114,13 @@ func (driver *CaddyGatewayDriver) ApplyRoute(ctx context.Context, route gateway.
 	} else {
 		next.Revision++
 	}
-	return driver.ApplyConfiguration(ctx, next)
+	return driver.ApplyConfiguration(ctx, next, certificates)
 }
 
 func (driver *CaddyGatewayDriver) DeleteRoute(ctx context.Context, routeID string) error {
 	driver.mu.RLock()
 	current := driver.state.Sorted()
+	certificates := append([]gateway.Certificate(nil), driver.certificates...)
 	driver.mu.RUnlock()
 	next := gateway.DesiredState{Revision: current.Revision, Routes: make([]gateway.Route, 0, len(current.Routes))}
 	for _, route := range current.Routes {
@@ -126,7 +133,7 @@ func (driver *CaddyGatewayDriver) DeleteRoute(ctx context.Context, routeID strin
 	} else {
 		next.Revision++
 	}
-	return driver.ApplyConfiguration(ctx, next)
+	return driver.ApplyConfiguration(ctx, next, certificates)
 }
 
 func (driver *CaddyGatewayDriver) ListRoutes(context.Context) ([]gateway.Route, error) {
@@ -172,7 +179,10 @@ func (driver *CaddyGatewayDriver) client() *http.Client {
 	return &http.Client{Timeout: 15 * time.Second}
 }
 
-func caddyConfiguration(desired gateway.DesiredState, adminListen string) ([]byte, error) {
+func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Certificate, adminListen string) ([]byte, error) {
+	if err := gateway.ValidateCertificates(certificates); err != nil {
+		return nil, err
+	}
 	type caddyRoute struct {
 		Match    []map[string][]string `json:"match"`
 		Handle   []map[string]any      `json:"handle"`
@@ -214,6 +224,14 @@ func caddyConfiguration(desired gateway.DesiredState, adminListen string) ([]byt
 			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort(httpsAddress, strconv.Itoa(httpsPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
 		}
 	}
-	configuration := map[string]any{"admin": map[string]any{"listen": adminListen}, "apps": map[string]any{"http": map[string]any{"servers": servers}}}
+	apps := map[string]any{"http": map[string]any{"servers": servers}}
+	if len(certificates) != 0 {
+		pairs := make([]map[string]any, 0, len(certificates))
+		for _, certificate := range certificates {
+			pairs = append(pairs, map[string]any{"certificate": certificate.CertificatePEM, "key": certificate.PrivateKeyPEM, "tags": []string{"vastora-" + certificate.Hostname}})
+		}
+		apps["tls"] = map[string]any{"certificates": map[string]any{"load_pem": pairs}}
+	}
+	configuration := map[string]any{"admin": map[string]any{"listen": adminListen}, "apps": apps}
 	return json.Marshal(configuration)
 }

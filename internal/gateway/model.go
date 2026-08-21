@@ -2,12 +2,17 @@
 package gateway
 
 import (
+	"bytes"
+	"crypto"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -31,6 +36,44 @@ type Route struct {
 	Upstreams    []Upstream `json:"upstreams"`
 	TLSEnabled   bool       `json:"tlsEnabled"`
 	ListenerKind string     `json:"listenerKind"`
+}
+
+// Certificate is delivered separately from DesiredState so private keys never
+// enter persisted desired-state JSON or task events.
+type Certificate struct {
+	Hostname       string `json:"hostname"`
+	CertificatePEM string `json:"certificatePem"`
+	PrivateKeyPEM  string `json:"privateKeyPem"`
+}
+
+func ValidateCertificates(values []Certificate) error {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if !hostnamePattern.MatchString(value.Hostname) || strings.TrimSpace(value.CertificatePEM) == "" || strings.TrimSpace(value.PrivateKeyPEM) == "" {
+			return errors.New("gateway: invalid TLS certificate")
+		}
+		if _, exists := seen[value.Hostname]; exists {
+			return fmt.Errorf("gateway: duplicate TLS certificate for %q", value.Hostname)
+		}
+		certificateBlock, _ := pem.Decode([]byte(value.CertificatePEM))
+		keyBlock, _ := pem.Decode([]byte(value.PrivateKeyPEM))
+		if certificateBlock == nil || certificateBlock.Type != "CERTIFICATE" || keyBlock == nil || keyBlock.Type != "PRIVATE KEY" {
+			return fmt.Errorf("gateway: invalid TLS certificate for %q", value.Hostname)
+		}
+		certificate, certificateErr := x509.ParseCertificate(certificateBlock.Bytes)
+		privateKey, keyErr := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+		signer, signerOK := privateKey.(crypto.Signer)
+		if certificateErr != nil || keyErr != nil || !signerOK || certificate.VerifyHostname(value.Hostname) != nil || time.Now().Before(certificate.NotBefore) || !time.Now().Before(certificate.NotAfter) {
+			return fmt.Errorf("gateway: invalid TLS certificate for %q", value.Hostname)
+		}
+		certificatePublicKey, certificateKeyErr := x509.MarshalPKIXPublicKey(certificate.PublicKey)
+		privatePublicKey, privateKeyErr := x509.MarshalPKIXPublicKey(signer.Public())
+		if certificateKeyErr != nil || privateKeyErr != nil || !bytes.Equal(certificatePublicKey, privatePublicKey) {
+			return fmt.Errorf("gateway: TLS certificate and private key do not match for %q", value.Hostname)
+		}
+		seen[value.Hostname] = struct{}{}
+	}
+	return nil
 }
 
 // Layer4Route is a raw TCP upstream selected from the TLS ClientHello SNI.

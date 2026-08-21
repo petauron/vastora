@@ -25,9 +25,10 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services           []ApplicationServiceResult `json:"services"`
-	GeneratedSecrets   map[string]string          `json:"generatedSecrets,omitempty"`
-	ApplicationCommand *RealityCommandResult      `json:"applicationCommand,omitempty"`
+	Services            []ApplicationServiceResult `json:"services"`
+	GeneratedSecrets    map[string]string          `json:"generatedSecrets,omitempty"`
+	ApplicationCommand  *RealityCommandResult      `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandResult `json:"subscriptionCommand,omitempty"`
 }
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {

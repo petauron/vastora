@@ -12,19 +12,33 @@ import (
 )
 
 func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
-	var id string
+	var id, kind string
 	var inputJSON []byte
 	var attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT id, input_json, attempt FROM application_commands WHERE agent_id = ? AND state = 'pending' ORDER BY created_at, rowid LIMIT 1`, agentID).Scan(&id, &inputJSON, &attempt)
+	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt FROM application_commands WHERE agent_id = ? AND state = 'pending' ORDER BY created_at, rowid LIMIT 1`, agentID).Scan(&id, &kind, &inputJSON, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("center: read pending application operation: %w", err)
 	}
-	var command RealityCommandTask
-	if json.Unmarshal(inputJSON, &command) != nil || command.Name == "" || command.ConnectHostname == "" {
-		return nil, errors.New("center: stored application operation is invalid")
+	var reality *RealityCommandTask
+	var subscription *SubscriptionCommandTask
+	switch kind {
+	case realityCommandKind:
+		var command RealityCommandTask
+		if json.Unmarshal(inputJSON, &command) != nil || command.Name == "" || command.ConnectHostname == "" {
+			return nil, errors.New("center: stored REALITY operation is invalid")
+		}
+		reality = &command
+	case subscriptionCommandKind:
+		var command SubscriptionCommandTask
+		if json.Unmarshal(inputJSON, &command) != nil || command.Domain == "" || command.BaseURI == "" || command.PublicationID == "" {
+			return nil, errors.New("center: stored subscription operation is invalid")
+		}
+		subscription = &command
+	default:
+		return nil, errors.New("center: stored application operation kind is invalid")
 	}
 	now := s.now().UTC()
 	result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'running', attempt = attempt + 1, lease_expires_at = ?, error = '', updated_at = ? WHERE id = ? AND state = 'pending' AND attempt = ?`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), id, attempt)
@@ -37,7 +51,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
 		return nil, err
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, ApplicationCommand: &command}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, ApplicationCommand: reality, SubscriptionCommand: subscription}, nil
 }
 
 func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
@@ -61,8 +75,14 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	if currentState == "succeeded" || currentState == "failed" {
 		return nil
 	}
-	if kind != realityCommandKind || currentState != "running" || expectedAttempt <= 0 || expectedAttempt != attempt {
+	if currentState != "running" || expectedAttempt <= 0 || expectedAttempt != attempt {
 		return errors.New("center: stale application operation result")
+	}
+	if kind == subscriptionCommandKind {
+		return s.completeSubscriptionCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind != realityCommandKind {
+		return errors.New("center: stored application operation kind is invalid")
 	}
 	now := s.now().UTC()
 	var serviceID string
@@ -213,4 +233,49 @@ func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gateway
 	}
 	_, err = s.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: publicationShared443, GatewayNodeID: gatewayID, Hostname: input.ConnectHostname, SNIHostname: sniHostname, DNSProvider: input.DNSProvider})
 	return err
+}
+
+func (s *Store) completeSubscriptionCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+	var input SubscriptionCommandTask
+	if json.Unmarshal(inputJSON, &input) != nil || input.PublicationID == "" {
+		return errors.New("center: stored subscription operation is invalid")
+	}
+	var envelope ApplicationTaskResult
+	if succeeded {
+		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.SubscriptionCommand == nil {
+			succeeded = false
+			taskError = "center: Agent returned an invalid subscription result"
+		} else if envelope.SubscriptionCommand.Domain != input.Domain || envelope.SubscriptionCommand.BaseURI != input.BaseURI {
+			succeeded = false
+			taskError = "center: Agent changed the requested subscription address"
+		}
+	}
+	if taskError == "" && !succeeded {
+		taskError = "application operation failed"
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	state, event, message := "succeeded", "succeeded", "3x-ui public subscription configured"
+	var resultJSON []byte
+	if succeeded {
+		resultJSON, _ = json.Marshal(envelope.SubscriptionCommand)
+	} else {
+		state, event, message = "failed", "failed", taskError
+		resultJSON = []byte(`{}`)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, resultJSON, taskError, now, taskID); err != nil {
+		return err
+	}
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if succeeded {
+		return nil
+	}
+	if err := s.StopPublication(context.WithoutCancel(ctx), input.PublicationID); err != nil && !strings.Contains(err.Error(), "already stopped") {
+		return errors.Join(errors.New(taskError), err)
+	}
+	return nil
 }

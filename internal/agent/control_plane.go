@@ -48,21 +48,23 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
-	Kind               string                `json:"kind"`
-	ID                 string                `json:"id"`
-	Attempt            int64                 `json:"attempt"`
-	AppKey             string                `json:"appKey"`
-	Manifest           catalog.AppManifest   `json:"manifest"`
-	Config             json.RawMessage       `json:"config"`
-	Secrets            json.RawMessage       `json:"secrets"`
-	Operation          string                `json:"operation"`
-	DeleteData         bool                  `json:"deleteData"`
-	Revision           int64                 `json:"revision,omitempty"`
-	ApplicationID      string                `json:"applicationId,omitempty"`
-	ServiceAddress     string                `json:"serviceAddress,omitempty"`
-	GatewayState       *gateway.DesiredState `json:"gatewayState,omitempty"`
-	TunnelState        *TunnelDesiredState   `json:"tunnelState,omitempty"`
-	ApplicationCommand *RealityCommandTask   `json:"applicationCommand,omitempty"`
+	Kind                string                   `json:"kind"`
+	ID                  string                   `json:"id"`
+	Attempt             int64                    `json:"attempt"`
+	AppKey              string                   `json:"appKey"`
+	Manifest            catalog.AppManifest      `json:"manifest"`
+	Config              json.RawMessage          `json:"config"`
+	Secrets             json.RawMessage          `json:"secrets"`
+	Operation           string                   `json:"operation"`
+	DeleteData          bool                     `json:"deleteData"`
+	Revision            int64                    `json:"revision,omitempty"`
+	ApplicationID       string                   `json:"applicationId,omitempty"`
+	ServiceAddress      string                   `json:"serviceAddress,omitempty"`
+	GatewayState        *gateway.DesiredState    `json:"gatewayState,omitempty"`
+	GatewayCertificates []gateway.Certificate    `json:"gatewayCertificates,omitempty"`
+	TunnelState         *TunnelDesiredState      `json:"tunnelState,omitempty"`
+	ApplicationCommand  *RealityCommandTask      `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandTask `json:"subscriptionCommand,omitempty"`
 }
 
 type Executor interface {
@@ -78,9 +80,10 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services           []ApplicationServiceResult `json:"services"`
-	GeneratedSecrets   map[string]string          `json:"generatedSecrets,omitempty"`
-	ApplicationCommand *RealityCommandResult      `json:"applicationCommand,omitempty"`
+	Services            []ApplicationServiceResult `json:"services"`
+	GeneratedSecrets    map[string]string          `json:"generatedSecrets,omitempty"`
+	ApplicationCommand  *RealityCommandResult      `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandResult `json:"subscriptionCommand,omitempty"`
 }
 
 type RealityCommandTask struct {
@@ -101,6 +104,17 @@ type RealityCommandResult struct {
 	SNIHostname     string `json:"sniHostname"`
 	ConnectHostname string `json:"connectHostname"`
 	ShareURI        string `json:"shareUri"`
+}
+
+type SubscriptionCommandTask struct {
+	Domain        string `json:"domain"`
+	BaseURI       string `json:"baseUri"`
+	PublicationID string `json:"publicationId"`
+}
+
+type SubscriptionCommandResult struct {
+	Domain  string `json:"domain"`
+	BaseURI string `json:"baseUri"`
 }
 
 type ApplicationEndpointObservation struct {
@@ -276,20 +290,26 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 				result, err = c.Executor.Deploy(requestContext, *task)
 			}
 		case "application.command":
-			if task.ApplicationCommand == nil || !c.Capabilities.Docker {
+			if !c.Capabilities.Docker || (task.ApplicationCommand == nil) == (task.SubscriptionCommand == nil) {
 				err = errors.New("agent: application command received without Docker capability")
-			} else {
+			} else if task.ApplicationCommand != nil {
 				var commandResult RealityCommandResult
 				commandResult, err = applyRealityCommand(requestContext, store, task.ID, *task.ApplicationCommand)
 				if err == nil {
 					result.ApplicationCommand = &commandResult
+				}
+			} else {
+				var commandResult SubscriptionCommandResult
+				commandResult, err = applySubscriptionCommand(requestContext, store, *task.SubscriptionCommand)
+				if err == nil {
+					result.SubscriptionCommand = &commandResult
 				}
 			}
 		case "gateway.routes.apply":
 			if task.GatewayState == nil || !c.Capabilities.Gateway {
 				err = errors.New("agent: gateway task received without gateway capability")
 			} else {
-				err = applyGatewayDesiredState(requestContext, store, c.GatewayDriver, *task.GatewayState)
+				err = applyGatewayDesiredState(requestContext, store, c.GatewayDriver, *task.GatewayState, task.GatewayCertificates)
 			}
 		case "gateway.component.apply":
 			if c.GatewayProvisioner == nil || !c.Capabilities.Gateway {

@@ -100,6 +100,9 @@ func runCenter(arguments []string) error {
 		go store.RunPublicationCleanup(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center publication cleanup: %v\n", err)
 		})
+		go store.RunCertificateRenewal(maintenanceContext, 12*time.Hour, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center private HTTPS renewal: %v\n", err)
+		})
 		centerServer := center.NewServer(store, *webDir, *tlsCert != "").
 			WithOfficialCatalog(catalogPayload).
 			WithAgentBinaries(*agentBinariesDir).

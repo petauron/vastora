@@ -38,11 +38,12 @@ type ManagedGatewayDriver struct {
 	Caddy  *CaddyGatewayDriver
 	Layer4 Layer4Provisioner
 
-	mu    sync.RWMutex
-	state gateway.DesiredState
+	mu           sync.RWMutex
+	state        gateway.DesiredState
+	certificates []gateway.Certificate
 }
 
-func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState) error {
+func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	if driver.Caddy == nil || driver.Layer4 == nil {
 		return errors.New("agent: managed gateway is not configured")
 	}
@@ -51,10 +52,11 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 	}
 	driver.mu.RLock()
 	previous := driver.state.Sorted()
+	previousCertificates := append([]gateway.Certificate(nil), driver.certificates...)
 	driver.mu.RUnlock()
-	if err := driver.apply(ctx, desired.Sorted()); err != nil {
+	if err := driver.apply(ctx, desired.Sorted(), certificates); err != nil {
 		if previous.Revision > 0 {
-			if rollbackErr := driver.apply(ctx, previous); rollbackErr != nil {
+			if rollbackErr := driver.apply(ctx, previous, previousCertificates); rollbackErr != nil {
 				return errors.Join(err, fmt.Errorf("agent: restore previous gateway revision %d: %w", previous.Revision, rollbackErr))
 			}
 		}
@@ -62,19 +64,20 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 	}
 	driver.mu.Lock()
 	driver.state = desired.Sorted()
+	driver.certificates = append([]gateway.Certificate(nil), certificates...)
 	driver.mu.Unlock()
 	return nil
 }
 
-func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.DesiredState) error {
+func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	if desired.SharedHTTPS == nil {
 		if err := driver.Layer4.Remove(ctx); err != nil {
 			return err
 		}
-		return driver.Caddy.ApplyConfiguration(ctx, desired)
+		return driver.Caddy.ApplyConfiguration(ctx, desired, certificates)
 	}
 	// Move Caddy away from public 443 before HAProxy claims it.
-	if err := driver.Caddy.ApplyConfiguration(ctx, desired); err != nil {
+	if err := driver.Caddy.ApplyConfiguration(ctx, desired, certificates); err != nil {
 		return err
 	}
 	if err := driver.Layer4.Apply(ctx, *desired.SharedHTTPS); err != nil {

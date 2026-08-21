@@ -56,7 +56,7 @@ type Connection struct {
 	Credential string `json:"-"`
 }
 
-const agentSchemaVersion = 1
+const agentSchemaVersion = 2
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -88,9 +88,36 @@ func Open(dataDir string) (*Store, error) {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: inspect schema version: %w", err)
 		}
+		if version == 1 {
+			emptyCertificates, sealErr := secret.Seal(key, []byte(`[]`), []byte("agent-gateway-certificates"))
+			if sealErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: encrypt empty gateway certificates: %w", sealErr)
+			}
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`ALTER TABLE gateway_applied_state ADD COLUMN sealed_certificates BLOB`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`UPDATE gateway_applied_state SET sealed_certificates = ?`, emptyCertificates)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version = 2`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 1 to 2: %w", migrateErr)
+			}
+			version = 2
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
-			return nil, errors.New("agent: database schema is obsolete; clear and re-enroll this Agent")
+			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
 		}
 		return store, nil
 	}
@@ -115,10 +142,11 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			applied_revision INTEGER NOT NULL,
 			desired_json BLOB NOT NULL,
+			sealed_certificates BLOB NOT NULL,
 			config_hash TEXT NOT NULL,
 			applied_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 1;`); err != nil {
+		PRAGMA user_version = 2;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
@@ -126,16 +154,17 @@ func Open(dataDir string) (*Store, error) {
 }
 
 type GatewayAppliedState struct {
-	Desired    gateway.DesiredState `json:"desired"`
-	ConfigHash string               `json:"configHash"`
-	AppliedAt  time.Time            `json:"appliedAt"`
+	Desired      gateway.DesiredState  `json:"desired"`
+	Certificates []gateway.Certificate `json:"-"`
+	ConfigHash   string                `json:"configHash"`
+	AppliedAt    time.Time             `json:"appliedAt"`
 }
 
 func (s *Store) GatewayState(ctx context.Context) (GatewayAppliedState, error) {
-	var encoded []byte
+	var encoded, sealedCertificates []byte
 	var state GatewayAppliedState
 	var appliedAt string
-	err := s.db.QueryRowContext(ctx, `SELECT desired_json, config_hash, applied_at FROM gateway_applied_state WHERE id = 1`).Scan(&encoded, &state.ConfigHash, &appliedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT desired_json, sealed_certificates, config_hash, applied_at FROM gateway_applied_state WHERE id = 1`).Scan(&encoded, &sealedCertificates, &state.ConfigHash, &appliedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GatewayAppliedState{}, errors.New("agent: no applied gateway state")
 	}
@@ -145,6 +174,10 @@ func (s *Store) GatewayState(ctx context.Context) (GatewayAppliedState, error) {
 	if json.Unmarshal(encoded, &state.Desired) != nil || state.Desired.Validate() != nil {
 		return GatewayAppliedState{}, errors.New("agent: stored gateway state is invalid")
 	}
+	certificateJSON, err := secret.Open(s.key, sealedCertificates, []byte("agent-gateway-certificates"))
+	if err != nil || json.Unmarshal(certificateJSON, &state.Certificates) != nil || gateway.ValidateCertificates(state.Certificates) != nil {
+		return GatewayAppliedState{}, errors.New("agent: stored gateway certificates are invalid")
+	}
 	state.AppliedAt, err = time.Parse(time.RFC3339Nano, appliedAt)
 	if err != nil {
 		return GatewayAppliedState{}, errors.New("agent: stored gateway timestamp is invalid")
@@ -152,22 +185,34 @@ func (s *Store) GatewayState(ctx context.Context) (GatewayAppliedState, error) {
 	return state, nil
 }
 
-func (s *Store) RecordGatewayState(ctx context.Context, desired gateway.DesiredState) (GatewayAppliedState, error) {
+func (s *Store) RecordGatewayState(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) (GatewayAppliedState, error) {
 	if err := desired.Validate(); err != nil {
 		return GatewayAppliedState{}, err
 	}
 	desired = desired.Sorted()
+	if err := gateway.ValidateCertificates(certificates); err != nil {
+		return GatewayAppliedState{}, err
+	}
 	encoded, err := json.Marshal(desired)
 	if err != nil {
 		return GatewayAppliedState{}, err
 	}
-	digest := sha256.Sum256(encoded)
+	certificateJSON, err := json.Marshal(certificates)
+	if err != nil {
+		return GatewayAppliedState{}, err
+	}
+	sealedCertificates, err := secret.Seal(s.key, certificateJSON, []byte("agent-gateway-certificates"))
+	if err != nil {
+		return GatewayAppliedState{}, fmt.Errorf("agent: encrypt gateway certificates: %w", err)
+	}
+	digestInput := append(append([]byte(nil), encoded...), certificateJSON...)
+	digest := sha256.Sum256(digestInput)
 	now := s.now().UTC()
-	state := GatewayAppliedState{Desired: desired, ConfigHash: hex.EncodeToString(digest[:]), AppliedAt: now}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO gateway_applied_state(id, applied_revision, desired_json, config_hash, applied_at)
-		VALUES(1, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET applied_revision = excluded.applied_revision, desired_json = excluded.desired_json, config_hash = excluded.config_hash, applied_at = excluded.applied_at
-		WHERE excluded.applied_revision >= gateway_applied_state.applied_revision`, desired.Revision, encoded, state.ConfigHash, now.Format(time.RFC3339Nano))
+	state := GatewayAppliedState{Desired: desired, Certificates: append([]gateway.Certificate(nil), certificates...), ConfigHash: hex.EncodeToString(digest[:]), AppliedAt: now}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO gateway_applied_state(id, applied_revision, desired_json, sealed_certificates, config_hash, applied_at)
+		VALUES(1, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET applied_revision = excluded.applied_revision, desired_json = excluded.desired_json, sealed_certificates = excluded.sealed_certificates, config_hash = excluded.config_hash, applied_at = excluded.applied_at
+		WHERE excluded.applied_revision >= gateway_applied_state.applied_revision`, desired.Revision, encoded, sealedCertificates, state.ConfigHash, now.Format(time.RFC3339Nano))
 	if err != nil {
 		return GatewayAppliedState{}, fmt.Errorf("agent: record gateway state: %w", err)
 	}

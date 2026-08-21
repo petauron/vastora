@@ -239,6 +239,41 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("高级：自定义伪装目标");
   });
 
+  it("offers a separate one-click public 3x-ui subscription", async () => {
+    const data = realityDashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
+    data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("开启公网订阅"))?.click();
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("发布独立订阅服务");
+    expect(document.body.textContent).toContain("管理面板仍只在私网开放");
+    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("subscription.3x-ui.home.vastora.example.com");
+    expect(document.querySelector<HTMLSelectElement>("#subscription-kind")?.value).toBe("cloudflare_tunnel");
+  });
+
+  it("offers browser-trusted HTTPS only when Cloudflare is connected", () => {
+    const data = dashboard();
+    data.sites[0].domainSuffix = "vastora.example.com";
+    data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    let container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
+    expect(document.body.textContent).toContain("连接 Cloudflare 后可开启");
+    expect(document.querySelector<HTMLButtonElement>("#publication-tls")?.disabled).toBe(true);
+
+    act(() => root?.unmount());
+    root = undefined;
+    document.body.replaceChildren();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
+    container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
+    expect(document.body.textContent).toContain("使用 Cloudflare DNS 验证申请公信证书");
+    expect(document.querySelector<HTMLButtonElement>("#publication-tls")?.disabled).toBe(false);
+  });
+
   it("reveals a REALITY client link only after explicit confirmation", async () => {
     const data = realityDashboard();
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", target: "www.example.com:443", sniHostname: "www.example.com", resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
