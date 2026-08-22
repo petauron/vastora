@@ -18,23 +18,24 @@ import (
 )
 
 type AgentTask struct {
-	Kind                string                   `json:"kind"`
-	ID                  string                   `json:"id"`
-	Attempt             int64                    `json:"attempt"`
-	AppKey              string                   `json:"appKey"`
-	Manifest            catalog.AppManifest      `json:"manifest"`
-	Config              json.RawMessage          `json:"config"`
-	Secrets             json.RawMessage          `json:"secrets"`
-	Operation           string                   `json:"operation"`
-	DeleteData          bool                     `json:"deleteData"`
-	Revision            int64                    `json:"revision,omitempty"`
-	ApplicationID       string                   `json:"applicationId,omitempty"`
-	ServiceAddress      string                   `json:"serviceAddress,omitempty"`
-	GatewayState        *gateway.DesiredState    `json:"gatewayState,omitempty"`
-	GatewayCertificates []gateway.Certificate    `json:"gatewayCertificates,omitempty"`
-	TunnelState         *TunnelTaskState         `json:"tunnelState,omitempty"`
-	ApplicationCommand  *RealityCommandTask      `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandTask `json:"subscriptionCommand,omitempty"`
+	Kind                string                     `json:"kind"`
+	ID                  string                     `json:"id"`
+	Attempt             int64                      `json:"attempt"`
+	AppKey              string                     `json:"appKey"`
+	Manifest            catalog.AppManifest        `json:"manifest"`
+	Config              json.RawMessage            `json:"config"`
+	Secrets             json.RawMessage            `json:"secrets"`
+	Operation           string                     `json:"operation"`
+	DeleteData          bool                       `json:"deleteData"`
+	Revision            int64                      `json:"revision,omitempty"`
+	ApplicationID       string                     `json:"applicationId,omitempty"`
+	ServiceAddress      string                     `json:"serviceAddress,omitempty"`
+	GatewayState        *gateway.DesiredState      `json:"gatewayState,omitempty"`
+	GatewayCertificates []gateway.Certificate      `json:"gatewayCertificates,omitempty"`
+	TunnelState         *TunnelTaskState           `json:"tunnelState,omitempty"`
+	ApplicationCommand  *RealityCommandTask        `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandTask   `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandTask `json:"clientCommand,omitempty"`
 }
 
 type TunnelTaskIngress struct {

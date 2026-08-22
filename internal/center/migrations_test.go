@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -160,7 +161,7 @@ func TestOpenMigratesVersion3WithoutLosingPublicationsOrRoutes(t *testing.T) {
 	) VALUES('publication-v4', 'service-v3', 'public_shared_443', 'agent-v3', 'raw.example.test', 'manual', 'pending', ?, ?)`, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("new publication kind was not accepted: %v", err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v3-before-v9-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v3-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("migration backups = %v, err = %v", backups, err)
 	}
@@ -230,10 +231,11 @@ func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`INSERT INTO goose_db_version(version_id, is_applied) VALUES(10, 1)`); err != nil {
+	newerVersion := centerSchemaVersion + 1
+	if _, err := store.db.Exec(`INSERT INTO goose_db_version(version_id, is_applied) VALUES(?, 1)`, newerVersion); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`PRAGMA user_version = 10`); err != nil {
+	if _, err := store.db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, newerVersion)); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -267,7 +269,7 @@ func TestFailedMigrationRollsBackSchemaAndLeavesBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "migrate database from 3 to 9") {
+	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("migrate database from 3 to %d", centerSchemaVersion)) {
 		t.Fatalf("migration error = %v", err)
 	}
 	db, err = sql.Open("sqlite", filepath.Join(directory, "center.db"))
@@ -287,7 +289,7 @@ func TestFailedMigrationRollsBackSchemaAndLeavesBackup(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('publications_v4', 'routes_v4')`).Scan(&temporaryTables); err != nil || temporaryTables != 0 {
 		t.Fatalf("temporary migration tables = %d, err = %v", temporaryTables, err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v3-before-v9-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v3-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("failed migration backups = %v, err = %v", backups, err)
 	}

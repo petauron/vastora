@@ -4,6 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppData } from "../App";
+import type { ApplicationCommand } from "../types";
 import { APIError, api } from "../api";
 import { vastoraDomainDefaults } from "../lib/network";
 import { AppsView } from "./AppsView";
@@ -230,7 +231,7 @@ describe("network and app views", () => {
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("一键创建 VLESS REALITY"))?.click();
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
     expect(document.body.textContent).toContain("目标站点、密钥、端口和共享 443 会自动配置");
@@ -246,13 +247,39 @@ describe("network and app views", () => {
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("开启公网订阅"))?.click();
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("开启订阅"))?.click();
       await Promise.resolve();
     });
     expect(document.body.textContent).toContain("发布独立订阅服务");
     expect(document.body.textContent).toContain("管理面板仍只在私网开放");
     expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("subscription.3x-ui.home.vastora.example.com");
     expect(document.querySelector<HTMLSelectElement>("#subscription-kind")?.value).toBe("cloudflare_tunnel");
+  });
+
+  it("manages 3x-ui clients and reveals links without opening the panel", async () => {
+    const data = realityDashboard();
+    const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, name: "inbound-9", connectHostname: "reality.example.test" }], subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
+    const create = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action === "reveal_link" ? { ...baseCommand, id: "client-command-reveal", action: "reveal_link", resultAvailable: true } : baseCommand);
+    const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理客户端"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "list" });
+    expect(document.body.textContent).toContain("MacBook");
+    expect(document.body.textContent).toContain("日常管理");
+    await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("复制 VLESS"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(reveal).toHaveBeenCalledWith("client-command-reveal");
+    expect(writeText).toHaveBeenCalledWith("vless://one-time-client-link");
+    expect(document.body.textContent).toContain("vless://one-time-client-link");
   });
 
   it("offers browser-trusted HTTPS only when Cloudflare is connected", () => {
@@ -280,7 +307,7 @@ describe("network and app views", () => {
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("一键创建 VLESS REALITY"))?.click();
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
     expect(reveal).not.toHaveBeenCalled();

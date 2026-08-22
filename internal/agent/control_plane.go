@@ -48,23 +48,24 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
-	Kind                string                   `json:"kind"`
-	ID                  string                   `json:"id"`
-	Attempt             int64                    `json:"attempt"`
-	AppKey              string                   `json:"appKey"`
-	Manifest            catalog.AppManifest      `json:"manifest"`
-	Config              json.RawMessage          `json:"config"`
-	Secrets             json.RawMessage          `json:"secrets"`
-	Operation           string                   `json:"operation"`
-	DeleteData          bool                     `json:"deleteData"`
-	Revision            int64                    `json:"revision,omitempty"`
-	ApplicationID       string                   `json:"applicationId,omitempty"`
-	ServiceAddress      string                   `json:"serviceAddress,omitempty"`
-	GatewayState        *gateway.DesiredState    `json:"gatewayState,omitempty"`
-	GatewayCertificates []gateway.Certificate    `json:"gatewayCertificates,omitempty"`
-	TunnelState         *TunnelDesiredState      `json:"tunnelState,omitempty"`
-	ApplicationCommand  *RealityCommandTask      `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandTask `json:"subscriptionCommand,omitempty"`
+	Kind                string                     `json:"kind"`
+	ID                  string                     `json:"id"`
+	Attempt             int64                      `json:"attempt"`
+	AppKey              string                     `json:"appKey"`
+	Manifest            catalog.AppManifest        `json:"manifest"`
+	Config              json.RawMessage            `json:"config"`
+	Secrets             json.RawMessage            `json:"secrets"`
+	Operation           string                     `json:"operation"`
+	DeleteData          bool                       `json:"deleteData"`
+	Revision            int64                      `json:"revision,omitempty"`
+	ApplicationID       string                     `json:"applicationId,omitempty"`
+	ServiceAddress      string                     `json:"serviceAddress,omitempty"`
+	GatewayState        *gateway.DesiredState      `json:"gatewayState,omitempty"`
+	GatewayCertificates []gateway.Certificate      `json:"gatewayCertificates,omitempty"`
+	TunnelState         *TunnelDesiredState        `json:"tunnelState,omitempty"`
+	ApplicationCommand  *RealityCommandTask        `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandTask   `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandTask `json:"clientCommand,omitempty"`
 }
 
 type Executor interface {
@@ -80,10 +81,11 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services            []ApplicationServiceResult `json:"services"`
-	GeneratedSecrets    map[string]string          `json:"generatedSecrets,omitempty"`
-	ApplicationCommand  *RealityCommandResult      `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandResult `json:"subscriptionCommand,omitempty"`
+	Services            []ApplicationServiceResult   `json:"services"`
+	GeneratedSecrets    map[string]string            `json:"generatedSecrets,omitempty"`
+	ApplicationCommand  *RealityCommandResult        `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandResult   `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandResult `json:"clientCommand,omitempty"`
 }
 
 type RealityCommandTask struct {
@@ -115,6 +117,45 @@ type SubscriptionCommandTask struct {
 type SubscriptionCommandResult struct {
 	Domain  string `json:"domain"`
 	BaseURI string `json:"baseUri"`
+}
+
+type ThreeXUIClientInbound struct {
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	ConnectHostname string `json:"connectHostname,omitempty"`
+	SNIHostname     string `json:"sniHostname,omitempty"`
+}
+
+type ThreeXUIClientCommandTask struct {
+	Action              string                  `json:"action"`
+	Email               string                  `json:"email,omitempty"`
+	NewEmail            string                  `json:"newEmail,omitempty"`
+	InboundID           int                     `json:"inboundId,omitempty"`
+	Enabled             bool                    `json:"enabled"`
+	TotalBytes          int64                   `json:"totalBytes"`
+	ExpiryTime          int64                   `json:"expiryTime"`
+	LimitIP             int                     `json:"limitIp"`
+	Inbounds            []ThreeXUIClientInbound `json:"inbounds"`
+	SubscriptionBaseURI string                  `json:"subscriptionBaseUri,omitempty"`
+}
+
+type ThreeXUIClientView struct {
+	Email           string `json:"email"`
+	Enabled         bool   `json:"enabled"`
+	TotalBytes      int64  `json:"totalBytes"`
+	UsedBytes       int64  `json:"usedBytes"`
+	ExpiryTime      int64  `json:"expiryTime"`
+	LimitIP         int    `json:"limitIp"`
+	InboundIDs      []int  `json:"inboundIds"`
+	HasSubscription bool   `json:"hasSubscription"`
+}
+
+type ThreeXUIClientCommandResult struct {
+	Clients         []ThreeXUIClientView    `json:"clients,omitempty"`
+	ClientsObserved bool                    `json:"clientsObserved"`
+	Inbounds        []ThreeXUIClientInbound `json:"inbounds"`
+	Secret          string                  `json:"secret,omitempty"`
+	SecretKind      string                  `json:"secretKind,omitempty"`
 }
 
 type ApplicationEndpointObservation struct {
@@ -290,7 +331,17 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 				result, err = c.Executor.Deploy(requestContext, *task)
 			}
 		case "application.command":
-			if !c.Capabilities.Docker || (task.ApplicationCommand == nil) == (task.SubscriptionCommand == nil) {
+			commands := 0
+			if task.ApplicationCommand != nil {
+				commands++
+			}
+			if task.SubscriptionCommand != nil {
+				commands++
+			}
+			if task.ClientCommand != nil {
+				commands++
+			}
+			if !c.Capabilities.Docker || commands != 1 {
 				err = errors.New("agent: application command received without Docker capability")
 			} else if task.ApplicationCommand != nil {
 				var commandResult RealityCommandResult
@@ -298,11 +349,17 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 				if err == nil {
 					result.ApplicationCommand = &commandResult
 				}
-			} else {
+			} else if task.SubscriptionCommand != nil {
 				var commandResult SubscriptionCommandResult
 				commandResult, err = applySubscriptionCommand(requestContext, store, *task.SubscriptionCommand)
 				if err == nil {
 					result.SubscriptionCommand = &commandResult
+				}
+			} else {
+				var commandResult ThreeXUIClientCommandResult
+				commandResult, err = applyThreeXUIClientCommand(requestContext, store, *task.ClientCommand)
+				if err == nil {
+					result.ClientCommand = &commandResult
 				}
 			}
 		case "gateway.routes.apply":

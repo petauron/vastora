@@ -24,6 +24,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	}
 	var reality *RealityCommandTask
 	var subscription *SubscriptionCommandTask
+	var client *ThreeXUIClientCommandTask
 	switch kind {
 	case realityCommandKind:
 		var command RealityCommandTask
@@ -37,6 +38,12 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, errors.New("center: stored subscription operation is invalid")
 		}
 		subscription = &command
+	case clientCommandKind:
+		var command ThreeXUIClientCommandTask
+		if json.Unmarshal(inputJSON, &command) != nil || !threeXUIClientActions[command.Action] {
+			return nil, errors.New("center: stored 3x-ui client operation is invalid")
+		}
+		client = &command
 	default:
 		return nil, errors.New("center: stored application operation kind is invalid")
 	}
@@ -51,7 +58,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
 		return nil, err
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, ApplicationCommand: reality, SubscriptionCommand: subscription}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client}, nil
 }
 
 func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
@@ -80,6 +87,9 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == clientCommandKind {
+		return s.completeThreeXUIClientCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind != realityCommandKind {
 		return errors.New("center: stored application operation kind is invalid")

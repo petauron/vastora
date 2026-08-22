@@ -113,6 +113,20 @@ func (s *Server) handleCreateSubscriptionCommand(writer http.ResponseWriter, req
 	writeJSON(writer, http.StatusCreated, value)
 }
 
+func (s *Server) handleCreateThreeXUIClientCommand(writer http.ResponseWriter, request *http.Request) {
+	var input ThreeXUIClientCommandInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.CreateThreeXUIClientCommand(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, value)
+}
+
 func (s *Server) handleApplicationCommand(writer http.ResponseWriter, request *http.Request) {
 	value, err := s.store.ApplicationCommand(request.Context(), request.PathValue("id"))
 	if err != nil {
