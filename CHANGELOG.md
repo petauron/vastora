@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.34](https://github.com/petauron/vastora/compare/v0.1.0-alpha.33...v0.1.0-alpha.34) (2026-08-22)
+
+
+### Bug Fixes
+
+* dispatch trusted release checks automatically ([#96](https://github.com/petauron/vastora/issues/96)) ([2d98e4a](https://github.com/petauron/vastora/commit/2d98e4a71643d183861a37255584d889b290030b))
+
 ## [0.1.0-alpha.33](https://github.com/petauron/vastora/compare/v0.1.0-alpha.32...v0.1.0-alpha.33) (2026-08-22)
 
 
