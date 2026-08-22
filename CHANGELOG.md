@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.24](https://github.com/petauron/vastora/compare/v0.1.0-alpha.23...v0.1.0-alpha.24) (2026-08-22)
+
+
+### Bug Fixes
+
+* protect system gateway from stale state ([#74](https://github.com/petauron/vastora/issues/74)) ([5cf09d8](https://github.com/petauron/vastora/commit/5cf09d83a261746eb4793ee7ad51f913d3fe2174))
+
 ## [0.1.0-alpha.23](https://github.com/petauron/vastora/compare/v0.1.0-alpha.22...v0.1.0-alpha.23) (2026-08-22)
 
 
