@@ -23,6 +23,7 @@ type CaddyGatewayDriver struct {
 	AdminListen     string
 	AdminSocketPath string
 	HTTPClient      *http.Client
+	SystemGateway   SystemGatewayInspector
 
 	mu           sync.RWMutex
 	state        gateway.DesiredState
@@ -65,6 +66,15 @@ func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desire
 	if err := gateway.ValidateCertificates(certificates); err != nil {
 		return err
 	}
+	if driver.SystemGateway != nil {
+		services, err := driver.SystemGateway.ProtectedSystemServices(ctx)
+		if err != nil {
+			return fmt.Errorf("agent: inspect protected system gateway: %w", err)
+		}
+		if err := validateProtectedSystemRoutes(desired, services); err != nil {
+			return err
+		}
+	}
 	configuration, err := caddyConfiguration(desired.Sorted(), certificates, driver.AdminListen)
 	if err != nil {
 		return err
@@ -91,6 +101,32 @@ func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desire
 	driver.state = desired.Sorted()
 	driver.certificates = append([]gateway.Certificate(nil), certificates...)
 	driver.mu.Unlock()
+	return nil
+}
+
+func validateProtectedSystemRoutes(desired gateway.DesiredState, services []string) error {
+	if len(services) == 0 {
+		return nil
+	}
+	routes := make(map[string]gateway.Route, len(desired.Routes))
+	for _, route := range desired.Routes {
+		routes[route.ID] = route
+	}
+	for _, service := range services {
+		required := []struct {
+			id       string
+			listener string
+		}{
+			{"system-" + service, "public"},
+			{"system-" + service + "-local", "system"},
+		}
+		for _, expected := range required {
+			route, exists := routes[expected.id]
+			if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != expected.listener {
+				return fmt.Errorf("agent: refusing to replace protected system gateway without %s route %q", expected.listener, expected.id)
+			}
+		}
+	}
 	return nil
 }
 

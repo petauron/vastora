@@ -30,6 +30,10 @@ type GatewayProvisioner interface {
 	Remove(context.Context) error
 }
 
+type SystemGatewayInspector interface {
+	ProtectedSystemServices(context.Context) ([]string, error)
+}
+
 type DockerGatewayProvisioner struct {
 	Socket          string
 	Image           string
@@ -38,6 +42,36 @@ type DockerGatewayProvisioner struct {
 	AdminSocketPath string
 	DataVolume      string
 	ConfigVolume    string
+}
+
+func (provisioner DockerGatewayProvisioner) ProtectedSystemServices(ctx context.Context) ([]string, error) {
+	settings, err := provisioner.settings()
+	if err != nil {
+		return nil, err
+	}
+	docker, err := provisioner.client()
+	if err != nil {
+		return nil, err
+	}
+	defer docker.Close()
+	existing, err := inspectManagedCaddy(ctx, docker, settings.Container)
+	if err != nil || existing == nil {
+		return nil, err
+	}
+	encoded := strings.TrimSpace(existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel])
+	if encoded == "" {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	services := make([]string, 0, 2)
+	for _, value := range strings.Split(encoded, ",") {
+		value = strings.TrimSpace(value)
+		if value != "" && !seen[value] {
+			seen[value] = true
+			services = append(services, value)
+		}
+	}
+	return services, nil
 }
 
 func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
