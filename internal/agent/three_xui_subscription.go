@@ -18,6 +18,7 @@ const (
 	threeXUIRawSubscriptionPath   = "/sub/"
 	threeXUIClashSubscriptionPath = "/clash/"
 	threeXUIClashUserAgentRegex   = `(?i)(clash|mihomo)`
+	threeXUIRestartSettleTime     = 4 * time.Second
 )
 
 func applySubscriptionCommand(ctx context.Context, store *Store, command SubscriptionCommandTask) (SubscriptionCommandResult, error) {
@@ -82,14 +83,14 @@ func configureThreeXUIPublicSubscription(ctx context.Context, endpoint, token, d
 		if _, err := threeXUIRequest(ctx, http.MethodPost, endpoint+"/panel/api/setting/update", token, settings); err != nil {
 			return "", fmt.Errorf("agent: update 3x-ui public subscription formats: %w", err)
 		}
-		if err := restartThreeXUIPanel(ctx, endpoint, token); err != nil {
+		if err := restartThreeXUIPanel(ctx, endpoint, token, threeXUIRestartSettleTime); err != nil {
 			return "", err
 		}
 	}
 	return clashURI.String(), nil
 }
 
-func restartThreeXUIPanel(ctx context.Context, endpoint, token string) error {
+func restartThreeXUIPanel(ctx context.Context, endpoint, token string, settleTime time.Duration) error {
 	if _, err := threeXUIRequest(ctx, http.MethodPost, endpoint+"/panel/api/setting/restartPanel", token, map[string]any{}); err != nil {
 		return fmt.Errorf("agent: restart 3x-ui after subscription update: %w", err)
 	}
@@ -97,6 +98,7 @@ func restartThreeXUIPanel(ctx context.Context, endpoint, token string) error {
 	defer cancel()
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	restartStarted := time.Now()
 	sawUnavailable := false
 	for {
 		probeContext, probeCancel := context.WithTimeout(restartContext, time.Second)
@@ -104,7 +106,7 @@ func restartThreeXUIPanel(ctx context.Context, endpoint, token string) error {
 		probeCancel()
 		if probeErr != nil {
 			sawUnavailable = true
-		} else if sawUnavailable {
+		} else if sawUnavailable || time.Since(restartStarted) >= settleTime {
 			return nil
 		}
 		select {
