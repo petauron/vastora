@@ -9,7 +9,31 @@ import (
 	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestRestartThreeXUIPanelAcceptsInProcessReload(t *testing.T) {
+	var restartCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/panel/api/setting/restartPanel":
+			restartCount.Add(1)
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "/panel/api/setting/all":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	if err := restartThreeXUIPanel(context.Background(), server.URL, "local-api-token", 10*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if restartCount.Load() != 1 {
+		t.Fatalf("3x-ui restart count = %d, want 1", restartCount.Load())
+	}
+}
 
 func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) {
 	var updated map[string]any
