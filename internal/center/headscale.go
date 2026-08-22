@@ -24,7 +24,7 @@ import (
 const (
 	headscaleDNSFile               = "headscale-extra-records.json"
 	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
-	builtinHeadscaleRuntimeVersion = "private-center-v4"
+	builtinHeadscaleRuntimeVersion = "private-center-dns-v5"
 )
 
 type HeadscaleInput struct {

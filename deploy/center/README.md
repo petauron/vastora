@@ -74,10 +74,13 @@ separator.
 
 Run the same public command to upgrade. It keeps `.env`, replaces only managed
 deployment files, validates and pulls the new immutable image before changing
-anything, then starts Center and waits for health. If the new Center has already
-started, the upgrader never rolls the database or image backward automatically;
-inspect the printed logs and restore Center's pre-migration SQLite backup when a
-manual downgrade is required.
+anything, then starts Center and waits for health. If this host also runs the
+official Vastora Agent service, the upgrader first extracts the matching Agent
+from that pinned image and restarts it before Center can reconcile a newer
+Gateway desired-state schema. If the new Center has already started, the
+upgrader never rolls the database or image backward automatically; inspect the
+printed logs and restore Center's pre-migration SQLite backup when a manual
+downgrade is required.
 
 ## Automated releases
 

@@ -65,6 +65,8 @@ esac
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-center-upgrade.XXXXXX")"
 candidate_env="$temporary_dir/.env"
 backup_dir="$(mktemp -d "${install_dir}.backup.XXXXXX")"
+agent_container=""
+agent_changed=no
 files_changed=no
 center_started=no
 
@@ -83,6 +85,16 @@ restore_files() {
 
 cleanup() {
   status=$?
+  if [ -n "$agent_container" ]; then
+    docker rm -f "$agent_container" >/dev/null 2>&1 || true
+  fi
+  if [ "$status" -ne 0 ] && [ "$agent_changed" = yes ] && [ "$center_started" = no ]; then
+    echo "Upgrade stopped before Center was started; restoring the previous Agent executable." >&2
+    agent_staged="$(mktemp /usr/local/bin/.vastora-rollback.XXXXXX)"
+    install -m 0755 /usr/local/bin/vastora.previous "$agent_staged"
+    mv "$agent_staged" /usr/local/bin/vastora
+    systemctl restart vastora-agent.service || true
+  fi
   if [ "$status" -ne 0 ] && [ "$files_changed" = yes ] && [ "$center_started" = no ]; then
     echo "Upgrade stopped before Center was started; restoring the previous managed files." >&2
     restore_files
@@ -108,6 +120,39 @@ echo "Validating the new deployment with the existing configuration..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" config --quiet
 echo "Downloading the immutable Center image..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center deployer
+
+agent_executable="/usr/local/bin/vastora"
+agent_unit="/etc/systemd/system/vastora-agent.service"
+if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=Vastora Agent' "$agent_unit"; then
+  if ! command -v systemctl >/dev/null 2>&1; then
+    echo "systemctl is required to update the co-located Vastora Agent." >&2
+    exit 1
+  fi
+  echo "Preparing the matching Agent from the immutable Center image..."
+  agent_container="$(docker create "$new_image")"
+  docker cp "$agent_container:/usr/local/bin/vastora" "$temporary_dir/vastora-agent"
+  docker rm -f "$agent_container" >/dev/null
+  agent_container=""
+  chmod 0755 "$temporary_dir/vastora-agent"
+  if [ "$("$temporary_dir/vastora-agent" version)" != "$new_version" ]; then
+    echo "The Center image contains an unexpected Agent version; the upgrade was not started." >&2
+    exit 1
+  fi
+  agent_staged="$(mktemp /usr/local/bin/.vastora-upgrade.XXXXXX)"
+  install -m 0755 "$temporary_dir/vastora-agent" "$agent_staged"
+  install -m 0755 "$agent_executable" "$agent_executable.previous"
+  mv "$agent_staged" "$agent_executable"
+  if ! systemctl restart vastora-agent.service || ! systemctl is-active --quiet vastora-agent.service; then
+    echo "The updated Agent did not start; restoring the previous executable." >&2
+    agent_staged="$(mktemp /usr/local/bin/.vastora-rollback.XXXXXX)"
+    install -m 0755 "$agent_executable.previous" "$agent_staged"
+    mv "$agent_staged" "$agent_executable"
+    systemctl restart vastora-agent.service || true
+    exit 1
+  fi
+  agent_changed=yes
+  echo "Co-located Agent updated to $new_version before Center reconciliation."
+fi
 
 for relative in setup.sh upgrade.sh compose.yaml release.env .env; do
   if [ -f "$install_dir/$relative" ]; then
@@ -144,5 +189,6 @@ until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
 done
 
 files_changed=no
+agent_changed=no
 center_started=no
 echo "Vastora Center was updated successfully${new_version:+ to $new_version}."

@@ -32,6 +32,8 @@ grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$temporary_dir/release.env"
 test -x "$temporary_dir/setup.sh"
 test -x "$temporary_dir/upgrade.sh"
 test -f "$temporary_dir/compose.yaml"
+grep -Fq 'docker cp "$agent_container:/usr/local/bin/vastora"' "$temporary_dir/upgrade.sh"
+grep -Fq 'Co-located Agent updated to $new_version before Center reconciliation.' "$temporary_dir/upgrade.sh"
 test ! -e "$temporary_dir/headscale"
 if grep -Eq 'headscale/(config\.yaml|policy\.hujson)' "$project_dir/install.sh"; then
   echo "Public installer still requires removed Headscale configuration files" >&2

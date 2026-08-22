@@ -99,9 +99,11 @@ database:
 dns:
   magic_dns: true
   base_domain: vastora.internal
-  override_local_dns: false
+  override_local_dns: true
   nameservers:
-    global: []
+    global:
+      - 1.1.1.1
+      - 1.0.0.1
     split: {}
   search_domains: []
   extra_records_path: /var/lib/vastora-shared/headscale-extra-records.json
