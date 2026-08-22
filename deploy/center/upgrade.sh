@@ -69,6 +69,10 @@ agent_container=""
 agent_changed=no
 files_changed=no
 center_started=no
+layer4_was_running=no
+if [ "$(docker inspect -f '{{.State.Running}}' vastora-gateway-haproxy 2>/dev/null || true)" = "true" ]; then
+  layer4_was_running=yes
+fi
 
 restore_files() {
   for relative in setup.sh upgrade.sh compose.yaml release.env .env; do
@@ -187,6 +191,46 @@ until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
   fi
   sleep 2
 done
+
+attempt=0
+until curl -fsS "http://127.0.0.1:$bootstrap_port/readyz" >/dev/null 2>&1; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 240 ]; then
+    echo "The updated Center did not finish startup reconciliation." >&2
+    echo "Inspect: cd '$install_dir' && docker compose logs center deployer" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+if [ "$agent_changed" = yes ]; then
+  echo "Restarting the co-located Agent after Center reconciliation..."
+  if ! systemctl restart vastora-agent.service || ! systemctl is-active --quiet vastora-agent.service; then
+    echo "The co-located Agent did not restart after Center reconciliation." >&2
+    exit 1
+  fi
+  attempt=0
+  until curl -fsS http://127.0.0.1:8090/healthz >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+      echo "The co-located Agent did not become healthy after Center reconciliation." >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  if [ "$layer4_was_running" = yes ]; then
+    attempt=0
+    until [ "$(docker inspect -f '{{.State.Running}}' vastora-gateway-haproxy 2>/dev/null || true)" = "true" ]; do
+      attempt=$((attempt + 1))
+      if [ "$attempt" -ge 30 ]; then
+        echo "The co-located Agent did not restore the shared HTTPS gateway." >&2
+        exit 1
+      fi
+      sleep 1
+    done
+  fi
+  echo "Co-located Agent reconciled successfully after Center startup."
+fi
 
 files_changed=no
 agent_changed=no

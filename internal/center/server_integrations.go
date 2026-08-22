@@ -138,7 +138,12 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 
 // ReconcileBuiltinHeadscale applies the current fixed runtime specification to
 // an existing bundled installation without rotating its stored API key.
-func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) error {
+func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) (err error) {
+	defer func() {
+		if err == nil {
+			s.startupReady.Store(true)
+		}
+	}()
 	if s.headscaleInstaller == nil {
 		return nil
 	}
