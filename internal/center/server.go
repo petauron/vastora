@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/applications/{id}/commands/latest", s.requireAuth(false, s.handleLatestApplicationCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/reality", s.requireAuth(true, s.handleCreateRealityCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/subscription", s.requireAuth(true, s.handleCreateSubscriptionCommand))
+	mux.HandleFunc("POST /api/v1/application-commands/clients", s.requireAuth(true, s.handleCreateThreeXUIClientCommand))
 	mux.HandleFunc("GET /api/v1/application-commands/{id}", s.requireAuth(false, s.handleApplicationCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/{id}/reveal", s.requireAuth(true, s.handleRevealApplicationCommand))
 	mux.HandleFunc("GET /api/v1/services", s.requireAuth(false, s.handleListServices))

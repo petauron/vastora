@@ -17,6 +17,7 @@ import (
 const (
 	realityCommandKind      = "3xui.reality.create"
 	subscriptionCommandKind = "3xui.subscription.configure"
+	clientCommandKind       = "3xui.clients.manage"
 )
 
 type RealityCommandInput struct {
@@ -68,21 +69,77 @@ type SubscriptionCommandResult struct {
 	BaseURI string `json:"baseUri"`
 }
 
+type ThreeXUIClientCommandInput struct {
+	ApplicationID string `json:"applicationId"`
+	Action        string `json:"action"`
+	Email         string `json:"email,omitempty"`
+	NewEmail      string `json:"newEmail,omitempty"`
+	InboundID     int    `json:"inboundId,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	TotalBytes    int64  `json:"totalBytes"`
+	ExpiryTime    int64  `json:"expiryTime"`
+	LimitIP       int    `json:"limitIp"`
+}
+
+type ThreeXUIClientInbound struct {
+	ID              int    `json:"id"`
+	Name            string `json:"name"`
+	ConnectHostname string `json:"connectHostname,omitempty"`
+	SNIHostname     string `json:"sniHostname,omitempty"`
+}
+
+type ThreeXUIClientCommandTask struct {
+	Action              string                  `json:"action"`
+	Email               string                  `json:"email,omitempty"`
+	NewEmail            string                  `json:"newEmail,omitempty"`
+	InboundID           int                     `json:"inboundId,omitempty"`
+	Enabled             bool                    `json:"enabled"`
+	TotalBytes          int64                   `json:"totalBytes"`
+	ExpiryTime          int64                   `json:"expiryTime"`
+	LimitIP             int                     `json:"limitIp"`
+	Inbounds            []ThreeXUIClientInbound `json:"inbounds"`
+	SubscriptionBaseURI string                  `json:"subscriptionBaseUri,omitempty"`
+}
+
+type ThreeXUIClientView struct {
+	Email           string `json:"email"`
+	Enabled         bool   `json:"enabled"`
+	TotalBytes      int64  `json:"totalBytes"`
+	UsedBytes       int64  `json:"usedBytes"`
+	ExpiryTime      int64  `json:"expiryTime"`
+	LimitIP         int    `json:"limitIp"`
+	InboundIDs      []int  `json:"inboundIds"`
+	HasSubscription bool   `json:"hasSubscription"`
+}
+
+type ThreeXUIClientCommandResult struct {
+	Clients         []ThreeXUIClientView    `json:"clients,omitempty"`
+	ClientsObserved bool                    `json:"clientsObserved"`
+	Inbounds        []ThreeXUIClientInbound `json:"inbounds"`
+	Secret          string                  `json:"secret,omitempty"`
+	SecretKind      string                  `json:"secretKind,omitempty"`
+}
+
 type ApplicationCommandView struct {
-	ID              string    `json:"id"`
-	ApplicationID   string    `json:"applicationId"`
-	GatewayNodeID   string    `json:"gatewayNodeId"`
-	Kind            string    `json:"kind"`
-	State           string    `json:"state"`
-	Hostname        string    `json:"hostname"`
-	DNSProvider     string    `json:"dnsProvider"`
-	Target          string    `json:"target,omitempty"`
-	SNIHostname     string    `json:"sniHostname,omitempty"`
-	PublicationID   string    `json:"publicationId,omitempty"`
-	Error           string    `json:"error,omitempty"`
-	ResultAvailable bool      `json:"resultAvailable"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID                    string                  `json:"id"`
+	ApplicationID         string                  `json:"applicationId"`
+	GatewayNodeID         string                  `json:"gatewayNodeId"`
+	Kind                  string                  `json:"kind"`
+	State                 string                  `json:"state"`
+	Hostname              string                  `json:"hostname"`
+	DNSProvider           string                  `json:"dnsProvider"`
+	Target                string                  `json:"target,omitempty"`
+	SNIHostname           string                  `json:"sniHostname,omitempty"`
+	PublicationID         string                  `json:"publicationId,omitempty"`
+	Action                string                  `json:"action,omitempty"`
+	Clients               []ThreeXUIClientView    `json:"clients,omitempty"`
+	ClientsObserved       bool                    `json:"clientsObserved,omitempty"`
+	Inbounds              []ThreeXUIClientInbound `json:"inbounds,omitempty"`
+	SubscriptionAvailable bool                    `json:"subscriptionAvailable,omitempty"`
+	Error                 string                  `json:"error,omitempty"`
+	ResultAvailable       bool                    `json:"resultAvailable"`
+	CreatedAt             time.Time               `json:"createdAt"`
+	UpdatedAt             time.Time               `json:"updatedAt"`
 }
 
 func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInput, error) {
@@ -251,6 +308,17 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 			return value, errors.New("center: stored subscription publication is invalid")
 		}
 		value.DNSProvider = publication.DNSProvider
+	case clientCommandKind:
+		var input ThreeXUIClientCommandTask
+		var result ThreeXUIClientCommandResult
+		if json.Unmarshal(inputJSON, &input) != nil || input.Action == "" || json.Unmarshal(resultJSON, &result) != nil {
+			return value, errors.New("center: stored 3x-ui client operation is invalid")
+		}
+		value.Action = input.Action
+		value.Clients = result.Clients
+		value.ClientsObserved = result.ClientsObserved
+		value.Inbounds = result.Inbounds
+		value.SubscriptionAvailable = input.SubscriptionBaseURI != ""
 	default:
 		return value, errors.New("center: stored application operation kind is invalid")
 	}
@@ -266,7 +334,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 }
 
 func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
-	if kind != realityCommandKind && kind != subscriptionCommandKind {
+	if kind != realityCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind {
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string
@@ -296,7 +364,7 @@ func (s *Store) ConsumeApplicationCommandResult(ctx context.Context, id string) 
 	var secretID string
 	var sealed []byte
 	if err := tx.QueryRowContext(ctx, `SELECT c.result_secret_id, s.sealed FROM application_commands c JOIN secrets s ON s.id = c.result_secret_id WHERE c.id = ? AND c.state = 'succeeded'`, id).Scan(&secretID, &sealed); errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("center: one-time REALITY link is unavailable")
+		return "", errors.New("center: one-time application result is unavailable")
 	} else if err != nil {
 		return "", err
 	}

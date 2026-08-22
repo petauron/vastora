@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput, ThreeXUIClientCommandInput } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -87,6 +87,7 @@ export const api = {
 	applications: () => request<{ applications: Application[] }>("/api/v1/applications"),
 	createRealityCommand: (input: { applicationId: string; name: string; gatewayNodeId: string; hostname: string; dnsProvider: "manual" | "cloudflare"; target?: string; sniHostname?: string }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
 	createSubscriptionCommand: (input: { applicationId: string; gatewayNodeId: string; hostname: string; kind: "public_direct" | "cloudflare_tunnel"; dnsProvider: "manual" | "cloudflare" }) => request<ApplicationCommand>("/api/v1/application-commands/subscription", { method: "POST", body: JSON.stringify(input) }),
+	createThreeXUIClientCommand: (input: ThreeXUIClientCommandInput) => request<ApplicationCommand>("/api/v1/application-commands/clients", { method: "POST", body: JSON.stringify(input) }),
 	latestApplicationCommand: (applicationId: string, kind: ApplicationCommandKind) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/commands/latest?kind=${encodeURIComponent(kind)}`),
 	applicationCommand: (id: string) => request<ApplicationCommand>(`/api/v1/application-commands/${encodeURIComponent(id)}`),
 	revealApplicationCommand: (id: string) => request<{ shareUri: string }>(`/api/v1/application-commands/${encodeURIComponent(id)}/reveal`, { method: "POST", body: "{}" }),
