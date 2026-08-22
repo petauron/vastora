@@ -42,6 +42,10 @@
 - Headscale API requests can target only exact HTTPS origins authorized when
   Center starts. Browser administrators select from that operator-controlled
   boundary and cannot send the stored Bearer token to arbitrary network hosts.
+- Bundled Headscale is public through Caddy HTTPS because new nodes need a
+  reachable coordination server. Center has no public DNS record or public
+  Caddy route. The Headscale hostname forwards only the exact Agent installer
+  path to Center; enrollment tokens remain ten-minute, single-use credentials.
 - The unauthenticated setup endpoint creates an administrator only while the
   administrator table is empty; all later setup requests are rejected. Until
   setup finishes, the released deployment publishes Center only on server

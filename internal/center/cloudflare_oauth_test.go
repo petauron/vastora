@@ -3,7 +3,6 @@ package center
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -133,24 +132,16 @@ func TestCloudflareOAuthPollAndCompleteStoresEncryptedToken(t *testing.T) {
 	}
 }
 
-func TestConfigureSetupDNSRollsBackNewRecordsOnConflict(t *testing.T) {
-	deleted := false
+func TestConfigureSetupDNSDoesNotCreateAPublicCenterRecord(t *testing.T) {
+	centerRequested := false
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records" && request.URL.Query().Get("name") == "center.vastora.example.com":
+			centerRequested = true
 			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
-		case request.Method == http.MethodPost && request.URL.Path == "/zones/zone/dns_records":
-			body, _ := io.ReadAll(request.Body)
-			if !strings.Contains(string(body), `"proxied":false`) {
-				t.Fatalf("setup DNS record was unexpectedly proxied: %s", body)
-			}
-			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":{"id":"created-record"}}`))
 		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records" && request.URL.Query().Get("name") == "headscale.vastora.example.com":
 			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"existing","type":"A","name":"headscale.vastora.example.com","content":"203.0.113.99","proxied":false}]}`))
-		case request.Method == http.MethodDelete && request.URL.Path == "/zones/zone/dns_records/created-record":
-			deleted = true
-			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
 		default:
 			t.Fatalf("unexpected DNS request: %s %s", request.Method, request.URL.String())
 		}
@@ -169,8 +160,8 @@ func TestConfigureSetupDNSRollsBackNewRecordsOnConflict(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("conflicting DNS record was accepted: %v", err)
 	}
-	if !deleted {
-		t.Fatal("new DNS record was not rolled back after a later conflict")
+	if centerRequested {
+		t.Fatal("private Center hostname was queried for public DNS creation")
 	}
 	var count int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'cloudflare_setup_dns_records'`).Scan(&count); err != nil || count != 0 {
@@ -187,6 +178,54 @@ func TestConfigureSetupDNSRejectsAnUnreportedPublicAddress(t *testing.T) {
 	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.example.com", PublicAddress: "203.0.113.10"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "not assigned") {
 		t.Fatalf("unreported public address was accepted: %v", err)
+	}
+}
+
+func TestPrivateCenterSetupRemovesOnlyItsTrackedPublicDNSRecord(t *testing.T) {
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records" && request.URL.Query().Get("name") == "center.vastora.example.com":
+			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"center-record","type":"A","name":"center.vastora.example.com","content":"203.0.113.10","proxied":false}]}`))
+		case request.Method == http.MethodDelete && request.URL.Path == "/zones/zone/dns_records/center-record":
+			deleted = true
+			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":null}`))
+		default:
+			t.Fatalf("unexpected DNS request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.cloudflareOAuth = cloudflareOAuthConfig{ClientID: "oauth-client", APIURL: server.URL, HTTPClient: server.Client()}
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access-secret", RefreshToken: "refresh-secret", ExpiresAt: time.Now().Add(time.Hour)})
+	records, err := json.Marshal([]SetupDNSRecord{
+		{ID: "center-record", Type: "A", Name: "center.vastora.example.com", Content: "203.0.113.10"},
+		{ID: "headscale-record", Type: "A", Name: "headscale.vastora.example.com", Content: "203.0.113.10"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES('cloudflare_setup_dns_records', ?)`, string(records)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.removePublicCenterSetupDNS(context.Background(), "https://center.vastora.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("tracked public Center record was not deleted")
+	}
+	var stored string
+	if err := store.db.QueryRow(`SELECT value FROM settings WHERE key = 'cloudflare_setup_dns_records'`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, "center.vastora.example.com") || !strings.Contains(stored, "headscale.vastora.example.com") {
+		t.Fatalf("unexpected remaining setup DNS records: %s", stored)
 	}
 }
 

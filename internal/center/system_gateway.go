@@ -35,6 +35,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	}
 	coLocated := false
 	publicAddress := ""
+	headscaleAddress := ""
 	for rows.Next() {
 		var candidate networking.Candidate
 		var observed string
@@ -50,6 +51,9 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 		if publicAddress == "" && local.Kind == networking.KindPublic && candidate.Kind == networking.KindPublic {
 			publicAddress = candidate.Address
 		}
+		if headscaleAddress == "" && local.Kind == networking.KindHeadscale && candidate.Kind == networking.KindHeadscale {
+			headscaleAddress = candidate.Address
+		}
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -64,6 +68,9 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	if publicAddress == "" {
 		return errors.New("center: the co-located Gateway does not report the public address used by bundled services")
 	}
+	if headscaleAddress == "" {
+		return errors.New("center: the co-located Gateway does not report a Headscale address for private Center access")
+	}
 	var centerEndpoint string
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectURLSetting).Scan(&centerEndpoint); err != nil {
 		return fmt.Errorf("center: read control-plane endpoint: %w", err)
@@ -77,10 +84,12 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 		return fmt.Errorf("center: bundled Headscale endpoint: %w", err)
 	}
 	listeners["public"] = gateway.Listener{Kind: "public", Address: publicAddress, HTTPPort: 80, HTTPSPort: 443}
+	listeners["headscale"] = gateway.Listener{Kind: "headscale", Address: headscaleAddress, HTTPPort: 80, HTTPSPort: 443}
 	listeners["system"] = gateway.Listener{Kind: "system", Address: "127.0.0.1", HTTPPort: 80, HTTPSPort: 443}
 	state.Routes = append(state.Routes,
-		gateway.Route{ID: "system-center", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		gateway.Route{ID: "system-center", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
 		gateway.Route{ID: "system-headscale", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		gateway.Route{ID: "system-agent-bootstrap", Hostname: headscaleHostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 		gateway.Route{ID: "system-center-local", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
 		gateway.Route{ID: "system-headscale-local", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
 	)

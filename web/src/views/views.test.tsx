@@ -343,15 +343,15 @@ describe("network and app views", () => {
     });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
     expect(container.textContent).toContain("当前是临时访问地址");
-    expect(container.textContent).toContain("自动填写服务器能够访问的正式地址");
+		expect(container.textContent).toContain("安全私网模式会让 Center 只在 Headscale 网络内开放");
     expect(container.textContent).toContain("你准备在哪里使用 Vastora");
     expect(container.textContent).toContain("同一网络");
     expect(container.textContent).toContain("随时随地");
     act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
     expect(container.textContent).toContain("设置安全连接");
     expect(container.textContent).toContain("登录 Cloudflare");
-    expect(container.textContent).toContain("Center 地址");
-    expect(container.textContent).toContain("私网地址");
+		expect(container.textContent).toContain("Center 私网地址");
+		expect(container.textContent).toContain("Headscale 公网地址");
     const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("Headscale 来源"));
     expect(advanced?.open).toBe(false);
     expect(container.querySelector("#setup-headscale-key")).toBeNull();
@@ -387,7 +387,6 @@ describe("network and app views", () => {
       agentConnectUrl: "https://center.kuddyx.com",
       headscaleMode: "builtin",
       headscaleUrl: "https://headscale.kuddyx.com",
-      dnsMode: "cloudflare",
       publicAddress: "203.0.113.10"
     }));
     const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, language: "zh-CN" as const, onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }], suggestedAgentConnectUrl: "" };
@@ -410,7 +409,6 @@ describe("network and app views", () => {
       agentConnectUrl: "https://control.ops.example.net",
       headscaleMode: "builtin",
       headscaleUrl: "https://mesh.ops.example.net",
-      dnsMode: "cloudflare",
       publicAddress: "203.0.113.10"
     }));
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="kuddyx.com" language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-19T00:00:00Z" }]} suggestedAgentConnectUrl="" />);
@@ -438,8 +436,9 @@ describe("network and app views", () => {
     };
     act(() => fill("#setup-location-name", "Cloudlead"));
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
-    act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
-    act(() => fill("#setup-headscale-url", "https://headscale.example.com"));
+		act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+		act(() => fill("#setup-headscale-url", "https://headscale.example.com"));
+		act(() => fill("#setup-headscale-key", "hskey-api-abcdefghijklmnopqrstuvwxyz"));
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("完成并添加节点"))?.click();
@@ -491,11 +490,11 @@ describe("network and app views", () => {
   it("downloads and directly runs the executable Agent installer", () => {
     const command = agentInstallCommand({
       centerURL: "https://center.example.com",
-      enrollment: { token: "one-time-token", siteId: "site", expiresAt: "2026-08-18T00:10:00Z" },
+      enrollment: { token: "one-time-token", siteId: "site", installerUrl: "https://headscale.example.com", expiresAt: "2026-08-18T00:10:00Z" },
       installerAvailable: true
     });
     expect(command).toContain("curl -fsSL");
-    expect(command).toContain("https://center.example.com/install/agent.sh");
+    expect(command).toContain("https://headscale.example.com/install/agent.sh");
     expect(command).toContain("-o /tmp/vastora-agent-install.sh");
     expect(command).toContain("chmod +x /tmp/vastora-agent-install.sh");
     expect(command).toContain("/tmp/vastora-agent-install.sh 'one-time-token'");

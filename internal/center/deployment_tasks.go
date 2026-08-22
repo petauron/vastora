@@ -131,7 +131,7 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 		if json.Unmarshal(desiredJSON, &state) != nil || state.Validate() != nil || state.Revision != revision {
 			return nil, errors.New("center: invalid stored gateway desired state")
 		}
-		certificates, err := s.gatewayCertificates(ctx, tx, agentID)
+		certificates, err := s.gatewayCertificates(ctx, tx, agentID, state)
 		if err != nil {
 			return nil, err
 		}

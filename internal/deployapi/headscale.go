@@ -16,8 +16,10 @@ import (
 )
 
 type HeadscaleInstallRequest struct {
-	CenterURL    string `json:"centerUrl"`
-	HeadscaleURL string `json:"headscaleUrl"`
+	CenterURL               string `json:"centerUrl"`
+	HeadscaleURL            string `json:"headscaleUrl"`
+	CenterCertificatePEM    string `json:"centerCertificatePem"`
+	CenterCertificateKeyPEM string `json:"centerCertificateKeyPem"`
 }
 
 type HeadscaleInstallResult struct {

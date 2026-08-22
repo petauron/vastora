@@ -151,6 +151,9 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if enrollment.InstallerURL != server.URL {
+		t.Fatalf("installer URL = %q, want public Headscale endpoint %q", enrollment.InstallerURL, server.URL)
+	}
 	var bootstrapSecretID string
 	var sealed []byte
 	if err := store.db.QueryRow(`SELECT bootstrap_secret_id, sealed FROM agent_enrollment_tokens JOIN secrets ON secrets.id = bootstrap_secret_id WHERE token_hash = ?`, tokenHash(enrollment.Token)).Scan(&bootstrapSecretID, &sealed); err != nil {

@@ -150,6 +150,12 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	if err := s.reconcileBuiltinHeadscaleDNSIfConfigured(ctx); err != nil {
+		return nil, err
+	}
+	if err := s.queueAllGatewayStates(ctx); err != nil {
+		return nil, err
+	}
 	return s.networkProfile(ctx, agentID)
 }
 

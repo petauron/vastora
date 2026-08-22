@@ -448,22 +448,31 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	ctx := context.Background()
 	configureBuiltinHeadscaleForTest(t, store)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, agentConnectionModeSetting, "public", agentConnectURLSetting, "https://center.example.test"); err != nil {
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, agentConnectionModeSetting, "headscale", agentConnectURLSetting, "https://center.example.test"); err != nil {
 		t.Fatal(err)
 	}
+	storeSystemCenterCertificateForTest(t, store, "center.example.test")
 	store.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
-		return []networking.Candidate{{Address: "203.0.113.70", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic, ObservedAt: now}}, nil
+		return []networking.Candidate{{Address: "203.0.113.70", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic, ObservedAt: now}, {Address: "100.64.0.70", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale, ObservedAt: now}}, nil
 	}
 	node := enrollOrchestrationNode(t, store, "center-host", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
 		{Address: "10.0.0.70", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN},
+		{Address: "100.64.0.70", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale},
 		{Address: "203.0.113.70", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic},
-	}, networking.Profile{ServiceAddress: "10.0.0.70", LANAddress: "10.0.0.70", PublicAddress: "203.0.113.70", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	}, networking.Profile{ServiceAddress: "100.64.0.70", LANAddress: "10.0.0.70", HeadscaleAddress: "100.64.0.70", PublicAddress: "203.0.113.70", EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale, networking.KindPublic}, DirectPublic: true})
+	dns, err := os.ReadFile(store.dataDir + "/" + headscaleDNSFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dns), `"name": "center.example.test"`) || !strings.Contains(string(dns), `"value": "100.64.0.70"`) {
+		t.Fatalf("private Center DNS record was not reconciled: %s", dns)
+	}
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	task := claimTask(t, store, node)
 	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil {
 		t.Fatalf("co-located gateway did not receive system desired state: %#v", task)
 	}
-	if len(task.GatewayState.Routes) != 4 || len(task.GatewayState.Listeners) != 2 {
+	if len(task.GatewayState.Routes) != 5 || len(task.GatewayState.Listeners) != 3 {
 		t.Fatalf("unexpected system gateway state: %#v", task.GatewayState)
 	}
 	for _, route := range task.GatewayState.Routes {

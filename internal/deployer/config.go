@@ -18,6 +18,11 @@ import (
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
+const (
+	centerCertificatePath = "/etc/caddy/system/center.crt"
+	centerPrivateKeyPath  = "/etc/caddy/system/center.key"
+)
+
 type gatewayResolution struct {
 	hostname  string
 	addresses []netip.Addr
@@ -193,7 +198,7 @@ func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []ne
 		addresses = append(addresses, address)
 	}
 	sort.Slice(addresses, func(left, right int) bool { return addresses[left].Compare(addresses[right]) < 0 })
-	result := []string{"127.0.0.1"}
+	result := []string{}
 	for _, address := range addresses {
 		if address.Is6() {
 			result = append(result, "["+address.String()+"]")
@@ -210,19 +215,32 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses
 	return []byte(fmt.Sprintf(`{
 	admin unix/%s|0600
 	persist_config off
-	default_bind %s
 }
 
-%s, %s {
+%s {
+	bind 127.0.0.1
 	redir https://{host}{uri} 308
 }
 
 %s {
+	bind 127.0.0.1
+	tls %s %s
 	reverse_proxy %s
 }
 
 %s {
-	reverse_proxy 127.0.0.1:8081
+	bind 127.0.0.1 %s
+	redir https://{host}{uri} 308
 }
-`, gatewayruntime.CaddyAdminSocket, strings.Join(bindAddresses, " "), centerHTTP, headscaleHTTP, centerURL, centerOrigin, headscaleURL))
+
+%s {
+	bind 127.0.0.1 %s
+	handle /install/agent.sh {
+		reverse_proxy %s
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8081
+	}
+}
+`, gatewayruntime.CaddyAdminSocket, centerHTTP, centerURL, centerCertificatePath, centerPrivateKeyPath, centerOrigin, headscaleHTTP, strings.Join(bindAddresses, " "), headscaleURL, strings.Join(bindAddresses, " "), centerOrigin))
 }

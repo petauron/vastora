@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CheckCircle2Icon, MapPinIcon, NetworkIcon, PlusIcon, ServerIcon, Settings2Icon, TerminalIcon, Trash2Icon } from "lucide-react";
+import { CheckCircle2Icon, MapPinIcon, NetworkIcon, PlusIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon } from "lucide-react";
 import { api } from "../api";
 import { validCenterURL } from "../lib/network";
 import type { AppData, Mutate, Screen } from "../App";
@@ -23,7 +23,7 @@ export { validCenterURL } from "../lib/network";
 export function agentInstallCommand({ centerURL, enrollment, installerAvailable }: { centerURL: string; enrollment: AgentEnrollment; installerAvailable: boolean }) {
   if (installerAvailable) {
     const installer = "/tmp/vastora-agent-install.sh";
-    return `curl -fsSL ${shellQuote(`${centerURL.replace(/\/$/, "")}/install/agent.sh`)} -o ${installer} && chmod +x ${installer} && ${installer} ${shellQuote(enrollment.token)}`;
+    return `curl -fsSL ${shellQuote(`${enrollment.installerUrl.replace(/\/$/, "")}/install/agent.sh`)} -o ${installer} && chmod +x ${installer} && ${installer} ${shellQuote(enrollment.token)}`;
   }
   return `printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file -`;
 }
@@ -71,6 +71,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
     setUseHeadscale(data.status.agentConnectionMode === "headscale");
   }, [open, data.sites, data.status.agentConnectUrl, data.status.agentConnectionMode]);
   const headscaleReady = data.integrations.some((integration) => integration.kind === "headscale" && integration.status === "configured");
+  const firstPrivateNode = data.agents.length === 0 && data.status.agentConnectionMode === "headscale" && useHeadscale && headscaleReady;
   const command = useMemo(() => {
     if (!enrollment) return "";
     return agentInstallCommand({ centerURL, enrollment, installerAvailable: data.status.agentInstallerAvailable });
@@ -81,7 +82,11 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
     event.preventDefault(); setError("");
     if (!validCenterURL(centerURL)) { setError(copy(language, "Center 必须使用 HTTPS；只有 127.0.0.1 或 localhost 可以使用 HTTP。", "Center must use HTTPS. Only 127.0.0.1 or localhost may use HTTP.")); return; }
     setBusy(true);
-    try { setExistingAgentIDs(data.agents.map((agent) => agent.id)); setEnrollment(await api.createAgentEnrollment(siteID, name, centerURL, useHeadscale && headscaleReady, gateway, tunnel)); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
+    try {
+      setExistingAgentIDs(data.agents.map((agent) => agent.id));
+      const connectionURL = firstPrivateNode ? "http://127.0.0.1:8080" : centerURL;
+      setEnrollment(await api.createAgentEnrollment(siteID, name, connectionURL, useHeadscale && headscaleReady, gateway, tunnel));
+    } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
   return (
     <Sheet onOpenChange={(next) => { if (!next) close(); }} open={open}>
@@ -99,6 +104,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
           <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
             <div className="flex-1 overflow-y-auto px-4">
               <FieldGroup>
+                {firstPrivateNode ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "先让当前 Center 主机加入私网", "Join this Center host first")}</AlertTitle><AlertDescription>{copy(language, "请在安装 Center 的这台服务器运行生成的命令。完成网络确认后，其他节点就能通过私网地址连接。", "Run the generated command on the server hosting Center. After confirming its network, other nodes can connect through the private address.")}</AlertDescription></Alert> : null}
                 <Field><FieldLabel htmlFor="new-node-name">{copy(language, "节点名称", "Node name")}</FieldLabel><Input autoFocus id="new-node-name" maxLength={128} onChange={(event) => setName(event.target.value)} placeholder={copy(language, "例如：新加坡服务器", "For example: Singapore server")} required value={name} /><FieldDescription>{copy(language, "使用容易识别设备或位置的名称。", "Use a name that identifies the device or location.")}</FieldDescription></Field>
                 <Field><FieldLabel htmlFor="new-node-site">{copy(language, "位置", "Location")}</FieldLabel><NativeSelect id="new-node-site" onChange={(event) => setSiteID(event.target.value)} required value={siteID}>{data.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</NativeSelect></Field>
                 <div className="rounded-xl border bg-muted/25 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium">{copy(language, "Agent 将连接 Center", "Agent will connect to Center")}</p><p className="mt-1 text-xs text-muted-foreground">{data.status.agentConnectionMode === "headscale" ? copy(language, "使用安全私网", "Using the secure private network") : data.status.agentConnectionMode === "public" ? copy(language, "使用公网安全连接", "Using a secure public connection") : copy(language, "使用同一局域网", "Using the same local network")}</p></div><Badge variant="secondary">{copy(language, "已自动配置", "Automatic")}</Badge></div></div>

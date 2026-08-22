@@ -112,19 +112,28 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 	for _, route := range desired.Routes {
 		routes[route.ID] = route
 	}
+	protected := make(map[string]bool, len(services))
 	for _, service := range services {
-		required := []struct {
-			id       string
-			listener string
-		}{
-			{"system-" + service, "public"},
-			{"system-" + service + "-local", "system"},
+		protected[service] = true
+		listener := "public"
+		if service == "center" {
+			listener = "headscale"
+		}
+		required := []struct{ id, listener, path string }{
+			{"system-" + service, listener, ""},
+			{"system-" + service + "-local", "system", ""},
 		}
 		for _, expected := range required {
 			route, exists := routes[expected.id]
-			if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != expected.listener {
+			if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != expected.listener || route.Path != expected.path {
 				return fmt.Errorf("agent: refusing to replace protected system gateway without %s route %q", expected.listener, expected.id)
 			}
+		}
+	}
+	if protected["center"] && protected["headscale"] {
+		route, exists := routes["system-agent-bootstrap"]
+		if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != "public" || route.Path != "/install/agent.sh" {
+			return errors.New("agent: refusing to replace protected system gateway without public Agent bootstrap route")
 		}
 	}
 	return nil
@@ -240,7 +249,11 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			if route.Protocol == "https" {
 				proxy["transport"] = map[string]any{"protocol": "http", "tls": map[string]any{}}
 			}
-			candidate := caddyRoute{Match: []map[string][]string{{"host": {route.Hostname}}}, Handle: []map[string]any{proxy}, Terminal: true}
+			matcher := map[string][]string{"host": {route.Hostname}}
+			if route.Path != "" {
+				matcher["path"] = []string{route.Path}
+			}
+			candidate := caddyRoute{Match: []map[string][]string{matcher}, Handle: []map[string]any{proxy}, Terminal: true}
 			if route.TLSEnabled {
 				httpsRoutes = append(httpsRoutes, candidate)
 				redirect := map[string]any{"handler": "static_response", "status_code": 308, "headers": map[string][]string{"Location": {"https://{http.request.host}{http.request.uri}"}}}
