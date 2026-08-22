@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.29](https://github.com/petauron/vastora/compare/v0.1.0-alpha.28...v0.1.0-alpha.29) (2026-08-22)
+
+
+### Bug Fixes
+
+* export public Reality endpoints in subscriptions ([#85](https://github.com/petauron/vastora/issues/85)) ([1f2d617](https://github.com/petauron/vastora/commit/1f2d61719f18403c301d0c3eafd9ac85dec80351))
+
 ## [0.1.0-alpha.28](https://github.com/petauron/vastora/compare/v0.1.0-alpha.27...v0.1.0-alpha.28) (2026-08-22)
 
 
