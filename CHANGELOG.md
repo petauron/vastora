@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.23](https://github.com/petauron/vastora/compare/v0.1.0-alpha.22...v0.1.0-alpha.23) (2026-08-22)
+
+
+### Bug Fixes
+
+* unify co-located gateway runtime ([#72](https://github.com/petauron/vastora/issues/72)) ([29ef235](https://github.com/petauron/vastora/commit/29ef2358b52c2a313f3bcd43be225f187a09f6bf))
+
 ## [0.1.0-alpha.22](https://github.com/petauron/vastora/compare/v0.1.0-alpha.21...v0.1.0-alpha.22) (2026-08-21)
 
 
