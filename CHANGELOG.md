@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.32](https://github.com/petauron/vastora/compare/v0.1.0-alpha.31...v0.1.0-alpha.32) (2026-08-22)
+
+
+### Bug Fixes
+
+* synchronize co-located upgrades and tailnet DNS ([#92](https://github.com/petauron/vastora/issues/92)) ([72105f9](https://github.com/petauron/vastora/commit/72105f977baa6b2804ff0b7dc12c4b3607d03b7d))
+
 ## [0.1.0-alpha.31](https://github.com/petauron/vastora/compare/v0.1.0-alpha.30...v0.1.0-alpha.31) (2026-08-22)
 
 
