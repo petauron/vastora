@@ -33,6 +33,12 @@ type fakeLayer4Provisioner struct {
 	removed  int
 }
 
+type staticSystemGatewayInspector []string
+
+func (services staticSystemGatewayInspector) ProtectedSystemServices(context.Context) ([]string, error) {
+	return append([]string(nil), services...), nil
+}
+
 func (provisioner *fakeLayer4Provisioner) Apply(context.Context, gateway.SharedHTTPS) error {
 	return provisioner.applyErr
 }
@@ -402,5 +408,39 @@ func TestGatewayProvisionerSharesUnixAdminSocketWithHost(t *testing.T) {
 	}
 	if _, err := (DockerGatewayProvisioner{AdminSocketPath: "relative.sock"}).settings(); err == nil {
 		t.Fatal("relative Admin socket path was accepted")
+	}
+}
+
+func TestProtectedSystemGatewayRejectsStateWithoutSystemRoutes(t *testing.T) {
+	driver, err := NewCaddyGatewayDriver("http://127.0.0.1:2019")
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver.SystemGateway = staticSystemGatewayInspector{"center", "headscale"}
+	err = driver.ApplyConfiguration(context.Background(), gatewayState(1, 3000), nil)
+	if err == nil || !strings.Contains(err.Error(), `without public route "system-center"`) {
+		t.Fatalf("unsafe stale gateway state was not rejected: %v", err)
+	}
+}
+
+func TestProtectedSystemGatewayAcceptsCompleteSystemRoutes(t *testing.T) {
+	desired := gateway.DesiredState{
+		Revision: 1,
+		Listeners: []gateway.Listener{
+			{Kind: "public", Address: "192.0.2.10", HTTPPort: 80, HTTPSPort: 443},
+			{Kind: "system", Address: "127.0.0.1", HTTPPort: 80, HTTPSPort: 443},
+		},
+	}
+	for _, service := range []struct {
+		name string
+		port int
+	}{{"center", 8080}, {"headscale", 8081}} {
+		desired.Routes = append(desired.Routes,
+			gateway.Route{ID: "system-" + service.name, Hostname: service.name + ".example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: service.port}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-" + service.name + "-local", Hostname: service.name + ".example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: service.port}}, TLSEnabled: true, ListenerKind: "system", System: true},
+		)
+	}
+	if err := validateProtectedSystemRoutes(desired, []string{"center", "headscale"}); err != nil {
+		t.Fatalf("complete protected system state was rejected: %v", err)
 	}
 }
