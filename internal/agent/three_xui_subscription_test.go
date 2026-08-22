@@ -19,7 +19,7 @@ func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) 
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/panel/api/setting/all":
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"subListen":"100.64.0.10","subPort":2096,"subPath":"/sub/"}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"subListen":"100.64.0.10","subPort":2096,"subPath":"/sub/","subClashEnable":false}}`))
 		case "/panel/api/setting/update":
 			if err := json.NewDecoder(request.Body).Decode(&updated); err != nil {
 				t.Fatal(err)
@@ -68,6 +68,9 @@ func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) 
 	}
 	if updated["subEnable"] != true || updated["subPath"] != "/sub/" {
 		t.Fatalf("public subscription endpoint was not enabled: %#v", updated)
+	}
+	if updated["subClashEnable"] != true || updated["subClashPath"] != "/clash/" || updated["subClashURI"] != "https://subscribe.example.com/clash/" || updated["subClashAutoDetect"] != true {
+		t.Fatalf("Clash/Mihomo subscription endpoint was not enabled: %#v", updated)
 	}
 	if updated["subListen"] != "100.64.0.10" || updated["subPath"] != "/sub/" {
 		t.Fatalf("existing private subscription settings were changed: %#v", updated)

@@ -100,12 +100,18 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 			return result, err
 		}
 		result.Secret, result.SecretKind = secret, "client_link"
-	case "reveal_subscription":
-		secret, err := revealThreeXUIClientSubscription(ctx, baseURL, token, command)
+	case "reveal_subscription", "reveal_clash_subscription":
+		clash := command.Action == "reveal_clash_subscription"
+		secret, err := revealThreeXUIClientSubscription(ctx, baseURL, token, command, clash)
 		if err != nil {
 			return result, err
 		}
-		result.Secret, result.SecretKind = secret, "subscription"
+		result.Secret = secret
+		if clash {
+			result.SecretKind = "clash_subscription"
+		} else {
+			result.SecretKind = "subscription"
+		}
 	default:
 		return result, errors.New("agent: unsupported 3x-ui client operation")
 	}
@@ -270,10 +276,20 @@ func realityClientLinkFromInbound(inbound threeXUIRealityInbound, connectHostnam
 	return "", errors.New("agent: client is not attached to the selected REALITY inbound")
 }
 
-func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string, command ThreeXUIClientCommandTask) (string, error) {
+func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string, command ThreeXUIClientCommandTask, clash bool) (string, error) {
 	base, err := url.Parse(strings.TrimSpace(command.SubscriptionBaseURI))
-	if err != nil || base.Scheme != "https" || base.Hostname() == "" || base.RawQuery != "" || base.Fragment != "" {
+	if err != nil || base.Scheme != "https" || base.Hostname() == "" || base.Port() != "" || base.Path != threeXUIRawSubscriptionPath || base.RawQuery != "" || base.Fragment != "" {
 		return "", errors.New("agent: no ready public subscription entry is available")
+	}
+	clashBaseURI, err := configureThreeXUIPublicSubscription(ctx, baseURL, token, base.Hostname(), base.String())
+	if err != nil {
+		return "", err
+	}
+	if clash {
+		base, err = url.Parse(clashBaseURI)
+		if err != nil {
+			return "", errors.New("agent: invalid 3x-ui Clash subscription address")
+		}
 	}
 	detail, err := getThreeXUIClient(ctx, baseURL, token, command.Email)
 	if err != nil {

@@ -77,4 +77,23 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	if _, err := store.ConsumeApplicationCommandResult(ctx, reveal.ID); err == nil {
 		t.Fatal("client link was revealed more than once")
 	}
+
+	clashReveal, err := store.CreateThreeXUIClientCommand(ctx, ThreeXUIClientCommandInput{ApplicationID: "three-x-ui-clients", Action: "reveal_clash_subscription", Email: "MacBook"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task = claimTask(t, store, node)
+	clashLink := "https://subscription.example.test/clash/client-sub-id"
+	result, _ = json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds, Secret: clashLink, SecretKind: "clash_subscription"}})
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+		t.Fatal(err)
+	}
+	completed, err = store.ApplicationCommand(ctx, clashReveal.ID)
+	if err != nil || !completed.ResultAvailable {
+		t.Fatalf("one-time Clash subscription was unavailable: %#v err=%v", completed, err)
+	}
+	consumed, err = store.ConsumeApplicationCommandResult(ctx, clashReveal.ID)
+	if err != nil || consumed != clashLink {
+		t.Fatalf("revealed Clash subscription = %q err=%v", consumed, err)
+	}
 }

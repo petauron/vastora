@@ -39,6 +39,7 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 
 func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T) {
 	updatedSubID := ""
+	var updatedSettings map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
@@ -50,6 +51,13 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 			var payload map[string]json.RawMessage
 			if json.NewDecoder(request.Body).Decode(&payload) != nil || json.Unmarshal(payload["subId"], &updatedSubID) != nil || updatedSubID == "" {
 				t.Fatal("subscription id was not generated in the full client payload")
+			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "POST /panel/api/setting/all":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"subEnable":true,"subPath":"/sub/","subClashEnable":false}}`))
+		case "POST /panel/api/setting/update":
+			if json.NewDecoder(request.Body).Decode(&updatedSettings) != nil {
+				t.Fatal("Clash subscription settings were not decoded")
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
 		case "GET /panel/api/clients/list/paged":
@@ -77,6 +85,16 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	}
 	if subscription.SecretKind != "subscription" || subscription.Secret != "https://subscription.example.test/sub/"+updatedSubID {
 		t.Fatalf("unexpected subscription link: %#v", subscription)
+	}
+	clashSubscription, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "reveal_clash_subscription", Email: "MacBook", Inbounds: inbounds, SubscriptionBaseURI: "https://subscription.example.test/sub/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clashSubscription.SecretKind != "clash_subscription" || clashSubscription.Secret != "https://subscription.example.test/clash/"+updatedSubID {
+		t.Fatalf("unexpected Clash subscription link: %#v", clashSubscription)
+	}
+	if updatedSettings["subClashEnable"] != true || updatedSettings["subClashPath"] != "/clash/" || updatedSettings["subClashAutoDetect"] != true {
+		t.Fatalf("Clash/Mihomo output was not enabled: %#v", updatedSettings)
 	}
 }
 
