@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.25](https://github.com/petauron/vastora/compare/v0.1.0-alpha.24...v0.1.0-alpha.25) (2026-08-22)
+
+
+### Features
+
+* manage 3x-ui clients in center ([#76](https://github.com/petauron/vastora/issues/76)) ([6f179a7](https://github.com/petauron/vastora/commit/6f179a73ffefa48df84b058a4998ff75f3213787))
+
 ## [0.1.0-alpha.24](https://github.com/petauron/vastora/compare/v0.1.0-alpha.23...v0.1.0-alpha.24) (2026-08-22)
 
 
