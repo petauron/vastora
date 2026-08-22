@@ -157,7 +157,10 @@ func configureThreeXUISubscription(ctx context.Context, address string, panelPor
 	}
 	settings["subListen"] = address
 	settings["subPort"] = 2096
-	settings["subPath"] = "/sub/"
+	settings["subPath"] = threeXUIRawSubscriptionPath
+	settings["subClashEnable"] = true
+	settings["subClashPath"] = threeXUIClashSubscriptionPath
+	settings["subClashAutoDetect"] = true
 	if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/update", apiToken, settings); err != nil {
 		return fmt.Errorf("agent: update 3x-ui subscription settings: %w", err)
 	}
