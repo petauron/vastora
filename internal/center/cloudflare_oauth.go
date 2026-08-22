@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -300,6 +301,7 @@ func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, cand
 		return nil, errors.New("center: public address is not assigned to this Center server")
 	}
 	hostnames := make([]string, 0, 2)
+	headscaleHostname := ""
 	for _, rawURL := range []string{input.CenterURL, input.HeadscaleURL} {
 		if strings.TrimSpace(rawURL) == "" {
 			continue
@@ -314,6 +316,9 @@ func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, cand
 		}
 		if !slices.Contains(hostnames, hostname) {
 			hostnames = append(hostnames, hostname)
+		}
+		if strings.TrimSpace(rawURL) == strings.TrimSpace(input.HeadscaleURL) && strings.TrimSpace(input.HeadscaleURL) != "" {
+			headscaleHostname = hostname
 		}
 	}
 	if len(hostnames) == 0 {
@@ -331,18 +336,24 @@ func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, cand
 	if publicIP.To4() != nil {
 		recordType = "A"
 	}
+	publicHostnames := hostnames
+	if headscaleHostname != "" {
+		publicHostnames = []string{headscaleHostname}
+	}
 	createdIDs := []string{}
 	rollback := func() {
 		for _, id := range createdIDs {
 			_ = client.deleteDNSRecord(context.Background(), id)
 		}
 	}
-	result := make([]SetupDNSRecord, 0, len(hostnames))
 	for _, hostname := range hostnames {
 		if hostname != zoneName && !strings.HasSuffix(hostname, "."+zoneName) {
 			rollback()
 			return nil, fmt.Errorf("center: %s is outside the selected Cloudflare zone %s", hostname, zoneName)
 		}
+	}
+	result := make([]SetupDNSRecord, 0, len(publicHostnames))
+	for _, hostname := range publicHostnames {
 		existing, err := client.listDNSRecords(ctx, hostname)
 		if err != nil {
 			rollback()
@@ -374,6 +385,58 @@ func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, cand
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Store) removePublicCenterSetupDNS(ctx context.Context, centerURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(centerURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+		return errors.New("center: private Center DNS hostname is invalid")
+	}
+	hostname := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	var encoded string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'cloudflare_setup_dns_records'`).Scan(&encoded); errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	var records []SetupDNSRecord
+	if json.Unmarshal([]byte(encoded), &records) != nil {
+		return errors.New("center: stored setup DNS records are invalid")
+	}
+	remaining := make([]SetupDNSRecord, 0, len(records))
+	client, err := s.cloudflare(ctx)
+	if err != nil {
+		return err
+	}
+	for _, tracked := range records {
+		if tracked.Name != hostname {
+			remaining = append(remaining, tracked)
+			continue
+		}
+		current, err := client.listDNSRecords(ctx, hostname)
+		if err != nil {
+			return err
+		}
+		if len(current) == 0 {
+			continue
+		}
+		if len(current) != 1 || current[0].ID != tracked.ID || current[0].Type != tracked.Type || current[0].Content != tracked.Content || current[0].Proxied {
+			return fmt.Errorf("center: public Center DNS record %s changed outside Vastora; remove it manually before completing private access", hostname)
+		}
+		for _, candidate := range current {
+			if err := client.deleteDNSRecord(ctx, candidate.ID); err != nil {
+				return err
+			}
+		}
+	}
+	updated, err := json.Marshal(remaining)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key = 'cloudflare_setup_dns_records'`, string(updated)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) exchangeCloudflareCode(ctx context.Context, code, verifier string) (cloudflareOAuthToken, error) {

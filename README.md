@@ -57,7 +57,9 @@ configured Agent address is reused automatically when adding nodes.
 When a Cloudflare zone such as `example.com` is selected, the wizard keeps that
 root zone separate and defaults Vastora to the `vastora.example.com` namespace.
 Center and bundled Headscale use `center.vastora.example.com` and
-`headscale.vastora.example.com`; app hostnames use a visible hierarchy such as
+`headscale.vastora.example.com`; only Headscale receives a public DNS record.
+Center receives a browser-trusted DNS-01 certificate and a Headscale DNS record,
+so its console is reachable only after joining the private network. App hostnames use a visible hierarchy such as
 `manager.cpa.home.vastora.example.com`, and node-specific raw entries use names
 such as `reality.edge-1.home.vastora.example.com`. Existing DNS records outside this
 namespace are not overwritten.
@@ -108,6 +110,9 @@ never attempted automatically.
 - Application runtime data is Agent-local and never uploaded as configuration.
 - The Center deployment stack can run a fixed-version Headscale service with a
   separate data volume; an existing Headscale control plane is also supported.
+  Bundled Headscale is the public Caddy HTTPS entry. Center stays private, while
+  only its token-protected Agent bootstrap script is reachable through the
+  Headscale hostname.
 - Management pages remain private by default. Public publication requires an
   explicit high-risk confirmation and application-level authentication.
 

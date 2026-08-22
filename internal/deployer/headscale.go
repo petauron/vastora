@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +48,8 @@ type DockerHeadscaleInstaller struct {
 	CaddyAdminSocket      string
 	HeadscaleImage        string
 	CaddyImage            string
+	CenterCertificatePEM  string
+	CenterPrivateKeyPEM   string
 	HTTPClient            *http.Client
 }
 
@@ -68,7 +71,7 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	if err != nil {
 		return "", "", err
 	}
-	bindAddresses, err := gatewayBindAddresses(ctx, centerURL, headscaleURL)
+	bindAddresses, err := gatewayBindAddresses(ctx, headscaleURL)
 	if err != nil {
 		return "", "", err
 	}
@@ -156,6 +159,16 @@ func (installer DockerHeadscaleInstaller) settings(input deployapi.HeadscaleInst
 	if centerURL == headscaleURL {
 		return DockerHeadscaleInstaller{}, "", "", errors.New("deployer: Center and Headscale require different hostnames")
 	}
+	certificatePair, err := tls.X509KeyPair([]byte(input.CenterCertificatePEM), []byte(input.CenterCertificateKeyPEM))
+	if err != nil || len(certificatePair.Certificate) == 0 {
+		return DockerHeadscaleInstaller{}, "", "", errors.New("deployer: a valid Center HTTPS certificate and key are required")
+	}
+	leaf, err := x509.ParseCertificate(certificatePair.Certificate[0])
+	if err != nil || leaf.VerifyHostname(strings.TrimPrefix(centerURL, "https://")) != nil || time.Now().Before(leaf.NotBefore) || !time.Now().Before(leaf.NotAfter) {
+		return DockerHeadscaleInstaller{}, "", "", errors.New("deployer: Center HTTPS certificate is invalid for its private hostname")
+	}
+	installer.CenterCertificatePEM = input.CenterCertificatePEM
+	installer.CenterPrivateKeyPEM = input.CenterCertificateKeyPEM
 	if installer.Socket == "" {
 		installer.Socket = "unix:///var/run/docker.sock"
 	}
@@ -321,6 +334,11 @@ func createHeadscaleAPIKey(ctx context.Context, docker *client.Client, container
 func copyFile(ctx context.Context, docker *client.Client, containerID, destination, name string, content []byte) error {
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)
+	if directory := filepath.Dir(name); directory != "." {
+		if err := writer.WriteHeader(&tar.Header{Name: directory, Typeflag: tar.TypeDir, Mode: 0o700, ModTime: time.Unix(0, 0)}); err != nil {
+			return err
+		}
+	}
 	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(content)), ModTime: time.Unix(0, 0)}); err != nil {
 		return err
 	}

@@ -32,6 +32,7 @@ type Listener struct {
 type Route struct {
 	ID           string     `json:"id"`
 	Hostname     string     `json:"hostname"`
+	Path         string     `json:"path,omitempty"`
 	Protocol     string     `json:"protocol"`
 	Upstreams    []Upstream `json:"upstreams"`
 	TLSEnabled   bool       `json:"tlsEnabled"`
@@ -108,7 +109,7 @@ func (state DesiredState) Validate() error {
 		return errors.New("gateway: revision must be positive")
 	}
 	seenIDs := make(map[string]struct{}, len(state.Routes))
-	seenHosts := make(map[string]struct{}, len(state.Routes))
+	seenMatches := make(map[string]struct{}, len(state.Routes))
 	listeners := make(map[string]Listener, len(state.Listeners))
 	for _, listener := range state.Listeners {
 		if listener.Kind != "lan" && listener.Kind != "headscale" && listener.Kind != "public" && listener.Kind != "system" {
@@ -133,11 +134,14 @@ func (state DesiredState) Validate() error {
 		if !hostnamePattern.MatchString(route.Hostname) {
 			return fmt.Errorf("gateway: invalid hostname %q", route.Hostname)
 		}
-		hostKey := route.ListenerKind + "\x00" + route.Hostname
-		if _, exists := seenHosts[hostKey]; exists {
-			return fmt.Errorf("gateway: duplicate hostname %q", route.Hostname)
+		if route.Path != "" && (!strings.HasPrefix(route.Path, "/") || strings.ContainsAny(route.Path, "?#") || len(route.Path) > 2048) {
+			return fmt.Errorf("gateway: route %q has an invalid exact path", route.ID)
 		}
-		seenHosts[hostKey] = struct{}{}
+		matchKey := route.ListenerKind + "\x00" + route.Hostname + "\x00" + route.Path
+		if _, exists := seenMatches[matchKey]; exists {
+			return fmt.Errorf("gateway: duplicate hostname and path %q", route.Hostname+route.Path)
+		}
+		seenMatches[matchKey] = struct{}{}
 		if _, exists := listeners[route.ListenerKind]; !exists {
 			return fmt.Errorf("gateway: route %q references an unavailable listener", route.ID)
 		}
@@ -220,6 +224,21 @@ func (state DesiredState) Sorted() DesiredState {
 			return first.Address < second.Address
 		})
 	}
-	sort.Slice(result.Routes, func(left, right int) bool { return result.Routes[left].ID < result.Routes[right].ID })
+	sort.Slice(result.Routes, func(left, right int) bool {
+		first, second := result.Routes[left], result.Routes[right]
+		if first.ListenerKind != second.ListenerKind {
+			return first.ListenerKind < second.ListenerKind
+		}
+		if first.Hostname != second.Hostname {
+			return first.Hostname < second.Hostname
+		}
+		if (first.Path != "") != (second.Path != "") {
+			return first.Path != ""
+		}
+		if first.Path != second.Path {
+			return first.Path < second.Path
+		}
+		return first.ID < second.ID
+	})
 	return result
 }

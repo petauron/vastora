@@ -418,7 +418,7 @@ func TestProtectedSystemGatewayRejectsStateWithoutSystemRoutes(t *testing.T) {
 	}
 	driver.SystemGateway = staticSystemGatewayInspector{"center", "headscale"}
 	err = driver.ApplyConfiguration(context.Background(), gatewayState(1, 3000), nil)
-	if err == nil || !strings.Contains(err.Error(), `without public route "system-center"`) {
+	if err == nil || !strings.Contains(err.Error(), `without headscale route "system-center"`) {
 		t.Fatalf("unsafe stale gateway state was not rejected: %v", err)
 	}
 }
@@ -428,6 +428,7 @@ func TestProtectedSystemGatewayAcceptsCompleteSystemRoutes(t *testing.T) {
 		Revision: 1,
 		Listeners: []gateway.Listener{
 			{Kind: "public", Address: "192.0.2.10", HTTPPort: 80, HTTPSPort: 443},
+			{Kind: "headscale", Address: "100.64.0.1", HTTPPort: 80, HTTPSPort: 443},
 			{Kind: "system", Address: "127.0.0.1", HTTPPort: 80, HTTPSPort: 443},
 		},
 	}
@@ -435,11 +436,16 @@ func TestProtectedSystemGatewayAcceptsCompleteSystemRoutes(t *testing.T) {
 		name string
 		port int
 	}{{"center", 8080}, {"headscale", 8081}} {
+		listener := "public"
+		if service.name == "center" {
+			listener = "headscale"
+		}
 		desired.Routes = append(desired.Routes,
-			gateway.Route{ID: "system-" + service.name, Hostname: service.name + ".example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: service.port}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-" + service.name, Hostname: service.name + ".example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: service.port}}, TLSEnabled: true, ListenerKind: listener, System: true},
 			gateway.Route{ID: "system-" + service.name + "-local", Hostname: service.name + ".example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: service.port}}, TLSEnabled: true, ListenerKind: "system", System: true},
 		)
 	}
+	desired.Routes = append(desired.Routes, gateway.Route{ID: "system-agent-bootstrap", Hostname: "headscale.example.test", Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true})
 	if err := validateProtectedSystemRoutes(desired, []string{"center", "headscale"}); err != nil {
 		t.Fatalf("complete protected system state was rejected: %v", err)
 	}

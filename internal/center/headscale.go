@@ -17,12 +17,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/petauron/vastora/internal/networking"
 )
 
 const (
 	headscaleDNSFile               = "headscale-extra-records.json"
 	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
-	builtinHeadscaleRuntimeVersion = "unified-gateway-v3"
+	builtinHeadscaleRuntimeVersion = "private-center-v4"
 )
 
 type HeadscaleInput struct {
@@ -287,6 +289,27 @@ func (s *Store) reconcileHeadscaleDNS(ctx context.Context) error {
 		Type  string `json:"type"`
 		Value string `json:"value"`
 	}
+	records := []record{}
+	var connectionMode, centerEndpoint string
+	modeErr := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectionModeSetting).Scan(&connectionMode)
+	endpointErr := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectURLSetting).Scan(&centerEndpoint)
+	if modeErr == nil && endpointErr == nil && connectionMode == "headscale" {
+		if centerAddress, err := s.coLocatedHeadscaleAddress(ctx); err != nil {
+			return err
+		} else if centerAddress != "" {
+			hostname, err := gatewayEndpointHostname(centerEndpoint)
+			if err != nil {
+				return err
+			}
+			recordType := "A"
+			if strings.Contains(centerAddress, ":") {
+				recordType = "AAAA"
+			}
+			records = append(records, record{Name: hostname, Type: recordType, Value: centerAddress})
+		}
+	} else if (modeErr != nil && !errors.Is(modeErr, sql.ErrNoRows)) || (endpointErr != nil && !errors.Is(endpointErr, sql.ErrNoRows)) {
+		return errors.Join(modeErr, endpointErr)
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT p.hostname, n.headscale_address FROM publications p
 		JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
 		WHERE p.kind = 'headscale_gateway' AND p.dns_provider = 'headscale' AND p.status <> 'stopped'
@@ -294,7 +317,6 @@ func (s *Store) reconcileHeadscaleDNS(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	records := []record{}
 	for rows.Next() {
 		var value record
 		if err := rows.Scan(&value.Name, &value.Value); err != nil {
@@ -331,6 +353,48 @@ func (s *Store) reconcileHeadscaleDNS(ctx context.Context) error {
 		return fmt.Errorf("center: publish Headscale DNS records: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) coLocatedHeadscaleAddress(ctx context.Context) (string, error) {
+	localCandidates, err := s.discoverNetworkCandidates(s.now().UTC())
+	if err != nil {
+		return "", fmt.Errorf("center: discover control-plane addresses: %w", err)
+	}
+	local := make(map[string]string, len(localCandidates))
+	for _, candidate := range localCandidates {
+		if candidate.Kind == networking.KindPublic || candidate.Kind == networking.KindHeadscale {
+			local[candidate.Kind+"\x00"+candidate.Address] = candidate.Address
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT n.headscale_address, c.kind, c.address
+		FROM agent_network_profiles n JOIN agents a ON a.id = n.agent_id
+		JOIN agent_network_candidates c ON c.agent_id = n.agent_id
+		WHERE a.status = 'active' AND n.headscale_address <> '' ORDER BY a.enrolled_at, c.kind, c.address`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var headscaleAddress, kind, address string
+		if err := rows.Scan(&headscaleAddress, &kind, &address); err != nil {
+			return "", err
+		}
+		if _, exists := local[kind+"\x00"+address]; exists {
+			return headscaleAddress, nil
+		}
+	}
+	return "", rows.Err()
+}
+
+func (s *Store) reconcileBuiltinHeadscaleDNSIfConfigured(ctx context.Context) error {
+	var configured int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM network_integrations WHERE kind = 'headscale' AND mode = 'builtin' AND status = 'configured'`).Scan(&configured); err != nil {
+		return err
+	}
+	if configured == 0 {
+		return nil
+	}
+	return s.reconcileHeadscaleDNS(ctx)
 }
 
 func (s *Store) ensureHeadscaleDNSFile() error {

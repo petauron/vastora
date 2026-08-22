@@ -228,7 +228,7 @@ func waitForPublicTXT(ctx context.Context, hostname, expected string) error {
 	}
 }
 
-func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID string) ([]gateway.Certificate, error) {
+func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID string, state gateway.DesiredState) ([]gateway.Certificate, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.hostname, sec.sealed
 		FROM publications p JOIN routes r ON r.publication_id = p.id
 		JOIN secrets sec ON sec.id = p.certificate_secret_id
@@ -239,6 +239,21 @@ func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID s
 	}
 	defer rows.Close()
 	values := []gateway.Certificate{}
+	if stateHasRoute(state, "system-center") {
+		var endpoint string
+		if err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectURLSetting).Scan(&endpoint); err != nil {
+			return nil, err
+		}
+		hostname, err := gatewayEndpointHostname(endpoint)
+		if err != nil {
+			return nil, err
+		}
+		certificate, err := s.loadSystemCenterCertificate(ctx, tx, "", hostname)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, gateway.Certificate{Hostname: hostname, CertificatePEM: certificate.CertificatePEM, PrivateKeyPEM: certificate.PrivateKeyPEM})
+	}
 	for rows.Next() {
 		var publicationID, hostname string
 		var sealed []byte
@@ -281,6 +296,27 @@ func (s *Store) RunCertificateRenewal(ctx context.Context, interval time.Duratio
 }
 
 func (s *Store) renewPrivateCertificates(ctx context.Context) error {
+	var mode, centerEndpoint string
+	if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectionModeSetting).Scan(&mode); err == nil && mode == "headscale" {
+		if err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectURLSetting).Scan(&centerEndpoint); err != nil {
+			return err
+		}
+		var builtin int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM network_integrations WHERE kind = 'headscale' AND mode = 'builtin' AND status = 'configured'`).Scan(&builtin); err != nil {
+			return err
+		}
+		if builtin == 1 {
+			if _, changed, err := s.ensureSystemCenterCertificate(ctx, centerEndpoint); err != nil {
+				return err
+			} else if changed {
+				if err := s.queueAllGatewayStates(ctx); err != nil {
+					return err
+				}
+			}
+		}
+	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	cutoff := s.now().UTC().Add(privateCertificateRenewBefore).Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `SELECT id, hostname, gateway_node_id, COALESCE(certificate_secret_id, '') FROM publications
 		WHERE status <> 'stopped' AND tls_enabled = 1 AND kind IN ('lan_gateway', 'headscale_gateway')

@@ -49,8 +49,8 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	if !strings.Contains(headscale, "listen_addr: 0.0.0.0:8081") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
-	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"127.0.0.1", "203.0.113.10"}))
-	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || !strings.Contains(caddy, "default_bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "http://center.example.com, http://headscale.example.com") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
+	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"203.0.113.10"}))
+	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || !strings.Contains(caddy, "bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "tls /etc/caddy/system/center.crt /etc/caddy/system/center.key") || !strings.Contains(caddy, "handle /install/agent.sh") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
 		t.Fatalf("unexpected Caddy configuration:\n%s", caddy)
 	}
 	policy := string(renderHeadscalePolicy())
@@ -74,7 +74,7 @@ func TestGatewayBindsOnlyResolvedLocalPublicAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"127.0.0.1", "203.0.113.20", "[2001:db8::20]"}
+	want := []string{"203.0.113.20", "[2001:db8::20]"}
 	if strings.Join(addresses, ",") != strings.Join(want, ",") {
 		t.Fatalf("gateway bind addresses = %#v, want %#v", addresses, want)
 	}

@@ -47,6 +47,7 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	if _, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple"); err != nil {
 		t.Fatal(err)
 	}
+	storeSystemCenterCertificateForTest(t, store, "center.example.com")
 	installer := &fakeBuiltinHeadscaleInstaller{endpoint: headscaleEndpoint}
 	server := NewServer(store, "", false).WithHeadscaleInstaller(installer)
 	payload, _ := json.Marshal(InitialSetupInput{
@@ -97,6 +98,7 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)`, agentConnectionModeSetting, "headscale", agentConnectURLSetting, "https://center.example.com"); err != nil {
 		t.Fatal(err)
 	}
+	storeSystemCenterCertificateForTest(t, store, "center.example.com")
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at)
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now, now); err != nil {

@@ -15,9 +15,10 @@ import (
 )
 
 type AgentEnrollment struct {
-	Token     string    `json:"token"`
-	SiteID    string    `json:"siteId"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	Token        string    `json:"token"`
+	SiteID       string    `json:"siteId"`
+	InstallerURL string    `json:"installerUrl"`
+	ExpiresAt    time.Time `json:"expiresAt"`
 }
 
 type AgentEnrollmentSpec struct {
@@ -101,7 +102,13 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		}
 		bootstrapCommand = join.Command
 	}
-	enrollment := AgentEnrollment{Token: token, SiteID: spec.SiteID, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
+	installerURL := centerURL
+	if spec.UseHeadscale {
+		if err := s.db.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'headscale' AND status = 'configured'`).Scan(&installerURL); err != nil {
+			return AgentEnrollment{}, errors.New("center: Headscale is not configured for public Agent bootstrap")
+		}
+	}
+	enrollment := AgentEnrollment{Token: token, SiteID: spec.SiteID, InstallerURL: installerURL, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: begin agent enrollment: %w", err)

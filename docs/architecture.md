@@ -134,7 +134,12 @@ port, listen address, and reachability without managing nftables.
 ## Gateway and Tunnel desired state
 
 Caddy receives explicit listeners for LAN, Headscale, public, and control-plane
-loopback addresses.
+loopback addresses. For bundled infrastructure, Headscale is the only public
+HTTPS service. Center binds its Web route to the co-located node's Headscale
+address and uses a Cloudflare DNS-01 certificate. The public Headscale hostname
+also exposes only the exact `/install/agent.sh` bootstrap path to Center; the
+short-lived enrollment token is still required before any private bootstrap
+material is returned.
 Routes reference exactly one listener kind, so the same hostname can be scoped
 to separate private entry networks without a wildcard bind. Caddy has no Docker
 socket; its Admin API is a permissioned Unix socket shared only with Agent.
@@ -145,6 +150,13 @@ it when the node becomes a Gateway. A forward runtime migration stops and
 removes the former Center-only Caddy only after the unified gateway passes both
 Center and Headscale HTTPS health checks; failure restarts the preserved prior
 containers. Caddy remains the sole Web TLS terminator.
+
+The first Agent in a bundled-Headscale installation runs on the Center host. It
+uses loopback for enrollment, joins Headscale, and reports the host's private
+address. Center then writes its own hostname into Headscale extra DNS and moves
+the canonical Caddy route onto that address. Later nodes fetch the token-bound
+installer from the public Headscale hostname, join the private network, and only
+then contact Center.
 
 HAProxy is absent by default. When at least one `public_shared_443` Publication
 exists, Agent moves Caddy's public HTTPS listener to loopback `8443`, starts a
@@ -173,11 +185,11 @@ Tailscale client run on the host, while bundled Headscale stays container-networ
 isolated and is reached only through the loopback-bound control port and the
 shared HTTPS gateway. Vastora does not require a dedicated Center-only machine.
 
-Bundled setup starts the Center HTTPS gateway on public ports `80` and `443`.
-Center and Headscale share that gateway through separate hostnames, so their
-public URLs use standard HTTPS without explicit ports. Loopback `8443` is only
-an internal Caddy backend when an Agent enables the optional shared-443 HAProxy
-frontend; it is never an administrator-facing service URL.
+Bundled setup starts Headscale's Caddy HTTPS entry on public ports `80` and
+`443`. Center uses the same Caddy process but only its loopback and Headscale
+listeners; it has no public DNS record or public application route. Loopback
+`8443` is only an internal Caddy backend when an Agent enables the optional
+shared-443 HAProxy frontend; it is never an administrator-facing service URL.
 
 Built-in Headscale reads stable sorted A/AAAA records from a Center-generated
 `dns.extra_records_path` file. External Headscale installations use manual DNS

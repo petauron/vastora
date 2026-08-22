@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -109,9 +110,15 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if strings.TrimSpace(input.APIKey) != "" {
 		return IntegrationView{}, errors.New("center: built-in Headscale creates its API key automatically")
 	}
+	centerCertificate, _, err := s.store.ensureSystemCenterCertificate(ctx, centerURL)
+	if err != nil {
+		return IntegrationView{}, fmt.Errorf("center: prepare private Center HTTPS: %w", err)
+	}
 	result, err := s.headscaleInstaller.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
-		CenterURL:    centerURL,
-		HeadscaleURL: input.URL,
+		CenterURL:               centerURL,
+		HeadscaleURL:            input.URL,
+		CenterCertificatePEM:    centerCertificate.CertificatePEM,
+		CenterCertificateKeyPEM: centerCertificate.PrivateKeyPEM,
 	})
 	if err != nil {
 		return IntegrationView{}, err
@@ -143,12 +150,25 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	centerCertificate, _, err := s.store.ensureSystemCenterCertificate(ctx, network.AgentConnectURL)
+	if err != nil {
+		return err
+	}
 	if err := s.headscaleInstaller.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
-		CenterURL: network.AgentConnectURL, HeadscaleURL: endpoint,
+		CenterURL:               network.AgentConnectURL,
+		HeadscaleURL:            endpoint,
+		CenterCertificatePEM:    centerCertificate.CertificatePEM,
+		CenterCertificateKeyPEM: centerCertificate.PrivateKeyPEM,
 	}); err != nil {
 		return err
 	}
+	if err := s.store.reconcileHeadscaleDNS(ctx); err != nil {
+		return err
+	}
 	if err := s.store.queueAllGatewayStates(ctx); err != nil {
+		return err
+	}
+	if err := s.store.removePublicCenterSetupDNS(ctx, network.AgentConnectURL); err != nil {
 		return err
 	}
 	return s.store.markBuiltinHeadscaleRuntime(ctx)
