@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.33](https://github.com/petauron/vastora/compare/v0.1.0-alpha.32...v0.1.0-alpha.33) (2026-08-22)
+
+
+### Bug Fixes
+
+* restore co-located gateways after upgrades ([#94](https://github.com/petauron/vastora/issues/94)) ([bcedf56](https://github.com/petauron/vastora/commit/bcedf56753de479067ded4d5bb702a48838f3237))
+
 ## [0.1.0-alpha.32](https://github.com/petauron/vastora/compare/v0.1.0-alpha.31...v0.1.0-alpha.32) (2026-08-22)
 
 
