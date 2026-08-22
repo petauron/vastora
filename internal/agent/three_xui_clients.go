@@ -275,6 +275,14 @@ func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string
 	if err != nil || base.Scheme != "https" || base.Hostname() == "" || base.Port() != "" || base.Path != threeXUIRawSubscriptionPath || base.RawQuery != "" || base.Fragment != "" {
 		return "", errors.New("agent: no ready public subscription entry is available")
 	}
+	for _, inbound := range command.Inbounds {
+		if strings.TrimSpace(inbound.ConnectHostname) == "" || strings.TrimSpace(inbound.SNIHostname) == "" {
+			continue
+		}
+		if err := syncThreeXUIRealityHost(ctx, baseURL, token, inbound.ID, inbound.ConnectHostname, inbound.SNIHostname); err != nil {
+			return "", err
+		}
+	}
 	_, err = configureThreeXUIPublicSubscription(ctx, baseURL, token, base.Hostname(), base.String())
 	if err != nil {
 		return "", err

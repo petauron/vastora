@@ -41,6 +41,7 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T) {
 	updatedSubID := ""
 	var updatedSettings map[string]any
+	var syncedHost threeXUIHostGroup
 	var restartPending atomic.Bool
 	var restartCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -56,6 +57,13 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 				t.Fatal("subscription id was not generated in the full client payload")
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "GET /panel/api/hosts/byInbound/9":
+			_, _ = response.Write([]byte(`{"success":true,"obj":[]}`))
+		case "POST /panel/api/hosts/add":
+			if json.NewDecoder(request.Body).Decode(&syncedHost) != nil {
+				t.Fatal("Reality subscription host was not decoded")
+			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":[]}`))
 		case "POST /panel/api/setting/all":
 			if restartPending.Swap(false) {
 				response.WriteHeader(http.StatusServiceUnavailable)
@@ -81,7 +89,7 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	defer server.Close()
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
-	inbounds := []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9", ConnectHostname: "reality.example.test"}}
+	inbounds := []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9", ConnectHostname: "reality.example.test", SNIHostname: "www.example.com"}}
 
 	link, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "reveal_link", Email: "MacBook", InboundID: 9, Inbounds: inbounds})
 	if err != nil {
@@ -97,6 +105,9 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	}
 	if subscription.SecretKind != "subscription" || subscription.Secret != "https://subscription.example.test/sub/"+updatedSubID {
 		t.Fatalf("unexpected subscription link: %#v", subscription)
+	}
+	if syncedHost.GroupID != "vastora-public-9" || len(syncedHost.InboundIDs) != 1 || syncedHost.InboundIDs[0] != 9 || len(syncedHost.Hosts) != 1 || syncedHost.Hosts[0] != "reality.example.test" || syncedHost.Port != 443 || syncedHost.SNI != "www.example.com" || syncedHost.Security != "same" {
+		t.Fatalf("public Reality endpoint was not synchronized into subscriptions: %#v", syncedHost)
 	}
 	if updatedSettings["subClashEnable"] != true || updatedSettings["subClashPath"] != "/clash/" || updatedSettings["subClashAutoDetect"] != true || updatedSettings["subClashUserAgentRegex"] != `(?i)(clash|mihomo)` {
 		t.Fatalf("Clash/Mihomo output was not enabled: %#v", updatedSettings)
