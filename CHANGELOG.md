@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.28](https://github.com/petauron/vastora/compare/v0.1.0-alpha.27...v0.1.0-alpha.28) (2026-08-22)
+
+
+### Bug Fixes
+
+* accept in-process 3x-ui reloads ([#82](https://github.com/petauron/vastora/issues/82)) ([ee7c13f](https://github.com/petauron/vastora/commit/ee7c13f35269416d88fb4918fd772202e860b0eb))
+
 ## [0.1.0-alpha.27](https://github.com/petauron/vastora/compare/v0.1.0-alpha.26...v0.1.0-alpha.27) (2026-08-22)
 
 
