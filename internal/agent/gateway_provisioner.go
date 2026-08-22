@@ -16,12 +16,13 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 const (
-	defaultCaddyImage       = "docker.io/library/caddy:2.11.4@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d"
-	defaultCaddyContainer   = "vastora-gateway-caddy"
-	defaultCaddyAdminSocket = "/run/vastora/caddy-admin.sock"
+	defaultCaddyImage       = gatewayruntime.CaddyImage
+	defaultCaddyContainer   = gatewayruntime.CaddyContainer
+	defaultCaddyAdminSocket = gatewayruntime.CaddyAdminSocket
 )
 
 type GatewayProvisioner interface {
@@ -40,14 +41,31 @@ type DockerGatewayProvisioner struct {
 }
 
 func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
+	settings, err := provisioner.settings()
+	if err != nil {
+		return err
+	}
 	docker, err := provisioner.client()
 	if err != nil {
 		return err
 	}
 	defer docker.Close()
-	settings, err := provisioner.settings()
+	existing, err := inspectManagedCaddy(ctx, docker, settings.Container)
 	if err != nil {
 		return err
+	}
+	protectedSystemGateway := existing != nil && strings.TrimSpace(existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel]) != ""
+	if protectedSystemGateway && !caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) {
+		return errors.New("agent: the protected system gateway must be reconciled by the Center deployment helper before Agent can adopt it")
+	}
+	if existing != nil && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
+		if existing.Container.State != nil && existing.Container.State.Running {
+			return nil
+		}
+		if _, err := docker.ContainerStart(ctx, existing.Container.ID, client.ContainerStartOptions{}); err != nil {
+			return fmt.Errorf("agent: start existing Caddy container: %w", err)
+		}
+		return nil
 	}
 	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
 	if err != nil {
@@ -60,7 +78,11 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 			return fmt.Errorf("agent: create Caddy volume %s: %w", name, err)
 		}
 	}
-	if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+	if existing != nil {
+		if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil {
+			return fmt.Errorf("agent: replace Caddy container: %w", err)
+		}
+	} else if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("agent: replace Caddy container: %w", err)
 	}
 	mounts := gatewayMounts(settings)
@@ -84,7 +106,7 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 		Config: &container.Config{
 			Image:  settings.Image,
 			Cmd:    []string{"caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
-			Labels: map[string]string{"io.vastora.managed": "true", "io.vastora.component": "gateway"},
+			Labels: map[string]string{gatewayruntime.ManagedLabel: "true", gatewayruntime.ComponentLabel: gatewayruntime.CaddyComponentLabel},
 		},
 		HostConfig: &container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
@@ -128,10 +150,47 @@ func (provisioner DockerGatewayProvisioner) Remove(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	existing, err := inspectManagedCaddy(ctx, docker, settings.Container)
+	if err != nil || existing == nil {
+		return err
+	}
+	if strings.TrimSpace(existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel]) != "" {
+		return errors.New("agent: refusing to remove Caddy while it serves Center system routes")
+	}
 	if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("agent: remove Caddy container: %w", err)
 	}
 	return nil
+}
+
+func inspectManagedCaddy(ctx context.Context, docker *client.Client, name string) (*client.ContainerInspectResult, error) {
+	inspection, err := docker.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agent: inspect Caddy container: %w", err)
+	}
+	if inspection.Container.Config == nil || inspection.Container.Config.Labels[gatewayruntime.ManagedLabel] != "true" || inspection.Container.Config.Labels[gatewayruntime.ComponentLabel] != gatewayruntime.CaddyComponentLabel {
+		return nil, fmt.Errorf("agent: container name %s is already used by an unmanaged workload", name)
+	}
+	return &inspection, nil
+}
+
+func caddySharesAdminPath(host *container.HostConfig, socketPath string) bool {
+	if socketPath == "" {
+		return true
+	}
+	if host == nil {
+		return false
+	}
+	directory := filepath.Dir(socketPath)
+	for _, value := range host.Mounts {
+		if value.Type == mount.TypeBind && value.Source == directory && value.Target == directory {
+			return true
+		}
+	}
+	return false
 }
 
 func (provisioner DockerGatewayProvisioner) client() (*client.Client, error) {

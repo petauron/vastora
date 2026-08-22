@@ -36,6 +36,7 @@ type Route struct {
 	Upstreams    []Upstream `json:"upstreams"`
 	TLSEnabled   bool       `json:"tlsEnabled"`
 	ListenerKind string     `json:"listenerKind"`
+	System       bool       `json:"system,omitempty"`
 }
 
 // Certificate is delivered separately from DesiredState so private keys never
@@ -110,7 +111,7 @@ func (state DesiredState) Validate() error {
 	seenHosts := make(map[string]struct{}, len(state.Routes))
 	listeners := make(map[string]Listener, len(state.Listeners))
 	for _, listener := range state.Listeners {
-		if listener.Kind != "lan" && listener.Kind != "headscale" && listener.Kind != "public" {
+		if listener.Kind != "lan" && listener.Kind != "headscale" && listener.Kind != "public" && listener.Kind != "system" {
 			return fmt.Errorf("gateway: unsupported listener kind %q", listener.Kind)
 		}
 		if _, exists := listeners[listener.Kind]; exists {

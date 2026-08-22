@@ -49,6 +49,7 @@ if sed -n '/^  center:/,/^  deployer:/p' "$temporary_dir/compose.yaml" | grep -F
 fi
 grep -Fq -- '--deployer-socket' "$temporary_dir/compose.yaml"
 grep -Fq '/var/run/docker.sock:/var/run/docker.sock' "$temporary_dir/compose.yaml"
+grep -Fq '/run/vastora:/run/vastora' "$temporary_dir/compose.yaml"
 if grep -Fq '${VASTORA_CENTER_PORT:-443}:8080' "$temporary_dir/compose.yaml"; then
   echo "Center install bundle still claims public port 443" >&2
   exit 1

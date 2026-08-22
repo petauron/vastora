@@ -10,7 +10,10 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +27,22 @@ type fakeGatewayDriver struct {
 	fail       bool
 	healthFail bool
 }
+
+type fakeLayer4Provisioner struct {
+	applyErr error
+	removed  int
+}
+
+func (provisioner *fakeLayer4Provisioner) Apply(context.Context, gateway.SharedHTTPS) error {
+	return provisioner.applyErr
+}
+
+func (provisioner *fakeLayer4Provisioner) Remove(context.Context) error {
+	provisioner.removed++
+	return nil
+}
+
+func (*fakeLayer4Provisioner) Health(context.Context) error { return nil }
 
 func (driver *fakeGatewayDriver) ApplyConfiguration(_ context.Context, desired gateway.DesiredState, _ []gateway.Certificate) error {
 	if driver.fail {
@@ -248,6 +267,46 @@ func TestShared443MovesCaddyHTTPSToLoopback(t *testing.T) {
 		if !strings.Contains(haproxy, wanted) {
 			t.Fatalf("HAProxy configuration missing %q: %s", wanted, haproxy)
 		}
+	}
+}
+
+func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
+	var loaded [][]byte
+	admin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/load" {
+			http.NotFound(writer, request)
+			return
+		}
+		defer request.Body.Close()
+		payload, _ := io.ReadAll(request.Body)
+		loaded = append(loaded, payload)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer admin.Close()
+	caddy, err := NewCaddyGatewayDriver(admin.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layer4 := &fakeLayer4Provisioner{applyErr: errors.New("HAProxy failed")}
+	driver := &ManagedGatewayDriver{Caddy: caddy, Layer4: layer4}
+	state := gateway.DesiredState{
+		Revision:  1,
+		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
+		Routes: []gateway.Route{{
+			ID: "system-center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", System: true,
+			Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}},
+		}},
+		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 8443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
+	}
+	if err := driver.ApplyConfiguration(context.Background(), state, nil); err == nil {
+		t.Fatal("failed HAProxy transition was accepted")
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("Caddy was not restored after HAProxy failure: %d loads", len(loaded))
+	}
+	last := string(loaded[len(loaded)-1])
+	if !strings.Contains(last, `"listen":["203.0.113.10:443"]`) || strings.Contains(last, `"listen":["127.0.0.1:8443"]`) {
+		t.Fatalf("Caddy did not return to public 443: %s", last)
 	}
 }
 
