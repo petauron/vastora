@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.30](https://github.com/petauron/vastora/compare/v0.1.0-alpha.29...v0.1.0-alpha.30) (2026-08-22)
+
+
+### Bug Fixes
+
+* support Mihomo Reality clients ([#87](https://github.com/petauron/vastora/issues/87)) ([e984040](https://github.com/petauron/vastora/commit/e9840403b6c1a904411cb9f920cf8aca0c8e5b91))
+
 ## [0.1.0-alpha.29](https://github.com/petauron/vastora/compare/v0.1.0-alpha.28...v0.1.0-alpha.29) (2026-08-22)
 
 
