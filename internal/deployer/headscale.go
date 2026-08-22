@@ -24,13 +24,15 @@ import (
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 const (
 	DefaultHeadscaleImage     = "ghcr.io/juanfont/headscale:0.29.3@sha256:0e7f1c6e4ce6c2a2a001103ecd3fa645a045adf30ac8a5234fe037b43000cd72"
-	DefaultCaddyImage         = "docker.io/library/caddy:2.11.4@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d"
+	DefaultCaddyImage         = gatewayruntime.CaddyImage
 	DefaultHeadscaleContainer = "vastora-center-headscale"
-	DefaultGatewayContainer   = "vastora-center-gateway"
+	DefaultGatewayContainer   = gatewayruntime.CaddyContainer
+	gatewayRollbackContainer  = "vastora-gateway-caddy-rollback"
 )
 
 type DockerHeadscaleInstaller struct {
@@ -42,6 +44,7 @@ type DockerHeadscaleInstaller struct {
 	HeadscaleConfigVolume string
 	CaddyDataVolume       string
 	CaddyConfigVolume     string
+	CaddyAdminSocket      string
 	HeadscaleImage        string
 	CaddyImage            string
 	HTTPClient            *http.Client
@@ -93,11 +96,15 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			return "", "", fmt.Errorf("deployer: create volume %s: %w", name, err)
 		}
 	}
-	gatewayExists, err := managedContainerExists(ctx, docker, DefaultGatewayContainer, "center-headscale-gateway")
+	gatewayExists, err := managedContainerExists(ctx, docker, DefaultGatewayContainer, gatewayruntime.CaddyComponentLabel)
 	if err != nil {
 		return "", "", err
 	}
-	if !gatewayExists {
+	legacyGatewayExists, err := managedContainerExists(ctx, docker, gatewayruntime.LegacyCenterCaddyContainer, "center-headscale-gateway")
+	if err != nil {
+		return "", "", err
+	}
+	if !gatewayExists && !legacyGatewayExists {
 		if err := ensurePortsAvailable(80, 443); err != nil {
 			return "", "", err
 		}
@@ -115,7 +122,8 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			return "", "", err
 		}
 	}
-	if err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, bindAddresses)); err != nil {
+	replacement, err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, bindAddresses))
+	if err != nil {
 		return "", "", err
 	}
 	for _, health := range []struct {
@@ -123,8 +131,15 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 		path     string
 	}{{centerURL, "/healthz"}, {headscaleURL, "/health"}} {
 		if err := waitForLocalGateway(ctx, health.endpoint, health.path, 3*time.Minute); err != nil {
+			rollbackErr := replacement.rollback(ctx, docker)
+			if rollbackErr != nil {
+				return "", "", errors.Join(fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err), rollbackErr)
+			}
 			return "", "", fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err)
 		}
+	}
+	if err := replacement.commit(ctx, docker); err != nil {
+		return "", "", err
 	}
 	return headscaleURL, apiKey, nil
 }
@@ -164,6 +179,9 @@ func (installer DockerHeadscaleInstaller) settings(input deployapi.HeadscaleInst
 	}
 	if installer.CaddyConfigVolume == "" {
 		installer.CaddyConfigVolume = "vastora_headscale-caddy-config"
+	}
+	if installer.CaddyAdminSocket == "" {
+		installer.CaddyAdminSocket = gatewayruntime.CaddyAdminSocket
 	}
 	if installer.HeadscaleImage == "" {
 		installer.HeadscaleImage = DefaultHeadscaleImage
@@ -217,55 +235,27 @@ func (installer DockerHeadscaleInstaller) headscaleContainerConfig() (*container
 		}
 }
 
-func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, docker *client.Client, caddyfile []byte) error {
-	if err := removeManagedContainer(ctx, docker, DefaultGatewayContainer, "center-headscale-gateway"); err != nil {
-		return err
+func inspectManagedContainer(ctx context.Context, docker *client.Client, name, component string) (*client.ContainerInspectResult, error) {
+	inspected, err := docker.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return nil, nil
 	}
-	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{
-			Image:  installer.CaddyImage,
-			Cmd:    []string{"caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
-			Labels: map[string]string{"io.vastora.managed": "true", "io.vastora.component": "center-headscale-gateway"},
-		},
-		HostConfig: &container.HostConfig{
-			NetworkMode:   container.NetworkMode("host"),
-			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
-			Mounts: []mount.Mount{
-				{Type: mount.TypeVolume, Source: installer.CaddyDataVolume, Target: "/data"},
-				{Type: mount.TypeVolume, Source: installer.CaddyConfigVolume, Target: "/config"},
-			},
-		},
-		Name: DefaultGatewayContainer,
-	})
 	if err != nil {
-		return fmt.Errorf("deployer: create Center gateway: %w", err)
+		return nil, fmt.Errorf("deployer: inspect managed container %s: %w", name, err)
 	}
-	if err := copyFile(ctx, docker, created.ID, "/etc/caddy", "Caddyfile", caddyfile); err != nil {
-		_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
-		return err
+	if inspected.Container.Config == nil {
+		return nil, fmt.Errorf("deployer: managed container %s has no Docker configuration", name)
 	}
-	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return fmt.Errorf("deployer: start Center gateway: %w", err)
+	labels := inspected.Container.Config.Labels
+	if labels[gatewayruntime.ManagedLabel] != "true" || labels[gatewayruntime.ComponentLabel] != component {
+		return nil, fmt.Errorf("deployer: container name %s is already used by an unmanaged workload", name)
 	}
-	return nil
+	return &inspected, nil
 }
 
 func managedContainerExists(ctx context.Context, docker *client.Client, name, component string) (bool, error) {
-	inspected, err := docker.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
-	if errdefs.IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("deployer: inspect managed container %s: %w", name, err)
-	}
-	if inspected.Container.Config == nil {
-		return false, fmt.Errorf("deployer: managed container %s has no Docker configuration", name)
-	}
-	labels := inspected.Container.Config.Labels
-	if labels["io.vastora.managed"] != "true" || labels["io.vastora.component"] != component {
-		return false, fmt.Errorf("deployer: container name %s is already used by an unmanaged workload", name)
-	}
-	return true, nil
+	inspected, err := inspectManagedContainer(ctx, docker, name, component)
+	return inspected != nil, err
 }
 
 func removeManagedContainer(ctx context.Context, docker *client.Client, name, component string) error {

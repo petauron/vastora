@@ -50,7 +50,7 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
 	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"127.0.0.1", "203.0.113.10"}))
-	if !strings.Contains(caddy, "default_bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "http://center.example.com, http://headscale.example.com") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
+	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || !strings.Contains(caddy, "default_bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "http://center.example.com, http://headscale.example.com") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
 		t.Fatalf("unexpected Caddy configuration:\n%s", caddy)
 	}
 	policy := string(renderHeadscalePolicy())

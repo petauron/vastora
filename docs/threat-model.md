@@ -20,7 +20,8 @@
   only typed, catalog-declared application operations and no arbitrary Docker API,
   Compose input, or shell hook.
 - Caddy never mounts Docker's socket. Its Admin API is a permissioned Unix socket
-  shared only with the local Vastora Agent.
+  available to the local Vastora Agent and the restricted deployment helper;
+  the Center process cannot access either Docker or the Admin socket.
 - Application Web ports bind to the confirmed private service address rather
   than every host interface. A public address is accepted only when Agent finds
   it on a local interface and an administrator explicitly enables direct ingress.

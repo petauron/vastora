@@ -442,6 +442,50 @@ func TestFirstConfirmedGatewayIsSelectedForItsSite(t *testing.T) {
 	}
 }
 
+func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	configureBuiltinHeadscaleForTest(t, store)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, agentConnectionModeSetting, "public", agentConnectURLSetting, "https://center.example.test"); err != nil {
+		t.Fatal(err)
+	}
+	store.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
+		return []networking.Candidate{{Address: "203.0.113.70", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic, ObservedAt: now}}, nil
+	}
+	node := enrollOrchestrationNode(t, store, "center-host", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
+		{Address: "10.0.0.70", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN},
+		{Address: "203.0.113.70", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic},
+	}, networking.Profile{ServiceAddress: "10.0.0.70", LANAddress: "10.0.0.70", PublicAddress: "203.0.113.70", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	task := claimTask(t, store, node)
+	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil {
+		t.Fatalf("co-located gateway did not receive system desired state: %#v", task)
+	}
+	if len(task.GatewayState.Routes) != 4 || len(task.GatewayState.Listeners) != 2 {
+		t.Fatalf("unexpected system gateway state: %#v", task.GatewayState)
+	}
+	for _, route := range task.GatewayState.Routes {
+		if !route.System || !route.TLSEnabled {
+			t.Fatalf("unprotected bundled route: %#v", route)
+		}
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC"}); err != nil {
+		t.Fatal(err)
+	}
+	var desiredStatus string
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_status FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&desiredStatus); err != nil {
+		t.Fatal(err)
+	}
+	if desiredStatus != "running" {
+		t.Fatalf("removing the site Gateway stopped the co-located system gateway: %q", desiredStatus)
+	}
+}
+
 func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

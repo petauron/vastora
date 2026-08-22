@@ -245,10 +245,12 @@ func runAgent(arguments []string) error {
 				return err
 			}
 			layer4 := agent.DockerLayer4Provisioner{Image: *haproxyImage}
-			client.GatewayDriver = &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4}
+			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4}
+			client.GatewayDriver = managedDriver
 			client.GatewayProvisioner = agent.ManagedGatewayProvisioner{
 				Caddy:  agent.DockerGatewayProvisioner{Image: *caddyImage, AdminListen: caddyDriver.AdminListen, AdminSocketPath: caddyDriver.AdminSocketPath},
 				Layer4: layer4,
+				Driver: managedDriver,
 			}
 		}
 		if capabilities.Tunnel {

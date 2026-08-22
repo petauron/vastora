@@ -15,11 +15,12 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 const (
 	defaultHAProxyImage      = "docker.io/library/haproxy:3.2.7-alpine@sha256:a9b408a818f5d0d9a6a042ec2957921038399f7a515f8b7bfef2054ef7f4ce05"
-	defaultHAProxyContainer  = "vastora-gateway-haproxy"
+	defaultHAProxyContainer  = gatewayruntime.HAProxyContainer
 	haproxyConfigurationDir  = "/usr/local/etc/haproxy"
 	haproxyConfigurationPath = haproxyConfigurationDir + "/haproxy.cfg"
 	haproxyConfigurationEnv  = "VASTORA_HAPROXY_CONFIG"
@@ -81,9 +82,68 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 		return err
 	}
 	if err := driver.Layer4.Apply(ctx, *desired.SharedHTTPS); err != nil {
+		fallback := desired
+		fallback.SharedHTTPS = nil
+		if restoreErr := driver.Caddy.ApplyConfiguration(ctx, fallback, certificates); restoreErr != nil {
+			return errors.Join(fmt.Errorf("agent: apply shared 443 frontend: %w", err), fmt.Errorf("agent: restore Caddy to public 443: %w", restoreErr))
+		}
 		return fmt.Errorf("agent: apply shared 443 frontend: %w", err)
 	}
 	return nil
+}
+
+// RetainSystemRoutes removes application ingress while keeping the Center and
+// bundled infrastructure reachable on a co-located control-plane host.
+func (driver *ManagedGatewayDriver) RetainSystemRoutes(ctx context.Context) (bool, error) {
+	if driver.Caddy == nil {
+		return false, errors.New("agent: managed gateway is not configured")
+	}
+	driver.mu.RLock()
+	current := driver.state.Sorted()
+	certificates := append([]gateway.Certificate(nil), driver.certificates...)
+	driver.mu.RUnlock()
+	listeners := make(map[string]gateway.Listener)
+	referencedListeners := make(map[string]bool)
+	hostnames := make(map[string]bool)
+	next := gateway.DesiredState{Revision: current.Revision, Routes: []gateway.Route{}, Listeners: []gateway.Listener{}}
+	for _, route := range current.Routes {
+		if !route.System {
+			continue
+		}
+		next.Routes = append(next.Routes, route)
+		hostnames[route.Hostname] = true
+		referencedListeners[route.ListenerKind] = true
+	}
+	if len(next.Routes) == 0 {
+		return false, nil
+	}
+	for _, listener := range current.Listeners {
+		listeners[listener.Kind] = listener
+	}
+	for kind := range referencedListeners {
+		listener, exists := listeners[kind]
+		if !exists {
+			return false, fmt.Errorf("agent: system route references unavailable %s listener", kind)
+		}
+		next.Listeners = append(next.Listeners, listener)
+	}
+	if next.Revision < 1 {
+		next.Revision = 1
+	}
+	keptCertificates := make([]gateway.Certificate, 0, len(certificates))
+	for _, certificate := range certificates {
+		if hostnames[certificate.Hostname] {
+			keptCertificates = append(keptCertificates, certificate)
+		}
+	}
+	if err := driver.Caddy.ApplyConfiguration(ctx, next.Sorted(), keptCertificates); err != nil {
+		return false, fmt.Errorf("agent: retain system gateway routes: %w", err)
+	}
+	driver.mu.Lock()
+	driver.state = next.Sorted()
+	driver.certificates = keptCertificates
+	driver.mu.Unlock()
+	return true, nil
 }
 
 func (driver *ManagedGatewayDriver) ListRoutes(ctx context.Context) ([]gateway.Route, error) {
@@ -164,8 +224,8 @@ func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, configurati
 			Cmd:        []string{haproxyBootstrapCommand},
 			Env:        []string{haproxyConfigurationEnv + "=" + string(configuration)},
 			Labels: map[string]string{
-				"io.vastora.managed":   "true",
-				"io.vastora.component": "layer4-gateway",
+				gatewayruntime.ManagedLabel:   "true",
+				gatewayruntime.ComponentLabel: gatewayruntime.Layer4ComponentLabel,
 			},
 		},
 		HostConfig: &container.HostConfig{
@@ -287,6 +347,7 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 type ManagedGatewayProvisioner struct {
 	Caddy  GatewayProvisioner
 	Layer4 Layer4Provisioner
+	Driver *ManagedGatewayDriver
 }
 
 func (provisioner ManagedGatewayProvisioner) Ensure(ctx context.Context) error {
@@ -300,5 +361,14 @@ func (provisioner ManagedGatewayProvisioner) Remove(ctx context.Context) error {
 	if provisioner.Caddy == nil || provisioner.Layer4 == nil {
 		return errors.New("agent: managed gateway provisioner is not configured")
 	}
-	return errors.Join(provisioner.Layer4.Remove(ctx), provisioner.Caddy.Remove(ctx))
+	if err := provisioner.Layer4.Remove(ctx); err != nil {
+		return err
+	}
+	if provisioner.Driver != nil {
+		retained, err := provisioner.Driver.RetainSystemRoutes(ctx)
+		if err != nil || retained {
+			return err
+		}
+	}
+	return provisioner.Caddy.Remove(ctx)
 }

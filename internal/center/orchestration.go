@@ -218,7 +218,7 @@ func (s *Store) queueGatewayState(ctx context.Context, tx *sql.Tx, gatewayID str
 		return err
 	}
 	revision := current + 1
-	state, err := desiredGatewayState(ctx, tx, gatewayID, revision)
+	state, err := s.desiredGatewayState(ctx, tx, gatewayID, revision)
 	if err != nil {
 		return err
 	}
@@ -240,7 +240,12 @@ func (s *Store) queueGatewayState(ctx context.Context, tx *sql.Tx, gatewayID str
 	return nil
 }
 
-func desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID string, revision int64) (gateway.DesiredState, error) {
+func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID string, revision int64) (gateway.DesiredState, error) {
+	state := gateway.DesiredState{Revision: revision, Listeners: []gateway.Listener{}, Routes: []gateway.Route{}}
+	listeners := map[string]gateway.Listener{}
+	if err := s.appendSystemGatewayRoutes(ctx, tx, gatewayID, &state, listeners); err != nil {
+		return gateway.DesiredState{}, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT r.id, r.hostname, r.protocol, r.upstreams_json, r.tls_enabled, p.kind,
 		n.lan_address, n.headscale_address, n.public_address
 		FROM routes r JOIN services s ON s.id = r.service_id JOIN publications p ON p.id = r.publication_id
@@ -250,8 +255,6 @@ func desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID string, revi
 	if err != nil {
 		return gateway.DesiredState{}, err
 	}
-	state := gateway.DesiredState{Revision: revision, Listeners: []gateway.Listener{}, Routes: []gateway.Route{}}
-	listeners := map[string]gateway.Listener{}
 	for rows.Next() {
 		var route gateway.Route
 		var encoded []byte

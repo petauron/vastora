@@ -120,6 +120,9 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
+	if err := s.store.queueAllGatewayStates(ctx); err != nil {
+		return IntegrationView{}, err
+	}
 	if err := s.store.markBuiltinHeadscaleRuntime(ctx); err != nil {
 		return IntegrationView{}, err
 	}
@@ -143,6 +146,9 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) error {
 	if err := s.headscaleInstaller.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
 		CenterURL: network.AgentConnectURL, HeadscaleURL: endpoint,
 	}); err != nil {
+		return err
+	}
+	if err := s.store.queueAllGatewayStates(ctx); err != nil {
 		return err
 	}
 	return s.store.markBuiltinHeadscaleRuntime(ctx)

@@ -43,6 +43,7 @@ services:
       - /tmp
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /run/vastora:/run/vastora
       - deployer-socket:/run/vastora-deployer
       - headscale-config:/var/lib/vastora-headscale-config
     security_opt:

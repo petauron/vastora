@@ -13,6 +13,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -287,7 +288,11 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 			if err != nil {
 				return err
 			}
-			if backfilled != 0 {
+			systemState := gateway.DesiredState{Revision: 1}
+			if err := s.appendSystemGatewayRoutes(ctx, tx, agentID, &systemState, map[string]gateway.Listener{}); err != nil {
+				return err
+			}
+			if backfilled != 0 || len(systemState.Routes) != 0 {
 				if err := s.queueGatewayState(ctx, tx, agentID, now); err != nil {
 					return err
 				}
@@ -296,6 +301,19 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 	}
 	for agentID := range previous {
 		if desiredSet[agentID] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE site_id = ? AND gateway_node_id = ?`, siteID, agentID); err != nil {
+			return fmt.Errorf("center: remove gateway routes: %w", err)
+		}
+		state := gateway.DesiredState{Revision: 1}
+		if err := s.appendSystemGatewayRoutes(ctx, tx, agentID, &state, map[string]gateway.Listener{}); err != nil {
+			return err
+		}
+		if len(state.Routes) != 0 {
+			if err := s.queueGatewayState(ctx, tx, agentID, now); err != nil {
+				return err
+			}
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE gateway_components SET desired_status = 'stopped', generation = generation + 1, status = 'pending', lease_expires_at = '', last_error = '', updated_at = ? WHERE gateway_node_id = ?`, now.Format(time.RFC3339Nano), agentID); err != nil {
@@ -307,9 +325,6 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 		}
 		if err := s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(agentID, generation), agentID, "gateway.component.apply", generation, "queued", "gateway removed from site "+siteID); err != nil {
 			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE site_id = ? AND gateway_node_id = ?`, siteID, agentID); err != nil {
-			return fmt.Errorf("center: remove gateway routes: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM gateway_states WHERE gateway_node_id = ?`, agentID); err != nil {
 			return fmt.Errorf("center: remove gateway desired state: %w", err)

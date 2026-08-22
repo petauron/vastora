@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
 )
@@ -30,6 +31,7 @@ type Store struct {
 	certificateMu             sync.Mutex
 	publicationCleanupMu      sync.Mutex
 	now                       func() time.Time
+	discoverNetworkCandidates func(time.Time) ([]networking.Candidate, error)
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
@@ -71,6 +73,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		cloudflareOAuth:           defaultCloudflareOAuthConfig(),
 		cloudflareOAuthSessions:   make(map[string]*cloudflareOAuthSession),
 		now:                       time.Now,
+		discoverNetworkCandidates: networking.Discover,
 	}
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
 		_ = db.Close()

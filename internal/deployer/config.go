@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/gatewayruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -207,7 +208,7 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses
 	centerHTTP := "http://" + strings.TrimPrefix(centerURL, "https://")
 	headscaleHTTP := "http://" + strings.TrimPrefix(headscaleURL, "https://")
 	return []byte(fmt.Sprintf(`{
-	admin off
+	admin unix/%s|0600
 	persist_config off
 	default_bind %s
 }
@@ -223,5 +224,5 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses
 %s {
 	reverse_proxy 127.0.0.1:8081
 }
-`, strings.Join(bindAddresses, " "), centerHTTP, headscaleHTTP, centerURL, centerOrigin, headscaleURL))
+`, gatewayruntime.CaddyAdminSocket, strings.Join(bindAddresses, " "), centerHTTP, headscaleHTTP, centerURL, centerOrigin, headscaleURL))
 }

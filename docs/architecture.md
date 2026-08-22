@@ -74,7 +74,12 @@ Tailscale client therefore owns `tailscale0` without sharing a network namespace
 with the Headscale server process. The bundled HTTPS gateway binds only to
 loopback and public addresses that both resolve from its configured hostnames
 and exist on the server, leaving LAN and Tailscale addresses available to the
-co-located Agent gateway. Center records the bundled infrastructure
+co-located Agent gateway. The deployment helper bootstraps the same canonical
+Caddy container and private Admin socket that Agent later adopts; it never
+creates a second Center-only Caddy. Center and Headscale are protected system
+routes in every complete desired state for that host, so application changes or
+removing the node from a Site Gateway role cannot erase the control plane.
+Center records the bundled infrastructure
 specification version and asks the restricted deployment helper to reconcile an
 older installation once after an upgrade; persistent Headscale data and the
 existing encrypted API key are retained.
@@ -128,10 +133,18 @@ port, listen address, and reachability without managing nftables.
 
 ## Gateway and Tunnel desired state
 
-Caddy receives explicit listeners for LAN, Headscale, and public addresses.
+Caddy receives explicit listeners for LAN, Headscale, public, and control-plane
+loopback addresses.
 Routes reference exactly one listener kind, so the same hostname can be scoped
 to separate private entry networks without a wildcard bind. Caddy has no Docker
 socket; its Admin API is a permissioned Unix socket shared only with Agent.
+
+Each host has at most one Vastora-managed Caddy. On a Center-plus-Agent host the
+deployment helper creates it during built-in Headscale setup, and Agent adopts
+it when the node becomes a Gateway. A forward runtime migration stops and
+removes the former Center-only Caddy only after the unified gateway passes both
+Center and Headscale HTTPS health checks; failure restarts the preserved prior
+containers. Caddy remains the sole Web TLS terminator.
 
 HAProxy is absent by default. When at least one `public_shared_443` Publication
 exists, Agent moves Caddy's public HTTPS listener to loopback `8443`, starts a
