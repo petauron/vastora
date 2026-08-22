@@ -260,7 +260,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, name: "inbound-9", connectHostname: "reality.example.test" }], subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
     const create = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action.startsWith("reveal_") ? { ...baseCommand, id: `client-command-${input.action}`, action: input.action, resultAvailable: true } : baseCommand);
-    const reveal = vi.spyOn(api, "revealApplicationCommand").mockImplementation(async (id) => ({ shareUri: id.includes("clash") ? "https://subscription.example.test/clash/client-id" : "vless://one-time-client-link" }));
+    const reveal = vi.spyOn(api, "revealApplicationCommand").mockImplementation(async (id) => ({ shareUri: id.includes("subscription") ? "https://subscription.example.test/sub/client-id" : "vless://one-time-client-link" }));
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -281,13 +281,15 @@ describe("network and app views", () => {
     expect(writeText).toHaveBeenCalledWith("vless://one-time-client-link");
     expect(document.body.textContent).toContain("vless://one-time-client-link");
     await act(async () => {
-      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("OpenClash"))?.click();
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("复制订阅"))?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "reveal_clash_subscription", email: "MacBook", inboundId: undefined });
-    expect(writeText).toHaveBeenCalledWith("https://subscription.example.test/clash/client-id");
-    expect(document.body.textContent).toContain("OpenClash / Mihomo 订阅地址");
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "reveal_subscription", email: "MacBook", inboundId: undefined });
+    expect(writeText).toHaveBeenCalledWith("https://subscription.example.test/sub/client-id");
+    expect(document.body.textContent).toContain("订阅地址");
+    expect([...document.querySelectorAll("button")].filter((button) => button.textContent?.trim() === "复制订阅")).toHaveLength(1);
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "OpenClash")).toBe(false);
   });
 
   it("offers browser-trusted HTTPS only when Cloudflare is connected", () => {

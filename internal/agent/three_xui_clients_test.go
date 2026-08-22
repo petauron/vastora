@@ -98,18 +98,11 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	if subscription.SecretKind != "subscription" || subscription.Secret != "https://subscription.example.test/sub/"+updatedSubID {
 		t.Fatalf("unexpected subscription link: %#v", subscription)
 	}
-	clashSubscription, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "reveal_clash_subscription", Email: "MacBook", Inbounds: inbounds, SubscriptionBaseURI: "https://subscription.example.test/sub/"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if clashSubscription.SecretKind != "clash_subscription" || clashSubscription.Secret != "https://subscription.example.test/clash/"+updatedSubID {
-		t.Fatalf("unexpected Clash subscription link: %#v", clashSubscription)
-	}
 	if updatedSettings["subClashEnable"] != true || updatedSettings["subClashPath"] != "/clash/" || updatedSettings["subClashAutoDetect"] != true || updatedSettings["subClashUserAgentRegex"] != `(?i)(clash|mihomo)` {
 		t.Fatalf("Clash/Mihomo output was not enabled: %#v", updatedSettings)
 	}
-	if restartCount.Load() != 2 {
-		t.Fatalf("3x-ui restart count = %d, want 2", restartCount.Load())
+	if restartCount.Load() != 1 {
+		t.Fatalf("3x-ui restart count = %d, want 1", restartCount.Load())
 	}
 }
 
