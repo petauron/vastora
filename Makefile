@@ -32,6 +32,7 @@ deployment-check:
 	sh -n scripts/validate-release-metadata.sh
 	sh -n scripts/test-center-install.sh
 	sh -n scripts/test-release-metadata.sh
+	sh -n scripts/test-release-workflow.sh
 	node scripts/test-installer-worker.mjs
 	./install.sh --help >/dev/null
 	deploy/center/setup.sh --help >/dev/null
@@ -39,6 +40,7 @@ deployment-check:
 	scripts/package-center-install.sh --help >/dev/null
 	scripts/test-center-install.sh
 	scripts/test-release-metadata.sh
+	scripts/test-release-workflow.sh
 
 security-check:
 	gitleaks detect --no-git --redact --source .
