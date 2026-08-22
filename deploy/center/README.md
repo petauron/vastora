@@ -87,11 +87,13 @@ manual downgrade is required.
 ## Automated releases
 
 Merges to `main` update a Release Please pull request from conventional commit
-messages. Merging that pull request creates a draft release, builds and pushes
-the `linux/amd64` Center image to GHCR, packages the installer
-against the image manifest digest, uploads all three assets, and publishes the
-release only after every step succeeds. Failed builds leave the release as a
-draft. The Cloudflare Worker behind `vastora.petauron.com` selects the newest
+messages. The trusted release workflow dispatches CI and CodeQL for the
+generated release branch, so GitHub does not require repeated approval of
+bot-authored pull-request runs. Merging that pull request creates a draft
+release, builds and pushes the `linux/amd64` Center image to GHCR, packages the
+installer against the image manifest digest, uploads all three assets, and
+publishes the release only after every step succeeds. Failed builds leave the
+release as a draft. The Cloudflare Worker behind `vastora.petauron.com` selects the newest
 non-draft release containing all three assets, including prereleases, so it does
 not depend on GitHub's stable-only `releases/latest` endpoint.
 

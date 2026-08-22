@@ -18,6 +18,7 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     permissions:
+      actions: write
       contents: write
       issues: write
       pull-requests: write
@@ -91,6 +92,15 @@ jobs:
         env:
           BASE_SHA: ${{ steps.release_pr.outputs.base_sha }}
         run: scripts/validate-release-metadata.sh "$BASE_SHA"
+
+      - name: Run trusted checks for release pull request
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ steps.release_pr.outputs.head_branch }}
+        run: |
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_BRANCH"
+          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_BRANCH"
 
   publish:
     needs: prepare
