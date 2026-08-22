@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.31](https://github.com/petauron/vastora/compare/v0.1.0-alpha.30...v0.1.0-alpha.31) (2026-08-22)
+
+
+### Features
+
+* keep Center private behind Headscale ([#90](https://github.com/petauron/vastora/issues/90)) ([31330e5](https://github.com/petauron/vastora/commit/31330e5b7e7ad710fbee46bd5b3b2f5e4bf5d529))
+
 ## [0.1.0-alpha.30](https://github.com/petauron/vastora/compare/v0.1.0-alpha.29...v0.1.0-alpha.30) (2026-08-22)
 
 
