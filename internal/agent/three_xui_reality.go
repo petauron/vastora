@@ -27,6 +27,22 @@ type threeXUIRealityInbound struct {
 	StreamSettings json.RawMessage `json:"streamSettings"`
 }
 
+type threeXUIHostGroup struct {
+	GroupID           string   `json:"groupId"`
+	InboundIDs        []int    `json:"inboundIds"`
+	Hosts             []string `json:"hosts"`
+	Remark            string   `json:"remark"`
+	ServerDescription string   `json:"serverDescription"`
+	IsDisabled        bool     `json:"isDisabled"`
+	IsHidden          bool     `json:"isHidden"`
+	Tags              []string `json:"tags"`
+	Port              int      `json:"port"`
+	Security          string   `json:"security"`
+	SNI               string   `json:"sni"`
+	Fingerprint       string   `json:"fingerprint"`
+	MihomoIPVersion   string   `json:"mihomoIpVersion"`
+}
+
 type realityScanResult struct {
 	Target      string   `json:"target"`
 	Host        string   `json:"host"`
@@ -56,7 +72,14 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	if existing, ok, err := findRealityInbound(ctx, baseURL, secrets["api_token"], remark); err != nil {
 		return RealityCommandResult{}, err
 	} else if ok {
-		return realityResultFromInbound(existing, command.ConnectHostname, command.Name)
+		result, err := realityResultFromInbound(existing, command.ConnectHostname, command.Name)
+		if err != nil {
+			return RealityCommandResult{}, err
+		}
+		if err := syncThreeXUIRealityHost(ctx, baseURL, secrets["api_token"], result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
+			return RealityCommandResult{}, err
+		}
+		return result, nil
 	}
 
 	target, sni, err := selectRealityTarget(ctx, baseURL, secrets["api_token"], command)
@@ -101,7 +124,74 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	if json.Unmarshal(added, &inbound) != nil || inbound.ID < 1 {
 		return RealityCommandResult{}, errors.New("agent: 3x-ui returned an invalid REALITY inbound")
 	}
-	return RealityCommandResult{InboundID: inbound.ID, Name: command.Name, Listen: listen, Port: port, Target: target, SNIHostname: sni, ConnectHostname: command.ConnectHostname, ShareURI: realityShareURI(clientID, command.ConnectHostname, command.Name, sni, keyPair.PublicKey, shortID)}, nil
+	result := RealityCommandResult{InboundID: inbound.ID, Name: command.Name, Listen: listen, Port: port, Target: target, SNIHostname: sni, ConnectHostname: command.ConnectHostname, ShareURI: realityShareURI(clientID, command.ConnectHostname, command.Name, sni, keyPair.PublicKey, shortID)}
+	if err := syncThreeXUIRealityHost(ctx, baseURL, secrets["api_token"], result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
+		return RealityCommandResult{}, err
+	}
+	return result, nil
+}
+
+func syncThreeXUIRealityHost(ctx context.Context, baseURL, token string, inboundID int, connectHostname, sniHostname string) error {
+	connectHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(connectHostname), "."))
+	sniHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(sniHostname), "."))
+	if inboundID < 1 || !validThreeXUIShareHostname(connectHostname) || !validThreeXUIShareHostname(sniHostname) {
+		return errors.New("agent: invalid public REALITY subscription endpoint")
+	}
+	groupID := "vastora-public-" + strconv.Itoa(inboundID)
+	desired := threeXUIHostGroup{
+		GroupID: groupID, InboundIDs: []int{inboundID}, Hosts: []string{connectHostname},
+		Remark: "{{INBOUND}}-{{EMAIL}}", ServerDescription: "Managed by Vastora",
+		Tags: []string{"vastora"}, Port: 443, Security: "same", SNI: sniHostname,
+		Fingerprint: "chrome", MihomoIPVersion: "dual",
+	}
+	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/hosts/byInbound/"+strconv.Itoa(inboundID), token, "", nil)
+	if err != nil {
+		return fmt.Errorf("agent: list 3x-ui REALITY subscription hosts: %w", err)
+	}
+	var groups []threeXUIHostGroup
+	if json.Unmarshal(payload, &groups) != nil {
+		return errors.New("agent: 3x-ui returned invalid subscription host data")
+	}
+	endpoint := baseURL + "/panel/api/hosts/add"
+	for _, group := range groups {
+		if group.GroupID != groupID {
+			continue
+		}
+		if threeXUIRealityHostMatches(group, desired) {
+			return nil
+		}
+		endpoint = baseURL + "/panel/api/hosts/update/" + url.PathEscape(groupID)
+		break
+	}
+	if _, err := threeXUIAPI(ctx, http.MethodPost, endpoint, token, "application/json", desired); err != nil {
+		return fmt.Errorf("agent: synchronize 3x-ui REALITY subscription host: %w", err)
+	}
+	return nil
+}
+
+func validThreeXUIShareHostname(value string) bool {
+	if value == "" || len(value) > 253 || strings.ContainsAny(value, "/\\?#@:") {
+		return false
+	}
+	for _, label := range strings.Split(value, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func threeXUIRealityHostMatches(actual, desired threeXUIHostGroup) bool {
+	return actual.GroupID == desired.GroupID && len(actual.InboundIDs) == 1 && actual.InboundIDs[0] == desired.InboundIDs[0] &&
+		len(actual.Hosts) == 1 && strings.EqualFold(strings.TrimSuffix(actual.Hosts[0], "."), desired.Hosts[0]) &&
+		actual.Remark == desired.Remark && actual.ServerDescription == desired.ServerDescription && !actual.IsDisabled && !actual.IsHidden &&
+		actual.Port == desired.Port && actual.Security == desired.Security && strings.EqualFold(strings.TrimSuffix(actual.SNI, "."), desired.SNI) &&
+		actual.Fingerprint == desired.Fingerprint && actual.MihomoIPVersion == desired.MihomoIPVersion && len(actual.Tags) == 1 && actual.Tags[0] == "vastora"
 }
 
 func threeXUIClientEmail(name, commandID string) string {
