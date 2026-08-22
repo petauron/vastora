@@ -36,7 +36,7 @@ for required_file in setup.sh upgrade.sh compose.yaml release.env; do
     exit 1
   fi
 done
-for required in awk curl docker install mktemp mv; do
+for required in awk curl docker grep install mktemp mv; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
