@@ -195,6 +195,11 @@ Built-in Headscale reads stable sorted A/AAAA records from a Center-generated
 `dns.extra_records_path` file. External Headscale installations use manual DNS
 unless that file is managed by the operator.
 
+Bundled Headscale enables tailnet DNS override with fixed Cloudflare upstream
+resolvers. Extra records such as the private Center hostname are therefore
+available through the operating system resolver, while unrelated queries are
+forwarded normally.
+
 ## 3x-ui
 
 3x-ui uses host networking. On first install, Center generates a strong

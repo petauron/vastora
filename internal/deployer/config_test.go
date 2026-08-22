@@ -46,7 +46,7 @@ func TestPortPreflightReportsAConflict(t *testing.T) {
 
 func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T) {
 	headscale := string(renderHeadscaleConfig("https://headscale.example.com"))
-	if !strings.Contains(headscale, "listen_addr: 0.0.0.0:8081") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
+	if !strings.Contains(headscale, "listen_addr: 0.0.0.0:8081") || !strings.Contains(headscale, "override_local_dns: true") || !strings.Contains(headscale, "      - 1.1.1.1") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
 	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"203.0.113.10"}))
