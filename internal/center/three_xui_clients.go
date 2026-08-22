@@ -16,7 +16,7 @@ import (
 var threeXUIClientActions = map[string]bool{
 	"list": true, "create": true, "update": true, "set_enabled": true,
 	"delete": true, "reset_traffic": true, "reveal_link": true,
-	"reveal_subscription": true, "reveal_clash_subscription": true,
+	"reveal_subscription": true,
 }
 
 func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (ThreeXUIClientCommandInput, error) {
@@ -39,7 +39,7 @@ func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (Thre
 		if !validThreeXUIClientName(input.Email) || !validThreeXUIClientName(input.NewEmail) {
 			return input, errors.New("center: current and new client names are required")
 		}
-	case "set_enabled", "delete", "reset_traffic", "reveal_subscription", "reveal_clash_subscription":
+	case "set_enabled", "delete", "reset_traffic", "reveal_subscription":
 		if !validThreeXUIClientName(input.Email) {
 			return input, errors.New("center: a valid client name is required")
 		}
@@ -213,7 +213,7 @@ func validateThreeXUIClientCommandResult(input ThreeXUIClientCommandTask, result
 			return errors.New("center: Agent returned incomplete 3x-ui inbound metadata")
 		}
 	}
-	expectedSecret := input.Action == "reveal_link" || input.Action == "reveal_subscription" || input.Action == "reveal_clash_subscription"
+	expectedSecret := input.Action == "reveal_link" || input.Action == "reveal_subscription"
 	if expectedSecret != (strings.TrimSpace(result.Secret) != "") {
 		return errors.New("center: Agent returned an unexpected 3x-ui client secret")
 	}
@@ -237,14 +237,8 @@ func validateThreeXUIClientCommandResult(input ThreeXUIClientCommandTask, result
 		return nil
 	}
 	base, baseErr := url.Parse(input.SubscriptionBaseURI)
-	expectedKind := "subscription"
-	expectedPath := "/sub/"
-	if input.Action == "reveal_clash_subscription" {
-		expectedKind = "clash_subscription"
-		expectedPath = "/clash/"
-	}
-	clientID := strings.TrimPrefix(secret.Path, expectedPath)
-	if baseErr != nil || base.Scheme != "https" || base.Path != "/sub/" || result.SecretKind != expectedKind || secret.Scheme != "https" || secret.Host != base.Host || secret.User != nil || secret.RawQuery != "" || secret.Fragment != "" || clientID == "" || strings.Contains(clientID, "/") {
+	clientID := strings.TrimPrefix(secret.Path, "/sub/")
+	if baseErr != nil || base.Scheme != "https" || base.Path != "/sub/" || result.SecretKind != "subscription" || secret.Scheme != "https" || secret.Host != base.Host || secret.User != nil || secret.RawQuery != "" || secret.Fragment != "" || clientID == "" || strings.Contains(clientID, "/") {
 		return errors.New("center: Agent returned an invalid 3x-ui subscription link")
 	}
 	return nil

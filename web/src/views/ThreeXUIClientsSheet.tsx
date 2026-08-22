@@ -75,23 +75,21 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
     setNotice("");
     try {
       await runCommand(input);
-      if (input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription" && input.action !== "reveal_clash_subscription") setNotice(copy(language, "更改已同步到 3x-ui。", "The change was synced to 3x-ui."));
+      if (input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription") setNotice(copy(language, "更改已同步到 3x-ui。", "The change was synced to 3x-ui."));
     } catch (operationError) {
       setError(readableError(language, operationError));
       throw operationError;
     }
   };
 
-  const reveal = async (client: ThreeXUIClient, action: "reveal_link" | "reveal_subscription" | "reveal_clash_subscription") => {
+  const reveal = async (client: ThreeXUIClient, action: "reveal_link" | "reveal_subscription") => {
     const publishedInbound = inbounds.find((inbound) => inbound.connectHostname && client.inboundIds.includes(inbound.id));
     try {
       const next = await runCommand({ action, email: client.email, inboundId: action === "reveal_link" ? publishedInbound?.id : undefined });
       const result = await api.revealApplicationCommand(next.id);
       const title = action === "reveal_link"
         ? copy(language, "VLESS 客户端链接", "VLESS client link")
-        : action === "reveal_clash_subscription"
-          ? copy(language, "OpenClash / Mihomo 订阅地址", "OpenClash / Mihomo subscription URL")
-          : copy(language, "通用订阅地址", "General subscription URL");
+        : copy(language, "订阅地址", "Subscription URL");
       setRevealed({ title, value: result.shareUri });
       await navigator.clipboard?.writeText(result.shareUri).catch(() => undefined);
     } catch (operationError) {
@@ -135,10 +133,10 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
                   <Switch aria-label={copy(language, `启用 ${client.email}`, `Enable ${client.email}`)} checked={client.enabled} disabled={busy} onCheckedChange={(enabled) => void run({ action: "set_enabled", email: client.email, enabled }).catch(() => undefined)} />
                 </div>
                 <div className="mt-4 grid gap-3 text-xs sm:grid-cols-3"><Metric label={copy(language, "已用流量", "Traffic used")} value={`${formatBytes(client.usedBytes)}${client.totalBytes ? ` / ${formatBytes(client.totalBytes)}` : ""}`} /><Metric label={copy(language, "有效期", "Expires")} value={formatExpiry(client.expiryTime, language)} /><Metric label={copy(language, "设备数限制", "IP limit")} value={client.limitIp ? String(client.limitIp) : copy(language, "不限", "Unlimited")} /></div>
-                {deleteClient?.email === client.email ? <Alert className="mt-4" variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : <div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy || !publishedInbound} onClick={() => void reveal(client, "reveal_link")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制 VLESS", "Copy VLESS")}</Button><Button disabled={busy || !command?.subscriptionAvailable} onClick={() => void reveal(client, "reveal_subscription")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "通用订阅", "General subscription")}</Button><Button disabled={busy || !command?.subscriptionAvailable} onClick={() => void reveal(client, "reveal_clash_subscription")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />OpenClash</Button><Button disabled={busy} onClick={() => setEditor({ client })} size="icon-sm" title={copy(language, "编辑", "Edit")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑", "Edit")}</span></Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).catch(() => undefined)} size="icon-sm" title={copy(language, "重置流量", "Reset traffic")} variant="ghost"><RotateCcwIcon /><span className="sr-only">{copy(language, "重置流量", "Reset traffic")}</span></Button><Button disabled={busy} onClick={() => setDeleteClient(client)} size="icon-sm" title={copy(language, "删除", "Delete")} variant="ghost"><Trash2Icon /><span className="sr-only">{copy(language, "删除", "Delete")}</span></Button></div>}
+                {deleteClient?.email === client.email ? <Alert className="mt-4" variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : <div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy || !publishedInbound} onClick={() => void reveal(client, "reveal_link")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制 VLESS", "Copy VLESS")}</Button><Button disabled={busy || !command?.subscriptionAvailable} onClick={() => void reveal(client, "reveal_subscription")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制订阅", "Copy subscription")}</Button><Button disabled={busy} onClick={() => setEditor({ client })} size="icon-sm" title={copy(language, "编辑", "Edit")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑", "Edit")}</span></Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).catch(() => undefined)} size="icon-sm" title={copy(language, "重置流量", "Reset traffic")} variant="ghost"><RotateCcwIcon /><span className="sr-only">{copy(language, "重置流量", "Reset traffic")}</span></Button><Button disabled={busy} onClick={() => setDeleteClient(client)} size="icon-sm" title={copy(language, "删除", "Delete")} variant="ghost"><Trash2Icon /><span className="sr-only">{copy(language, "删除", "Delete")}</span></Button></div>}
                 {!publishedInbound ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "为入站完成公网发布后才能导出 VLESS 链接。", "Publish the inbound before exporting a VLESS URL.")}</p> : null}
                 {!command?.subscriptionAvailable ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, "开启公网订阅后才能复制订阅地址。", "Enable public subscription before copying a subscription URL.")}</p> : null}
-                {command?.subscriptionAvailable ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, "OpenClash、Mihomo 使用 OpenClash；其他客户端使用通用订阅。", "Use OpenClash for OpenClash and Mihomo; use General subscription for other clients.")}</p> : null}
+                {command?.subscriptionAvailable ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, "同一地址会自动适配 OpenClash、Mihomo 和其他客户端。", "The same URL automatically adapts to OpenClash, Mihomo, and other clients.")}</p> : null}
               </div>;
             })}
           </div>
