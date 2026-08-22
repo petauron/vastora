@@ -230,13 +230,9 @@ func revealThreeXUIClientLink(ctx context.Context, baseURL, token string, comman
 	if !ok || strings.TrimSpace(inboundRef.ConnectHostname) == "" {
 		return "", errors.New("agent: this client has no ready public REALITY entry")
 	}
-	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/get/"+strconv.Itoa(inboundRef.ID), token, "", nil)
+	inbound, err := ensureThreeXUIRealityClientVersion(ctx, baseURL, token, inboundRef.ID)
 	if err != nil {
-		return "", fmt.Errorf("agent: get 3x-ui REALITY inbound: %w", err)
-	}
-	var inbound threeXUIRealityInbound
-	if json.Unmarshal(payload, &inbound) != nil || inbound.ID != inboundRef.ID {
-		return "", errors.New("agent: 3x-ui returned invalid REALITY inbound data")
+		return "", err
 	}
 	return realityClientLinkFromInbound(inbound, inboundRef.ConnectHostname, command.Email)
 }
@@ -278,6 +274,9 @@ func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string
 	for _, inbound := range command.Inbounds {
 		if strings.TrimSpace(inbound.ConnectHostname) == "" || strings.TrimSpace(inbound.SNIHostname) == "" {
 			continue
+		}
+		if _, err := ensureThreeXUIRealityClientVersion(ctx, baseURL, token, inbound.ID); err != nil {
+			return "", err
 		}
 		if err := syncThreeXUIRealityHost(ctx, baseURL, token, inbound.ID, inbound.ConnectHostname, inbound.SNIHostname); err != nil {
 			return "", err

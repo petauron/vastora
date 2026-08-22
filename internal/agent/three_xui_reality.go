@@ -50,6 +50,8 @@ type realityScanResult struct {
 	ServerNames []string `json:"serverNames"`
 }
 
+const threeXUIMihomoMinClientVersion = "1.8.2"
+
 func applyRealityCommand(ctx context.Context, store *Store, commandID string, command RealityCommandTask) (RealityCommandResult, error) {
 	installation, err := store.AppliedInstallation(ctx, threeXUIKey)
 	if err != nil {
@@ -72,6 +74,10 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	if existing, ok, err := findRealityInbound(ctx, baseURL, secrets["api_token"], remark); err != nil {
 		return RealityCommandResult{}, err
 	} else if ok {
+		existing, err = ensureThreeXUIRealityClientVersion(ctx, baseURL, secrets["api_token"], existing.ID)
+		if err != nil {
+			return RealityCommandResult{}, err
+		}
 		result, err := realityResultFromInbound(existing, command.ConnectHostname, command.Name)
 		if err != nil {
 			return RealityCommandResult{}, err
@@ -113,7 +119,7 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	payload := map[string]any{
 		"enable": true, "remark": remark, "listen": listen, "port": port, "protocol": "vless", "expiryTime": 0, "total": 0,
 		"settings":       map[string]any{"clients": []map[string]any{{"id": clientID, "email": threeXUIClientEmail(command.Name, commandID), "flow": "xtls-rprx-vision", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true}}, "decryption": "none", "encryption": "none", "fallbacks": []any{}},
-		"streamSettings": map[string]any{"network": "tcp", "tcpSettings": map[string]any{"header": map[string]string{"type": "none"}}, "security": "reality", "realitySettings": map[string]any{"show": false, "xver": 0, "target": target, "serverNames": []string{sni}, "privateKey": keyPair.PrivateKey, "minClientVer": "", "maxClientVer": "", "maxTimediff": 0, "shortIds": []string{shortID}, "settings": map[string]any{"publicKey": keyPair.PublicKey, "fingerprint": "chrome", "serverName": "", "spiderX": "/"}}},
+		"streamSettings": threeXUIRealityStreamSettings(target, sni, keyPair.PrivateKey, keyPair.PublicKey, shortID),
 		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "metadataOnly": false, "routeOnly": false},
 	}
 	added, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/add", secrets["api_token"], "application/json", payload)
@@ -129,6 +135,56 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		return RealityCommandResult{}, err
 	}
 	return result, nil
+}
+
+func threeXUIRealityStreamSettings(target, sni, privateKey, publicKey, shortID string) map[string]any {
+	return map[string]any{
+		"network":     "tcp",
+		"tcpSettings": map[string]any{"header": map[string]string{"type": "none"}},
+		"security":    "reality",
+		"realitySettings": map[string]any{
+			"show": false, "xver": 0, "target": target, "serverNames": []string{sni},
+			"privateKey": privateKey, "minClientVer": threeXUIMihomoMinClientVersion,
+			"maxClientVer": "", "maxTimediff": 0, "shortIds": []string{shortID},
+			"settings": map[string]any{"publicKey": publicKey, "fingerprint": "chrome", "serverName": "", "spiderX": "/"},
+		},
+	}
+}
+
+func ensureThreeXUIRealityClientVersion(ctx context.Context, baseURL, token string, inboundID int) (threeXUIRealityInbound, error) {
+	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/get/"+strconv.Itoa(inboundID), token, "", nil)
+	if err != nil {
+		return threeXUIRealityInbound{}, fmt.Errorf("agent: get 3x-ui REALITY inbound: %w", err)
+	}
+	var inbound threeXUIRealityInbound
+	var update map[string]any
+	if json.Unmarshal(payload, &inbound) != nil || json.Unmarshal(payload, &update) != nil || inbound.ID != inboundID {
+		return threeXUIRealityInbound{}, errors.New("agent: 3x-ui returned invalid REALITY inbound data")
+	}
+	streamSettings, ok := update["streamSettings"].(map[string]any)
+	if !ok || streamSettings["security"] != "reality" || update["protocol"] != "vless" {
+		return threeXUIRealityInbound{}, errors.New("agent: selected inbound is not VLESS REALITY")
+	}
+	realitySettings, ok := streamSettings["realitySettings"].(map[string]any)
+	if !ok {
+		return threeXUIRealityInbound{}, errors.New("agent: selected REALITY inbound is incomplete")
+	}
+	if realitySettings["minClientVer"] == threeXUIMihomoMinClientVersion {
+		return inbound, nil
+	}
+	realitySettings["minClientVer"] = threeXUIMihomoMinClientVersion
+	delete(update, "id")
+	delete(update, "clientStats")
+	delete(update, "fallbackParent")
+	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/update/"+strconv.Itoa(inboundID), token, "application/json", update); err != nil {
+		return threeXUIRealityInbound{}, fmt.Errorf("agent: enable Mihomo compatibility for 3x-ui REALITY inbound: %w", err)
+	}
+	encodedStreamSettings, err := json.Marshal(streamSettings)
+	if err != nil {
+		return threeXUIRealityInbound{}, err
+	}
+	inbound.StreamSettings = encodedStreamSettings
+	return inbound, nil
 }
 
 func syncThreeXUIRealityHost(ctx context.Context, baseURL, token string, inboundID int, connectHostname, sniHostname string) error {

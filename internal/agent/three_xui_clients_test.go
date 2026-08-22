@@ -42,6 +42,8 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	updatedSubID := ""
 	var updatedSettings map[string]any
 	var syncedHost threeXUIHostGroup
+	var clientVersionUpdated atomic.Bool
+	var clientVersionUpdateCount atomic.Int32
 	var restartPending atomic.Bool
 	var restartCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -50,7 +52,24 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 		case "GET /panel/api/clients/get/MacBook":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","id":"11111111-2222-4333-8444-555555555555","subId":"","flow":"xtls-rprx-vision","enable":true},"inboundIds":[9]}}`))
 		case "GET /panel/api/inbounds/get/9":
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"MacBook","flow":"xtls-rprx-vision"}]},"streamSettings":{"security":"reality","realitySettings":{"serverNames":["www.example.com"],"shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}}`))
+			minClientVersion := ""
+			if clientVersionUpdated.Load() {
+				minClientVersion = threeXUIMihomoMinClientVersion
+			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"inbound-9","protocol":"vless","listen":"100.64.0.1","port":39871,"total":0,"expiryTime":0,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"MacBook","flow":"xtls-rprx-vision"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverNames":["www.example.com"],"shortIds":["deadbeef"],"minClientVer":"` + minClientVersion + `","settings":{"publicKey":"public-key"}}},"sniffing":{"enabled":true}}}`))
+		case "POST /panel/api/inbounds/update/9":
+			var payload map[string]any
+			if json.NewDecoder(request.Body).Decode(&payload) != nil {
+				t.Fatal("compatible Reality inbound update was not decoded")
+			}
+			streamSettings, _ := payload["streamSettings"].(map[string]any)
+			realitySettings, _ := streamSettings["realitySettings"].(map[string]any)
+			if realitySettings["minClientVer"] != threeXUIMihomoMinClientVersion {
+				t.Fatalf("minimum Reality client version = %#v", realitySettings["minClientVer"])
+			}
+			clientVersionUpdateCount.Add(1)
+			clientVersionUpdated.Store(true)
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
 		case "POST /panel/api/clients/update/MacBook":
 			var payload map[string]json.RawMessage
 			if json.NewDecoder(request.Body).Decode(&payload) != nil || json.Unmarshal(payload["subId"], &updatedSubID) != nil || updatedSubID == "" {
@@ -114,6 +133,9 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	}
 	if restartCount.Load() != 1 {
 		t.Fatalf("3x-ui restart count = %d, want 1", restartCount.Load())
+	}
+	if clientVersionUpdateCount.Load() != 1 {
+		t.Fatalf("Reality compatibility update count = %d, want 1", clientVersionUpdateCount.Load())
 	}
 }
 
