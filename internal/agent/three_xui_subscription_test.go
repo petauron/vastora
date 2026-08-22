@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 )
 
 func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) {
 	var updated map[string]any
+	var restartPending atomic.Bool
+	var restartCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer local-api-token" {
 			t.Fatalf("missing API token: %q", request.Header.Get("Authorization"))
@@ -19,11 +22,20 @@ func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) 
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/panel/api/setting/all":
+			if restartPending.Swap(false) {
+				response.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = response.Write([]byte(`{"success":false}`))
+				return
+			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"subListen":"100.64.0.10","subPort":2096,"subPath":"/sub/","subClashEnable":false}}`))
 		case "/panel/api/setting/update":
 			if err := json.NewDecoder(request.Body).Decode(&updated); err != nil {
 				t.Fatal(err)
 			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "/panel/api/setting/restartPanel":
+			restartCount.Add(1)
+			restartPending.Store(true)
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
 		default:
 			http.NotFound(response, request)
@@ -69,8 +81,11 @@ func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) 
 	if updated["subEnable"] != true || updated["subPath"] != "/sub/" {
 		t.Fatalf("public subscription endpoint was not enabled: %#v", updated)
 	}
-	if updated["subClashEnable"] != true || updated["subClashPath"] != "/clash/" || updated["subClashURI"] != "https://subscribe.example.com/clash/" || updated["subClashAutoDetect"] != true {
+	if updated["subClashEnable"] != true || updated["subClashPath"] != "/clash/" || updated["subClashURI"] != "https://subscribe.example.com/clash/" || updated["subClashAutoDetect"] != true || updated["subClashUserAgentRegex"] != `(?i)(clash|mihomo)` {
 		t.Fatalf("Clash/Mihomo subscription endpoint was not enabled: %#v", updated)
+	}
+	if restartCount.Load() != 1 {
+		t.Fatalf("3x-ui restart count = %d, want 1", restartCount.Load())
 	}
 	if updated["subListen"] != "100.64.0.10" || updated["subPath"] != "/sub/" {
 		t.Fatalf("existing private subscription settings were changed: %#v", updated)

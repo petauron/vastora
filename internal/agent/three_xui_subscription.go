@@ -11,11 +11,13 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	threeXUIRawSubscriptionPath   = "/sub/"
 	threeXUIClashSubscriptionPath = "/clash/"
+	threeXUIClashUserAgentRegex   = `(?i)(clash|mihomo)`
 )
 
 func applySubscriptionCommand(ctx context.Context, store *Store, command SubscriptionCommandTask) (SubscriptionCommandResult, error) {
@@ -59,14 +61,15 @@ func configureThreeXUIPublicSubscription(ctx context.Context, endpoint, token, d
 		return "", fmt.Errorf("agent: read 3x-ui subscription settings: %w", err)
 	}
 	desired := map[string]any{
-		"subEnable":          true,
-		"subPath":            threeXUIRawSubscriptionPath,
-		"subDomain":          domain,
-		"subURI":             parsed.String(),
-		"subClashEnable":     true,
-		"subClashPath":       threeXUIClashSubscriptionPath,
-		"subClashURI":        clashURI.String(),
-		"subClashAutoDetect": true,
+		"subEnable":              true,
+		"subPath":                threeXUIRawSubscriptionPath,
+		"subDomain":              domain,
+		"subURI":                 parsed.String(),
+		"subClashEnable":         true,
+		"subClashPath":           threeXUIClashSubscriptionPath,
+		"subClashURI":            clashURI.String(),
+		"subClashAutoDetect":     true,
+		"subClashUserAgentRegex": threeXUIClashUserAgentRegex,
 	}
 	changed := false
 	for key, value := range desired {
@@ -79,6 +82,35 @@ func configureThreeXUIPublicSubscription(ctx context.Context, endpoint, token, d
 		if _, err := threeXUIRequest(ctx, http.MethodPost, endpoint+"/panel/api/setting/update", token, settings); err != nil {
 			return "", fmt.Errorf("agent: update 3x-ui public subscription formats: %w", err)
 		}
+		if err := restartThreeXUIPanel(ctx, endpoint, token); err != nil {
+			return "", err
+		}
 	}
 	return clashURI.String(), nil
+}
+
+func restartThreeXUIPanel(ctx context.Context, endpoint, token string) error {
+	if _, err := threeXUIRequest(ctx, http.MethodPost, endpoint+"/panel/api/setting/restartPanel", token, map[string]any{}); err != nil {
+		return fmt.Errorf("agent: restart 3x-ui after subscription update: %w", err)
+	}
+	restartContext, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	sawUnavailable := false
+	for {
+		probeContext, probeCancel := context.WithTimeout(restartContext, time.Second)
+		_, probeErr := threeXUIRequest(probeContext, http.MethodPost, endpoint+"/panel/api/setting/all", token, map[string]any{})
+		probeCancel()
+		if probeErr != nil {
+			sawUnavailable = true
+		} else if sawUnavailable {
+			return nil
+		}
+		select {
+		case <-restartContext.Done():
+			return fmt.Errorf("agent: wait for 3x-ui subscription reload: %w", restartContext.Err())
+		case <-ticker.C:
+		}
+	}
 }
