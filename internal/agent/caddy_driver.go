@@ -40,7 +40,7 @@ func NewCaddyGatewayDriver(adminURL string) (*CaddyGatewayDriver, error) {
 			return nil, errors.New("agent: Caddy Admin API Unix socket path must be absolute")
 		}
 		socketPath := parsed.Path
-		transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
 		}}
 		return &CaddyGatewayDriver{

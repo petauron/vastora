@@ -106,8 +106,14 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 	}
 	installer := &fakeBuiltinHeadscaleInstaller{}
 	server := NewServer(store, "", false).WithHeadscaleInstaller(installer)
+	if server.startupReady.Load() {
+		t.Fatal("Center became ready before built-in Headscale startup reconciliation")
+	}
 	if err := server.ReconcileBuiltinHeadscale(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if !server.startupReady.Load() {
+		t.Fatal("Center did not become ready after built-in Headscale startup reconciliation")
 	}
 	if installer.reconcileInput.CenterURL != "https://center.example.com" || installer.reconcileInput.HeadscaleURL != "https://headscale.example.com" {
 		t.Fatalf("unexpected reconciliation input: %#v", installer.reconcileInput)

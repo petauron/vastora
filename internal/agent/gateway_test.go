@@ -375,6 +375,10 @@ func TestCaddyDriverAcceptsOnlyPrivateAdminEndpoints(t *testing.T) {
 	if driver.AdminListen != "unix//run/vastora/caddy-admin.sock" || driver.AdminSocketPath != "/run/vastora/caddy-admin.sock" || driver.AdminURL != "http://localhost" {
 		t.Fatalf("unexpected Unix Admin API configuration: %#v", driver)
 	}
+	transport, ok := driver.HTTPClient.Transport.(*http.Transport)
+	if !ok || !transport.DisableKeepAlives {
+		t.Fatal("Unix Admin API must reconnect after the managed Caddy container is replaced")
+	}
 	for _, endpoint := range []string{"http://127.0.0.1:2019", "http://[::1]:2019"} {
 		if _, err := NewCaddyGatewayDriver(endpoint); err != nil {
 			t.Fatalf("private endpoint %q was rejected: %v", endpoint, err)

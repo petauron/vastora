@@ -84,6 +84,11 @@ specification version and asks the restricted deployment helper to reconcile an
 older installation once after an upgrade; persistent Headscale data and the
 existing encrypted API key are retained.
 
+Center exposes separate liveness and startup-readiness probes. The official
+upgrader waits for built-in Headscale reconciliation before restarting a
+co-located Agent, allowing the Agent to restore Caddy and HAProxy state without
+depending on the private Center route during the gateway handoff.
+
 ## Address discovery and confirmation
 
 Agent enumerates addresses assigned to local interfaces and reports

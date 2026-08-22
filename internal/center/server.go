@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
@@ -25,15 +26,19 @@ type Server struct {
 	secureCookies        bool
 	officialCatalog      []byte
 	headscaleInstaller   deployapi.HeadscaleInstaller
+	startupReady         atomic.Bool
 }
 
 func (s *Server) WithHeadscaleInstaller(installer deployapi.HeadscaleInstaller) *Server {
 	s.headscaleInstaller = installer
+	s.startupReady.Store(false)
 	return s
 }
 
 func NewServer(store *Store, staticDir string, secureCookies bool) *Server {
-	return &Server{store: store, staticDir: staticDir, secureCookies: secureCookies}
+	server := &Server{store: store, staticDir: staticDir, secureCookies: secureCookies}
+	server.startupReady.Store(true)
+	return server
 }
 
 func (s *Server) WithOfficialCatalog(payload []byte) *Server {
@@ -54,6 +59,7 @@ func (s *Server) WithSetupAgentConnectURL(value string) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /install/agent.sh", s.handleAgentInstallScript)
 	mux.HandleFunc("GET /api/v1/agent-binaries/{os}/{arch}", s.handleAgentBinary)
 	mux.HandleFunc("GET /api/v1/agents/{id}/binary/{os}/{arch}", s.handleAgentUpdateBinary)
@@ -115,6 +121,14 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) handleHealth(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "ok", "version": Version})
+}
+
+func (s *Server) handleReady(writer http.ResponseWriter, _ *http.Request) {
+	if !s.startupReady.Load() {
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"status": "reconciling", "version": Version})
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "ready", "version": Version})
 }
 
 func (s *Server) requireAuth(mutation bool, handler http.HandlerFunc) http.HandlerFunc {
