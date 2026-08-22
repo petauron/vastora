@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.26](https://github.com/petauron/vastora/compare/v0.1.0-alpha.25...v0.1.0-alpha.26) (2026-08-22)
+
+
+### Bug Fixes
+
+* support OpenClash subscriptions ([#78](https://github.com/petauron/vastora/issues/78)) ([1b5313d](https://github.com/petauron/vastora/commit/1b5313d5a2279cfee328abd63f128d69d6e0f50f))
+
 ## [0.1.0-alpha.25](https://github.com/petauron/vastora/compare/v0.1.0-alpha.24...v0.1.0-alpha.25) (2026-08-22)
 
 
