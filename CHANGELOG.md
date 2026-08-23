@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.39](https://github.com/petauron/vastora/compare/v0.1.0-alpha.38...v0.1.0-alpha.39) (2026-08-23)
+
+
+### Features
+
+* add VLESS region prefixes ([#122](https://github.com/petauron/vastora/issues/122)) ([e8d4c4e](https://github.com/petauron/vastora/commit/e8d4c4ee2129961473c817eb8e144b6a91899e97))
+
 ## [0.1.0-alpha.38](https://github.com/petauron/vastora/compare/v0.1.0-alpha.37...v0.1.0-alpha.38) (2026-08-23)
 
 
