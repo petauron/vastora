@@ -284,7 +284,7 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 				if operation == "uninstall" {
 					err = s.queueThreeXUINodeRemoval(ctx, tx, applicationID, now)
 				} else {
-					err = s.queueThreeXUINodeReconcile(ctx, tx, taskID, applicationID, now)
+					err = s.queueThreeXUINodeReconcile(ctx, tx, taskID, applicationID, "", now)
 				}
 				if err != nil && operation != "uninstall" {
 					if role == threeXUIRoleWorker {

@@ -154,7 +154,7 @@ func (s *Store) validateThreeXUIUninstall(ctx context.Context, agentID string) e
 	return nil
 }
 
-func (s *Store) queueThreeXUINodeReconcile(ctx context.Context, tx *sql.Tx, deploymentID, workerApplicationID string, now time.Time) error {
+func (s *Store) queueThreeXUINodeReconcile(ctx context.Context, tx *sql.Tx, deploymentID, workerApplicationID, migrationID string, now time.Time) error {
 	var role, siteID, workerName, address, masterApplicationID, masterAgentID string
 	var configJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT a.role, a.site_id, ag.name,
@@ -194,7 +194,7 @@ func (s *Store) queueThreeXUINodeReconcile(ctx context.Context, tx *sql.Tx, depl
 		return fmt.Errorf("center: save 3x-ui node topology: %w", err)
 	}
 	task := ThreeXUINodeCommandTask{
-		Action: "reconcile", WorkerApplicationID: workerApplicationID,
+		Action: "reconcile", MigrationID: migrationID, WorkerApplicationID: workerApplicationID,
 		Name: workerName, Address: address, Port: config.PanelPort,
 	}
 	if remoteNodeID.Valid {
@@ -292,8 +292,15 @@ func (s *Store) ReconcileThreeXUINode(ctx context.Context, applicationID string)
 	} else if err != nil {
 		return ApplicationCommandView{}, err
 	}
+	var migrationID string
+	if err := tx.QueryRowContext(ctx, `SELECT m.id FROM three_x_ui_nodes n
+		JOIN three_x_ui_migrations m ON m.target_application_id = n.master_application_id
+		WHERE n.worker_application_id = ? AND m.state = 'switching'
+		AND (m.source_application_id <> ? OR m.step = 'switch')`, applicationID, applicationID).Scan(&migrationID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ApplicationCommandView{}, err
+	}
 	now := s.now().UTC()
-	if err := s.queueThreeXUINodeReconcile(ctx, tx, deploymentID, applicationID, now); err != nil {
+	if err := s.queueThreeXUINodeReconcile(ctx, tx, deploymentID, applicationID, migrationID, now); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	var commandID string
@@ -349,6 +356,10 @@ func (s *Store) completeThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, tas
 		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'failed', last_error = ?, updated_at = ? WHERE worker_application_id = ?`, taskError, now, input.WorkerApplicationID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET last_error = ?, updated_at = ?
+			WHERE state = 'switching' AND target_application_id = (SELECT master_application_id FROM three_x_ui_nodes WHERE worker_application_id = ?)`, taskError, now, input.WorkerApplicationID); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, resultJSON, taskError, now, taskID); err != nil {
 		return err
@@ -356,5 +367,32 @@ func (s *Store) completeThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, tas
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
 	}
+	if succeeded && input.Action == "reconcile" {
+		if err := s.completeThreeXUIControllerMigrationIfReady(ctx, tx, input.WorkerApplicationID, now); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
+}
+
+func (s *Store) completeThreeXUIControllerMigrationIfReady(ctx context.Context, tx *sql.Tx, workerApplicationID, now string) error {
+	var migrationID, masterApplicationID string
+	err := tx.QueryRowContext(ctx, `SELECT m.id, n.master_application_id
+		FROM three_x_ui_nodes n JOIN three_x_ui_migrations m ON m.target_application_id = n.master_application_id
+		WHERE n.worker_application_id = ? AND m.state = 'switching'`, workerApplicationID).Scan(&migrationID, &masterApplicationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var unfinished int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM three_x_ui_nodes WHERE master_application_id = ? AND status <> 'ready'`, masterApplicationID).Scan(&unfinished); err != nil {
+		return err
+	}
+	if unfinished != 0 {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'ready', step = 'complete', last_error = '', updated_at = ? WHERE id = ? AND state = 'switching'`, now, migrationID)
+	return err
 }

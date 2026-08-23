@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 
 type Editor = { client?: ThreeXUIClient } | null;
 type RevealedLink = { title: string; value: string } | null;
@@ -21,7 +22,6 @@ const gibibyte = 1024 * 1024 * 1024;
 
 export function ThreeXUIClientsSheet({ application, advancedURL, language, onClose }: { application: Application | null; advancedURL?: string; language: Language; onClose: () => void }) {
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
@@ -29,6 +29,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
   const [editor, setEditor] = useState<Editor>(null);
   const [deleteClient, setDeleteClient] = useState<ThreeXUIClient | null>(null);
   const [revealed, setRevealed] = useState<RevealedLink>(null);
+  const { execute, running: busy } = useApplicationCommandExecutor(application?.id);
   const clients = command?.clients ?? [];
   const inbounds = command?.inbounds ?? [];
   const filteredClients = useMemo(() => clients.filter((client) => client.email.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())), [clients, search]);
@@ -37,24 +38,14 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 
   const runCommand = useCallback(async (input: Omit<ThreeXUIClientCommandInput, "applicationId">) => {
     if (!application) throw new Error("Application is unavailable");
-    setBusy(true);
     setError("");
-    try {
-      let next = await api.createThreeXUIClientCommand({ applicationId: application.id, ...input });
-      const adopt = (value: ApplicationCommand) => setCommand((current) => value.clientsObserved || !current ? value : { ...value, clients: current.clients, clientsObserved: current.clientsObserved, inbounds: value.inbounds?.length ? value.inbounds : current.inbounds });
-      adopt(next);
-      for (let attempt = 0; next.state === "pending" || next.state === "running"; attempt += 1) {
-        if (attempt >= 120) throw new Error("The node did not respond in time");
-        await new Promise((resolve) => window.setTimeout(resolve, 1000));
-        next = await api.applicationCommand(next.id);
-        adopt(next);
-      }
-      if (next.state === "failed") throw new Error(next.error || "The 3x-ui operation failed");
-      return next;
-    } finally {
-      setBusy(false);
-    }
-  }, [application]);
+    const next = await execute(
+      () => api.createThreeXUIClientCommand({ applicationId: application.id, ...input }),
+      (value) => setCommand((current) => value.clientsObserved || !current ? value : { ...value, clients: current.clients, clientsObserved: current.clientsObserved, inbounds: value.inbounds?.length ? value.inbounds : current.inbounds })
+    );
+    if (next?.state === "failed") throw new Error(next.error || "The 3x-ui operation failed");
+    return next;
+  }, [application?.id, execute]);
 
   useEffect(() => {
     if (!application) {
@@ -73,8 +64,8 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
     setRevealed(null);
     setNotice("");
     try {
-      await runCommand(input);
-      if (input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription") setNotice(copy(language, "更改已同步到所选节点。", "The change was synced to the selected nodes."));
+      const next = await runCommand(input);
+      if (next && input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription") setNotice(copy(language, "更改已同步到所选节点。", "The change was synced to the selected nodes."));
     } catch (operationError) {
       setError(readableError(language, operationError));
       throw operationError;
@@ -85,6 +76,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
     const publishedInbound = inbounds.find((inbound) => inbound.connectHostname && client.inboundIds.includes(inbound.id));
     try {
       const next = await runCommand({ action, email: client.email, inboundId: action === "reveal_link" ? publishedInbound?.id : undefined });
+      if (!next) return;
       const result = await api.revealApplicationCommand(next.id);
       const title = action === "reveal_link"
         ? copy(language, "VLESS 客户端链接", "VLESS client link")

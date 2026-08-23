@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 15
+const centerSchemaVersion = 16
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -369,7 +369,12 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 		`CREATE UNIQUE INDEX application_commands_one_active_controller_idx ON application_commands(application_id) WHERE state IN ('pending', 'running') AND kind = '3xui.controller.manage'`,
 		`CREATE TRIGGER application_commands_block_during_three_x_ui_migration
 			BEFORE INSERT ON application_commands
-			WHEN NEW.kind <> '3xui.controller.manage' AND EXISTS (
+			WHEN NEW.kind <> '3xui.controller.manage'
+			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
+				SELECT 1 FROM three_x_ui_migrations
+				WHERE id = json_extract(NEW.input_json, '$.migrationId') AND state = 'switching'
+			))
+			AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE state IN ('backing_up', 'restoring', 'switching')
 				AND (source_application_id = NEW.application_id OR target_application_id = NEW.application_id)

@@ -88,6 +88,7 @@ export const api = {
 	reconcileThreeXUINode: (applicationId: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-node/reconcile`, { method: "POST", body: "{}" }),
 	threeXUIControllerMigrations: () => request<{ migrations: ThreeXUIControllerMigration[] }>("/api/v1/three-x-ui-migrations"),
 	threeXUIControllerMigration: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}`),
+	retryThreeXUIControllerMigrationCleanup: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}/retry-cleanup`, { method: "POST", body: "{}" }),
 	migrateThreeXUIController: (applicationId: string, targetApplicationId: string, allowStaleBackup: boolean) => request<ThreeXUIControllerMigration>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-controller/migrate`, { method: "POST", body: JSON.stringify({ targetApplicationId, confirm: true, allowStaleBackup }) }),
 	regions: () => request<{ regions: Region[] }>("/api/v1/regions"),
 	agentRegionSuggestion: (agentId: string) => request<RegionSuggestion>(`/api/v1/agents/${encodeURIComponent(agentId)}/region-suggestion`),

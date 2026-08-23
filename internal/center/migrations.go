@@ -53,9 +53,20 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if current < 15 {
+			if _, err := provider.UpTo(ctx, 14); err != nil {
+				return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
+			}
+			if err := s.stageLegacySiteCertificates(ctx); err != nil {
+				return fmt.Errorf("center: prepare private HTTPS certificates before database migration (backup: %s): %w", backup, err)
+			}
+		}
 		if _, err := provider.Up(ctx); err != nil {
 			return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
 		}
+	}
+	if err := s.activateMigratedSiteCertificates(ctx); err != nil {
+		return fmt.Errorf("center: activate migrated private HTTPS certificates: %w", err)
 	}
 	return verifyMigratedSchema(ctx, s.db, target)
 }

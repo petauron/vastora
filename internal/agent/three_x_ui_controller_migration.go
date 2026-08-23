@@ -186,45 +186,55 @@ func (c Client) promoteThreeXUIController(ctx context.Context, store *Store, bas
 	if err := importThreeXUIDatabase(ctx, baseURL, currentToken, transformed); err != nil {
 		return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: restore 3x-ui controller database: %w", err)
 	}
+	rollback := func(operationErr error) (ThreeXUIControllerCommandResult, error) {
+		if rollbackErr := rollbackThreeXUIControllerDatabase(baseURL, command.SourceAPIToken, currentToken, original); rollbackErr != nil {
+			return ThreeXUIControllerCommandResult{}, errors.Join(operationErr, fmt.Errorf("agent: rollback promoted 3x-ui controller: %w", rollbackErr))
+		}
+		return ThreeXUIControllerCommandResult{}, operationErr
+	}
 	if err := waitForThreeXUIAPI(ctx, baseURL, command.SourceAPIToken); err != nil {
-		rollbackThreeXUIControllerDatabase(baseURL, command.SourceAPIToken, currentToken, original)
-		return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: validate restored 3x-ui controller: %w", err)
+		return rollback(fmt.Errorf("agent: validate restored 3x-ui controller: %w", err))
 	}
 	parsedBase, parseErr := url.Parse(baseURL)
 	if parseErr != nil || parsedBase.Hostname() == "" || mustPort(baseURL) < 1 {
-		rollbackThreeXUIControllerDatabase(baseURL, command.SourceAPIToken, currentToken, original)
-		return ThreeXUIControllerCommandResult{}, errors.New("agent: promoted 3x-ui endpoint is invalid")
+		return rollback(errors.New("agent: promoted 3x-ui endpoint is invalid"))
 	}
 	if err := configureThreeXUISubscriptionRole(ctx, parsedBase.Hostname(), mustPort(baseURL), command.SourceAPIToken, "master"); err != nil {
-		rollbackThreeXUIControllerDatabase(baseURL, command.SourceAPIToken, currentToken, original)
-		return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: enable subscription on promoted 3x-ui controller: %w", err)
+		return rollback(fmt.Errorf("agent: enable subscription on promoted 3x-ui controller: %w", err))
 	}
 	var secrets map[string]string
 	if json.Unmarshal(installation.Secrets, &secrets) != nil {
-		return ThreeXUIControllerCommandResult{}, errors.New("agent: stored 3x-ui secrets are invalid")
+		return rollback(errors.New("agent: stored 3x-ui secrets are invalid"))
 	}
 	secrets["api_token"] = command.SourceAPIToken
 	installation.Secrets, _ = json.Marshal(secrets)
 	if _, err := store.RecordApplied(ctx, installation); err != nil {
-		return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: save promoted 3x-ui controller token: %w", err)
+		return rollback(fmt.Errorf("agent: save promoted 3x-ui controller token: %w", err))
 	}
 	return ThreeXUIControllerCommandResult{Action: "promote", BackupRevision: command.BackupRevision, SourceRemoteNodeID: command.SourceRemoteNodeID}, nil
 }
 
-func rollbackThreeXUIControllerDatabase(baseURL, restoredToken, originalToken string, content []byte) {
+func rollbackThreeXUIControllerDatabase(baseURL, restoredToken, originalToken string, content []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	seen := map[string]bool{}
+	var failures []error
 	for _, token := range []string{restoredToken, originalToken} {
 		token = strings.TrimSpace(token)
 		if token == "" || seen[token] {
 			continue
 		}
 		seen[token] = true
-		if importThreeXUIDatabase(ctx, baseURL, token, content) == nil {
-			return
+		if err := importThreeXUIDatabase(ctx, baseURL, token, content); err == nil {
+			return nil
+		} else {
+			failures = append(failures, err)
 		}
 	}
+	if len(failures) == 0 {
+		return errors.New("no 3x-ui API token was available for rollback")
+	}
+	return errors.Join(failures...)
 }
 
 type threeXUIControllerTargetSettings struct {
