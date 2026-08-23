@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.37](https://github.com/petauron/vastora/compare/v0.1.0-alpha.36...v0.1.0-alpha.37) (2026-08-23)
+
+
+### Bug Fixes
+
+* synchronize 3x-ui clients across nodes ([#118](https://github.com/petauron/vastora/issues/118)) ([443b8c3](https://github.com/petauron/vastora/commit/443b8c3494f941634162d921f80989bad8e08173))
+
 ## [0.1.0-alpha.36](https://github.com/petauron/vastora/compare/v0.1.0-alpha.35...v0.1.0-alpha.36) (2026-08-23)
 
 
