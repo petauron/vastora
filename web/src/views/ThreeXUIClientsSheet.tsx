@@ -201,7 +201,7 @@ function ClientEditor({ busy, editor, inbounds, language, onCancel, onDirtyChang
           <FieldDescription>{copy(language, "这是设备名称，不需要填写真实邮箱。", "This is a device label, not a real email address.")}</FieldDescription>
         </Field>
         <ClientNodePicker busy={busy} inbounds={inbounds} language={language} onChange={setInboundIDs} selected={inboundIDs} />
-        <SubscriptionTrafficPlanFields expiry={expiry} idPrefix="three-xui-client" language={language} minimumDate={dateInputValueInTimeZone(new Date(), siteTimezone)} onExpiryChange={setExpiry} onQuotaChange={setQuota} onResetDaysChange={(value) => { setResetDays(value); if (!client || Number(value) > 0) setExpiry(nextRenewalDateInTimeZone(Number(value), siteTimezone)); }} quota={quota} resetDays={resetDays} />
+        <SubscriptionTrafficPlanFields expiry={expiry} idPrefix="three-x-ui-client" language={language} minimumDate={dateInputValueInTimeZone(new Date(), siteTimezone)} onExpiryChange={setExpiry} onQuotaChange={setQuota} onResetDaysChange={(value) => { setResetDays(value); if (!client || Number(value) > 0) setExpiry(nextRenewalDateInTimeZone(Number(value), siteTimezone)); }} quota={quota} resetDays={resetDays} />
         <Field>
           <FieldLabel htmlFor="three-xui-client-limit-ip">{copy(language, "同时使用的设备数", "Simultaneous devices")}</FieldLabel>
           <Input id="three-xui-client-limit-ip" min="0" onChange={(event) => setLimitIP(event.target.value)} placeholder={copy(language, "留空表示不限", "Leave empty for unlimited")} step="1" type="number" value={limitIP} />
