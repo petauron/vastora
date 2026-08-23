@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -169,7 +170,15 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	task, err := s.store.ClaimNextTask(request.Context(), request.PathValue("id"), credential)
+	wait := time.Duration(0)
+	if value := strings.TrimSpace(request.URL.Query().Get("wait")); value != "" {
+		wait, err = time.ParseDuration(value)
+		if err != nil || wait < 0 || wait > 30*time.Second {
+			writeError(writer, http.StatusBadRequest, errors.New("center: task wait must be between 0 and 30 seconds"))
+			return
+		}
+	}
+	task, err := s.store.WaitAndClaimNextTask(request.Context(), request.PathValue("id"), credential, wait)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return

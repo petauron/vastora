@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +58,21 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 	}
 }
 
+func TestThreeXUIClientInboundDisplayNameSurvivesAgentRoundTrip(t *testing.T) {
+	var task ThreeXUIClientCommandTask
+	if err := json.Unmarshal([]byte(`{"action":"list","inbounds":[{"id":7,"name":"inbound-7","displayName":"美国CloudLead","applicationId":"app-1","nodeId":"node-1","nodeName":"CloudLead"}]}`), &task); err != nil {
+		t.Fatal(err)
+	}
+	result := ThreeXUIClientCommandResult{Inbounds: task.Inbounds}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"displayName":"美国CloudLead"`) {
+		t.Fatalf("display name was lost from Agent result: %s", payload)
+	}
+}
+
 func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -102,6 +118,29 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 	}
 	if len(driver.applied) != 1 || driver.applied[0].Revision != 3 {
 		t.Fatalf("persisted gateway state was restored %d times: %#v", len(driver.applied), driver.applied)
+	}
+}
+
+func TestTaskClaimUsesBoundedLongPoll(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/tasks/next" || request.URL.Query().Get("wait") != "10s" {
+			t.Fatalf("unexpected task claim request: %s", request.URL.String())
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"task":null}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	task, err := (Client{}).claimNextTask(context.Background(), store, 10*time.Second)
+	if err != nil || task != nil {
+		t.Fatalf("unexpected task claim result: task=%#v err=%v", task, err)
 	}
 }
 

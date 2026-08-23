@@ -57,6 +57,58 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	}
 }
 
+func TestTaskLongPollWakesWhenACommandIsQueued(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "long-poll", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
+	siteID := testSiteID(t, store)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
+		VALUES('long-poll-controller', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan *AgentTask, 1)
+	errors := make(chan error, 1)
+	go func() {
+		task, err := store.WaitAndClaimNextTask(ctx, node.ID, node.Credential, 5*time.Second)
+		if err != nil {
+			errors <- err
+			return
+		}
+		result <- task
+	}()
+	time.Sleep(50 * time.Millisecond)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandID := "application-command-long-poll"
+	input, _ := json.Marshal(ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{}})
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
+		VALUES(?, 'long-poll-controller', ?, ?, ?, ?, 'pending', ?, ?)`, commandID, node.ID, node.ID, clientCommandKind, input, now, now); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := store.recordTaskEvent(ctx, tx, commandID, node.ID, "application.command", 1, "queued", "test command queued"); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-errors:
+		t.Fatal(err)
+	case task := <-result:
+		if task == nil || task.ID != commandID || task.ClientCommand == nil || task.ClientCommand.Action != "list" {
+			t.Fatalf("unexpected long-polled task: %#v", task)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("queued task did not wake the Agent long poll")
+	}
+}
+
 func TestDeploymentLifecyclePreventsDuplicateInstallAndControlsDataDeletion(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
