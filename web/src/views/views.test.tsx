@@ -91,9 +91,9 @@ describe("network and app views", () => {
     data.sites[0].domainSuffix = "vastora.example.com";
     const service = { id: "manager", applicationId: "running", siteId: "site", name: "Manager 页面", protocol: "http" as const, containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog" as const, management: true, status: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
     data.services = [service];
-    expect(defaultPublicationHostname(data, service)).toBe("manager.komari-agent.home.vastora.example.com");
+    expect(defaultPublicationHostname(data, service)).toBe("manager-komari-agent.home.vastora.example.com");
     data.services.push({ ...service, id: "subscription", name: "订阅服务" });
-    expect(defaultPublicationHostname(data, service)).toBe("manager.komari-agent.home.vastora.example.com");
+    expect(defaultPublicationHostname(data, service)).toBe("manager-komari-agent.home.vastora.example.com");
     expect(defaultRealityHostname(data, data.applications[0])).toBe("reality.home-server.home.vastora.example.com");
   });
 

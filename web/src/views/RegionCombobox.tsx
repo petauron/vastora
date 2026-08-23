@@ -17,14 +17,15 @@ function normalizedSearch(value: string) {
 
 export function regionDisplayName(code: string, name: string) {
   const normalizedCode = code.trim().toUpperCase();
-  const chineseName = new Intl.DisplayNames(["zh-CN"], { type: "region" }).of(normalizedCode) ?? normalizedCode;
-  return normalizedCode && name.trim() ? `${regionFlag(normalizedCode)} ${chineseName}${name.trim()}` : name.trim();
+  const normalizedName = name.trim();
+  if (!normalizedCode || !normalizedName) return normalizedName;
+  return `${regionFlag(normalizedCode)} ${regionName(normalizedCode, ["zh-CN"])}${normalizedName}`;
 }
 
 export function regionBaseName(displayName: string, code?: string) {
   if (!code) return displayName;
   const normalizedCode = code.toUpperCase();
-  const chineseName = new Intl.DisplayNames(["zh-CN"], { type: "region" }).of(normalizedCode) ?? normalizedCode;
+  const chineseName = regionName(normalizedCode, ["zh-CN"]);
   const prefixes = [
     `${regionFlag(normalizedCode)} ${chineseName}`,
     `${regionFlag(normalizedCode)} ${normalizedCode} · `,
@@ -32,6 +33,15 @@ export function regionBaseName(displayName: string, code?: string) {
   ].filter(Boolean);
   const prefix = prefixes.find((candidate) => displayName.startsWith(candidate));
   return prefix ? displayName.slice(prefix.length).trim() : displayName;
+}
+
+function regionName(code: string, locales: string[]) {
+  if (!/^[A-Z]{2}$/.test(code)) return code;
+  try {
+    return new Intl.DisplayNames(locales, { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
 function regionFlag(code: string) {
