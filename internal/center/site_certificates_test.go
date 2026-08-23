@@ -57,6 +57,20 @@ func TestSiteCertificateAddsParentWildcardForExistingNestedHostname(t *testing.T
 	}
 }
 
+func TestSiteCertificateRejectsHostnameOutsideSiteNamespace(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	siteID := testSiteID(t, store)
+	if _, err := store.UpdateSite(ctx, siteID, SiteInput{Name: "Home", Code: "home", Timezone: "UTC", DomainSuffix: "example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	configureCloudflareZoneForTest(t, store, "example.com")
+	if _, err := store.siteCertificateDNSNames(ctx, siteID, "panel.other.example.com"); err == nil {
+		t.Fatal("Site certificate unexpectedly accepted a sibling namespace")
+	}
+}
+
 func configureCloudflareZoneForTest(t *testing.T, store *Store, zone string) {
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339Nano)

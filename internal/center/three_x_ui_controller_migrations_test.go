@@ -71,7 +71,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completed.State != "ready" || completed.Step != "complete" {
+	if completed.State != "switching" || completed.Step != "cleanup" {
 		t.Fatalf("migration = %#v", completed)
 	}
 	applications, err := store.ListApplications(ctx)
@@ -88,5 +88,24 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	demoteTask := claimTask(t, store, master)
 	if demoteTask.ControllerCommand == nil || demoteTask.ControllerCommand.Action != "demote" {
 		t.Fatalf("demote task = %#v", demoteTask)
+	}
+	demoteResult, _ := json.Marshal(ApplicationTaskResult{ControllerCommand: &ThreeXUIControllerCommandResult{Action: "demote"}})
+	if err := store.CompleteTask(ctx, master.ID, master.Credential, demoteTask.ID, demoteTask.Attempt, true, "", demoteResult); err != nil {
+		t.Fatal(err)
+	}
+	reconnectTask := claimTask(t, store, worker)
+	if reconnectTask.NodeCommand == nil || reconnectTask.NodeCommand.Action != "reconcile" || reconnectTask.NodeCommand.WorkerApplicationID != masterDeployment.ApplicationID {
+		t.Fatalf("old controller reconnect task = %#v", reconnectTask)
+	}
+	reconnectResult, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
+	if err := store.CompleteTask(ctx, worker.ID, worker.Credential, reconnectTask.ID, reconnectTask.Attempt, true, "", reconnectResult); err != nil {
+		t.Fatal(err)
+	}
+	completed, err = store.ThreeXUIControllerMigration(ctx, migration.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != "ready" || completed.Step != "complete" {
+		t.Fatalf("completed migration = %#v", completed)
 	}
 }

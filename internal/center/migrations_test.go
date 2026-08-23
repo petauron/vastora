@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/petauron/vastora/internal/secret"
 )
 
 type schemaColumn struct {
@@ -365,7 +368,7 @@ func TestVersion13MigrationAddsRealityDisplayNames(t *testing.T) {
 	}
 }
 
-func TestVersion15MigrationRemovesPerPublicationCertificateSecrets(t *testing.T) {
+func TestVersion15MigrationHandsOffPerPublicationCertificateWithoutAGap(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
 	ctx := context.Background()
@@ -386,7 +389,16 @@ func TestVersion15MigrationRemovesPerPublicationCertificateSecrets(t *testing.T)
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.ExecContext(ctx, `INSERT INTO secrets(id, sealed, created_at, updated_at) VALUES('old-publication-certificate', X'0102', ?, ?)`, now, now); err != nil {
+	key, err := secret.LoadOrCreateKey(filepath.Join(directory, "center.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedCertificate, _ := json.Marshal(testManagedCertificate(t, "legacy.example.test"))
+	sealedCertificate, err := secret.Seal(key, encodedCertificate, []byte("publication-certificate:publication-v3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO secrets(id, sealed, created_at, updated_at) VALUES('old-publication-certificate', ?, ?, ?)`, sealedCertificate, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE publications SET certificate_secret_id = 'old-publication-certificate', certificate_not_after = ?, tls_enabled = 1 WHERE id = 'publication-v3'`, now); err != nil {
@@ -405,7 +417,7 @@ func TestVersion15MigrationRemovesPerPublicationCertificateSecrets(t *testing.T)
 	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('publications') WHERE name IN ('certificate_secret_id', 'certificate_not_after')`).Scan(&obsoleteColumns); err != nil || obsoleteColumns != 0 {
 		t.Fatalf("obsolete publication certificate columns=%d err=%v", obsoleteColumns, err)
 	}
-	var oldSecrets, publications, routes int
+	var oldSecrets, publications, routes, siteCertificates int
 	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM secrets WHERE id = 'old-publication-certificate'`).Scan(&oldSecrets); err != nil {
 		t.Fatal(err)
 	}
@@ -415,8 +427,18 @@ func TestVersion15MigrationRemovesPerPublicationCertificateSecrets(t *testing.T)
 	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE id = 'route-v3'`).Scan(&routes); err != nil {
 		t.Fatal(err)
 	}
-	if oldSecrets != 0 || publications != 1 || routes != 1 {
-		t.Fatalf("migrated Site certificate state: oldSecrets=%d publications=%d routes=%d", oldSecrets, publications, routes)
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_certificates WHERE site_id = 'site-v3' AND status = 'ready' AND secret_id IS NOT NULL`).Scan(&siteCertificates); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := migrated.storedSiteCertificate(ctx, "site-v3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrated.decodeSiteCertificate(stored); err != nil {
+		t.Fatalf("migrated Site certificate cannot be decoded: %v", err)
+	}
+	if oldSecrets != 0 || publications != 1 || routes != 1 || siteCertificates != 1 {
+		t.Fatalf("migrated Site certificate state: oldSecrets=%d publications=%d routes=%d siteCertificates=%d", oldSecrets, publications, routes, siteCertificates)
 	}
 }
 

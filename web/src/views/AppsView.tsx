@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppWindowIcon, ArrowRightLeftIcon, ArrowUpCircleIcon, CheckCircle2Icon, ExternalLinkIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, PencilIcon, RadioTowerIcon, RotateCcwIcon, Settings2Icon, ShieldAlertIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
-import type { AgentView, Application, ApplicationCommand, AppView, Deployment, Publication, PublicationKind, Service, ThreeXUIControllerMigration, ThreeXUIRole } from "../types";
+import type { AgentView, Application, ApplicationCommand, AppView, Deployment, Publication, PublicationKind, Service, ThreeXUIRole } from "../types";
 import type { Language } from "../translations";
 import { canInstall, defaultPublicationHostname, defaultRealityHostname, gatewaysForKind, installBlocker, isActiveApplication, isInstalledApplication, latestOperations, localized, operationLabel, publicationIntentOptions, publicationKindLabel, publicationKindsForIntent, publicationOptions, type PublicationIntent } from "./appAccess";
 import { CopyButton, HighPrivilegeBadge, PageHeading, StateBadge, TechnicalError, copy, userError } from "./shared";
@@ -18,7 +18,9 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { ThreeXUIClientsSheet } from "./ThreeXUIClientsSheet";
+import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
 import { RegionCombobox, regionBaseName, regionDisplayName } from "./RegionCombobox";
+import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 
 type DeploymentEditor = { app: AppView; agent?: AgentView; operation: "install" | "upgrade" | "configure" } | null;
 
@@ -144,73 +146,6 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
     </CardContent>
     <CardFooter className="flex-wrap justify-end gap-2">{isController && activeWorkers.some((worker) => worker.nodeSyncStatus === "ready") ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} size="sm" variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "迁移订阅主机", "Move subscription host")}</Button> : null}{application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange) || activeWorkers.length > 0} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter>
   </Card>;
-}
-
-function ThreeXUIControllerMigrationSheet({ application, data, language, mutate, onClose }: { application: Application | null; data: AppData; language: Language; mutate: Mutate; onClose: () => void }) {
-  const candidates = application ? data.applications.filter((value) => value.siteId === application.siteId && value.appKey === application.appKey && value.role === "worker" && value.status === "running" && value.nodeSyncStatus === "ready" && data.agents.some((agent) => agent.id === value.nodeId && agent.connected)) : [];
-  const [targetID, setTargetID] = useState("");
-  const [confirmed, setConfirmed] = useState(false);
-  const [allowStale, setAllowStale] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [migration, setMigration] = useState<ThreeXUIControllerMigration | null>(null);
-  const sourceAgent = application ? data.agents.find((value) => value.id === application.nodeId) : undefined;
-  const sourceOnline = Boolean(sourceAgent?.connected);
-  const selectedTarget = candidates.find((value) => value.id === targetID);
-  const selectedAgent = selectedTarget ? data.agents.find((value) => value.id === selectedTarget.nodeId) : undefined;
-  const active = migration && migration.state !== "ready" && migration.state !== "failed";
-
-  useEffect(() => {
-    if (!application) return;
-    const existing = data.threeXUIControllerMigrations.find((value) => value.sourceApplicationId === application.id && value.state !== "ready") ?? null;
-    setTargetID(candidates[0]?.id ?? "");
-    setConfirmed(false);
-    setAllowStale(false);
-    setError("");
-    setMigration(existing);
-  }, [application?.id]);
-
-  useEffect(() => {
-    if (!active) return;
-    let cancelled = false;
-    let timer: number | undefined;
-    const poll = async () => {
-      try {
-        const next = await api.threeXUIControllerMigration(migration.id);
-        if (!cancelled) setMigration(next);
-        if (!cancelled && next.state === "ready") await mutate(async () => undefined, copy(language, "订阅主机迁移完成，原来的域名和订阅地址保持不变。", "Subscription host moved. Existing domains and subscription URLs were preserved."));
-      } catch (pollError) {
-        if (!cancelled) setError(userError(language, pollError));
-      } finally {
-        if (!cancelled) timer = window.setTimeout(() => void poll(), 1500);
-      }
-    };
-    timer = window.setTimeout(() => void poll(), 1500);
-    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
-  }, [active, migration?.id, language, mutate]);
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!application || !targetID) return;
-    setBusy(true); setError("");
-    try {
-      let created: ThreeXUIControllerMigration | undefined;
-      await mutate(async () => { created = await api.migrateThreeXUIController(application.id, targetID, allowStale); });
-      if (created) setMigration(created);
-    } catch (submitError) {
-      setError(userError(language, submitError));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const steps = [
-    { id: "backup", zh: "保存最新配置", en: "Save current configuration" },
-    { id: "restore", zh: "恢复到新主机", en: "Restore on the new host" },
-    { id: "complete", zh: "切换入口和节点", en: "Switch access points and nodes" }
-  ];
-  const progress = migration?.step === "backup" ? 0 : migration?.step === "restore" ? 1 : migration?.step === "switch" ? 2 : migration?.step === "complete" ? 3 : 0;
-
-  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(application)}><SheetContent className="sm:max-w-xl"><SheetHeader><SheetTitle>{copy(language, "迁移订阅主机", "Move subscription host")}</SheetTitle><SheetDescription>{copy(language, "把当前位置唯一的面板、客户端和订阅迁移到另一台已接入的 VLESS 节点。", "Move this location's panel, clients, and subscription to another connected VLESS node.")}</SheetDescription></SheetHeader>{migration ? <div aria-live="polite" className="flex flex-1 flex-col gap-4 overflow-y-auto px-4"><Alert variant={migration.state === "failed" ? "destructive" : "default"}>{migration.state === "ready" ? <CheckCircle2Icon /> : migration.state === "failed" ? <ShieldAlertIcon /> : <Spinner />}<AlertTitle>{migration.state === "ready" ? copy(language, "迁移完成", "Migration complete") : migration.state === "failed" ? copy(language, "迁移没有完成", "Migration did not complete") : copy(language, "正在安全迁移", "Moving safely")}</AlertTitle><AlertDescription>{migration.state === "ready" ? copy(language, "新主机已接管面板和订阅；原主机会自动作为普通 VLESS 节点重新接入。", "The new host now serves the panel and subscription. The previous host reconnects as a regular VLESS node.") : migration.state === "failed" ? migration.lastError : copy(language, "请保持目标节点在线。页面可关闭，后台任务仍会继续。", "Keep the target node online. You may close this sheet; the task continues in the background.")}</AlertDescription></Alert><ol className="flex flex-col gap-2">{steps.map((step, index) => { const complete = progress > index; const current = migration.state !== "failed" && progress === index; return <li className="flex items-center gap-3 rounded-xl border p-3" key={step.id}>{complete ? <CheckCircle2Icon className="size-5 text-emerald-500" /> : current ? <Spinner className="size-5" /> : <span className="flex size-5 items-center justify-center rounded-full border text-xs text-muted-foreground">{index + 1}</span>}<span className={complete || current ? "font-medium" : "text-muted-foreground"}>{copy(language, step.zh, step.en)}</span></li>; })}</ol>{migration.backup?.updatedAt ? <p className="text-xs text-muted-foreground">{copy(language, `恢复点：${new Date(migration.backup.updatedAt).toLocaleString()}`, `Restore point: ${new Date(migration.backup.updatedAt).toLocaleString()}`)}</p> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Alert><ArrowRightLeftIcon /><AlertTitle>{copy(language, "现有入口配置会保留", "Existing access settings are preserved")}</AlertTitle><AlertDescription>{copy(language, "Vastora 会迁移管理域名、订阅域名、客户端和已有入站。迁移期间会有短暂中断；如果原主机同时承担入口节点，请先切换入口。", "Vastora moves the panel domain, subscription domain, clients, and existing inbounds. A brief interruption is expected. If the current host is also the access gateway, move that gateway first.")}</AlertDescription></Alert><Field><FieldLabel htmlFor="three-x-ui-migration-target">{copy(language, "新的订阅主机", "New subscription host")}</FieldLabel><NativeSelect id="three-x-ui-migration-target" onChange={(event) => setTargetID(event.target.value)} required value={targetID}><option disabled value="">{copy(language, "没有可迁移的节点", "No eligible node")}</option>{candidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{data.agents.find((agent) => agent.id === candidate.nodeId)?.name ?? candidate.nodeId}</option>)}</NativeSelect><FieldDescription>{selectedAgent ? copy(language, `${selectedAgent.name} 已在线并接入当前订阅主机。`, `${selectedAgent.name} is online and connected to the current subscription host.`) : copy(language, "目标必须是同一位置内已连接的 VLESS 节点。", "The target must be a connected VLESS node in the same location.")}</FieldDescription></Field>{!sourceOnline ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "原主机当前离线", "Current host is offline")}</AlertTitle><AlertDescription>{copy(language, "只能使用 Center 中最后一次恢复点；恢复点之后的修改可能丢失。", "Only the latest Center restore point can be used; changes after that restore point may be lost.")}</AlertDescription></Alert> : null}{!sourceOnline ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="three-x-ui-migration-stale">{copy(language, "接受使用最后一次恢复点", "Use the latest restore point")}</FieldLabel><FieldDescription>{copy(language, "仅在原主机无法恢复时启用。", "Use only when the current host cannot be recovered.")}</FieldDescription></div><Switch checked={allowStale} id="three-x-ui-migration-stale" onCheckedChange={setAllowStale} /></Field> : null}<Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="three-x-ui-migration-confirm">{copy(language, "确认迁移", "Confirm migration")}</FieldLabel><FieldDescription>{copy(language, "开始后不要在 3x-ui 中修改配置，直到迁移完成。", "Do not change 3x-ui configuration until the migration completes.")}</FieldDescription></div><Switch checked={confirmed} id="three-x-ui-migration-confirm" onCheckedChange={setConfirmed} /></Field>{candidates.length === 0 ? <FieldError>{copy(language, "还没有在线且已接入的 VLESS 节点可作为新主机。", "No online, connected VLESS node is available as the new host.")}</FieldError> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !targetID || !confirmed || !sourceOnline && !allowStale} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ArrowRightLeftIcon data-icon="inline-start" />}{copy(language, "开始迁移", "Start migration")}</Button></SheetFooter></form>}<SheetFooter>{migration?.state === "failed" ? <Button onClick={() => { setMigration(null); setConfirmed(false); setError(""); }} variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重新开始", "Start again")}</Button> : null}{migration ? <Button onClick={onClose}>{copy(language, migration.state === "ready" ? "完成" : "关闭", migration.state === "ready" ? "Done" : "Close")}</Button> : null}</SheetFooter></SheetContent></Sheet>;
 }
 
 function ServiceRow({ data, language, service, onPublish, onRename, mutate }: { data: AppData; language: Language; service: Service; onPublish: () => void; onRename: () => void; mutate: Mutate }) {
@@ -401,6 +336,7 @@ function SubscriptionSheet({ application, data, language, mutate, onClose }: { a
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const { execute } = useApplicationCommandExecutor(application?.id);
   const service = application ? data.services.find((value) => value.applicationId === application.id && value.name === "subscription" && value.status !== "stopped") : undefined;
   const publication = service ? data.publications.find((value) => value.serviceId === service.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
   const cloudflareReady = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
@@ -417,25 +353,15 @@ function SubscriptionSheet({ application, data, language, mutate, onClose }: { a
     setCommand(null); setBusy(false); setError("");
     if (!publication) return;
     let cancelled = false;
-    void api.latestApplicationCommand(application.id, "3xui.subscription.configure").then((latest) => { if (!cancelled) setCommand(latest); }).catch(() => { /* A ready publication can outlive its completed command record. */ });
-    return () => { cancelled = true; };
-  }, [application?.id, service?.id, publication?.id]);
-  useEffect(() => {
-    if (!command || command.state === "failed" || command.state === "succeeded") return;
-    let cancelled = false; let timer = 0;
-    const poll = async () => {
-      try {
-        const next = await api.applicationCommand(command.id);
-        if (cancelled) return;
-        setCommand(next);
-        if (next.state === "pending" || next.state === "running") timer = window.setTimeout(() => void poll(), 2500);
-      } catch (pollError) {
-        if (!cancelled) { setError(userError(language, pollError)); timer = window.setTimeout(() => void poll(), 2500); }
+    void api.latestApplicationCommand(application.id, "3xui.subscription.configure").then((latest) => {
+      if (cancelled) return;
+      setCommand(latest);
+      if (latest.state === "pending" || latest.state === "running") {
+        void execute(() => Promise.resolve(latest), setCommand).catch((pollError) => setError(userError(language, pollError)));
       }
-    };
-    timer = window.setTimeout(() => void poll(), 2500);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [command?.id, command?.state, language]);
+    }).catch(() => { /* A ready publication can outlive its completed command record. */ });
+    return () => { cancelled = true; };
+  }, [application?.id, service?.id, publication?.id, execute, language]);
   const selectKind = (next: "cloudflare_tunnel" | "public_direct") => {
     setKind(next);
     const nextGateways = next === "cloudflare_tunnel" ? tunnelGateways : directGateways;
@@ -448,7 +374,7 @@ function SubscriptionSheet({ application, data, language, mutate, onClose }: { a
     try {
       let created: ApplicationCommand | undefined;
       await mutate(async () => { created = await api.createSubscriptionCommand({ applicationId: application.id, gatewayNodeId: gatewayID, hostname, kind, dnsProvider: kind === "cloudflare_tunnel" || cloudflareReady ? "cloudflare" : "manual" }); }, copy(language, "公网订阅配置已开始。", "Public subscription setup started."));
-      if (created) setCommand(created);
+      if (created) await execute(() => Promise.resolve(created!), setCommand);
     } catch (submitError) {
       setError(userError(language, submitError));
     } finally {
@@ -475,6 +401,7 @@ function RealitySheet({ application, data, language, onClose }: { application: A
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const regionRequest = useRef(0);
+  const { execute } = useApplicationCommandExecutor(application?.id);
   const gateways = application ? data.agents.filter((agent) => agent.siteId === application.siteId && agent.connected && agent.capabilities.gateway && agent.networkProfile?.directPublic && agent.networkProfile.enabledKinds.includes("public") && data.sites.some((site) => site.id === application.siteId && site.gatewayNodes.includes(agent.id))).sort((left, right) => Number(right.id === application.nodeId) - Number(left.id === application.nodeId) || left.name.localeCompare(right.name)) : [];
 	const cloudflareReady = data.integrations.some((integration) => integration.kind === "cloudflare" && integration.status === "configured");
 	const targetAgent = application ? data.agents.find((agent) => agent.id === application.nodeId) : undefined;
@@ -489,9 +416,15 @@ function RealitySheet({ application, data, language, onClose }: { application: A
     setDNSProvider(cloudflareReady ? "cloudflare" : "manual");
     setTarget(""); setSNIHostname(""); setCommand(null); setShareURI(""); setBusy(false); setError("");
     let cancelled = false;
-    void api.latestApplicationCommand(application.id, "3xui.reality.create").then((latest) => { if (!cancelled) { setCommand(latest); setGatewayID(latest.gatewayNodeId); setHostname(latest.hostname); setDNSProvider(latest.dnsProvider); } }).catch(() => { /* No resumable operation is the normal first-use state. */ });
+    void api.latestApplicationCommand(application.id, "3xui.reality.create").then((latest) => {
+      if (cancelled) return;
+      setCommand(latest); setGatewayID(latest.gatewayNodeId); setHostname(latest.hostname); setDNSProvider(latest.dnsProvider);
+      if (latest.state === "pending" || latest.state === "running") {
+        void execute(() => Promise.resolve(latest), setCommand).catch((pollError) => setError(userError(language, pollError)));
+      }
+    }).catch(() => { /* No resumable operation is the normal first-use state. */ });
     return () => { cancelled = true; };
-  }, [application?.id]);
+  }, [application?.id, execute, language]);
   useEffect(() => {
     const request = ++regionRequest.current;
     if (!application || !gatewayID || command) {
@@ -509,26 +442,6 @@ function RealitySheet({ application, data, language, onClose }: { application: A
       setRegionMatch("unavailable");
     });
   }, [application?.id, command?.id, gatewayID]);
-  useEffect(() => {
-    if (!command || command.state === "failed" || command.state === "succeeded") return;
-    let cancelled = false;
-    let timer = 0;
-    const poll = async () => {
-      try {
-        const next = await api.applicationCommand(command.id);
-        if (cancelled) return;
-        setCommand(next);
-        if (next.state === "pending" || next.state === "running") timer = window.setTimeout(() => void poll(), 2500);
-      } catch (pollError) {
-        if (!cancelled) {
-          setError(userError(language, pollError));
-          timer = window.setTimeout(() => void poll(), 2500);
-        }
-      }
-    };
-    timer = window.setTimeout(() => void poll(), 2500);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [command?.id, command?.state, language]);
   const reveal = async () => {
     if (!command || command.state !== "succeeded" || !command.resultAvailable) return;
     setBusy(true); setError("");
@@ -546,7 +459,7 @@ function RealitySheet({ application, data, language, onClose }: { application: A
     if (!application) return;
     setBusy(true); setError("");
     try {
-		setCommand(await api.createRealityCommand({ applicationId: application.id, regionCode, name, clientName, gatewayNodeId: gatewayID, hostname, dnsProvider, target: target || undefined, sniHostname: sniHostname || undefined }));
+		await execute(() => api.createRealityCommand({ applicationId: application.id, regionCode, name, clientName, gatewayNodeId: gatewayID, hostname, dnsProvider, target: target || undefined, sniHostname: sniHostname || undefined }), setCommand);
     } catch (submitError) {
       setError(userError(language, submitError));
     } finally {
@@ -567,6 +480,7 @@ function RealityRenameSheet({ data, language, mutate, onClose, service }: { data
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const regionRequest = useRef(0);
+	const { execute } = useApplicationCommandExecutor(service?.id);
 	const publication = service ? data.publications.find((value) => value.serviceId === service.id && value.kind === "public_shared_443" && value.status !== "stopped") : undefined;
 	const application = service ? data.applications.find((value) => value.id === service.applicationId) : undefined;
 	const gatewayID = publication?.gatewayNodeId ?? application?.nodeId ?? "";
@@ -593,37 +507,16 @@ function RealityRenameSheet({ data, language, mutate, onClose, service }: { data
 			setRegionMatch("unavailable");
 		});
 	}, [gatewayID, service?.id]);
-	useEffect(() => {
-		if (!command || command.state === "failed" || command.state === "succeeded") return;
-		let cancelled = false;
-		let timer = 0;
-		const poll = async () => {
-			try {
-				const next = await api.applicationCommand(command.id);
-				if (cancelled) return;
-				setCommand(next);
-				if (next.state === "succeeded") {
-					await mutate(async () => undefined, copy(language, `订阅节点已重命名为“${next.displayName ?? regionDisplayName(regionCode, name)}”。`, `Subscription node renamed to “${next.displayName ?? regionDisplayName(regionCode, name)}”.`));
-				} else if (next.state === "pending" || next.state === "running") {
-					timer = window.setTimeout(() => void poll(), 1800);
-				}
-			} catch (pollError) {
-				if (!cancelled) {
-					setError(userError(language, pollError));
-					timer = window.setTimeout(() => void poll(), 2500);
-				}
-			}
-		};
-		timer = window.setTimeout(() => void poll(), 1200);
-		return () => { cancelled = true; window.clearTimeout(timer); };
-	}, [command?.id, command?.state, language, mutate]);
 	const submit = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!service) return;
 		setBusy(true);
 		setError("");
 		try {
-			setCommand(await api.renameRealityCommand(service.id, regionCode, name.trim()));
+			const next = await execute(() => api.renameRealityCommand(service.id, regionCode, name.trim()), setCommand);
+			if (next?.state === "succeeded") {
+				await mutate(async () => undefined, copy(language, `订阅节点已重命名为“${next.displayName ?? regionDisplayName(regionCode, name)}”。`, `Subscription node renamed to “${next.displayName ?? regionDisplayName(regionCode, name)}”.`));
+			}
 		} catch (submitError) {
 			setError(userError(language, submitError));
 		} finally {

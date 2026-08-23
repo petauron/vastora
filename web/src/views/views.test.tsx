@@ -337,7 +337,7 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("正在安全迁移");
     expect(document.body.textContent).toContain("保存最新配置");
     expect(document.body.textContent).toContain("恢复到新主机");
-    expect(document.body.textContent).toContain("切换入口和节点");
+    expect(document.body.textContent).toContain("清理旧主机并同步节点");
   });
 
   it("manages 3x-ui clients and reveals links without opening the panel", async () => {

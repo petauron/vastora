@@ -51,8 +51,7 @@ func (s *Store) ensureSiteCertificate(ctx context.Context, siteID, candidateHost
 	}
 	certificate, issueErr := s.issuePrivateCertificate(ctx, dnsNames...)
 	if issueErr != nil {
-		s.recordSiteCertificateFailure(ctx, siteID, dnsNames, issueErr)
-		return issueErr
+		return errors.Join(issueErr, s.recordSiteCertificateFailure(ctx, siteID, dnsNames, issueErr))
 	}
 	return s.storeSiteCertificate(ctx, siteID, dnsNames, certificate, current.secretID)
 }
@@ -64,7 +63,8 @@ func (s *Store) siteCertificateDNSNames(ctx context.Context, siteID, candidateHo
 	} else if err != nil {
 		return nil, err
 	}
-	if !siteCodePattern.MatchString(code) || !domainSuffixPattern.MatchString(domainSuffix) {
+	siteBase, err := siteDomainBase(code, domainSuffix)
+	if err != nil {
 		return nil, errors.New("center: Site requires a valid domain namespace for private HTTPS")
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&zoneName); errors.Is(err, sql.ErrNoRows) {
@@ -72,7 +72,6 @@ func (s *Store) siteCertificateDNSNames(ctx context.Context, siteID, candidateHo
 	} else if err != nil {
 		return nil, err
 	}
-	siteBase := strings.ToLower(code + "." + domainSuffix)
 	zoneName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(zoneName), "."))
 	if !domainSuffixPattern.MatchString(zoneName) || (siteBase != zoneName && !strings.HasSuffix(siteBase, "."+zoneName)) {
 		return nil, errors.New("center: Site domain namespace must belong to the configured Cloudflare Zone")
@@ -103,6 +102,9 @@ func (s *Store) siteCertificateDNSNames(ctx context.Context, siteID, candidateHo
 		hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
 		if hostname == "" {
 			continue
+		}
+		if err := validateHostnameInSiteNamespace(hostname, code, domainSuffix); err != nil {
+			return nil, err
 		}
 		if hostname != zoneName && !strings.HasSuffix(hostname, "."+zoneName) {
 			return nil, errors.New("center: private HTTPS hostname must belong to the configured Cloudflare Zone")
@@ -183,6 +185,11 @@ func (s *Store) storeSiteCertificate(ctx context.Context, siteID string, dnsName
 		siteID, encodedNames, secretID, certificate.NotAfter.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'pending', last_error = '', desired_revision = desired_revision + 1, updated_at = ?
+		WHERE service_id IN (SELECT id FROM services WHERE site_id = ?) AND status <> 'stopped' AND tls_enabled = 1
+		AND kind IN ('lan_gateway', 'headscale_gateway')`, now.Format(time.RFC3339Nano), siteID); err != nil {
+		return err
+	}
 	gateways, err := siteTLSGateways(ctx, tx, siteID)
 	if err != nil {
 		return err
@@ -200,13 +207,26 @@ func (s *Store) storeSiteCertificate(ctx context.Context, siteID string, dnsName
 	return tx.Commit()
 }
 
-func (s *Store) recordSiteCertificateFailure(ctx context.Context, siteID string, dnsNames []string, issueErr error) {
+func (s *Store) recordSiteCertificateFailure(ctx context.Context, siteID string, dnsNames []string, issueErr error) error {
 	encodedNames, _ := json.Marshal(dnsNames)
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	_, _ = s.db.ExecContext(ctx, `INSERT INTO site_certificates(site_id, dns_names_json, status, last_error, created_at, updated_at)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO site_certificates(site_id, dns_names_json, status, last_error, created_at, updated_at)
 		VALUES(?, ?, 'failed', ?, ?, ?)
 		ON CONFLICT(site_id) DO UPDATE SET status = 'failed', last_error = excluded.last_error, updated_at = excluded.updated_at`,
-		siteID, encodedNames, issueErr.Error(), now, now)
+		siteID, encodedNames, issueErr.Error(), now, now); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'degraded', last_error = ?, updated_at = ?
+		WHERE service_id IN (SELECT id FROM services WHERE site_id = ?) AND status <> 'stopped' AND tls_enabled = 1
+		AND kind IN ('lan_gateway', 'headscale_gateway')`, issueErr.Error(), now, siteID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func siteTLSGateways(ctx context.Context, tx *sql.Tx, siteID string) ([]string, error) {

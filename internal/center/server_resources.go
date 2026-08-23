@@ -126,6 +126,15 @@ func (s *Server) handleThreeXUIControllerMigration(writer http.ResponseWriter, r
 	writeJSON(writer, http.StatusOK, value)
 }
 
+func (s *Server) handleRetryThreeXUIControllerMigrationCleanup(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.RetryThreeXUIControllerMigrationCleanup(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusAccepted, value)
+}
+
 func (s *Server) handleCreateRealityCommand(writer http.ResponseWriter, request *http.Request) {
 	var input RealityCommandInput
 	if err := decodeJSON(request, &input); err != nil {

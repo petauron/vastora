@@ -151,6 +151,7 @@ type ThreeXUIClientCommandResult struct {
 
 type ThreeXUINodeCommandTask struct {
 	Action              string `json:"action"`
+	MigrationID         string `json:"migrationId,omitempty"`
 	WorkerApplicationID string `json:"workerApplicationId"`
 	Name                string `json:"name"`
 	Address             string `json:"address"`

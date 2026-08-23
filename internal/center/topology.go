@@ -208,12 +208,31 @@ func (s *Store) UpdateSite(ctx context.Context, id string, input SiteInput) (Sit
 		return SiteView{}, err
 	}
 	defer tx.Rollback()
-	var existing int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sites WHERE id = ?`, id).Scan(&existing); err != nil {
+	var existingCode, existingDomainSuffix, certificateSecretID string
+	if err := tx.QueryRowContext(ctx, `SELECT s.code, s.domain_suffix, COALESCE(c.secret_id, '')
+		FROM sites s LEFT JOIN site_certificates c ON c.site_id = s.id WHERE s.id = ?`, id).Scan(&existingCode, &existingDomainSuffix, &certificateSecretID); errors.Is(err, sql.ErrNoRows) {
+		return SiteView{}, errors.New("center: site not found")
+	} else if err != nil {
 		return SiteView{}, fmt.Errorf("center: read site configuration: %w", err)
 	}
-	if existing == 0 {
-		return SiteView{}, errors.New("center: site not found")
+	namespaceChanged := input.Code != existingCode || input.DomainSuffix != existingDomainSuffix
+	if namespaceChanged {
+		var activePublications int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services svc ON svc.id = p.service_id
+			WHERE svc.site_id = ? AND p.status <> 'stopped'`, id).Scan(&activePublications); err != nil {
+			return SiteView{}, err
+		}
+		if activePublications != 0 {
+			return SiteView{}, errors.New("center: stop this Site's access points before changing its domain namespace")
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM site_certificates WHERE site_id = ?`, id); err != nil {
+			return SiteView{}, err
+		}
+		if certificateSecretID != "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, certificateSecretID); err != nil {
+				return SiteView{}, err
+			}
+		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE sites SET name = ?, code = ?, description = ?, timezone = ?, domain_suffix = ?, updated_at = ? WHERE id = ?`, input.Name, input.Code, input.Description, input.Timezone, input.DomainSuffix, now.Format(time.RFC3339Nano), id)
 	if err != nil {

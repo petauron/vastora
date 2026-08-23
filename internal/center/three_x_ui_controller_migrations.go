@@ -377,7 +377,12 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, tx *sql.T
 			_, _ = tx.ExecContext(ctx, `UPDATE three_x_ui_backups SET state = 'failed', last_error = ?, updated_at = ? WHERE application_id = ? AND revision = ?`, taskError, now.Format(time.RFC3339Nano), input.ApplicationID, input.BackupRevision)
 		}
 		if input.MigrationID != "" {
-			_, _ = tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'failed', last_error = ?, updated_at = ? WHERE id = ?`, taskError, now.Format(time.RFC3339Nano), input.MigrationID)
+			if input.Action == "demote" {
+				_, _ = tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'switching', step = 'cleanup', last_error = ?, updated_at = ? WHERE id = ?`, taskError, now.Format(time.RFC3339Nano), input.MigrationID)
+				_, _ = tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'failed', last_error = ?, updated_at = ? WHERE worker_application_id = ?`, taskError, now.Format(time.RFC3339Nano), input.ApplicationID)
+			} else {
+				_, _ = tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'failed', last_error = ?, updated_at = ? WHERE id = ?`, taskError, now.Format(time.RFC3339Nano), input.MigrationID)
+			}
 		}
 	} else {
 		switch input.Action {
@@ -408,16 +413,67 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, tx *sql.T
 			}
 			message = "3x-ui subscription host migrated"
 		case "demote":
-			if err := s.queueThreeXUINodeReconcileAfterDemotion(ctx, tx, input.ApplicationID, now); err != nil {
+			if err := s.queueThreeXUINodeReconcileAfterDemotion(ctx, tx, input.ApplicationID, input.MigrationID, now); err != nil {
 				return err
 			}
-			message = "previous 3x-ui subscription host reconnected as a VLESS node"
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'switch', last_error = '', updated_at = ? WHERE id = ? AND state = 'switching'`, now.Format(time.RFC3339Nano), input.MigrationID); err != nil {
+				return err
+			}
+			message = "previous 3x-ui subscription host prepared to reconnect as a VLESS node"
 		}
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// RetryThreeXUIControllerMigrationCleanup retries only the old controller
+// demotion. The new controller has already taken ownership at this stage, so
+// restarting the whole migration would restore stale data over the live copy.
+func (s *Store) RetryThreeXUIControllerMigrationCleanup(ctx context.Context, migrationID string) (ThreeXUIControllerMigrationView, error) {
+	migrationID = strings.TrimSpace(migrationID)
+	if migrationID == "" {
+		return ThreeXUIControllerMigrationView{}, errors.New("center: 3x-ui controller migration is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	defer tx.Rollback()
+	var sourceApplicationID, sourceAgentID, state, lastError string
+	if err := tx.QueryRowContext(ctx, `SELECT m.source_application_id, source.node_id, m.state, m.last_error
+		FROM three_x_ui_migrations m JOIN applications source ON source.id = m.source_application_id
+		WHERE m.id = ?`, migrationID).Scan(&sourceApplicationID, &sourceAgentID, &state, &lastError); errors.Is(err, sql.ErrNoRows) {
+		return ThreeXUIControllerMigrationView{}, errors.New("center: 3x-ui controller migration not found")
+	} else if err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	if state != "switching" || lastError == "" {
+		return ThreeXUIControllerMigrationView{}, errors.New("center: old 3x-ui controller cleanup does not need a retry")
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind = ? AND state IN ('pending', 'running')`, sourceApplicationID, controllerCommandKind).Scan(&active); err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	if active != 0 {
+		return ThreeXUIControllerMigrationView{}, errors.New("center: old 3x-ui controller cleanup is already running")
+	}
+	now := s.now().UTC()
+	command := ThreeXUIControllerCommandTask{Action: "demote", MigrationID: migrationID, ApplicationID: sourceApplicationID}
+	if err := s.queueThreeXUIControllerCommand(ctx, tx, sourceApplicationID, sourceAgentID, command, now, "previous 3x-ui subscription host cleanup retried"); err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'cleanup', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), migrationID); err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'pending', last_error = '', updated_at = ? WHERE worker_application_id = ?`, now.Format(time.RFC3339Nano), sourceApplicationID); err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	return s.ThreeXUIControllerMigration(ctx, migrationID)
 }
 
 func (s *Store) loadThreeXUIMigrationEndpoints(ctx context.Context, tx *sql.Tx, migrationID string, source, target *struct {
@@ -476,7 +532,7 @@ func (s *Store) switchThreeXUIController(ctx context.Context, tx *sql.Tx, input 
 		VALUES(?, ?, ?, 'pending', '', ?, ?)`, input.SourceApplicationID, input.ApplicationID, input.SourceRemoteNodeID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'ready', step = 'complete', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), input.MigrationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'switching', step = 'cleanup', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), input.MigrationID); err != nil {
 		return err
 	}
 	// Commands still pointed at the old controller must never be replayed after the role switch.
@@ -488,7 +544,7 @@ func (s *Store) switchThreeXUIController(ctx context.Context, tx *sql.Tx, input 
 	if err := s.queueThreeXUIControllerCommand(ctx, tx, input.SourceApplicationID, sourceAgentID, command, now, "previous 3x-ui subscription host queued for VLESS-only mode"); err != nil {
 		return err
 	}
-	return s.queueOtherThreeXUINodesAfterMigration(ctx, tx, input.ApplicationID, input.SourceApplicationID, now)
+	return s.queueOtherThreeXUINodesAfterMigration(ctx, tx, input.MigrationID, input.ApplicationID, input.SourceApplicationID, now)
 }
 
 func (s *Store) copyApplicationSecrets(ctx context.Context, tx *sql.Tx, sourceApplicationID, targetApplicationID string, now time.Time) error {
@@ -582,7 +638,7 @@ func mustJSON(value any) []byte {
 	return encoded
 }
 
-func (s *Store) queueOtherThreeXUINodesAfterMigration(ctx context.Context, tx *sql.Tx, masterApplicationID, sourceApplicationID string, now time.Time) error {
+func (s *Store) queueOtherThreeXUINodesAfterMigration(ctx context.Context, tx *sql.Tx, migrationID, masterApplicationID, sourceApplicationID string, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `SELECT n.worker_application_id, d.id FROM three_x_ui_nodes n
 		JOIN deployments d ON d.rowid = (SELECT d2.rowid FROM deployments d2 WHERE d2.application_id = n.worker_application_id AND d2.state = 'succeeded' AND d2.operation IN ('install','upgrade','configure') ORDER BY d2.updated_at DESC, d2.rowid DESC LIMIT 1)
 		WHERE n.master_application_id = ? AND n.worker_application_id <> ?`, masterApplicationID, sourceApplicationID)
@@ -603,17 +659,17 @@ func (s *Store) queueOtherThreeXUINodesAfterMigration(ctx context.Context, tx *s
 		return err
 	}
 	for _, value := range items {
-		if err := s.queueThreeXUINodeReconcile(ctx, tx, value.deploymentID, value.applicationID, now); err != nil {
+		if err := s.queueThreeXUINodeReconcile(ctx, tx, value.deploymentID, value.applicationID, migrationID, now); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Store) queueThreeXUINodeReconcileAfterDemotion(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time) error {
+func (s *Store) queueThreeXUINodeReconcileAfterDemotion(ctx context.Context, tx *sql.Tx, applicationID, migrationID string, now time.Time) error {
 	var deploymentID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments WHERE application_id = ? AND state = 'succeeded' AND operation IN ('install','upgrade','configure') ORDER BY updated_at DESC, rowid DESC LIMIT 1`, applicationID).Scan(&deploymentID); err != nil {
 		return err
 	}
-	return s.queueThreeXUINodeReconcile(ctx, tx, deploymentID, applicationID, now)
+	return s.queueThreeXUINodeReconcile(ctx, tx, deploymentID, applicationID, migrationID, now)
 }
