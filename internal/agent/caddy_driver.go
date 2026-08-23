@@ -63,7 +63,7 @@ func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desire
 	if err := desired.Validate(); err != nil {
 		return err
 	}
-	if err := gateway.ValidateCertificates(certificates); err != nil {
+	if err := gateway.ValidateCertificatesForState(desired, certificates); err != nil {
 		return err
 	}
 	if driver.SystemGateway != nil {
@@ -225,7 +225,7 @@ func (driver *CaddyGatewayDriver) client() *http.Client {
 }
 
 func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Certificate, adminListen string) ([]byte, error) {
-	if err := gateway.ValidateCertificates(certificates); err != nil {
+	if err := gateway.ValidateCertificatesForState(desired, certificates); err != nil {
 		return nil, err
 	}
 	type caddyRoute struct {

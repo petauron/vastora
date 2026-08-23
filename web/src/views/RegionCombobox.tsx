@@ -17,13 +17,31 @@ function normalizedSearch(value: string) {
 
 export function regionDisplayName(code: string, name: string) {
   const normalizedCode = code.trim().toUpperCase();
-  return normalizedCode && name.trim() ? `${regionFlag(normalizedCode)} ${normalizedCode} · ${name.trim()}` : name.trim();
+  const normalizedName = name.trim();
+  if (!normalizedCode || !normalizedName) return normalizedName;
+  return `${regionFlag(normalizedCode)} ${regionName(normalizedCode, ["zh-CN"])}${normalizedName}`;
 }
 
 export function regionBaseName(displayName: string, code?: string) {
   if (!code) return displayName;
-  const prefix = `${regionFlag(code)} ${code.toUpperCase()} · `;
-  return displayName.startsWith(prefix) ? displayName.slice(prefix.length) : displayName;
+  const normalizedCode = code.toUpperCase();
+  const chineseName = regionName(normalizedCode, ["zh-CN"]);
+  const prefixes = [
+    `${regionFlag(normalizedCode)} ${chineseName}`,
+    `${regionFlag(normalizedCode)} ${normalizedCode} · `,
+    `${regionFlag(normalizedCode)} ${normalizedCode} `,
+  ].filter(Boolean);
+  const prefix = prefixes.find((candidate) => displayName.startsWith(candidate));
+  return prefix ? displayName.slice(prefix.length).trim() : displayName;
+}
+
+function regionName(code: string, locales: string[]) {
+  if (!/^[A-Z]{2}$/.test(code)) return code;
+  try {
+    return new Intl.DisplayNames(locales, { type: "region" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
 }
 
 function regionFlag(code: string) {
@@ -50,9 +68,9 @@ export function RegionCombobox({ id, language, onValueChange, value }: { id: str
     const englishNames = new Intl.DisplayNames(["en"], { type: "region" });
     const chineseNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
     return regions.map((region) => {
-      const localName = localNames.of(region.code) ?? region.code;
-      const searchText = normalizedSearch([region.code, localName, englishNames.of(region.code), chineseNames.of(region.code)].filter(Boolean).join(" "));
-      return { ...region, label: `${region.prefix} · ${localName}`, searchText };
+      const localName = language === "zh-CN" ? region.nameZh : localNames.of(region.code) ?? region.code;
+      const searchText = normalizedSearch([region.code, localName, region.nameZh, englishNames.of(region.code), chineseNames.of(region.code)].filter(Boolean).join(" "));
+      return { ...region, label: `${regionFlag(region.code)} ${localName}`, searchText };
     }).sort((left, right) => left.label.localeCompare(right.label, language));
   }, [language, regions]);
   const selected = options.find((option) => option.code === value) ?? null;

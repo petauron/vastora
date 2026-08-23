@@ -2,45 +2,15 @@ package center
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
-	"math/big"
 	"testing"
 	"time"
 )
 
 func storeSystemCenterCertificateForTest(t *testing.T, store *Store, hostname string) managedCertificate {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	notAfter := now.Add(90 * 24 * time.Hour)
-	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
-		NotBefore: now.Add(-time.Minute), NotAfter: notAfter,
-	}, &x509.Certificate{
-		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname},
-		NotBefore: now.Add(-time.Minute), NotAfter: notAfter,
-	}, &key.PublicKey, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	certificate := managedCertificate{
-		CertificatePEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
-		PrivateKeyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})),
-		NotAfter:       notAfter,
-	}
+	certificate := testManagedCertificate(t, hostname)
+	notAfter := certificate.NotAfter
 	encoded, err := json.Marshal(certificate)
 	if err != nil {
 		t.Fatal(err)

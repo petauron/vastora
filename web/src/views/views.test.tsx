@@ -91,9 +91,9 @@ describe("network and app views", () => {
     data.sites[0].domainSuffix = "vastora.example.com";
     const service = { id: "manager", applicationId: "running", siteId: "site", name: "Manager 页面", protocol: "http" as const, containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog" as const, management: true, status: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
     data.services = [service];
-    expect(defaultPublicationHostname(data, service)).toBe("manager.komari-agent.home.vastora.example.com");
+    expect(defaultPublicationHostname(data, service)).toBe("manager-komari-agent.home.vastora.example.com");
     data.services.push({ ...service, id: "subscription", name: "订阅服务" });
-    expect(defaultPublicationHostname(data, service)).toBe("manager.komari-agent.home.vastora.example.com");
+    expect(defaultPublicationHostname(data, service)).toBe("manager-komari-agent.home.vastora.example.com");
     expect(defaultRealityHostname(data, data.applications[0])).toBe("reality.home-server.home.vastora.example.com");
   });
 
@@ -229,8 +229,8 @@ describe("network and app views", () => {
   it("offers one-click REALITY with a hierarchical connection hostname", async () => {
     const data = realityDashboard();
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
-    vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", prefix: "🇺🇸 US" }] });
-    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 US", source: "country.is" });
+    vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
+    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
@@ -238,7 +238,7 @@ describe("network and app views", () => {
     });
     expect(document.body.textContent).toContain("自动识别地区并生成标准节点名");
     expect(document.querySelector<HTMLInputElement>("#reality-name")?.value).toBe("home-server");
-    expect(document.body.textContent).toContain("🇺🇸 US · home-server");
+    expect(document.body.textContent).toContain("🇺🇸 美国home-server");
     expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
     expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
     expect(document.querySelector<HTMLSelectElement>("#reality-gateway")?.value).toBe("agent");
@@ -257,7 +257,7 @@ describe("network and app views", () => {
     });
     expect(document.body.textContent).toContain("发布独立订阅服务");
     expect(document.body.textContent).toContain("管理面板仍只在私网开放");
-    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("subscription.3x-ui.home.vastora.example.com");
+    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("subscription-3x-ui.home.vastora.example.com");
     expect(document.querySelector<HTMLSelectElement>("#subscription-kind")?.value).toBe("cloudflare_tunnel");
   });
 
@@ -299,14 +299,14 @@ describe("network and app views", () => {
 	it("renames an existing REALITY node from Center", async () => {
 		vi.useFakeTimers();
 		const data = realityDashboard();
-		data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 US · Old name", regionCode: "US", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
-		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 US · Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
-		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", prefix: "🇺🇸 US" }] });
+		data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国Old name", regionCode: "US", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
+		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 美国Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		const rename = vi.spyOn(api, "renameRealityCommand").mockResolvedValue(pending);
 		vi.spyOn(api, "applicationCommand").mockResolvedValue({ ...pending, state: "succeeded", updatedAt: "2026-08-23T00:00:01Z" });
 		const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
 		const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
-		expect(container.textContent).toContain("🇺🇸 US · Old name");
+		expect(container.textContent).toContain("🇺🇸 美国Old name");
 		act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("重命名"))?.click());
 		const input = document.querySelector<HTMLInputElement>("#reality-rename-name")!;
 		act(() => {
@@ -323,7 +323,7 @@ describe("network and app views", () => {
 			await Promise.resolve();
 			await Promise.resolve();
 		});
-		expect(document.body.textContent).toContain("现在显示为“🇺🇸 US · Oracle”");
+		expect(document.body.textContent).toContain("现在显示为“🇺🇸 美国Oracle”");
 		expect(mutate).toHaveBeenCalled();
 	});
 
@@ -447,9 +447,9 @@ describe("network and app views", () => {
 	it("specifies separate subscription-node and initial-client names when creating REALITY", async () => {
 		const data = realityDashboard();
 		vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new Error("not found"));
-		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", prefix: "🇺🇸 US" }] });
-		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 US", source: "country.is" });
-		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 US · Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
+		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
+		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 		await act(async () => {

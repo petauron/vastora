@@ -132,8 +132,11 @@ func (driver *ManagedGatewayDriver) RetainSystemRoutes(ctx context.Context) (boo
 	}
 	keptCertificates := make([]gateway.Certificate, 0, len(certificates))
 	for _, certificate := range certificates {
-		if hostnames[certificate.Hostname] {
-			keptCertificates = append(keptCertificates, certificate)
+		for hostname := range hostnames {
+			if gateway.CertificateCoversHostname(certificate, hostname) {
+				keptCertificates = append(keptCertificates, certificate)
+				break
+			}
 		}
 	}
 	if err := driver.Caddy.ApplyConfiguration(ctx, next.Sorted(), keptCertificates); err != nil {

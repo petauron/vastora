@@ -9,16 +9,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
-	"github.com/petauron/vastora/internal/secret"
 	"golang.org/x/crypto/acme"
 )
 
@@ -33,7 +32,11 @@ type managedCertificate struct {
 	NotAfter       time.Time `json:"notAfter"`
 }
 
-func (s *Store) obtainPrivateCertificate(ctx context.Context, hostname string) (managedCertificate, error) {
+func (s *Store) obtainPrivateCertificate(ctx context.Context, requestedNames ...string) (managedCertificate, error) {
+	names, err := normalizeCertificateDNSNames(requestedNames)
+	if err != nil {
+		return managedCertificate{}, err
+	}
 	s.certificateMu.Lock()
 	defer s.certificateMu.Unlock()
 
@@ -45,7 +48,11 @@ func (s *Store) obtainPrivateCertificate(ctx context.Context, hostname string) (
 	if err != nil {
 		return managedCertificate{}, err
 	}
-	order, err := client.AuthorizeOrder(ctx, []acme.AuthzID{{Type: "dns", Value: hostname}})
+	identifiers := make([]acme.AuthzID, 0, len(names))
+	for _, name := range names {
+		identifiers = append(identifiers, acme.AuthzID{Type: "dns", Value: name})
+	}
+	order, err := client.AuthorizeOrder(ctx, identifiers)
 	if err != nil {
 		return managedCertificate{}, fmt.Errorf("center: create ACME certificate order: %w", err)
 	}
@@ -71,7 +78,11 @@ func (s *Store) obtainPrivateCertificate(ctx context.Context, hostname string) (
 		if err != nil {
 			return managedCertificate{}, fmt.Errorf("center: prepare ACME DNS validation: %w", err)
 		}
-		name := "_acme-challenge." + hostname
+		identifier := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(authorization.Identifier.Value)), "*.")
+		if !domainSuffixPattern.MatchString(identifier) {
+			return managedCertificate{}, errors.New("center: certificate authority returned an invalid DNS authorization")
+		}
+		name := "_acme-challenge." + identifier
 		recordID, err := cloudflare.createDNSRecord(ctx, "TXT", name, value, false)
 		if err != nil {
 			return managedCertificate{}, fmt.Errorf("center: create private HTTPS validation record: %w", err)
@@ -98,7 +109,7 @@ func (s *Store) obtainPrivateCertificate(ctx context.Context, hostname string) (
 	if err != nil {
 		return managedCertificate{}, fmt.Errorf("center: generate private HTTPS key: %w", err)
 	}
-	requestDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: hostname}, DNSNames: []string{hostname}}, certificateKey)
+	requestDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: names[0]}, DNSNames: names}, certificateKey)
 	if err != nil {
 		return managedCertificate{}, fmt.Errorf("center: create private HTTPS certificate request: %w", err)
 	}
@@ -110,7 +121,7 @@ func (s *Store) obtainPrivateCertificate(ctx context.Context, hostname string) (
 		return managedCertificate{}, errors.New("center: certificate authority returned an empty certificate chain")
 	}
 	leaf, err := x509.ParseCertificate(chain[0])
-	if err != nil || leaf.VerifyHostname(hostname) != nil || !leaf.NotAfter.After(s.now().UTC().Add(24*time.Hour)) {
+	if err != nil || !certificateCoversNames(leaf, names) || !leaf.NotAfter.After(s.now().UTC().Add(24*time.Hour)) {
 		return managedCertificate{}, errors.New("center: certificate authority returned an invalid private HTTPS certificate")
 	}
 	var certificatePEM strings.Builder
@@ -125,6 +136,50 @@ func (s *Store) obtainPrivateCertificate(ctx context.Context, hostname string) (
 	}
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
 	return managedCertificate{CertificatePEM: certificatePEM.String(), PrivateKeyPEM: string(keyPEM), NotAfter: leaf.NotAfter.UTC()}, nil
+}
+
+func normalizeCertificateDNSNames(values []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(values))
+	names := make([]string, 0, len(values))
+	for _, value := range values {
+		name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
+		base := strings.TrimPrefix(name, "*.")
+		if !domainSuffixPattern.MatchString(base) || strings.Contains(base, "*") || strings.HasPrefix(name, "*.") && strings.Count(name, "*") != 1 {
+			return nil, errors.New("center: invalid private HTTPS certificate name")
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	if len(names) == 0 || len(names) > 100 {
+		return nil, errors.New("center: private HTTPS certificate requires between 1 and 100 DNS names")
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func certificateCoversNames(certificate *x509.Certificate, names []string) bool {
+	for _, name := range names {
+		if strings.HasPrefix(name, "*.") {
+			found := false
+			for _, subject := range certificate.DNSNames {
+				if strings.EqualFold(subject, name) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+			continue
+		}
+		if certificate.VerifyHostname(name) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) acmeClient(ctx context.Context) (*acme.Client, error) {
@@ -229,15 +284,6 @@ func waitForPublicTXT(ctx context.Context, hostname, expected string) error {
 }
 
 func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID string, state gateway.DesiredState) ([]gateway.Certificate, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.hostname, sec.sealed
-		FROM publications p JOIN routes r ON r.publication_id = p.id
-		JOIN secrets sec ON sec.id = p.certificate_secret_id
-		WHERE r.gateway_node_id = ? AND p.status <> 'stopped' AND p.tls_enabled = 1
-		AND p.kind IN ('lan_gateway', 'headscale_gateway') ORDER BY p.hostname`, gatewayID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	values := []gateway.Certificate{}
 	if stateHasRoute(state, "system-center") {
 		var endpoint string
@@ -254,23 +300,15 @@ func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID s
 		}
 		values = append(values, gateway.Certificate{Hostname: hostname, CertificatePEM: certificate.CertificatePEM, PrivateKeyPEM: certificate.PrivateKeyPEM})
 	}
-	for rows.Next() {
-		var publicationID, hostname string
-		var sealed []byte
-		if err := rows.Scan(&publicationID, &hostname, &sealed); err != nil {
-			return nil, err
-		}
-		encoded, err := secret.Open(s.key, sealed, []byte("publication-certificate:"+publicationID))
-		if err != nil {
-			return nil, fmt.Errorf("center: decrypt private HTTPS certificate: %w", err)
-		}
-		var certificate managedCertificate
-		if json.Unmarshal(encoded, &certificate) != nil || certificate.CertificatePEM == "" || certificate.PrivateKeyPEM == "" {
-			return nil, errors.New("center: stored private HTTPS certificate is invalid")
-		}
-		values = append(values, gateway.Certificate{Hostname: hostname, CertificatePEM: certificate.CertificatePEM, PrivateKeyPEM: certificate.PrivateKeyPEM})
+	siteCertificates, err := s.gatewaySiteCertificates(ctx, tx, gatewayID)
+	if err != nil {
+		return nil, err
 	}
-	return values, rows.Err()
+	values = append(values, siteCertificates...)
+	if err := gateway.ValidateCertificatesForState(state, values); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func (s *Store) RunCertificateRenewal(ctx context.Context, interval time.Duration, report func(error)) {
@@ -317,66 +355,5 @@ func (s *Store) renewPrivateCertificates(ctx context.Context) error {
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	cutoff := s.now().UTC().Add(privateCertificateRenewBefore).Format(time.RFC3339Nano)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, hostname, gateway_node_id, COALESCE(certificate_secret_id, '') FROM publications
-		WHERE status <> 'stopped' AND tls_enabled = 1 AND kind IN ('lan_gateway', 'headscale_gateway')
-		AND (certificate_not_after = '' OR certificate_not_after <= ?) ORDER BY certificate_not_after LIMIT 20`, cutoff)
-	if err != nil {
-		return err
-	}
-	type candidate struct{ id, hostname, gatewayID, oldSecretID string }
-	values := []candidate{}
-	for rows.Next() {
-		var value candidate
-		if err := rows.Scan(&value.id, &value.hostname, &value.gatewayID, &value.oldSecretID); err != nil {
-			rows.Close()
-			return err
-		}
-		values = append(values, value)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	var renewalErrors []error
-	for _, value := range values {
-		certificate, err := s.obtainPrivateCertificate(ctx, value.hostname)
-		if err != nil {
-			renewalErrors = append(renewalErrors, fmt.Errorf("%s: %w", value.hostname, err))
-			continue
-		}
-		tx, err := s.db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		encoded, _ := json.Marshal(certificate)
-		secretID, err := s.putSecret(ctx, tx, encoded, "publication-certificate:"+value.id)
-		if err == nil {
-			var updated sql.Result
-			updated, err = tx.ExecContext(ctx, `UPDATE publications SET certificate_secret_id = ?, certificate_not_after = ?, desired_revision = desired_revision + 1, updated_at = ? WHERE id = ? AND status <> 'stopped'`, secretID, certificate.NotAfter.Format(time.RFC3339Nano), s.now().UTC().Format(time.RFC3339Nano), value.id)
-			if err == nil {
-				changed, changedErr := updated.RowsAffected()
-				if changedErr != nil {
-					err = changedErr
-				} else if changed != 1 {
-					_ = tx.Rollback()
-					continue
-				}
-			}
-		}
-		if err == nil {
-			err = s.queueGatewayState(ctx, tx, value.gatewayID, s.now().UTC())
-		}
-		if err == nil && value.oldSecretID != "" {
-			_, err = tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, value.oldSecretID)
-		}
-		if err == nil {
-			err = tx.Commit()
-		} else {
-			_ = tx.Rollback()
-		}
-		if err != nil {
-			renewalErrors = append(renewalErrors, fmt.Errorf("%s: %w", value.hostname, err))
-		}
-	}
-	return errors.Join(renewalErrors...)
+	return s.renewSiteCertificates(ctx)
 }

@@ -125,7 +125,7 @@ export function defaultPublicationHostname(data: AppData, service: Service) {
   const appLabel = dnsLabel(application?.appKey.split("/").at(-1) || application?.name || "app");
   const serviceLabel = dnsLabel(service.name) || "service";
   const siteLabel = dnsLabel(site.code) || dnsLabel(site.name) || "site";
-  return `${serviceLabel}.${appLabel}.${siteLabel}.${site.domainSuffix}`.toLowerCase();
+  return `${dnsLabel(`${serviceLabel}-${appLabel}`)}.${siteLabel}.${site.domainSuffix}`.toLowerCase();
 }
 
 export function defaultRealityHostname(data: AppData, application: AppData["applications"][number]) {

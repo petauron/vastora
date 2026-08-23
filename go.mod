@@ -11,6 +11,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.3
 	golang.org/x/crypto v0.55.0
 	golang.org/x/mod v0.40.0
+	golang.org/x/text v0.41.0
 	modernc.org/sqlite v1.56.0
 )
 

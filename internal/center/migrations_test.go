@@ -365,6 +365,61 @@ func TestVersion13MigrationAddsRealityDisplayNames(t *testing.T) {
 	}
 }
 
+func TestVersion15MigrationRemovesPerPublicationCertificateSecrets(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 14); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `INSERT INTO secrets(id, sealed, created_at, updated_at) VALUES('old-publication-certificate', X'0102', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE publications SET certificate_secret_id = 'old-publication-certificate', certificate_not_after = ?, tls_enabled = 1 WHERE id = 'publication-v3'`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var obsoleteColumns int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('publications') WHERE name IN ('certificate_secret_id', 'certificate_not_after')`).Scan(&obsoleteColumns); err != nil || obsoleteColumns != 0 {
+		t.Fatalf("obsolete publication certificate columns=%d err=%v", obsoleteColumns, err)
+	}
+	var oldSecrets, publications, routes int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM secrets WHERE id = 'old-publication-certificate'`).Scan(&oldSecrets); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE id = 'publication-v3' AND tls_enabled = 1`).Scan(&publications); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE id = 'route-v3'`).Scan(&routes); err != nil {
+		t.Fatal(err)
+	}
+	if oldSecrets != 0 || publications != 1 || routes != 1 {
+		t.Fatalf("migrated Site certificate state: oldSecrets=%d publications=%d routes=%d", oldSecrets, publications, routes)
+	}
+}
+
 func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -476,6 +531,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	for _, statement := range []string{
 		`DROP TRIGGER application_commands_block_during_three_x_ui_migration`,
 		`DROP TRIGGER deployments_block_during_three_x_ui_migration`,
+		`DROP TABLE site_certificates`,
 		`DROP TABLE three_x_ui_migrations`,
 		`DROP TABLE three_x_ui_backups`,
 		`DROP TABLE three_x_ui_nodes`,

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -17,6 +16,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Private", Code: "private", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID}}); err != nil {
 		t.Fatal(err)
 	}
+	configureCloudflareZoneForTest(t, store, "example.test")
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, "10.0.0.64")
 	services, err := store.ListServices(ctx)
@@ -27,8 +27,12 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certificate := managedCertificate{CertificatePEM: "TEST CERTIFICATE", PrivateKeyPEM: "TEST PRIVATE KEY", NotAfter: time.Now().UTC().Add(90 * 24 * time.Hour)}
-	publication, err = store.applyPublicationTLS(ctx, publication.ID, true, &certificate)
+	var certificate managedCertificate
+	store.issuePrivateCertificate = func(_ context.Context, dnsNames ...string) (managedCertificate, error) {
+		certificate = testManagedCertificate(t, dnsNames...)
+		return certificate, nil
+	}
+	publication, err = store.UpdatePublicationTLS(ctx, publication.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +44,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil || len(task.GatewayState.Routes) != 1 || !task.GatewayState.Routes[0].TLSEnabled {
 		t.Fatalf("HTTPS route was not sent to the gateway: %#v", task)
 	}
-	if len(task.GatewayCertificates) != 1 || task.GatewayCertificates[0].PrivateKeyPEM != "TEST PRIVATE KEY" {
+	if len(task.GatewayCertificates) != 1 || task.GatewayCertificates[0].PrivateKeyPEM != certificate.PrivateKeyPEM {
 		t.Fatalf("certificate was not delivered with the gateway task: %#v", task.GatewayCertificates)
 	}
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
@@ -52,7 +56,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	}
 
 	var certificateID string
-	if err := store.db.QueryRowContext(ctx, `SELECT certificate_secret_id FROM publications WHERE id = ?`, publication.ID).Scan(&certificateID); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM site_certificates WHERE site_id = ?`, testSiteID(t, store)).Scan(&certificateID); err != nil {
 		t.Fatal(err)
 	}
 	publication, err = store.UpdatePublicationTLS(ctx, publication.ID, false)
@@ -63,8 +67,8 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 		t.Fatalf("HTTP fallback was not queued: %#v", publication)
 	}
 	var retained int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM secrets WHERE id = ?`, certificateID).Scan(&retained); err != nil || retained != 0 {
-		t.Fatalf("obsolete certificate secret retained: count=%d err=%v", retained, err)
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM secrets WHERE id = ?`, certificateID).Scan(&retained); err != nil || retained != 1 {
+		t.Fatalf("Site certificate was not retained for reuse: count=%d err=%v", retained, err)
 	}
 
 	task = claimTask(t, store, node)

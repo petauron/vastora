@@ -24,7 +24,7 @@ func applyGatewayDesiredState(ctx context.Context, store *Store, driver GatewayD
 	if err := desired.Validate(); err != nil {
 		return err
 	}
-	if err := gateway.ValidateCertificates(certificates); err != nil {
+	if err := gateway.ValidateCertificatesForState(desired, certificates); err != nil {
 		return err
 	}
 	current, err := store.GatewayState(ctx)
