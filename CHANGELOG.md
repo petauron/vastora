@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.35](https://github.com/petauron/vastora/compare/v0.1.0-alpha.34...v0.1.0-alpha.35) (2026-08-23)
+
+
+### Features
+
+* support resilient 3x-ui site controllers ([#113](https://github.com/petauron/vastora/issues/113)) ([d570a0e](https://github.com/petauron/vastora/commit/d570a0e76b0c89754fb0a864b4528ae393cc7b64))
+
 ## [0.1.0-alpha.34](https://github.com/petauron/vastora/compare/v0.1.0-alpha.33...v0.1.0-alpha.34) (2026-08-22)
 
 
