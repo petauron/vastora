@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.44](https://github.com/petauron/vastora/compare/v0.1.0-alpha.43...v0.1.0-alpha.44) (2026-08-23)
+
+
+### Bug Fixes
+
+* normalize 3x-ui subscription node names ([#132](https://github.com/petauron/vastora/issues/132)) ([0088105](https://github.com/petauron/vastora/commit/00881055df6d23a48bb29300d6ea4bea83f3550a))
+
 ## [0.1.0-alpha.43](https://github.com/petauron/vastora/compare/v0.1.0-alpha.42...v0.1.0-alpha.43) (2026-08-23)
 
 
