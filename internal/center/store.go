@@ -31,6 +31,7 @@ type Store struct {
 	certificateMu             sync.Mutex
 	siteCertificateMu         sync.Mutex
 	publicationCleanupMu      sync.Mutex
+	taskChanges               changeNotifier
 	now                       func() time.Time
 	discoverNetworkCandidates func(time.Time) ([]networking.Candidate, error)
 	lookupPublicRegion        func(context.Context, string) (string, error)

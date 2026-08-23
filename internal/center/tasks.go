@@ -36,6 +36,10 @@ func (s *Store) recordTaskEvent(ctx context.Context, tx *sql.Tx, taskID, agentID
 		message = message[:1024]
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO task_events(id, task_id, agent_id, kind, revision, event, message, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, taskID, agentID, kind, revision, event, message, s.now().UTC().Format(time.RFC3339Nano))
+	if err == nil {
+		s.taskChanges.notify("agent:" + agentID)
+		s.taskChanges.notify("task:" + taskID)
+	}
 	return err
 }
 

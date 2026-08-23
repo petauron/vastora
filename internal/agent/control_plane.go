@@ -137,6 +137,7 @@ type SubscriptionCommandResult struct {
 type ThreeXUIClientInbound struct {
 	ID              int    `json:"id"`
 	Name            string `json:"name"`
+	DisplayName     string `json:"displayName,omitempty"`
 	ApplicationID   string `json:"applicationId"`
 	NodeID          string `json:"nodeId"`
 	NodeName        string `json:"nodeName"`
@@ -367,125 +368,6 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 		if observeErr != nil && report != nil {
 			report(observeErr)
 		}
-		if err != nil {
-			if report != nil {
-				report(err)
-			}
-			return
-		}
-		task, err := c.claimNextTask(requestContext, store)
-		if err != nil {
-			if report != nil {
-				report(err)
-			}
-			return
-		}
-		if task == nil {
-			return
-		}
-		var result ApplicationTaskResult
-		switch task.Kind {
-		case "application.apply":
-			if c.Executor == nil || !c.Capabilities.Docker {
-				err = errors.New("agent: Docker capability is not configured")
-			} else {
-				result, err = c.Executor.Deploy(requestContext, *task)
-			}
-		case "application.command":
-			commands := 0
-			if task.ApplicationCommand != nil {
-				commands++
-			}
-			if task.SubscriptionCommand != nil {
-				commands++
-			}
-			if task.ClientCommand != nil {
-				commands++
-			}
-			if task.NodeCommand != nil {
-				commands++
-			}
-			if task.ControllerCommand != nil {
-				commands++
-			}
-			if !c.Capabilities.Docker || commands != 1 {
-				err = errors.New("agent: application command received without Docker capability")
-			} else if task.ApplicationCommand != nil {
-				var commandResult RealityCommandResult
-				commandResult, err = applyRealityCommand(requestContext, store, task.ID, *task.ApplicationCommand)
-				if err == nil {
-					result.ApplicationCommand = &commandResult
-				}
-			} else if task.SubscriptionCommand != nil {
-				var commandResult SubscriptionCommandResult
-				commandResult, err = applySubscriptionCommand(requestContext, store, *task.SubscriptionCommand)
-				if err == nil {
-					result.SubscriptionCommand = &commandResult
-				}
-			} else if task.ClientCommand != nil {
-				var commandResult ThreeXUIClientCommandResult
-				commandResult, err = applyThreeXUIClientCommand(requestContext, store, *task.ClientCommand)
-				if err == nil {
-					result.ClientCommand = &commandResult
-				}
-			} else if task.NodeCommand != nil {
-				var commandResult ThreeXUINodeCommandResult
-				commandResult, err = applyThreeXUINodeCommand(requestContext, store, *task.NodeCommand)
-				if err == nil {
-					result.NodeCommand = &commandResult
-				}
-			} else {
-				var commandResult ThreeXUIControllerCommandResult
-				commandResult, err = c.applyThreeXUIControllerCommand(requestContext, store, *task.ControllerCommand)
-				if err == nil {
-					result.ControllerCommand = &commandResult
-				}
-			}
-		case "gateway.routes.apply":
-			if task.GatewayState == nil || !c.Capabilities.Gateway {
-				err = errors.New("agent: gateway task received without gateway capability")
-			} else {
-				err = applyGatewayDesiredState(requestContext, store, c.GatewayDriver, *task.GatewayState, task.GatewayCertificates)
-			}
-		case "gateway.component.apply":
-			if c.GatewayProvisioner == nil || !c.Capabilities.Gateway {
-				err = errors.New("agent: gateway provisioning capability is not configured")
-			} else if task.Operation == "running" {
-				err = c.GatewayProvisioner.Ensure(requestContext)
-				if err == nil {
-					err = waitForGateway(requestContext, c.GatewayDriver)
-				}
-			} else if task.Operation == "stopped" {
-				err = c.GatewayProvisioner.Remove(requestContext)
-				if err == nil {
-					err = store.ClearGatewayState(requestContext)
-				}
-			} else {
-				err = errors.New("agent: invalid gateway component operation")
-			}
-		case "tunnel.state.apply":
-			if c.TunnelProvisioner == nil || !c.Capabilities.Tunnel || task.TunnelState == nil {
-				err = errors.New("agent: tunnel task received without tunnel capability")
-			} else {
-				err = c.TunnelProvisioner.Apply(requestContext, *task.TunnelState)
-			}
-		default:
-			err = errors.New("agent: unsupported task kind")
-		}
-		if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-			if len(result.GeneratedSecrets) != 0 {
-				task.Secrets, err = mergeGeneratedSecrets(task.Secrets, result.GeneratedSecrets)
-			}
-		}
-		if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-			_, err = store.RecordApplied(requestContext, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress})
-		}
-		if err == nil && task.Kind == "application.apply" && task.Operation == "uninstall" {
-			err = store.RemoveApplied(requestContext, task.AppKey)
-		}
-		if completeErr := c.completeTask(requestContext, store, task.ID, task.Attempt, result, err); completeErr != nil && report != nil {
-			report(completeErr)
-		}
 		if err != nil && report != nil {
 			report(err)
 		}
@@ -500,6 +382,144 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 		case <-ticker.C:
 			send()
 		}
+	}
+}
+
+func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
+	for {
+		claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+		task, err := c.claimNextTask(claimContext, store, 10*time.Second)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			if report != nil {
+				report(err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		if task == nil {
+			continue
+		}
+		requestContext, requestCancel := context.WithTimeout(ctx, 5*time.Minute)
+		c.processTask(requestContext, store, *task, report)
+		requestCancel()
+	}
+}
+
+func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTask, report func(error)) {
+	var result ApplicationTaskResult
+	var err error
+	switch task.Kind {
+	case "application.apply":
+		if c.Executor == nil || !c.Capabilities.Docker {
+			err = errors.New("agent: Docker capability is not configured")
+		} else {
+			result, err = c.Executor.Deploy(ctx, task)
+		}
+	case "application.command":
+		commands := 0
+		if task.ApplicationCommand != nil {
+			commands++
+		}
+		if task.SubscriptionCommand != nil {
+			commands++
+		}
+		if task.ClientCommand != nil {
+			commands++
+		}
+		if task.NodeCommand != nil {
+			commands++
+		}
+		if task.ControllerCommand != nil {
+			commands++
+		}
+		if !c.Capabilities.Docker || commands != 1 {
+			err = errors.New("agent: application command received without Docker capability")
+		} else if task.ApplicationCommand != nil {
+			var commandResult RealityCommandResult
+			commandResult, err = applyRealityCommand(ctx, store, task.ID, *task.ApplicationCommand)
+			if err == nil {
+				result.ApplicationCommand = &commandResult
+			}
+		} else if task.SubscriptionCommand != nil {
+			var commandResult SubscriptionCommandResult
+			commandResult, err = applySubscriptionCommand(ctx, store, *task.SubscriptionCommand)
+			if err == nil {
+				result.SubscriptionCommand = &commandResult
+			}
+		} else if task.ClientCommand != nil {
+			var commandResult ThreeXUIClientCommandResult
+			commandResult, err = applyThreeXUIClientCommand(ctx, store, *task.ClientCommand)
+			if err == nil {
+				result.ClientCommand = &commandResult
+			}
+		} else if task.NodeCommand != nil {
+			var commandResult ThreeXUINodeCommandResult
+			commandResult, err = applyThreeXUINodeCommand(ctx, store, *task.NodeCommand)
+			if err == nil {
+				result.NodeCommand = &commandResult
+			}
+		} else {
+			var commandResult ThreeXUIControllerCommandResult
+			commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, *task.ControllerCommand)
+			if err == nil {
+				result.ControllerCommand = &commandResult
+			}
+		}
+	case "gateway.routes.apply":
+		if task.GatewayState == nil || !c.Capabilities.Gateway {
+			err = errors.New("agent: gateway task received without gateway capability")
+		} else {
+			err = applyGatewayDesiredState(ctx, store, c.GatewayDriver, *task.GatewayState, task.GatewayCertificates)
+		}
+	case "gateway.component.apply":
+		if c.GatewayProvisioner == nil || !c.Capabilities.Gateway {
+			err = errors.New("agent: gateway provisioning capability is not configured")
+		} else if task.Operation == "running" {
+			err = c.GatewayProvisioner.Ensure(ctx)
+			if err == nil {
+				err = waitForGateway(ctx, c.GatewayDriver)
+			}
+		} else if task.Operation == "stopped" {
+			err = c.GatewayProvisioner.Remove(ctx)
+			if err == nil {
+				err = store.ClearGatewayState(ctx)
+			}
+		} else {
+			err = errors.New("agent: invalid gateway component operation")
+		}
+	case "tunnel.state.apply":
+		if c.TunnelProvisioner == nil || !c.Capabilities.Tunnel || task.TunnelState == nil {
+			err = errors.New("agent: tunnel task received without tunnel capability")
+		} else {
+			err = c.TunnelProvisioner.Apply(ctx, *task.TunnelState)
+		}
+	default:
+		err = errors.New("agent: unsupported task kind")
+	}
+	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
+		if len(result.GeneratedSecrets) != 0 {
+			task.Secrets, err = mergeGeneratedSecrets(task.Secrets, result.GeneratedSecrets)
+		}
+	}
+	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
+		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress})
+	}
+	if err == nil && task.Kind == "application.apply" && task.Operation == "uninstall" {
+		err = store.RemoveApplied(ctx, task.AppKey)
+	}
+	if completeErr := c.completeTask(ctx, store, task.ID, task.Attempt, result, err); completeErr != nil && report != nil {
+		report(completeErr)
+	}
+	if err != nil && report != nil {
+		report(err)
 	}
 }
 
@@ -534,7 +554,7 @@ func waitForGateway(ctx context.Context, driver GatewayDriver) error {
 	}
 }
 
-func (c Client) claimNextTask(ctx context.Context, store *Store) (*DeploymentTask, error) {
+func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration) (*DeploymentTask, error) {
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return nil, err
@@ -542,7 +562,8 @@ func (c Client) claimNextTask(ctx context.Context, store *Store) (*DeploymentTas
 	var response struct {
 		Task *DeploymentTask `json:"task"`
 	}
-	if err := c.get(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/next", connection.Credential, &response); err != nil {
+	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/tasks/next?wait=" + url.QueryEscape(wait.String())
+	if err := c.get(ctx, endpoint, connection.Credential, &response); err != nil {
 		return nil, err
 	}
 	return response.Task, nil

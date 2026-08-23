@@ -261,6 +261,9 @@ func runAgent(arguments []string) error {
 		go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
 			fmt.Fprintln(os.Stderr, "agent heartbeat:", err)
 		})
+		go client.RunTasks(context.Background(), store, func(err error) {
+			fmt.Fprintln(os.Stderr, "agent task channel:", err)
+		})
 		fmt.Printf("Agent health listener on %s\n", *listen)
 		return http.ListenAndServe(*listen, store.Handler())
 	default:

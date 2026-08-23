@@ -26,6 +26,7 @@ afterEach(() => {
   document.body.replaceChildren();
   window.sessionStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
@@ -57,6 +58,19 @@ function render(element: ReactNode) {
   root = createRoot(container);
   act(() => root?.render(element));
   return container;
+}
+
+function mockCommandEvent(command: ApplicationCommand) {
+  class CommandEventSource {
+    onmessage: ((event: MessageEvent<string>) => void) | null = null;
+
+    constructor(readonly url: string, readonly init?: EventSourceInit) {
+      queueMicrotask(() => this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(command) })));
+    }
+
+    close() {}
+  }
+  vi.stubGlobal("EventSource", CommandEventSource);
 }
 
 describe("network and app views", () => {
@@ -303,7 +317,7 @@ describe("network and app views", () => {
 		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 美国Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		const rename = vi.spyOn(api, "renameRealityCommand").mockResolvedValue(pending);
-		vi.spyOn(api, "applicationCommand").mockResolvedValue({ ...pending, state: "succeeded", updatedAt: "2026-08-23T00:00:01Z" });
+		mockCommandEvent({ ...pending, state: "succeeded", updatedAt: "2026-08-23T00:00:01Z" });
 		const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
 		const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
 		expect(container.textContent).toContain("🇺🇸 美国Old name");
@@ -451,6 +465,7 @@ describe("network and app views", () => {
 		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
 		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
+		mockCommandEvent(pending);
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 		await act(async () => {
 			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();

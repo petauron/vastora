@@ -90,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/application-commands/subscription", s.requireAuth(true, s.handleCreateSubscriptionCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/clients", s.requireAuth(true, s.handleCreateThreeXUIClientCommand))
 	mux.HandleFunc("GET /api/v1/application-commands/{id}", s.requireAuth(false, s.handleApplicationCommand))
+	mux.HandleFunc("GET /api/v1/application-commands/{id}/events", s.requireAuth(false, s.handleApplicationCommandEvents))
 	mux.HandleFunc("POST /api/v1/application-commands/{id}/reveal", s.requireAuth(true, s.handleRevealApplicationCommand))
 	mux.HandleFunc("GET /api/v1/services", s.requireAuth(false, s.handleListServices))
 	mux.HandleFunc("GET /api/v1/publications", s.requireAuth(false, s.handleListPublications))

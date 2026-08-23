@@ -203,6 +203,35 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 	return &task, nil
 }
 
+func (s *Store) WaitAndClaimNextTask(ctx context.Context, agentID, credential string, wait time.Duration) (*AgentTask, error) {
+	if wait <= 0 {
+		return s.ClaimNextTask(ctx, agentID, credential)
+	}
+	if wait > 30*time.Second {
+		wait = 30 * time.Second
+	}
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	for {
+		key := "agent:" + agentID
+		changed := s.taskChanges.subscribe(key)
+		task, err := s.ClaimNextTask(ctx, agentID, credential)
+		if err != nil || task != nil {
+			s.taskChanges.unsubscribe(key, changed)
+			return task, err
+		}
+		select {
+		case <-ctx.Done():
+			s.taskChanges.unsubscribe(key, changed)
+			return nil, ctx.Err()
+		case <-deadline.C:
+			s.taskChanges.unsubscribe(key, changed)
+			return nil, nil
+		case <-changed:
+		}
+	}
+}
+
 func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return err
