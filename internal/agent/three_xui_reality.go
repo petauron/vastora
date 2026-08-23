@@ -417,7 +417,7 @@ func syncThreeXUIRealityHost(ctx context.Context, baseURL, token string, inbound
 	groupID := "vastora-public-" + strconv.Itoa(inboundID)
 	desired := threeXUIHostGroup{
 		GroupID: groupID, InboundIDs: []int{inboundID}, Hosts: []string{connectHostname},
-		Remark: "{{INBOUND}}", ServerDescription: "Managed by Vastora",
+		Remark: threeXUISubscriptionRemarkTemplate, ServerDescription: "Managed by Vastora",
 		Tags: []string{"vastora"}, Port: 443, Security: "same", SNI: sniHostname,
 		Fingerprint: "chrome", MihomoIPVersion: "dual",
 	}

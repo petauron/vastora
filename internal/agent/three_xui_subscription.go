@@ -15,11 +15,24 @@ import (
 )
 
 const (
-	threeXUIRawSubscriptionPath   = "/sub/"
-	threeXUIClashSubscriptionPath = "/clash/"
-	threeXUIClashUserAgentRegex   = `(?i)(clash|mihomo)`
-	threeXUIRestartSettleTime     = 4 * time.Second
+	threeXUIRawSubscriptionPath        = "/sub/"
+	threeXUIClashSubscriptionPath      = "/clash/"
+	threeXUIClashUserAgentRegex        = `(?i)(clash|mihomo)`
+	threeXUISubscriptionRemarkTemplate = "{{INBOUND}}"
+	threeXUIRestartSettleTime          = 4 * time.Second
 )
+
+func threeXUIManagedSubscriptionSettings() map[string]any {
+	return map[string]any{
+		"subEnable":              true,
+		"subPath":                threeXUIRawSubscriptionPath,
+		"subClashEnable":         true,
+		"subClashPath":           threeXUIClashSubscriptionPath,
+		"subClashAutoDetect":     true,
+		"subClashUserAgentRegex": threeXUIClashUserAgentRegex,
+		"remarkTemplate":         threeXUISubscriptionRemarkTemplate,
+	}
+}
 
 func applySubscriptionCommand(ctx context.Context, store *Store, command SubscriptionCommandTask) (SubscriptionCommandResult, error) {
 	domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(command.Domain), "."))
@@ -61,17 +74,10 @@ func configureThreeXUIPublicSubscription(ctx context.Context, endpoint, token, d
 	if err != nil {
 		return "", fmt.Errorf("agent: read 3x-ui subscription settings: %w", err)
 	}
-	desired := map[string]any{
-		"subEnable":              true,
-		"subPath":                threeXUIRawSubscriptionPath,
-		"subDomain":              domain,
-		"subURI":                 parsed.String(),
-		"subClashEnable":         true,
-		"subClashPath":           threeXUIClashSubscriptionPath,
-		"subClashURI":            clashURI.String(),
-		"subClashAutoDetect":     true,
-		"subClashUserAgentRegex": threeXUIClashUserAgentRegex,
-	}
+	desired := threeXUIManagedSubscriptionSettings()
+	desired["subDomain"] = domain
+	desired["subURI"] = parsed.String()
+	desired["subClashURI"] = clashURI.String()
 	changed := false
 	for key, value := range desired {
 		if !reflect.DeepEqual(settings[key], value) {
