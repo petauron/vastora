@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.38](https://github.com/petauron/vastora/compare/v0.1.0-alpha.37...v0.1.0-alpha.38) (2026-08-23)
+
+
+### Features
+
+* improve multi-node VLESS management ([#120](https://github.com/petauron/vastora/issues/120)) ([4fd2e06](https://github.com/petauron/vastora/commit/4fd2e066494c38a8f7f21bd9407d1b9b974a7cbb))
+
 ## [0.1.0-alpha.37](https://github.com/petauron/vastora/compare/v0.1.0-alpha.36...v0.1.0-alpha.37) (2026-08-23)
 
 
