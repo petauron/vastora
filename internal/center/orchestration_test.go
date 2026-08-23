@@ -596,13 +596,17 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "private-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.63", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.63", LANAddress: "10.0.0.63", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	configureCloudflareZoneForTest(t, store, "example.test")
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, "10.0.0.63")
 	services, err := store.ListServices(ctx)
 	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
 		t.Fatalf("services = %#v, err=%v", services, err)
 	}
-	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.private.example.test", DNSProvider: "manual"})
+	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.test.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}

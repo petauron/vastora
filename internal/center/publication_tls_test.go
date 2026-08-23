@@ -16,6 +16,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Private", Code: "private", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID}}); err != nil {
 		t.Fatal(err)
 	}
+	configureCloudflareZoneForTest(t, store, "example.test")
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, "10.0.0.64")
 	services, err := store.ListServices(ctx)

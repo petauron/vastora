@@ -83,7 +83,10 @@ func ValidateCertificatesForState(state DesiredState, values []Certificate) erro
 		return err
 	}
 	for _, route := range state.Routes {
-		if !route.TLSEnabled || route.ListenerKind == "public" {
+		// Public routes use Caddy's automatic HTTPS. The loopback-only system
+		// listener reuses those public certificates. Center supplies explicit
+		// certificates only for private LAN and Headscale listeners.
+		if !route.TLSEnabled || route.ListenerKind == "public" || route.ListenerKind == "system" {
 			continue
 		}
 		covered := false

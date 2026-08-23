@@ -15,11 +15,7 @@ func TestSiteCertificateIsReusedAcrossFlatServiceHostnames(t *testing.T) {
 	if _, err := store.UpdateSite(ctx, siteID, SiteInput{Name: "Home", Code: "home", Timezone: "UTC", DomainSuffix: "example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at)
-		VALUES('cloudflare', 'oauth', 'example.com', 'configured', ?, ?)`, now, now); err != nil {
-		t.Fatal(err)
-	}
+	configureCloudflareZoneForTest(t, store, "example.com")
 	issued := 0
 	var issuedNames []string
 	store.issuePrivateCertificate = func(_ context.Context, dnsNames ...string) (managedCertificate, error) {
@@ -50,11 +46,7 @@ func TestSiteCertificateAddsParentWildcardForExistingNestedHostname(t *testing.T
 	if _, err := store.UpdateSite(ctx, siteID, SiteInput{Name: "Home", Code: "home", Timezone: "UTC", DomainSuffix: "example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at)
-		VALUES('cloudflare', 'oauth', 'example.com', 'configured', ?, ?)`, now, now); err != nil {
-		t.Fatal(err)
-	}
+	configureCloudflareZoneForTest(t, store, "example.com")
 	names, err := store.siteCertificateDNSNames(ctx, siteID, "panel.3x-ui.home.example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -62,5 +54,14 @@ func TestSiteCertificateAddsParentWildcardForExistingNestedHostname(t *testing.T
 	expected := []string{"*.3x-ui.home.example.com", "*.home.example.com"}
 	if !reflect.DeepEqual(names, expected) {
 		t.Fatalf("nested hostname certificate names=%#v, want %#v", names, expected)
+	}
+}
+
+func configureCloudflareZoneForTest(t *testing.T, store *Store, zone string) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at)
+		VALUES('cloudflare', 'oauth', ?, 'configured', ?, ?)`, zone, now, now); err != nil {
+		t.Fatal(err)
 	}
 }
