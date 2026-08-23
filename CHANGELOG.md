@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.41](https://github.com/petauron/vastora/compare/v0.1.0-alpha.40...v0.1.0-alpha.41) (2026-08-23)
+
+
+### Bug Fixes
+
+* harden migrations and app workflows ([#126](https://github.com/petauron/vastora/issues/126)) ([9aee583](https://github.com/petauron/vastora/commit/9aee583daa92d9536f72b8c0fc137e21eb9a0bb3))
+
 ## [0.1.0-alpha.40](https://github.com/petauron/vastora/compare/v0.1.0-alpha.39...v0.1.0-alpha.40) (2026-08-23)
 
 
