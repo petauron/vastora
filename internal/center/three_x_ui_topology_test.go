@@ -110,7 +110,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	}
 }
 
-func completeThreeXUIDeployment(t *testing.T, store *Store, node AgentCredential, task AgentTask, address, apiToken string) {
+func completeThreeXUIDeployment(t *testing.T, store *Store, node AgentCredential, task *AgentTask, address, apiToken string) {
 	t.Helper()
 	result, _ := json.Marshal(ApplicationTaskResult{
 		Services: []ApplicationServiceResult{
