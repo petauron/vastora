@@ -109,6 +109,38 @@ func TestSyncThreeXUIRealityHostKeepsMatchingGroup(t *testing.T) {
 	}
 }
 
+func TestAttachAllThreeXUIClientsToInboundKeepsClientIdentity(t *testing.T) {
+	var emails []string
+	var inboundIDs []int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /panel/api/clients/list/paged":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","inboundIds":[7]},{"email":"Router","inboundIds":[7,9]}],"total":2}}`))
+		case "POST /panel/api/clients/bulkAttach":
+			var payload struct {
+				Emails     []string `json:"emails"`
+				InboundIDs []int    `json:"inboundIds"`
+			}
+			if json.NewDecoder(request.Body).Decode(&payload) != nil {
+				t.Fatal("bulk attachment payload was not decoded")
+			}
+			emails, inboundIDs = payload.Emails, payload.InboundIDs
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"attached":["MacBook"],"skipped":[],"errors":[]}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	if err := attachAllThreeXUIClientsToInbound(context.Background(), server.URL, "token", 9); err != nil {
+		t.Fatal(err)
+	}
+	if len(emails) != 1 || emails[0] != "MacBook" || len(inboundIDs) != 1 || inboundIDs[0] != 9 {
+		t.Fatalf("automatic attachment = emails %#v, inbounds %#v", emails, inboundIDs)
+	}
+}
+
 func TestSelectRealityTargetUsesNodeLocalFeasibilityAndSkipsUsedSNI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/panel/api/server/scanRealityTargets" || request.Header.Get("Authorization") != "Bearer token" {

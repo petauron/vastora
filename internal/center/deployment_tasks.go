@@ -232,12 +232,12 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 		return err
 	}
 	defer tx.Rollback()
-	var applicationID, operation, currentState string
+	var applicationID, appKey, role, operation, currentState string
 	var attempt int64
 	var manifestJSON, configJSON []byte
 	var serviceAddress string
-	if err := tx.QueryRowContext(ctx, `SELECT d.application_id, d.operation, d.state, d.manifest_json, d.config_json, COALESCE(p.service_address, ''), d.attempt
-		FROM deployments d LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.id = ? AND d.agent_id = ?`, taskID, agentID).Scan(&applicationID, &operation, &currentState, &manifestJSON, &configJSON, &serviceAddress, &attempt); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT d.application_id, a.app_key, a.role, d.operation, d.state, d.manifest_json, d.config_json, COALESCE(p.service_address, ''), d.attempt
+		FROM deployments d JOIN applications a ON a.id = d.application_id LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.id = ? AND d.agent_id = ?`, taskID, agentID).Scan(&applicationID, &appKey, &role, &operation, &currentState, &manifestJSON, &configJSON, &serviceAddress, &attempt); err != nil {
 		return errors.New("center: task not found")
 	}
 	if currentState == "succeeded" || currentState == "failed" {
@@ -261,7 +261,7 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 			if json.Unmarshal(manifestJSON, &manifest) != nil || catalog.ValidateApp(manifest) != nil {
 				return errors.New("center: stored deployment manifest is invalid")
 			}
-			if err := validateApplicationResult(manifest, configJSON, serviceAddress, taskResult); err != nil {
+			if err := validateApplicationResult(manifest, appKey, role, configJSON, serviceAddress, taskResult); err != nil {
 				state = "failed"
 				taskError = err.Error()
 				succeeded = false
@@ -287,10 +287,6 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 					err = s.queueThreeXUINodeReconcile(ctx, tx, taskID, applicationID, now)
 				}
 				if err != nil && operation != "uninstall" {
-					var role string
-					if roleErr := tx.QueryRowContext(ctx, `SELECT role FROM applications WHERE id = ?`, applicationID).Scan(&role); roleErr != nil {
-						return roleErr
-					}
 					if role == threeXUIRoleWorker {
 						if _, syncErr := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'failed', last_error = ?, updated_at = ? WHERE worker_application_id = ?`, err.Error(), now.Format(time.RFC3339Nano), applicationID); syncErr != nil {
 							return syncErr

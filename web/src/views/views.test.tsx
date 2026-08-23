@@ -300,7 +300,7 @@ describe("network and app views", () => {
 
   it("manages 3x-ui clients and reveals links without opening the panel", async () => {
     const data = realityDashboard();
-    const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test" }], subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
+    const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test" }, { id: 10, name: "inbound-10", nodeName: "oracle-worker", connectHostname: "reality.oracle.example.test" }], subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
     const create = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action.startsWith("reveal_") ? { ...baseCommand, id: `client-command-${input.action}`, action: input.action, resultAvailable: true } : baseCommand);
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockImplementation(async (id) => ({ shareUri: id.includes("subscription") ? "https://subscription.example.test/sub/client-id" : "vless://one-time-client-link" }));
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -313,8 +313,20 @@ describe("network and app views", () => {
     });
     expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "list" });
     expect(document.body.textContent).toContain("MacBook");
-    expect(document.body.textContent).toContain("edge-worker · inbound-9");
+    expect(document.body.textContent).toContain("已接入 1 个节点：edge-worker");
     expect(document.body.textContent).toContain("日常管理");
+    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("编辑") || button.querySelector(".sr-only")?.textContent === "编辑")?.click());
+    const nodeChoices = [...document.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+    expect(nodeChoices).toHaveLength(2);
+    expect(nodeChoices[0].getAttribute("aria-checked")).toBe("true");
+    expect(nodeChoices[1].getAttribute("aria-checked")).toBe("false");
+    act(() => nodeChoices[1].click());
+    await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("保存修改"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "update", email: "MacBook", newEmail: "MacBook", inboundIds: [9, 10], totalBytes: 10 * 1024 ** 3, expiryTime: 0, limitIp: 2 });
     await act(async () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("复制 VLESS"))?.click();
       await Promise.resolve();

@@ -112,11 +112,14 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 
 func completeThreeXUIDeployment(t *testing.T, store *Store, node AgentCredential, task *AgentTask, address, apiToken string) {
 	t.Helper()
+	services := []ApplicationServiceResult{
+		{Name: "panel", Protocol: "http", ContainerPort: 2053, HostPort: 2053, Address: address},
+	}
+	if task.ApplicationRole != threeXUIRoleWorker {
+		services = append(services, ApplicationServiceResult{Name: "subscription", Protocol: "http", ContainerPort: 2096, HostPort: 2096, Address: address})
+	}
 	result, _ := json.Marshal(ApplicationTaskResult{
-		Services: []ApplicationServiceResult{
-			{Name: "panel", Protocol: "http", ContainerPort: 2053, HostPort: 2053, Address: address},
-			{Name: "subscription", Protocol: "http", ContainerPort: 2096, HostPort: 2096, Address: address},
-		},
+		Services:         services,
 		GeneratedSecrets: map[string]string{"api_token": apiToken},
 	})
 	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {

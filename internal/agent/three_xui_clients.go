@@ -48,8 +48,8 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 	switch command.Action {
 	case "list":
 	case "create":
-		if !clientInboundAvailable(command.Inbounds, command.InboundID) {
-			return result, errors.New("agent: selected 3x-ui inbound is unavailable")
+		if !clientInboundsAvailable(command.Inbounds, command.InboundIDs) {
+			return result, errors.New("agent: selected 3x-ui nodes are unavailable")
 		}
 		clientID, err := randomUUID()
 		if err != nil {
@@ -65,7 +65,7 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 				"totalGB": command.TotalBytes, "expiryTime": command.ExpiryTime, "limitIp": command.LimitIP,
 				"tgId": 0, "enable": command.Enabled,
 			},
-			"inboundIds": []int{command.InboundID},
+			"inboundIds": command.InboundIDs,
 		}
 		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/add", token, "application/json", payload); err != nil {
 			return result, fmt.Errorf("agent: create 3x-ui client: %w", err)
@@ -76,6 +76,9 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 			return result, err
 		}
 		if command.Action == "update" {
+			if !clientInboundsAvailable(command.Inbounds, command.InboundIDs) {
+				return result, errors.New("agent: selected 3x-ui nodes are unavailable")
+			}
 			setClientJSONField(detail.Client, "email", command.NewEmail)
 			setClientJSONField(detail.Client, "totalGB", command.TotalBytes)
 			setClientJSONField(detail.Client, "expiryTime", command.ExpiryTime)
@@ -85,6 +88,11 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 		}
 		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(command.Email), token, "application/json", detail.Client); err != nil {
 			return result, fmt.Errorf("agent: update 3x-ui client: %w", err)
+		}
+		if command.Action == "update" {
+			if err := syncThreeXUIClientInbounds(ctx, baseURL, token, command.NewEmail, detail.InboundIDs, command.InboundIDs); err != nil {
+				return result, err
+			}
 		}
 	case "delete":
 		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/del/"+url.PathEscape(command.Email), token, "application/json", map[string]any{}); err != nil {
@@ -198,13 +206,55 @@ func clientJSONText(client map[string]json.RawMessage, key string) string {
 	return strings.TrimSpace(value)
 }
 
-func clientInboundAvailable(inbounds []ThreeXUIClientInbound, id int) bool {
+func clientInboundsAvailable(inbounds []ThreeXUIClientInbound, ids []int) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	available := make(map[int]bool, len(inbounds))
 	for _, inbound := range inbounds {
-		if inbound.ID == id {
-			return true
+		available[inbound.ID] = true
+	}
+	seen := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		if id < 1 || !available[id] || seen[id] {
+			return false
+		}
+		seen[id] = true
+	}
+	return true
+}
+
+func syncThreeXUIClientInbounds(ctx context.Context, baseURL, token, email string, current, desired []int) error {
+	currentSet := make(map[int]bool, len(current))
+	desiredSet := make(map[int]bool, len(desired))
+	for _, inboundID := range current {
+		currentSet[inboundID] = true
+	}
+	for _, inboundID := range desired {
+		desiredSet[inboundID] = true
+	}
+	attach, detach := []int{}, []int{}
+	for _, inboundID := range desired {
+		if !currentSet[inboundID] {
+			attach = append(attach, inboundID)
 		}
 	}
-	return false
+	for _, inboundID := range current {
+		if !desiredSet[inboundID] {
+			detach = append(detach, inboundID)
+		}
+	}
+	if len(attach) != 0 {
+		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/"+url.PathEscape(email)+"/attach", token, "application/json", map[string]any{"inboundIds": attach}); err != nil {
+			return fmt.Errorf("agent: attach 3x-ui client to selected nodes: %w", err)
+		}
+	}
+	if len(detach) != 0 {
+		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/"+url.PathEscape(email)+"/detach", token, "application/json", map[string]any{"inboundIds": detach}); err != nil {
+			return fmt.Errorf("agent: detach 3x-ui client from unselected nodes: %w", err)
+		}
+	}
+	return nil
 }
 
 func clientInbound(inbounds []ThreeXUIClientInbound, ids []int, requested int) (ThreeXUIClientInbound, bool) {

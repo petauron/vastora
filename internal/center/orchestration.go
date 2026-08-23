@@ -85,15 +85,6 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	return applicationID, nil
 }
 
-func selectedCatalogService(manifest catalog.AppManifest, name string) (catalog.Service, error) {
-	for _, service := range manifest.Services {
-		if service.Name == name {
-			return service, nil
-		}
-	}
-	return catalog.Service{}, fmt.Errorf("center: catalog service %q not found", name)
-}
-
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
 	if operation == "uninstall" {
 		values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)

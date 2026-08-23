@@ -97,3 +97,38 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 		t.Fatalf("revealed subscription = %q err=%v", consumed, err)
 	}
 }
+
+func TestThreeXUIClientCommandSelectsMultipleSiteNodes(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	siteID := testSiteID(t, store)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES('three-x-ui-controller', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)
+		VALUES('reality-9', 'three-x-ui-controller', ?, 'inbound-9', 'tcp', 30009, 30009, '10.0.0.80:30009', 'observed', 'vless/tcp/reality', 0, '10.0.0.80', 'ready', ?, ?),
+		('reality-10', 'three-x-ui-controller', ?, 'inbound-10', 'tcp', 30010, 30010, '10.0.0.80:30010', 'observed', 'vless/tcp/reality', 0, '10.0.0.80', 'ready', ?, ?)`, siteID, now, now, siteID, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	command, err := store.CreateThreeXUIClientCommand(ctx, ThreeXUIClientCommandInput{ApplicationID: "three-x-ui-controller", Action: "create", NewEmail: "Router", InboundIDs: []int{10, 9, 10}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.ClientCommand == nil || len(task.ClientCommand.InboundIDs) != 2 || task.ClientCommand.InboundIDs[0] != 9 || task.ClientCommand.InboundIDs[1] != 10 {
+		t.Fatalf("multi-node client task = %#v", task.ClientCommand)
+	}
+	metadata := []ThreeXUIClientView{{Email: "Router", Enabled: true, InboundIDs: []int{9, 10}, HasSubscription: true}}
+	result, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds}})
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.ApplicationCommand(ctx, command.ID)
+	if err != nil || completed.State != "succeeded" || len(completed.Clients) != 1 || len(completed.Clients[0].InboundIDs) != 2 {
+		t.Fatalf("multi-node client result = %#v err=%v", completed, err)
+	}
+}
