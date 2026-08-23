@@ -468,6 +468,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE three_x_ui_nodes`,
 		`DROP INDEX applications_one_three_x_ui_master_idx`,
 		`ALTER TABLE applications DROP COLUMN role`,
+		`ALTER TABLE services DROP COLUMN display_name`,
 		`DROP TABLE application_commands`,
 		`DROP TABLE certificate_authorities`,
 		`CREATE TABLE publications_v3 (
