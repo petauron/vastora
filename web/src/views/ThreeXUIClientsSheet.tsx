@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { CopyIcon, ExternalLinkIcon, LinkIcon, PencilIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, Trash2Icon, UsersIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, LinkIcon, PencilIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, ServerIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { api } from "../api";
 import type { Application, ApplicationCommand, ThreeXUIClient, ThreeXUIClientCommandInput, ThreeXUIClientInbound } from "../types";
 import type { Language } from "../translations";
@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -75,7 +74,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
     setNotice("");
     try {
       await runCommand(input);
-      if (input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription") setNotice(copy(language, "更改已同步到 3x-ui。", "The change was synced to 3x-ui."));
+      if (input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription") setNotice(copy(language, "更改已同步到所选节点。", "The change was synced to the selected nodes."));
     } catch (operationError) {
       setError(readableError(language, operationError));
       throw operationError;
@@ -126,10 +125,10 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
           <div className="grid gap-3">
             {visibleClients.map((client) => {
               const publishedInbound = inbounds.find((inbound) => inbound.connectHostname && client.inboundIds.includes(inbound.id));
-              const inboundNames = inbounds.filter((inbound) => client.inboundIds.includes(inbound.id)).map((inbound) => inbound.nodeName ? `${inbound.nodeName} · ${inbound.name}` : inbound.name);
+              const inboundNames = inbounds.filter((inbound) => client.inboundIds.includes(inbound.id)).map((inbound) => inbound.nodeName || inbound.name);
               return <div className="rounded-2xl border bg-card p-4" key={client.email}>
                 <div className="flex flex-wrap items-start gap-3">
-                  <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-medium">{client.email}</h3><Badge variant={client.enabled ? "secondary" : "outline"}>{client.enabled ? copy(language, "已启用", "Enabled") : copy(language, "已停用", "Disabled")}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{inboundNames.length ? inboundNames.join(" · ") : copy(language, "未连接入站", "No inbound attached")}</p></div>
+                  <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-medium">{client.email}</h3><Badge variant={client.enabled ? "secondary" : "outline"}>{client.enabled ? copy(language, "已启用", "Enabled") : copy(language, "已停用", "Disabled")}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{inboundNames.length ? copy(language, `已接入 ${inboundNames.length} 个节点：${inboundNames.join("、")}`, `Connected to ${inboundNames.length} node(s): ${inboundNames.join(", ")}`) : copy(language, "未连接节点", "No node attached")}</p></div>
                   <Switch aria-label={copy(language, `启用 ${client.email}`, `Enable ${client.email}`)} checked={client.enabled} disabled={busy} onCheckedChange={(enabled) => void run({ action: "set_enabled", email: client.email, enabled }).catch(() => undefined)} />
                 </div>
                 <div className="mt-4 grid gap-3 text-xs sm:grid-cols-3"><Metric label={copy(language, "已用流量", "Traffic used")} value={`${formatBytes(client.usedBytes)}${client.totalBytes ? ` / ${formatBytes(client.totalBytes)}` : ""}`} /><Metric label={copy(language, "有效期", "Expires")} value={formatExpiry(client.expiryTime, language)} /><Metric label={copy(language, "设备数限制", "IP limit")} value={client.limitIp ? String(client.limitIp) : copy(language, "不限", "Unlimited")} /></div>
@@ -151,23 +150,77 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 function ClientEditor({ busy, editor, inbounds, language, onCancel, onSave }: { busy: boolean; editor: NonNullable<Editor>; inbounds: ThreeXUIClientInbound[]; language: Language; onCancel: () => void; onSave: (input: Omit<ThreeXUIClientCommandInput, "applicationId">) => Promise<void> }) {
   const client = editor.client;
   const [name, setName] = useState(client?.email ?? "");
-  const [inboundID, setInboundID] = useState(client?.inboundIds[0] ?? inbounds[0]?.id ?? 0);
+  const [inboundIDs, setInboundIDs] = useState<number[]>(() => client ? client.inboundIds.filter((id) => inbounds.some((inbound) => inbound.id === id)) : inbounds.map((inbound) => inbound.id));
   const [quota, setQuota] = useState(client?.totalBytes ? String(Math.round(client.totalBytes / gibibyte * 100) / 100) : "");
   const [expiry, setExpiry] = useState(client?.expiryTime ? localDateValue(client.expiryTime) : "");
   const [limitIP, setLimitIP] = useState(client?.limitIp ? String(client.limitIp) : "");
   const [enabled, setEnabled] = useState(client?.enabled ?? true);
   const [error, setError] = useState("");
   const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setError("");
+    event.preventDefault();
+    setError("");
     const totalBytes = quota ? Math.round(Number(quota) * gibibyte) : 0;
     const expiryTime = expiry ? new Date(`${expiry}T23:59:59`).getTime() : 0;
     const limit = limitIP ? Number(limitIP) : 0;
-    if (!name.trim() || !Number.isFinite(totalBytes) || totalBytes < 0 || !Number.isInteger(limit) || limit < 0) { setError(copy(language, "请检查名称、流量和设备数。", "Check the name, quota, and IP limit.")); return; }
+    if (!name.trim() || !Number.isFinite(totalBytes) || totalBytes < 0 || !Number.isInteger(limit) || limit < 0) {
+      setError(copy(language, "请检查名称、流量和设备数。", "Check the name, quota, and IP limit."));
+      return;
+    }
     try {
-      await onSave(client ? { action: "update", email: client.email, newEmail: name.trim(), totalBytes, expiryTime, limitIp: limit } : { action: "create", newEmail: name.trim(), inboundId: inboundID, enabled, totalBytes, expiryTime, limitIp: limit });
-    } catch (saveError) { setError(readableError(language, saveError)); }
+      await onSave(client ? { action: "update", email: client.email, newEmail: name.trim(), inboundIds: inboundIDs, totalBytes, expiryTime, limitIp: limit } : { action: "create", newEmail: name.trim(), inboundIds: inboundIDs, enabled, totalBytes, expiryTime, limitIp: limit });
+    } catch (saveError) {
+      setError(readableError(language, saveError));
+    }
   };
-  return <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="three-xui-client-name">{copy(language, "名称", "Name")}</FieldLabel><Input autoFocus id="three-xui-client-name" maxLength={64} onChange={(event) => setName(event.target.value)} placeholder={copy(language, "例如：我的 MacBook", "For example: My MacBook")} required value={name} /><FieldDescription>{copy(language, "这是设备名称，不需要填写真实邮箱。", "This is a device label, not a real email address.")}</FieldDescription></Field><Field><FieldLabel htmlFor="three-xui-client-inbound">{copy(language, "使用的节点和入站", "Node and inbound")}</FieldLabel><NativeSelect disabled={Boolean(client)} id="three-xui-client-inbound" onChange={(event) => setInboundID(Number(event.target.value))} required value={inboundID}>{inbounds.map((inbound) => <option key={inbound.id} value={inbound.id}>{inbound.nodeName ? `${inbound.nodeName} · ` : ""}{inbound.name}{inbound.connectHostname ? ` · ${inbound.connectHostname}` : ""}</option>)}</NativeSelect>{client ? <FieldDescription>{copy(language, "更改客户端所属入站属于高级操作，请在 3x-ui 中完成。", "Changing inbound attachments is an advanced task handled in 3x-ui.")}</FieldDescription> : null}</Field><Field><FieldLabel htmlFor="three-xui-client-quota">{copy(language, "流量上限（GB）", "Traffic limit (GB)")}</FieldLabel><Input id="three-xui-client-quota" min="0" onChange={(event) => setQuota(event.target.value)} placeholder={copy(language, "留空表示不限", "Leave empty for unlimited")} step="0.1" type="number" value={quota} /></Field><Field><FieldLabel htmlFor="three-xui-client-expiry">{copy(language, "到期日期", "Expiry date")}</FieldLabel><Input id="three-xui-client-expiry" min={new Date().toISOString().slice(0, 10)} onChange={(event) => setExpiry(event.target.value)} type="date" value={expiry} /><FieldDescription>{copy(language, "留空表示永不过期。", "Leave empty to never expire.")}</FieldDescription></Field><Field><FieldLabel htmlFor="three-xui-client-limit-ip">{copy(language, "同时使用的设备数", "Simultaneous devices")}</FieldLabel><Input id="three-xui-client-limit-ip" min="0" onChange={(event) => setLimitIP(event.target.value)} placeholder={copy(language, "留空表示不限", "Leave empty for unlimited")} step="1" type="number" value={limitIP} /></Field>{!client ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="three-xui-client-enabled">{copy(language, "创建后立即启用", "Enable after creation")}</FieldLabel><FieldDescription>{copy(language, "关闭时会保存客户端，但暂时不能连接。", "When off, the client is saved but cannot connect yet.")}</FieldDescription></div><Switch checked={enabled} id="three-xui-client-enabled" onCheckedChange={setEnabled} /></Field> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button disabled={busy} onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !name.trim() || (!client && !inboundID)} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{client ? copy(language, "保存修改", "Save changes") : copy(language, "添加客户端", "Add client")}</Button></SheetFooter></form>;
+  return <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
+    <div className="flex-1 overflow-y-auto px-4">
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="three-xui-client-name">{copy(language, "名称", "Name")}</FieldLabel>
+          <Input autoFocus id="three-xui-client-name" maxLength={64} onChange={(event) => setName(event.target.value)} placeholder={copy(language, "例如：我的 MacBook", "For example: My MacBook")} required value={name} />
+          <FieldDescription>{copy(language, "这是设备名称，不需要填写真实邮箱。", "This is a device label, not a real email address.")}</FieldDescription>
+        </Field>
+        <ClientNodePicker busy={busy} inbounds={inbounds} language={language} onChange={setInboundIDs} selected={inboundIDs} />
+        <Field>
+          <FieldLabel htmlFor="three-xui-client-quota">{copy(language, "流量上限（GB）", "Traffic limit (GB)")}</FieldLabel>
+          <Input id="three-xui-client-quota" min="0" onChange={(event) => setQuota(event.target.value)} placeholder={copy(language, "留空表示不限", "Leave empty for unlimited")} step="0.1" type="number" value={quota} />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="three-xui-client-expiry">{copy(language, "到期日期", "Expiry date")}</FieldLabel>
+          <Input id="three-xui-client-expiry" min={new Date().toISOString().slice(0, 10)} onChange={(event) => setExpiry(event.target.value)} type="date" value={expiry} />
+          <FieldDescription>{copy(language, "留空表示永不过期。", "Leave empty to never expire.")}</FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="three-xui-client-limit-ip">{copy(language, "同时使用的设备数", "Simultaneous devices")}</FieldLabel>
+          <Input id="three-xui-client-limit-ip" min="0" onChange={(event) => setLimitIP(event.target.value)} placeholder={copy(language, "留空表示不限", "Leave empty for unlimited")} step="1" type="number" value={limitIP} />
+        </Field>
+        {!client ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="three-xui-client-enabled">{copy(language, "创建后立即启用", "Enable after creation")}</FieldLabel><FieldDescription>{copy(language, "关闭时会保存客户端，但暂时不能连接。", "When off, the client is saved but cannot connect yet.")}</FieldDescription></div><Switch checked={enabled} id="three-xui-client-enabled" onCheckedChange={setEnabled} /></Field> : null}
+        {error ? <FieldError role="alert">{error}</FieldError> : null}
+      </FieldGroup>
+    </div>
+    <SheetFooter><Button disabled={busy} onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !name.trim() || inboundIDs.length === 0} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{client ? copy(language, "保存修改", "Save changes") : copy(language, "添加客户端", "Add client")}</Button></SheetFooter>
+  </form>;
+}
+
+function ClientNodePicker({ busy, inbounds, language, onChange, selected }: { busy: boolean; inbounds: ThreeXUIClientInbound[]; language: Language; onChange: (ids: number[]) => void; selected: number[] }) {
+  const toggle = (id: number) => onChange(selected.includes(id) ? selected.filter((value) => value !== id) : [...selected, id]);
+  return <fieldset className="grid gap-3">
+    <legend className="text-sm font-medium">{copy(language, "使用哪些节点", "Nodes to use")}</legend>
+    <div className="flex items-start justify-between gap-3">
+      <p className="text-sm text-muted-foreground">{copy(language, "默认使用全部节点；以后添加的新入站也会自动同步现有客户端。", "All nodes are selected by default. New inbounds also receive existing clients automatically.")}</p>
+      <Button disabled={busy || selected.length === inbounds.length} onClick={() => onChange(inbounds.map((inbound) => inbound.id))} size="sm" type="button" variant="ghost">{copy(language, "全选", "Select all")}</Button>
+    </div>
+    <div className="grid gap-2 sm:grid-cols-2">
+      {inbounds.map((inbound) => {
+        const checked = selected.includes(inbound.id);
+        return <button aria-checked={checked} className={`flex min-h-14 items-center gap-3 rounded-xl border p-3 text-left transition-colors ${checked ? "border-primary bg-primary/5" : "bg-card hover:bg-accent"}`} disabled={busy} key={inbound.id} onClick={() => toggle(inbound.id)} role="checkbox" type="button">
+          <span className={`flex size-9 shrink-0 items-center justify-center rounded-full ${checked ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{checked ? <CheckIcon className="size-4" /> : <ServerIcon className="size-4" />}</span>
+          <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{inbound.nodeName || inbound.name}</span><span className="mt-0.5 block truncate text-xs text-muted-foreground">{inbound.connectHostname || inbound.name}</span></span>
+        </button>;
+      })}
+    </div>
+    <p aria-live="polite" className="text-xs text-muted-foreground">{copy(language, `已选择 ${selected.length} / ${inbounds.length} 个节点`, `${selected.length} of ${inbounds.length} nodes selected`)}</p>
+  </fieldset>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div><p className="text-muted-foreground">{label}</p><p className="mt-1 font-medium tabular-nums">{value}</p></div>; }

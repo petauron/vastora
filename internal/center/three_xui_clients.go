@@ -24,6 +24,12 @@ func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (Thre
 	input.Action = strings.TrimSpace(input.Action)
 	input.Email = strings.TrimSpace(input.Email)
 	input.NewEmail = strings.TrimSpace(input.NewEmail)
+	for _, inboundID := range input.InboundIDs {
+		if inboundID < 1 {
+			return input, errors.New("center: selected REALITY node is invalid")
+		}
+	}
+	input.InboundIDs = normalizedThreeXUIInboundIDs(input.InboundIDs)
 	if input.ApplicationID == "" || !threeXUIClientActions[input.Action] {
 		return input, errors.New("center: application and a valid 3x-ui client operation are required")
 	}
@@ -32,12 +38,12 @@ func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (Thre
 	}
 	switch input.Action {
 	case "create":
-		if !validThreeXUIClientName(input.NewEmail) || input.InboundID < 1 {
-			return input, errors.New("center: client name and REALITY inbound are required")
+		if !validThreeXUIClientName(input.NewEmail) || len(input.InboundIDs) == 0 {
+			return input, errors.New("center: client name and at least one REALITY node are required")
 		}
 	case "update":
-		if !validThreeXUIClientName(input.Email) || !validThreeXUIClientName(input.NewEmail) {
-			return input, errors.New("center: current and new client names are required")
+		if !validThreeXUIClientName(input.Email) || !validThreeXUIClientName(input.NewEmail) || len(input.InboundIDs) == 0 {
+			return input, errors.New("center: client name and at least one REALITY node are required")
 		}
 	case "set_enabled", "delete", "reset_traffic", "reveal_subscription":
 		if !validThreeXUIClientName(input.Email) {
@@ -49,6 +55,20 @@ func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (Thre
 		}
 	}
 	return input, nil
+}
+
+func normalizedThreeXUIInboundIDs(values []int) []int {
+	seen := make(map[int]bool, len(values))
+	result := make([]int, 0, len(values))
+	for _, value := range values {
+		if value < 1 || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	sort.Ints(result)
+	return result
 }
 
 func validThreeXUIClientName(value string) bool {
@@ -97,13 +117,19 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 	if input.InboundID > 0 && !threeXUIClientInboundExists(inbounds, input.InboundID) {
 		return ApplicationCommandView{}, errors.New("center: selected REALITY inbound is unavailable")
 	}
+	for _, inboundID := range input.InboundIDs {
+		if !threeXUIClientInboundExists(inbounds, inboundID) {
+			return ApplicationCommandView{}, errors.New("center: selected REALITY node is unavailable")
+		}
+	}
 	subscriptionBaseURI, err := threeXUISubscriptionBaseURI(ctx, tx, input.ApplicationID)
 	if err != nil {
 		return ApplicationCommandView{}, err
 	}
 	task := ThreeXUIClientCommandTask{
 		Action: input.Action, Email: input.Email, NewEmail: input.NewEmail, InboundID: input.InboundID,
-		Enabled: input.Enabled, TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, LimitIP: input.LimitIP,
+		InboundIDs: input.InboundIDs,
+		Enabled:    input.Enabled, TotalBytes: input.TotalBytes, ExpiryTime: input.ExpiryTime, LimitIP: input.LimitIP,
 		Inbounds: inbounds, SubscriptionBaseURI: subscriptionBaseURI,
 	}
 	encoded, _ := json.Marshal(task)

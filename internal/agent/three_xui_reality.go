@@ -85,6 +85,9 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
 			return RealityCommandResult{}, err
 		}
+		if err := attachAllThreeXUIClientsToInbound(ctx, baseURL, masterToken, result.InboundID); err != nil {
+			return RealityCommandResult{}, err
+		}
 		return result, nil
 	}
 
@@ -137,7 +140,46 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
 		return RealityCommandResult{}, err
 	}
+	if err := attachAllThreeXUIClientsToInbound(ctx, baseURL, masterToken, result.InboundID); err != nil {
+		return RealityCommandResult{}, err
+	}
 	return result, nil
+}
+
+func attachAllThreeXUIClientsToInbound(ctx context.Context, baseURL, token string, inboundID int) error {
+	clients, err := listThreeXUIClients(ctx, baseURL, token)
+	if err != nil {
+		return fmt.Errorf("agent: list clients for automatic node synchronization: %w", err)
+	}
+	emails := make([]string, 0, len(clients))
+	for _, client := range clients {
+		if !containsInt(client.InboundIDs, inboundID) {
+			emails = append(emails, client.Email)
+		}
+	}
+	if len(emails) == 0 {
+		return nil
+	}
+	payload, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/bulkAttach", token, "application/json", map[string]any{"emails": emails, "inboundIds": []int{inboundID}})
+	if err != nil {
+		return fmt.Errorf("agent: attach existing clients to the new REALITY node: %w", err)
+	}
+	var result struct {
+		Errors []json.RawMessage `json:"errors"`
+	}
+	if json.Unmarshal(payload, &result) != nil || len(result.Errors) != 0 {
+		return errors.New("agent: 3x-ui could not attach every existing client to the new REALITY node")
+	}
+	return nil
+}
+
+func containsInt(values []int, expected int) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func threeXUIRealityStreamSettings(target, sni, privateKey, publicKey, shortID string) map[string]any {

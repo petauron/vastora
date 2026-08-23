@@ -146,7 +146,7 @@ export type ApplicationCommandKind = "3xui.reality.create" | "3xui.subscription.
 export type ThreeXUIClientInbound = { id: number; name: string; applicationId?: string; nodeId?: string; nodeName?: string; connectHostname?: string; sniHostname?: string };
 export type ThreeXUIClient = { email: string; enabled: boolean; totalBytes: number; usedBytes: number; expiryTime: number; limitIp: number; inboundIds: number[]; hasSubscription: boolean };
 export type ThreeXUIClientAction = "list" | "create" | "update" | "set_enabled" | "delete" | "reset_traffic" | "reveal_link" | "reveal_subscription";
-export type ThreeXUIClientCommandInput = { applicationId: string; action: ThreeXUIClientAction; email?: string; newEmail?: string; inboundId?: number; enabled?: boolean; totalBytes?: number; expiryTime?: number; limitIp?: number };
+export type ThreeXUIClientCommandInput = { applicationId: string; action: ThreeXUIClientAction; email?: string; newEmail?: string; inboundId?: number; inboundIds?: number[]; enabled?: boolean; totalBytes?: number; expiryTime?: number; limitIp?: number };
 export type ApplicationCommand = { id: string; applicationId: string; gatewayNodeId: string; kind: ApplicationCommandKind; state: "pending" | "running" | "succeeded" | "failed"; hostname: string; dnsProvider: "manual" | "cloudflare"; target?: string; sniHostname?: string; publicationId?: string; action?: ThreeXUIClientAction; clients?: ThreeXUIClient[]; clientsObserved?: boolean; inbounds?: ThreeXUIClientInbound[]; subscriptionAvailable?: boolean; error?: string; resultAvailable: boolean; createdAt: string; updatedAt: string };
 
 export type Deployment = {

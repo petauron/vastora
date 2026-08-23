@@ -82,6 +82,7 @@ type ThreeXUIClientCommandInput struct {
 	Email         string `json:"email,omitempty"`
 	NewEmail      string `json:"newEmail,omitempty"`
 	InboundID     int    `json:"inboundId,omitempty"`
+	InboundIDs    []int  `json:"inboundIds,omitempty"`
 	Enabled       bool   `json:"enabled"`
 	TotalBytes    int64  `json:"totalBytes"`
 	ExpiryTime    int64  `json:"expiryTime"`
@@ -103,6 +104,7 @@ type ThreeXUIClientCommandTask struct {
 	Email               string                  `json:"email,omitempty"`
 	NewEmail            string                  `json:"newEmail,omitempty"`
 	InboundID           int                     `json:"inboundId,omitempty"`
+	InboundIDs          []int                   `json:"inboundIds,omitempty"`
 	Enabled             bool                    `json:"enabled"`
 	TotalBytes          int64                   `json:"totalBytes"`
 	ExpiryTime          int64                   `json:"expiryTime"`

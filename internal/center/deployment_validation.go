@@ -7,8 +7,15 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 )
 
-func validateApplicationResult(manifest catalog.AppManifest, configJSON []byte, serviceAddress string, result ApplicationTaskResult) error {
-	if len(result.Services) != len(manifest.Services) {
+func validateApplicationResult(manifest catalog.AppManifest, appKey, role string, configJSON []byte, serviceAddress string, result ApplicationTaskResult) error {
+	services := make(map[string]catalog.Service, len(manifest.Services))
+	for _, service := range manifest.Services {
+		if appKey == threeXUIAppKey && role == threeXUIRoleWorker && service.Name == "subscription" {
+			continue
+		}
+		services[service.Name] = service
+	}
+	if len(result.Services) != len(services) {
 		return errors.New("center: Agent service result does not match the signed manifest")
 	}
 	var config map[string]json.RawMessage
@@ -17,8 +24,8 @@ func validateApplicationResult(manifest catalog.AppManifest, configJSON []byte, 
 	}
 	seen := make(map[string]bool, len(result.Services))
 	for _, reported := range result.Services {
-		declared, err := selectedCatalogService(manifest, reported.Name)
-		if err != nil || seen[reported.Name] || reported.Protocol != declared.Protocol || reported.ContainerPort != declared.ContainerPort {
+		declared, expected := services[reported.Name]
+		if !expected || seen[reported.Name] || reported.Protocol != declared.Protocol || reported.ContainerPort != declared.ContainerPort {
 			return errors.New("center: Agent service result does not match the signed manifest")
 		}
 		seen[reported.Name] = true
