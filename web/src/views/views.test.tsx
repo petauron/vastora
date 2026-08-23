@@ -342,7 +342,7 @@ describe("network and app views", () => {
     let container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     expect(document.body.textContent).toContain("连接 Cloudflare 后可以开启");
-    expect(document.querySelector<HTMLButtonElement>("#publication-tls")?.disabled).toBe(true);
+    expect(document.querySelector<HTMLElement>('[role="switch"][aria-label="使用 HTTPS"]')?.getAttribute("aria-disabled")).toBe("true");
 
     act(() => root?.unmount());
     root = undefined;
@@ -351,8 +351,9 @@ describe("network and app views", () => {
     container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     expect(document.body.textContent).toContain("使用 Cloudflare DNS 验证申请可信证书");
-    expect(document.querySelector<HTMLButtonElement>("#publication-tls")?.disabled).toBe(false);
-    expect(document.querySelector<HTMLButtonElement>("#publication-tls")?.getAttribute("aria-checked")).toBe("true");
+    const tlsSwitch = document.querySelector<HTMLElement>('[role="switch"][aria-label="使用 HTTPS"]');
+    expect(tlsSwitch?.getAttribute("aria-disabled")).not.toBe("true");
+    expect(tlsSwitch?.getAttribute("aria-checked")).toBe("true");
   });
 
   it("upgrades an existing private HTTP access point from its HTTPS switch", async () => {
@@ -364,7 +365,7 @@ describe("network and app views", () => {
     const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
 
     expect(container.textContent).toContain("安全私网 · HTTP");
-    const tlsSwitch = container.querySelector<HTMLButtonElement>("#publication-tls-private-panel");
+    const tlsSwitch = container.querySelector<HTMLElement>('[role="switch"][aria-label="开启 HTTPS"]');
     expect(tlsSwitch?.getAttribute("aria-label")).toBe("开启 HTTPS");
     await act(async () => { tlsSwitch?.click(); await Promise.resolve(); });
     expect(update).toHaveBeenCalledWith("private-panel", true);
