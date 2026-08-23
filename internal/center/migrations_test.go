@@ -299,6 +299,59 @@ func TestVersion11MigrationSelectsOneRunningThreeXUIControllerPerSite(t *testing
 	}
 }
 
+func TestVersion13MigrationAddsRealityDisplayNames(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 12); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, result_json, state, created_at, updated_at)
+		VALUES('legacy-reality', 'application-v3', 'agent-v3', 'agent-v3', '3xui.reality.create',
+		'{"name":"MacBook","connectHostname":"reality.example.test","dnsProvider":"manual","targetApplicationId":"application-v3","targetAddress":"10.0.0.2","targetPanelPort":2053}',
+		'{"inboundId":9,"name":"MacBook"}', 'succeeded', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var action, displayName, clientName, resultDisplayName string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT json_extract(input_json, '$.action'), json_extract(input_json, '$.displayName'), json_extract(input_json, '$.clientName'), json_extract(result_json, '$.displayName') FROM application_commands WHERE id = 'legacy-reality'`).Scan(&action, &displayName, &clientName, &resultDisplayName); err != nil {
+		t.Fatal(err)
+	}
+	if action != "create" || displayName != "MacBook" || clientName != "MacBook" || resultDisplayName != "MacBook" {
+		t.Fatalf("migrated REALITY names = action %q, display %q, client %q, result %q", action, displayName, clientName, resultDisplayName)
+	}
+	var serviceDisplayName string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT display_name FROM services WHERE id = 'service-v3'`).Scan(&serviceDisplayName); err != nil || serviceDisplayName != "" {
+		t.Fatalf("migrated service display name = %q, err=%v", serviceDisplayName, err)
+	}
+	if _, err := migrated.db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
+		VALUES('rename-reality', 'application-v3', 'agent-v3', 'agent-v3', '3xui.reality.rename', '{"action":"rename","displayName":"US Oracle","inboundId":9,"targetApplicationId":"application-v3"}', 'failed', ?, ?)`, now, now); err != nil {
+		t.Fatalf("REALITY rename command kind was not accepted: %v", err)
+	}
+}
+
 func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)

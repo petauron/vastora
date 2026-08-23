@@ -273,19 +273,55 @@ describe("network and app views", () => {
     expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker");
   });
 
-  it("shows one Site controller and keeps worker controls focused on VLESS", () => {
+	it("shows one Site controller and keeps worker controls focused on VLESS", () => {
     const data = realityDashboard();
     data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker" });
     data.applications.push({ ...data.applications[0], id: "three-x-ui-worker", nodeId: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
+    data.services.push(
+      { id: "controller-inbound", applicationId: "three-x-ui", siteId: "site", name: "inbound-1", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" },
+      { id: "worker-inbound", applicationId: "three-x-ui-worker", siteId: "site", name: "inbound-2", protocol: "tcp", containerPort: 31443, hostPort: 31443, endpoint: "10.0.0.20:31443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }
+    );
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("订阅主机");
     expect(container.textContent).toContain("VLESS 节点");
+    expect(container.textContent).toContain("当前订阅包含 2 个 VLESS 节点");
+    expect(container.textContent).not.toContain("统一管理 1 个 VLESS 节点");
     expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("管理客户端"))).toHaveLength(1);
     expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("创建 VLESS"))).toHaveLength(2);
-    expect(container.textContent).toContain("客户端和订阅由当前位置的订阅主机统一管理");
-  });
+		expect(container.textContent).toContain("客户端和订阅由当前位置的订阅主机统一管理");
+	});
 
-  it("offers a guided manual subscription-host migration", () => {
+	it("renames an existing REALITY node from Center", async () => {
+		vi.useFakeTimers();
+		const data = realityDashboard();
+		data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "Old name", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
+		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", displayName: "US Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		const rename = vi.spyOn(api, "renameRealityCommand").mockResolvedValue(pending);
+		vi.spyOn(api, "applicationCommand").mockResolvedValue({ ...pending, state: "succeeded", updatedAt: "2026-08-23T00:00:01Z" });
+		const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
+		const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+		expect(container.textContent).toContain("Old name");
+		act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("重命名"))?.click());
+		const input = document.querySelector<HTMLInputElement>("#reality-rename-display-name")!;
+		act(() => {
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "US Oracle");
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		await act(async () => {
+			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("保存名称"))?.click();
+			await Promise.resolve();
+		});
+		expect(rename).toHaveBeenCalledWith("reality-service", "US Oracle");
+		await act(async () => {
+			vi.advanceTimersByTime(1300);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		expect(document.body.textContent).toContain("现在显示为“US Oracle”");
+		expect(mutate).toHaveBeenCalled();
+	});
+
+	it("offers a guided manual subscription-host migration", () => {
     const data = realityDashboard();
     data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker", connected: true });
     data.applications.push({ ...data.applications[0], id: "three-x-ui-worker", nodeId: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
@@ -383,7 +419,7 @@ describe("network and app views", () => {
     expect(update).toHaveBeenCalledWith("private-panel", true);
   });
 
-  it("reveals a REALITY client link only after explicit confirmation", async () => {
+	it("reveals a REALITY client link only after explicit confirmation", async () => {
     const data = realityDashboard();
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", target: "www.example.com:443", sniHostname: "www.example.com", resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
@@ -399,10 +435,34 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
     expect(reveal).toHaveBeenCalledWith("application-command-1");
-    expect(document.body.textContent).toContain("vless://one-time-client-link");
-  });
+		expect(document.body.textContent).toContain("vless://one-time-client-link");
+	});
 
-  it("starts first-run onboarding with a real location and the browser timezone", () => {
+	it("specifies separate subscription-node and initial-client names when creating REALITY", async () => {
+		const data = realityDashboard();
+		vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new Error("not found"));
+		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", displayName: "US Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+		await act(async () => {
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
+			await Promise.resolve();
+		});
+		const nodeName = document.querySelector<HTMLInputElement>("#reality-display-name")!;
+		expect(nodeName.value).toBe("home-server");
+		expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
+		act(() => {
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(nodeName, "US Oracle");
+			nodeName.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		await act(async () => {
+			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("自动创建"))?.click();
+			await Promise.resolve();
+		});
+		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", displayName: "US Oracle", clientName: "我的设备", gatewayNodeId: "agent", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", target: undefined, sniHostname: undefined });
+	});
+
+	it("starts first-run onboarding with a real location and the browser timezone", () => {
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-19T00:00:00Z" }]} suggestedAgentConnectUrl="" />);
     expect(container.textContent).toContain("创建第一个位置");
     expect(container.textContent).toContain("位置通常是一处家庭、办公室或数据中心");

@@ -140,6 +140,20 @@ func (s *Server) handleCreateRealityCommand(writer http.ResponseWriter, request 
 	writeJSON(writer, http.StatusCreated, value)
 }
 
+func (s *Server) handleRenameRealityCommand(writer http.ResponseWriter, request *http.Request) {
+	var input RealityRenameCommandInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.CreateRealityRenameCommand(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, value)
+}
+
 func (s *Server) handleCreateSubscriptionCommand(writer http.ResponseWriter, request *http.Request) {
 	var input SubscriptionCommandInput
 	if err := decodeJSON(request, &input); err != nil {

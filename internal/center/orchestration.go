@@ -492,7 +492,7 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 }
 
 func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.application_id, s.site_id, s.name, s.protocol, s.container_port, s.host_port, s.endpoint, s.source, s.app_protocol, s.management, s.observed_listen, s.status, s.last_error, s.created_at, s.updated_at, a.last_seen_at
+	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.application_id, s.site_id, s.name, s.display_name, s.protocol, s.container_port, s.host_port, s.endpoint, s.source, s.app_protocol, s.management, s.observed_listen, s.status, s.last_error, s.created_at, s.updated_at, a.last_seen_at
 		FROM services s JOIN applications app ON app.id = s.application_id JOIN agents a ON a.id = app.node_id ORDER BY s.name, s.id`)
 	if err != nil {
 		return nil, err
@@ -503,7 +503,7 @@ func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 		var value ServiceView
 		var created, updated, lastSeen string
 		var management int
-		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen); err != nil {
+		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen); err != nil {
 			return nil, err
 		}
 		value.Management = management == 1

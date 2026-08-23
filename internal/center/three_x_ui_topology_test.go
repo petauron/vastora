@@ -91,7 +91,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if !workerInboundFound {
 		t.Fatalf("controller observation was not assigned to its worker: %#v", services)
 	}
-	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, Name: "Phone", GatewayNodeID: master.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual"})
+	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, DisplayName: "Worker", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
