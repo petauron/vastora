@@ -15,7 +15,10 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var id, kind string
 	var inputJSON []byte
 	var attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt FROM application_commands WHERE agent_id = ? AND state = 'pending' ORDER BY created_at, rowid LIMIT 1`, agentID).Scan(&id, &kind, &inputJSON, &attempt)
+	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt FROM application_commands
+		WHERE agent_id = ? AND state = 'pending'
+		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(input_json, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
+		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
