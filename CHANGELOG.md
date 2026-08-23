@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.42](https://github.com/petauron/vastora/compare/v0.1.0-alpha.41...v0.1.0-alpha.42) (2026-08-23)
+
+
+### Features
+
+* deliver agent tasks instantly ([#128](https://github.com/petauron/vastora/issues/128)) ([7f8c423](https://github.com/petauron/vastora/commit/7f8c42329e138399b26bb749e5a990017e5db319))
+
 ## [0.1.0-alpha.41](https://github.com/petauron/vastora/compare/v0.1.0-alpha.40...v0.1.0-alpha.41) (2026-08-23)
 
 
