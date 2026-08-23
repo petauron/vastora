@@ -113,6 +113,7 @@ type ServiceView struct {
 	SiteID         string    `json:"siteId"`
 	Name           string    `json:"name"`
 	DisplayName    string    `json:"displayName,omitempty"`
+	RegionCode     string    `json:"regionCode,omitempty"`
 	Protocol       string    `json:"protocol"`
 	ContainerPort  int       `json:"containerPort"`
 	HostPort       int       `json:"hostPort"`

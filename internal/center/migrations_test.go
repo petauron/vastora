@@ -326,6 +326,12 @@ func TestVersion13MigrationAddsRealityDisplayNames(t *testing.T) {
 		'{"inboundId":9,"name":"MacBook"}', 'succeeded', ?, ?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
+		VALUES('legacy-pending-reality', 'application-v3', 'agent-v3', 'agent-v3', '3xui.reality.create',
+		'{"name":"Phone","connectHostname":"reality.example.test","dnsProvider":"manual","targetApplicationId":"application-v3","targetAddress":"10.0.0.2","targetPanelPort":2053}',
+		'pending', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -342,9 +348,16 @@ func TestVersion13MigrationAddsRealityDisplayNames(t *testing.T) {
 	if action != "create" || displayName != "MacBook" || clientName != "MacBook" || resultDisplayName != "MacBook" {
 		t.Fatalf("migrated REALITY names = action %q, display %q, client %q, result %q", action, displayName, clientName, resultDisplayName)
 	}
-	var serviceDisplayName string
-	if err := migrated.db.QueryRowContext(ctx, `SELECT display_name FROM services WHERE id = 'service-v3'`).Scan(&serviceDisplayName); err != nil || serviceDisplayName != "" {
-		t.Fatalf("migrated service display name = %q, err=%v", serviceDisplayName, err)
+	var pendingState, pendingError string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT state, error FROM application_commands WHERE id = 'legacy-pending-reality'`).Scan(&pendingState, &pendingError); err != nil {
+		t.Fatal(err)
+	}
+	if pendingState != "failed" || !strings.Contains(pendingError, "choose a region") {
+		t.Fatalf("legacy pending REALITY command = state %q, error %q", pendingState, pendingError)
+	}
+	var serviceDisplayName, serviceRegionCode string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT display_name, region_code FROM services WHERE id = 'service-v3'`).Scan(&serviceDisplayName, &serviceRegionCode); err != nil || serviceDisplayName != "" || serviceRegionCode != "" {
+		t.Fatalf("migrated service display name = %q, region = %q, err=%v", serviceDisplayName, serviceRegionCode, err)
 	}
 	if _, err := migrated.db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
 		VALUES('rename-reality', 'application-v3', 'agent-v3', 'agent-v3', '3xui.reality.rename', '{"action":"rename","displayName":"US Oracle","inboundId":9,"targetApplicationId":"application-v3"}', 'failed', ?, ?)`, now, now); err != nil {
@@ -468,6 +481,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE three_x_ui_nodes`,
 		`DROP INDEX applications_one_three_x_ui_master_idx`,
 		`ALTER TABLE applications DROP COLUMN role`,
+		`ALTER TABLE services DROP COLUMN region_code`,
 		`ALTER TABLE services DROP COLUMN display_name`,
 		`DROP TABLE application_commands`,
 		`DROP TABLE certificate_authorities`,
