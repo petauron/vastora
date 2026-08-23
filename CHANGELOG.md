@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.40](https://github.com/petauron/vastora/compare/v0.1.0-alpha.39...v0.1.0-alpha.40) (2026-08-23)
+
+
+### Features
+
+* share site certificates and localize node names ([#124](https://github.com/petauron/vastora/issues/124)) ([0c38e5b](https://github.com/petauron/vastora/commit/0c38e5b58551a175fb58c17b9881af4b6d3a7a16))
+
 ## [0.1.0-alpha.39](https://github.com/petauron/vastora/compare/v0.1.0-alpha.38...v0.1.0-alpha.39) (2026-08-23)
 
 
