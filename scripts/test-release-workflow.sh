@@ -18,6 +18,7 @@ require_line '      - name: Start release metadata check'
 require_line '          GH_TOKEN: ${{ github.token }}'
 require_line "              -f name='Release metadata'"
 require_line '            gh api --method POST "/repos/$GITHUB_REPOSITORY/check-runs"'
+require_line '              -f details_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"'
 require_line '        id: validate_release_metadata'
 require_line '      - name: Finish release metadata check'
 require_line '          CHECK_CONCLUSION: ${{ steps.validate_release_metadata.outcome == '\''success'\'' && '\''success'\'' || '\''failure'\'' }}'

@@ -98,6 +98,7 @@ jobs:
               -f name='Release metadata' \
               -f head_sha="$(git rev-parse HEAD)" \
               -f status='in_progress' \
+              -f details_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
               --jq '.id'
           )"
           echo "id=$check_id" >> "$GITHUB_OUTPUT"
