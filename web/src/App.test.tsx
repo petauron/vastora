@@ -46,6 +46,17 @@ async function renderReadyApp() {
 }
 
 describe("application shell", () => {
+  it("requires ten characters when creating the administrator", async () => {
+    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, cloudflareConfigured: false, publicAddressCandidates: [] });
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(<App />));
+    await vi.waitFor(() => expect(container.textContent).toContain("Create administrator"));
+    expect(container.querySelector<HTMLInputElement>("#password")?.minLength).toBe(10);
+    expect(container.textContent).toContain("At least 10 characters.");
+  });
+
   it("moves keyboard focus to the main content after navigation", async () => {
     mockReadyCenter();
     const container = await renderReadyApp();

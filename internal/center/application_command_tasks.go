@@ -15,7 +15,10 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var id, kind string
 	var inputJSON []byte
 	var attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt FROM application_commands WHERE agent_id = ? AND state = 'pending' ORDER BY created_at, rowid LIMIT 1`, agentID).Scan(&id, &kind, &inputJSON, &attempt)
+	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt FROM application_commands
+		WHERE agent_id = ? AND state = 'pending'
+		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(input_json, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
+		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -25,11 +28,19 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var reality *RealityCommandTask
 	var subscription *SubscriptionCommandTask
 	var client *ThreeXUIClientCommandTask
+	var node *ThreeXUINodeCommandTask
+	var controller *ThreeXUIControllerCommandTask
 	switch kind {
 	case realityCommandKind:
 		var command RealityCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.Name == "" || command.ConnectHostname == "" {
+		if json.Unmarshal(inputJSON, &command) != nil || command.Name == "" || command.ConnectHostname == "" || command.TargetApplicationID == "" || net.ParseIP(command.TargetAddress) == nil {
 			return nil, errors.New("center: stored REALITY operation is invalid")
+		}
+		if command.TargetNodeID > 0 {
+			command.TargetAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.TargetApplicationID)
+			if err != nil {
+				return nil, err
+			}
 		}
 		reality = &command
 	case subscriptionCommandKind:
@@ -44,6 +55,32 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, errors.New("center: stored 3x-ui client operation is invalid")
 		}
 		client = &command
+	case nodeCommandKind:
+		var command ThreeXUINodeCommandTask
+		if json.Unmarshal(inputJSON, &command) != nil || command.WorkerApplicationID == "" || (command.Action != "reconcile" && command.Action != "remove") {
+			return nil, errors.New("center: stored 3x-ui node operation is invalid")
+		}
+		if command.Action == "reconcile" {
+			command.APIToken, err = s.threeXUIAPISecret(ctx, tx, command.WorkerApplicationID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		node = &command
+	case controllerCommandKind:
+		var command ThreeXUIControllerCommandTask
+		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || (command.Action != "backup" && command.Action != "promote" && command.Action != "demote") {
+			return nil, errors.New("center: stored 3x-ui controller operation is invalid")
+		}
+		if command.Action == "promote" {
+			command.SourceAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.SourceApplicationID)
+		} else {
+			command.SourceAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.ApplicationID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		controller = &command
 	default:
 		return nil, errors.New("center: stored application operation kind is invalid")
 	}
@@ -58,7 +95,12 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
 		return nil, err
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client}, nil
+	if node != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'applying', updated_at = ? WHERE worker_application_id = ?`, now.Format(time.RFC3339Nano), node.WorkerApplicationID); err != nil {
+			return nil, err
+		}
+	}
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller}, nil
 }
 
 func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
@@ -91,6 +133,12 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	if kind == clientCommandKind {
 		return s.completeThreeXUIClientCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
+	if kind == nodeCommandKind {
+		return s.completeThreeXUINodeCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == controllerCommandKind {
+		return s.completeThreeXUIControllerCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
 	if kind != realityCommandKind {
 		return errors.New("center: stored application operation kind is invalid")
 	}
@@ -114,7 +162,7 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 			taskError = err.Error()
 		} else {
 			var serviceAddress string
-			if err := tx.QueryRowContext(ctx, `SELECT service_address FROM agent_network_profiles WHERE agent_id = ?`, agentID).Scan(&serviceAddress); err != nil || result.Listen != serviceAddress {
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(p.service_address, '') FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.id = ?`, applicationID).Scan(&serviceAddress); err != nil || result.Listen != serviceAddress {
 				succeeded = false
 				taskError = "center: REALITY inbound is not bound to the confirmed private service address"
 			}

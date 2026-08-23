@@ -11,19 +11,23 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
 
-const sessionLifetime = 24 * time.Hour
+const (
+	adminPasswordMinLength = 10
+	sessionLifetime        = 24 * time.Hour
+)
 
 func (s *Store) CreateFirstAdmin(ctx context.Context, username, password string) (string, string, error) {
 	username = strings.TrimSpace(username)
 	if !usernamePattern.MatchString(username) {
 		return "", "", errors.New("center: username must be 3 to 64 characters using letters, numbers, dots, underscores, or hyphens")
 	}
-	if len(password) < 12 {
-		return "", "", errors.New("center: password must be at least 12 characters")
+	if utf8.RuneCountInString(password) < adminPasswordMinLength {
+		return "", "", errors.New("center: password must be at least 10 characters")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -131,8 +135,8 @@ func (s *Store) ChangePassword(ctx context.Context, sessionToken, currentPasswor
 	if sessionToken == "" {
 		return errors.New("center: authentication required")
 	}
-	if len(newPassword) < 12 {
-		return errors.New("center: new password must be at least 12 characters")
+	if utf8.RuneCountInString(newPassword) < adminPasswordMinLength {
+		return errors.New("center: new password must be at least 10 characters")
 	}
 	if currentPassword == newPassword {
 		return errors.New("center: new password must be different")

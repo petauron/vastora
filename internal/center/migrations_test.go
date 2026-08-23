@@ -225,6 +225,80 @@ func TestVersion8MigrationKeepsShared443SNISeparateFromConnectionHostname(t *tes
 	}
 }
 
+func TestVersion11MigrationSelectsOneRunningThreeXUIControllerPerSite(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := db.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id) VALUES('agent-v10-worker', 'Legacy Worker', X'0304', '0.1.0', 'active', ?, ?, 'site-v3')`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at)
+		VALUES('three-x-ui-failed', 'Old failed 3x-ui', 'agent-v3', 'site-v3', ?, '', 'failed', 'docker', ?, ?),
+		('three-x-ui-running', 'Running 3x-ui', 'agent-v10-worker', 'site-v3', ?, '', 'running', 'docker', ?, ?)`,
+		threeXUIAppKey, now.Add(-time.Hour).Format(time.RFC3339Nano), now.Add(-time.Hour).Format(time.RFC3339Nano), threeXUIAppKey, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, management, status, created_at, updated_at)
+		VALUES('failed-worker-panel', 'three-x-ui-failed', 'site-v3', 'panel', 'http', 2053, 2053, '10.0.0.3:2053', 'catalog', 1, 'ready', ?, ?)`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	roles := map[string]string{}
+	rows, err := migrated.db.QueryContext(ctx, `SELECT id, role FROM applications WHERE app_key = ?`, threeXUIAppKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var id, role string
+		if err := rows.Scan(&id, &role); err != nil {
+			t.Fatal(err)
+		}
+		roles[id] = role
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if roles["three-x-ui-running"] != threeXUIRoleMaster || roles["three-x-ui-failed"] != threeXUIRoleWorker {
+		t.Fatalf("migrated 3x-ui roles = %#v", roles)
+	}
+	var workerPanelStatus string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT status FROM services WHERE id = 'failed-worker-panel'`).Scan(&workerPanelStatus); err != nil || workerPanelStatus != "stopped" {
+		t.Fatalf("legacy worker panel status=%q err=%v", workerPanelStatus, err)
+	}
+	if _, err := migrated.db.ExecContext(ctx, `UPDATE applications SET role = 'master', status = 'pending' WHERE id = 'three-x-ui-failed'`); err == nil {
+		t.Fatal("migration did not enforce one active 3x-ui controller per Site")
+	}
+	var topologyTable int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'three_x_ui_nodes'`).Scan(&topologyTable); err != nil || topologyTable != 1 {
+		t.Fatalf("3x-ui topology table count=%d err=%v", topologyTable, err)
+	}
+}
+
 func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -334,6 +408,13 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TRIGGER application_commands_block_during_three_x_ui_migration`,
+		`DROP TRIGGER deployments_block_during_three_x_ui_migration`,
+		`DROP TABLE three_x_ui_migrations`,
+		`DROP TABLE three_x_ui_backups`,
+		`DROP TABLE three_x_ui_nodes`,
+		`DROP INDEX applications_one_three_x_ui_master_idx`,
+		`ALTER TABLE applications DROP COLUMN role`,
 		`DROP TABLE application_commands`,
 		`DROP TABLE certificate_authorities`,
 		`CREATE TABLE publications_v3 (

@@ -25,11 +25,13 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services            []ApplicationServiceResult   `json:"services"`
-	GeneratedSecrets    map[string]string            `json:"generatedSecrets,omitempty"`
-	ApplicationCommand  *RealityCommandResult        `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandResult   `json:"subscriptionCommand,omitempty"`
-	ClientCommand       *ThreeXUIClientCommandResult `json:"clientCommand,omitempty"`
+	Services            []ApplicationServiceResult       `json:"services"`
+	GeneratedSecrets    map[string]string                `json:"generatedSecrets,omitempty"`
+	ApplicationCommand  *RealityCommandResult            `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandResult       `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandResult     `json:"clientCommand,omitempty"`
+	NodeCommand         *ThreeXUINodeCommandResult       `json:"nodeCommand,omitempty"`
+	ControllerCommand   *ThreeXUIControllerCommandResult `json:"controllerCommand,omitempty"`
 }
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {
@@ -54,14 +56,31 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		if len(manifest.Images) != 0 {
 			image = manifest.Images[0].Reference
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, 'pending', 'docker', ?, ?)`, applicationID, manifest.Name.English, request.AgentID, siteID, request.AppKey, image, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, 'pending', 'docker', ?, ?, ?)`, applicationID, manifest.Name.English, request.AgentID, siteID, request.AppKey, image, request.Role, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return "", fmt.Errorf("center: create application: %w", err)
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("center: read application: %w", err)
-	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, updated_at = ? WHERE id = ?`, siteID, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return "", fmt.Errorf("center: update application: %w", err)
+	}
+	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleMaster {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_nodes WHERE worker_application_id = ?`, applicationID); err != nil {
+			return "", fmt.Errorf("center: reset 3x-ui topology role: %w", err)
+		}
+	}
+	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleWorker {
+		var masterApplicationID string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE site_id = ? AND app_key = ? AND role = 'master' AND status = 'running'`, siteID, threeXUIAppKey).Scan(&masterApplicationID); err != nil {
+			return "", errors.New("center: this Site has no running 3x-ui controller")
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id, master_application_id, status, last_error, created_at, updated_at)
+			VALUES(?, ?, 'pending', '', ?, ?)
+			ON CONFLICT(worker_application_id) DO UPDATE SET master_application_id = excluded.master_application_id, remote_node_id = NULL, status = 'pending', last_error = '', updated_at = excluded.updated_at`,
+			applicationID, masterApplicationID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+			return "", fmt.Errorf("center: reserve 3x-ui VLESS node: %w", err)
+		}
 	}
 	return applicationID, nil
 }
@@ -99,8 +118,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		*cleanups = append(*cleanups, values...)
 		return nil
 	}
-	var siteID string
-	if err := tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID); err != nil {
+	var siteID, role string
+	if err := tx.QueryRowContext(ctx, `SELECT site_id, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &role); err != nil {
 		return fmt.Errorf("center: read application site: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
@@ -120,6 +139,9 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	}
 	reportedServices := make(map[string]bool, len(result.Services))
 	for _, reported := range result.Services {
+		if role == threeXUIRoleWorker {
+			continue
+		}
 		reportedServices[reported.Name] = true
 		if net.ParseIP(reported.Address) == nil || reported.HostPort < 1 || reported.HostPort > 65535 || reported.ContainerPort < 1 || reported.ContainerPort > 65535 {
 			return errors.New("center: Agent reported an invalid service endpoint")
@@ -142,7 +164,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			return fmt.Errorf("center: update service: %w", err)
 		}
 	}
-	existingRows, err := tx.QueryContext(ctx, `SELECT id, name FROM services WHERE application_id = ?`, applicationID)
+	existingRows, err := tx.QueryContext(ctx, `SELECT id, name FROM services WHERE application_id = ? AND source = 'catalog'`, applicationID)
 	if err != nil {
 		return err
 	}
@@ -436,10 +458,14 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 	for _, app := range apps {
 		availableVersions[app.Key] = app.App.Version
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.name, a.node_id, a.site_id, a.app_key, a.image, a.status, a.runtime,
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.name, a.node_id, a.site_id, a.app_key, a.image, a.status, a.runtime, a.role,
+		COALESCE(n.master_application_id, ''), COALESCE(n.status, ''), COALESCE(n.last_error, ''),
+		COALESCE(b.state, ''), COALESCE(b.updated_at, ''),
 		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
 		a.created_at, a.updated_at
 		FROM applications a
+		LEFT JOIN three_x_ui_nodes n ON n.worker_application_id = a.id
+		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
 		LEFT JOIN deployments latest ON latest.rowid = (
 			SELECT candidate.rowid FROM deployments candidate
 			WHERE candidate.agent_id = a.node_id AND candidate.app_key = a.app_key AND candidate.state = 'succeeded'
@@ -454,8 +480,16 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 	for rows.Next() {
 		var value ApplicationView
 		var created, updated string
-		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.InstalledVersion, &created, &updated); err != nil {
+		var restorePointAt string
+		if err := rows.Scan(&value.ID, &value.Name, &value.NodeID, &value.SiteID, &value.AppKey, &value.Image, &value.Status, &value.Runtime, &value.Role, &value.ControllerID, &value.NodeSyncStatus, &value.NodeSyncError, &value.RestorePointState, &restorePointAt, &value.InstalledVersion, &created, &updated); err != nil {
 			return nil, err
+		}
+		if restorePointAt != "" {
+			parsed, parseErr := time.Parse(time.RFC3339Nano, restorePointAt)
+			if parseErr != nil {
+				return nil, errors.New("center: invalid 3x-ui restore point timestamp")
+			}
+			value.RestorePointAt = &parsed
 		}
 		value.AvailableVersion = availableVersions[value.AppKey]
 		value.UpdateAvailable = value.InstalledVersion != "" && semver.Compare(canonicalAppVersion(value.AvailableVersion), canonicalAppVersion(value.InstalledVersion)) > 0

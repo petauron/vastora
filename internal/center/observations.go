@@ -28,17 +28,72 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 		if value.Listen != "" && net.ParseIP(value.Listen) == nil {
 			return errors.New("center: Agent reported an invalid application listen address")
 		}
-		if seen[value.Name] {
+		if value.RemoteNodeID < 0 {
+			return errors.New("center: Agent reported an invalid remote 3x-ui node")
+		}
+		key := strconv.Itoa(value.RemoteNodeID) + ":" + value.Name
+		if seen[key] {
 			return errors.New("center: Agent reported a duplicate application endpoint")
 		}
-		seen[value.Name] = true
+		seen[key] = true
 	}
-	var applicationID, siteID, serviceAddress string
-	err := tx.QueryRowContext(ctx, `SELECT a.id, a.site_id, COALESCE(p.service_address, '127.0.0.1') FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.node_id = ? AND a.app_key = ? AND a.status = 'running'`, agentID, threeXUIAppKey).Scan(&applicationID, &siteID, &serviceAddress)
+	var masterApplicationID, role string
+	err := tx.QueryRowContext(ctx, `SELECT id, role FROM applications WHERE node_id = ? AND app_key = ? AND status = 'running'`, agentID, threeXUIAppKey).Scan(&masterApplicationID, &role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	if role == threeXUIRoleWorker {
+		// A worker reports its local database ids, while the Site controller owns
+		// the stable cross-node ids used by clients and subscriptions.
+		return nil
+	}
+	if role != threeXUIRoleMaster {
+		return errors.New("center: running 3x-ui application has no topology role")
+	}
+	byApplication := map[string][]ApplicationEndpointObservation{masterApplicationID: {}}
+	workerRows, err := tx.QueryContext(ctx, `SELECT worker_application_id FROM three_x_ui_nodes WHERE master_application_id = ? AND status = 'ready'`, masterApplicationID)
+	if err != nil {
+		return err
+	}
+	for workerRows.Next() {
+		var workerApplicationID string
+		if err := workerRows.Scan(&workerApplicationID); err != nil {
+			workerRows.Close()
+			return err
+		}
+		byApplication[workerApplicationID] = []ApplicationEndpointObservation{}
+	}
+	if err := workerRows.Close(); err != nil {
+		return err
+	}
+	for _, value := range observations {
+		applicationID := masterApplicationID
+		if value.RemoteNodeID > 0 {
+			err := tx.QueryRowContext(ctx, `SELECT worker_application_id FROM three_x_ui_nodes WHERE master_application_id = ? AND remote_node_id = ? AND status = 'ready'`, masterApplicationID, value.RemoteNodeID).Scan(&applicationID)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+		}
+		byApplication[applicationID] = append(byApplication[applicationID], value)
+	}
+	for applicationID, values := range byApplication {
+		if err := s.reconcileObservedApplication(ctx, tx, applicationID, values, now, cleanups); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, applicationID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
+	var siteID, serviceAddress string
+	if err := tx.QueryRowContext(ctx, `SELECT a.site_id, COALESCE(p.service_address, '')
+		FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.id = ?`, applicationID).Scan(&siteID, &serviceAddress); err != nil {
 		return err
 	}
 	if net.ParseIP(serviceAddress) == nil {

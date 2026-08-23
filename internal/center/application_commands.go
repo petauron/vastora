@@ -18,6 +18,8 @@ const (
 	realityCommandKind      = "3xui.reality.create"
 	subscriptionCommandKind = "3xui.subscription.configure"
 	clientCommandKind       = "3xui.clients.manage"
+	nodeCommandKind         = "3xui.node.reconcile"
+	controllerCommandKind   = "3xui.controller.manage"
 )
 
 type RealityCommandInput struct {
@@ -31,12 +33,17 @@ type RealityCommandInput struct {
 }
 
 type RealityCommandTask struct {
-	Name            string   `json:"name"`
-	ConnectHostname string   `json:"connectHostname"`
-	DNSProvider     string   `json:"dnsProvider"`
-	Target          string   `json:"target,omitempty"`
-	SNIHostname     string   `json:"sniHostname,omitempty"`
-	ExcludedSNI     []string `json:"excludedSni,omitempty"`
+	Name                string   `json:"name"`
+	ConnectHostname     string   `json:"connectHostname"`
+	DNSProvider         string   `json:"dnsProvider"`
+	Target              string   `json:"target,omitempty"`
+	SNIHostname         string   `json:"sniHostname,omitempty"`
+	ExcludedSNI         []string `json:"excludedSni,omitempty"`
+	TargetApplicationID string   `json:"targetApplicationId"`
+	TargetAddress       string   `json:"targetAddress"`
+	TargetPanelPort     int      `json:"targetPanelPort"`
+	TargetNodeID        int      `json:"targetNodeId,omitempty"`
+	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
 }
 
 type RealityCommandResult struct {
@@ -84,6 +91,9 @@ type ThreeXUIClientCommandInput struct {
 type ThreeXUIClientInbound struct {
 	ID              int    `json:"id"`
 	Name            string `json:"name"`
+	ApplicationID   string `json:"applicationId"`
+	NodeID          string `json:"nodeId"`
+	NodeName        string `json:"nodeName"`
 	ConnectHostname string `json:"connectHostname,omitempty"`
 	SNIHostname     string `json:"sniHostname,omitempty"`
 }
@@ -118,6 +128,42 @@ type ThreeXUIClientCommandResult struct {
 	Inbounds        []ThreeXUIClientInbound `json:"inbounds"`
 	Secret          string                  `json:"secret,omitempty"`
 	SecretKind      string                  `json:"secretKind,omitempty"`
+}
+
+type ThreeXUINodeCommandTask struct {
+	Action              string `json:"action"`
+	WorkerApplicationID string `json:"workerApplicationId"`
+	Name                string `json:"name"`
+	Address             string `json:"address"`
+	Port                int    `json:"port"`
+	RemoteNodeID        int    `json:"remoteNodeId,omitempty"`
+	APIToken            string `json:"apiToken,omitempty"`
+}
+
+type ThreeXUINodeCommandResult struct {
+	RemoteNodeID int    `json:"remoteNodeId"`
+	Status       string `json:"status"`
+}
+
+type ThreeXUIControllerCommandTask struct {
+	Action              string `json:"action"`
+	MigrationID         string `json:"migrationId,omitempty"`
+	ApplicationID       string `json:"applicationId"`
+	SourceApplicationID string `json:"sourceApplicationId,omitempty"`
+	SourceName          string `json:"sourceName,omitempty"`
+	SourceAddress       string `json:"sourceAddress,omitempty"`
+	SourcePanelPort     int    `json:"sourcePanelPort,omitempty"`
+	SourceRemoteNodeID  int    `json:"sourceRemoteNodeId,omitempty"`
+	BackupRevision      int64  `json:"backupRevision,omitempty"`
+	SourceAPIToken      string `json:"sourceApiToken,omitempty"`
+}
+
+type ThreeXUIControllerCommandResult struct {
+	Action             string `json:"action"`
+	BackupRevision     int64  `json:"backupRevision,omitempty"`
+	BackupSHA256       string `json:"backupSha256,omitempty"`
+	BackupSize         int64  `json:"backupSize,omitempty"`
+	SourceRemoteNodeID int    `json:"sourceRemoteNodeId,omitempty"`
 }
 
 type ApplicationCommandView struct {
@@ -207,14 +253,45 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, err
 	}
 	defer tx.Rollback()
-	var agentID, siteID, appKey, status string
-	if err := tx.QueryRowContext(ctx, `SELECT node_id, site_id, app_key, status FROM applications WHERE id = ?`, input.ApplicationID).Scan(&agentID, &siteID, &appKey, &status); errors.Is(err, sql.ErrNoRows) {
+	var targetAgentID, siteID, appKey, status, role, targetAddress string
+	if err := tx.QueryRowContext(ctx, `SELECT a.node_id, a.site_id, a.app_key, a.status, a.role,
+		COALESCE(p.service_address, '')
+		FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.id = ?`, input.ApplicationID).Scan(&targetAgentID, &siteID, &appKey, &status, &role, &targetAddress); errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: application not found")
 	} else if err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if appKey != threeXUIAppKey || status != "running" {
 		return ApplicationCommandView{}, errors.New("center: REALITY requires a running official 3x-ui application")
+	}
+	if role != threeXUIRoleMaster && role != threeXUIRoleWorker {
+		return ApplicationCommandView{}, errors.New("center: 3x-ui topology role is not configured")
+	}
+	if net.ParseIP(targetAddress) == nil {
+		return ApplicationCommandView{}, errors.New("center: target VLESS node has no confirmed private service address")
+	}
+	var agentID string
+	var targetNodeID int
+	if role == threeXUIRoleMaster {
+		agentID = targetAgentID
+	} else {
+		if err := tx.QueryRowContext(ctx, `SELECT master.node_id, n.remote_node_id
+			FROM three_x_ui_nodes n JOIN applications master ON master.id = n.master_application_id
+			WHERE n.worker_application_id = ? AND n.status = 'ready' AND master.status = 'running'`, input.ApplicationID).Scan(&agentID, &targetNodeID); errors.Is(err, sql.ErrNoRows) {
+			return ApplicationCommandView{}, errors.New("center: this VLESS node is not connected to the Site 3x-ui controller")
+		} else if err != nil {
+			return ApplicationCommandView{}, err
+		}
+	}
+	var targetConfig []byte
+	if err := tx.QueryRowContext(ctx, `SELECT config_json FROM deployments WHERE application_id = ? AND operation IN ('install', 'upgrade', 'configure') AND state = 'succeeded' ORDER BY created_at DESC, rowid DESC LIMIT 1`, input.ApplicationID).Scan(&targetConfig); err != nil {
+		return ApplicationCommandView{}, errors.New("center: target VLESS node configuration is unavailable")
+	}
+	var targetSettings struct {
+		PanelPort int `json:"panel_port"`
+	}
+	if json.Unmarshal(targetConfig, &targetSettings) != nil || targetSettings.PanelPort < 1024 || targetSettings.PanelPort > 65535 {
+		return ApplicationCommandView{}, errors.New("center: target VLESS node configuration is invalid")
 	}
 	if err := validateGatewayForPublication(ctx, tx, siteID, input.GatewayNodeID, publicationShared443); err != nil {
 		return ApplicationCommandView{}, err
@@ -231,7 +308,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		}
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND state IN ('pending', 'running')`, input.ApplicationID).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind <> ? AND state IN ('pending', 'running')`, input.ApplicationID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
@@ -253,7 +330,8 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if err := rows.Close(); err != nil {
 		return ApplicationCommandView{}, err
 	}
-	task := RealityCommandTask{Name: input.Name, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, Target: input.Target, SNIHostname: input.SNIHostname, ExcludedSNI: excluded}
+	task := RealityCommandTask{Name: input.Name, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, Target: input.Target, SNIHostname: input.SNIHostname, ExcludedSNI: excluded,
+		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID}
 	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)
 	if err != nil {
@@ -319,6 +397,17 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		value.ClientsObserved = result.ClientsObserved
 		value.Inbounds = result.Inbounds
 		value.SubscriptionAvailable = input.SubscriptionBaseURI != ""
+	case nodeCommandKind:
+		var input ThreeXUINodeCommandTask
+		if json.Unmarshal(inputJSON, &input) != nil || input.WorkerApplicationID == "" || (input.Action != "reconcile" && input.Action != "remove") {
+			return value, errors.New("center: stored 3x-ui node operation is invalid")
+		}
+	case controllerCommandKind:
+		var input ThreeXUIControllerCommandTask
+		if json.Unmarshal(inputJSON, &input) != nil || input.ApplicationID == "" {
+			return value, errors.New("center: stored 3x-ui controller operation is invalid")
+		}
+		value.Action = input.Action
 	default:
 		return value, errors.New("center: stored application operation kind is invalid")
 	}
@@ -334,7 +423,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 }
 
 func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
-	if kind != realityCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind {
+	if kind != realityCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string

@@ -31,7 +31,7 @@ afterEach(() => {
 
 const dashboard = (): AppData => ({
   status: { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" },
-  sources: [], organizations: [], routes: [], actions: [], integrations: [],
+  sources: [], organizations: [], routes: [], actions: [], integrations: [], threeXUIControllerMigrations: [],
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
   agents: [{ id: "agent", name: "home-server", version: "test", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", family: "ipv4", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
@@ -47,7 +47,7 @@ const realityDashboard = () => {
   data.agents[0].networkProfile = { serviceAddress: "10.0.0.10", publicAddress: "203.0.113.10", enabledKinds: ["lan", "public"], directPublic: true };
   data.sites[0].domainSuffix = "vastora.example.com";
   data.apps = [{ key: "vastora-official/3x-ui", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "3x-ui", version: "3.6.0", name: { en: "3x-ui", "zh-CN": "3x-ui" }, description: { en: "Proxy management", "zh-CN": "代理管理" }, hostAccess: true, config: [] } }];
-  data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", installedVersion: "3.6.0", availableVersion: "3.6.0" }];
+  data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", role: "master", installedVersion: "3.6.0", availableVersion: "3.6.0" }];
   return data;
 };
 
@@ -256,9 +256,51 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLSelectElement>("#subscription-kind")?.value).toBe("cloudflare_tunnel");
   });
 
+  it("automatically installs later 3x-ui instances as VLESS-only nodes", async () => {
+    const data = realityDashboard();
+    data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker", networkProfile: { serviceAddress: "100.64.0.20", headscaleAddress: "100.64.0.20", enabledKinds: ["headscale"], directPublic: false } });
+    const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "worker-deployment", agentId: "worker", appKey: "vastora-official/3x-ui", appVersion: "3.6.0", state: "pending", operation: "install", deleteData: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
+    const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
+    const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"))?.click());
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装")?.click());
+    expect(document.body.textContent).toContain("将作为 VLESS 节点");
+    expect(document.body.textContent).toContain("不会再创建独立面板或订阅地址");
+    await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("开始安装"))?.click();
+      await Promise.resolve();
+    });
+    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker");
+  });
+
+  it("shows one Site controller and keeps worker controls focused on VLESS", () => {
+    const data = realityDashboard();
+    data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker" });
+    data.applications.push({ ...data.applications[0], id: "three-x-ui-worker", nodeId: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).toContain("订阅主机");
+    expect(container.textContent).toContain("VLESS 节点");
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("管理客户端"))).toHaveLength(1);
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("创建 VLESS"))).toHaveLength(2);
+    expect(container.textContent).toContain("客户端和订阅由当前位置的订阅主机统一管理");
+  });
+
+  it("offers a guided manual subscription-host migration", () => {
+    const data = realityDashboard();
+    data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker", connected: true });
+    data.applications.push({ ...data.applications[0], id: "three-x-ui-worker", nodeId: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
+    data.threeXUIControllerMigrations.push({ id: "migration", siteId: "site", sourceApplicationId: "three-x-ui", targetApplicationId: "three-x-ui-worker", backupRevision: 2, state: "backing_up", step: "backup", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("迁移订阅主机"))?.click());
+    expect(document.body.textContent).toContain("正在安全迁移");
+    expect(document.body.textContent).toContain("保存最新配置");
+    expect(document.body.textContent).toContain("恢复到新主机");
+    expect(document.body.textContent).toContain("切换入口和节点");
+  });
+
   it("manages 3x-ui clients and reveals links without opening the panel", async () => {
     const data = realityDashboard();
-    const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, name: "inbound-9", connectHostname: "reality.example.test" }], subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
+    const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test" }], subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
     const create = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action.startsWith("reveal_") ? { ...baseCommand, id: `client-command-${input.action}`, action: input.action, resultAvailable: true } : baseCommand);
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockImplementation(async (id) => ({ shareUri: id.includes("subscription") ? "https://subscription.example.test/sub/client-id" : "vless://one-time-client-link" }));
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -271,6 +313,7 @@ describe("network and app views", () => {
     });
     expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "list" });
     expect(document.body.textContent).toContain("MacBook");
+    expect(document.body.textContent).toContain("edge-worker · inbound-9");
     expect(document.body.textContent).toContain("日常管理");
     await act(async () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("复制 VLESS"))?.click();
@@ -298,8 +341,8 @@ describe("network and app views", () => {
     data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     let container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
-    expect(document.body.textContent).toContain("连接 Cloudflare 后可开启");
-    expect(document.querySelector<HTMLButtonElement>("#publication-tls")?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("连接 Cloudflare 后可以开启");
+    expect(document.querySelector<HTMLElement>('[role="switch"][aria-label="使用 HTTPS"]')?.getAttribute("aria-disabled")).toBe("true");
 
     act(() => root?.unmount());
     root = undefined;
@@ -307,8 +350,25 @@ describe("network and app views", () => {
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
     container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
-    expect(document.body.textContent).toContain("使用 Cloudflare DNS 验证申请公信证书");
-    expect(document.querySelector<HTMLButtonElement>("#publication-tls")?.disabled).toBe(false);
+    expect(document.body.textContent).toContain("使用 Cloudflare DNS 验证申请可信证书");
+    const tlsSwitch = document.querySelector<HTMLElement>('[role="switch"][aria-label="使用 HTTPS"]');
+    expect(tlsSwitch?.getAttribute("aria-disabled")).not.toBe("true");
+    expect(tlsSwitch?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("upgrades an existing private HTTP access point from its HTTPS switch", async () => {
+    const data = dashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
+    data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.publications = [{ id: "private-panel", serviceId: "manager", kind: "headscale_gateway", gatewayNodeId: "agent", hostname: "panel.home.example", dnsProvider: "headscale", tlsEnabled: false, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl: "http://panel.home.example/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const update = vi.spyOn(api, "updatePublicationTLS").mockResolvedValue({ ...data.publications[0], tlsEnabled: true });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+
+    expect(container.textContent).toContain("安全私网 · HTTP");
+    const tlsSwitch = container.querySelector<HTMLElement>('[role="switch"][aria-label="开启 HTTPS"]');
+    expect(tlsSwitch?.getAttribute("aria-label")).toBe("开启 HTTPS");
+    await act(async () => { tlsSwitch?.click(); await Promise.resolve(); });
+    expect(update).toHaveBeenCalledWith("private-panel", true);
   });
 
   it("reveals a REALITY client link only after explicit confirmation", async () => {
@@ -562,5 +622,9 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("下载诊断报告");
     expect(container.textContent).toContain("不含 Token");
     expect(container.textContent).toContain("修改管理员密码");
+    const changePassword = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("修改管理员密码"));
+    act(() => changePassword?.click());
+    expect(document.querySelector<HTMLInputElement>("#new-password")?.minLength).toBe(10);
+    expect(document.body.textContent).toContain("至少 10 个字符。");
   });
 });

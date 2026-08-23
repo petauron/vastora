@@ -86,10 +86,30 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 	if err != nil {
 		return "", err
 	}
-	if err := configureThreeXUISubscription(ctx, bindAddress, settings.PanelPort, apiToken); err != nil {
+	if err := configureThreeXUISubscriptionRole(ctx, bindAddress, settings.PanelPort, apiToken, task.ApplicationRole); err != nil {
 		return "", err
 	}
 	return apiToken, nil
+}
+
+func configureThreeXUISubscriptionRole(ctx context.Context, address string, panelPort int, apiToken, role string) error {
+	if role == "master" {
+		return configureThreeXUISubscription(ctx, address, panelPort, apiToken)
+	}
+	if role != "worker" {
+		return errors.New("agent: invalid 3x-ui topology role")
+	}
+	baseURL := "http://" + net.JoinHostPort(address, strconv.Itoa(panelPort))
+	settings, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/all", apiToken, map[string]any{})
+	if err != nil {
+		return fmt.Errorf("agent: read 3x-ui worker settings: %w", err)
+	}
+	settings["subEnable"] = false
+	settings["subClashEnable"] = false
+	if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/update", apiToken, settings); err != nil {
+		return fmt.Errorf("agent: disable standalone 3x-ui worker subscription: %w", err)
+	}
+	return restartThreeXUIPanel(ctx, baseURL, apiToken, threeXUIRestartSettleTime)
 }
 
 type threeXUIConfig struct {

@@ -85,6 +85,47 @@ func (s *Server) handleListApplications(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusOK, map[string]any{"applications": values})
 }
 
+func (s *Server) handleReconcileThreeXUINode(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.ReconcileThreeXUINode(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, value)
+}
+
+func (s *Server) handleCreateThreeXUIControllerMigration(writer http.ResponseWriter, request *http.Request) {
+	var input ThreeXUIControllerMigrationInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.CreateThreeXUIControllerMigration(request.Context(), request.PathValue("id"), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, value)
+}
+
+func (s *Server) handleListThreeXUIControllerMigrations(writer http.ResponseWriter, request *http.Request) {
+	values, err := s.store.ListThreeXUIControllerMigrations(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"migrations": values})
+}
+
+func (s *Server) handleThreeXUIControllerMigration(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.ThreeXUIControllerMigration(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
 func (s *Server) handleCreateRealityCommand(writer http.ResponseWriter, request *http.Request) {
 	var input RealityCommandInput
 	if err := decodeJSON(request, &input); err != nil {
@@ -185,6 +226,24 @@ func (s *Server) handleCreatePublication(writer http.ResponseWriter, request *ht
 		return
 	}
 	writeJSON(writer, http.StatusCreated, value)
+}
+
+func (s *Server) handleUpdatePublicationTLS(writer http.ResponseWriter, request *http.Request) {
+	var input PublicationTLSInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if input.Enabled == nil {
+		writeError(writer, http.StatusBadRequest, errors.New("center: HTTPS setting is required"))
+		return
+	}
+	value, err := s.store.UpdatePublicationTLS(request.Context(), request.PathValue("id"), *input.Enabled)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
 }
 
 func (s *Server) handleStopPublication(writer http.ResponseWriter, request *http.Request) {

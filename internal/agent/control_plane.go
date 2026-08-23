@@ -48,24 +48,27 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
-	Kind                string                     `json:"kind"`
-	ID                  string                     `json:"id"`
-	Attempt             int64                      `json:"attempt"`
-	AppKey              string                     `json:"appKey"`
-	Manifest            catalog.AppManifest        `json:"manifest"`
-	Config              json.RawMessage            `json:"config"`
-	Secrets             json.RawMessage            `json:"secrets"`
-	Operation           string                     `json:"operation"`
-	DeleteData          bool                       `json:"deleteData"`
-	Revision            int64                      `json:"revision,omitempty"`
-	ApplicationID       string                     `json:"applicationId,omitempty"`
-	ServiceAddress      string                     `json:"serviceAddress,omitempty"`
-	GatewayState        *gateway.DesiredState      `json:"gatewayState,omitempty"`
-	GatewayCertificates []gateway.Certificate      `json:"gatewayCertificates,omitempty"`
-	TunnelState         *TunnelDesiredState        `json:"tunnelState,omitempty"`
-	ApplicationCommand  *RealityCommandTask        `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandTask   `json:"subscriptionCommand,omitempty"`
-	ClientCommand       *ThreeXUIClientCommandTask `json:"clientCommand,omitempty"`
+	Kind                string                         `json:"kind"`
+	ID                  string                         `json:"id"`
+	Attempt             int64                          `json:"attempt"`
+	AppKey              string                         `json:"appKey"`
+	Manifest            catalog.AppManifest            `json:"manifest"`
+	Config              json.RawMessage                `json:"config"`
+	Secrets             json.RawMessage                `json:"secrets"`
+	Operation           string                         `json:"operation"`
+	DeleteData          bool                           `json:"deleteData"`
+	Revision            int64                          `json:"revision,omitempty"`
+	ApplicationID       string                         `json:"applicationId,omitempty"`
+	ApplicationRole     string                         `json:"applicationRole,omitempty"`
+	ServiceAddress      string                         `json:"serviceAddress,omitempty"`
+	GatewayState        *gateway.DesiredState          `json:"gatewayState,omitempty"`
+	GatewayCertificates []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
+	TunnelState         *TunnelDesiredState            `json:"tunnelState,omitempty"`
+	ApplicationCommand  *RealityCommandTask            `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandTask       `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandTask     `json:"clientCommand,omitempty"`
+	NodeCommand         *ThreeXUINodeCommandTask       `json:"nodeCommand,omitempty"`
+	ControllerCommand   *ThreeXUIControllerCommandTask `json:"controllerCommand,omitempty"`
 }
 
 type Executor interface {
@@ -81,20 +84,27 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services            []ApplicationServiceResult   `json:"services"`
-	GeneratedSecrets    map[string]string            `json:"generatedSecrets,omitempty"`
-	ApplicationCommand  *RealityCommandResult        `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandResult   `json:"subscriptionCommand,omitempty"`
-	ClientCommand       *ThreeXUIClientCommandResult `json:"clientCommand,omitempty"`
+	Services            []ApplicationServiceResult       `json:"services"`
+	GeneratedSecrets    map[string]string                `json:"generatedSecrets,omitempty"`
+	ApplicationCommand  *RealityCommandResult            `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandResult       `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandResult     `json:"clientCommand,omitempty"`
+	NodeCommand         *ThreeXUINodeCommandResult       `json:"nodeCommand,omitempty"`
+	ControllerCommand   *ThreeXUIControllerCommandResult `json:"controllerCommand,omitempty"`
 }
 
 type RealityCommandTask struct {
-	Name            string   `json:"name"`
-	ConnectHostname string   `json:"connectHostname"`
-	DNSProvider     string   `json:"dnsProvider"`
-	Target          string   `json:"target,omitempty"`
-	SNIHostname     string   `json:"sniHostname,omitempty"`
-	ExcludedSNI     []string `json:"excludedSni,omitempty"`
+	Name                string   `json:"name"`
+	ConnectHostname     string   `json:"connectHostname"`
+	DNSProvider         string   `json:"dnsProvider"`
+	Target              string   `json:"target,omitempty"`
+	SNIHostname         string   `json:"sniHostname,omitempty"`
+	ExcludedSNI         []string `json:"excludedSni,omitempty"`
+	TargetApplicationID string   `json:"targetApplicationId"`
+	TargetAddress       string   `json:"targetAddress"`
+	TargetPanelPort     int      `json:"targetPanelPort"`
+	TargetNodeID        int      `json:"targetNodeId,omitempty"`
+	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
 }
 
 type RealityCommandResult struct {
@@ -122,6 +132,9 @@ type SubscriptionCommandResult struct {
 type ThreeXUIClientInbound struct {
 	ID              int    `json:"id"`
 	Name            string `json:"name"`
+	ApplicationID   string `json:"applicationId"`
+	NodeID          string `json:"nodeId"`
+	NodeName        string `json:"nodeName"`
 	ConnectHostname string `json:"connectHostname,omitempty"`
 	SNIHostname     string `json:"sniHostname,omitempty"`
 }
@@ -158,14 +171,51 @@ type ThreeXUIClientCommandResult struct {
 	SecretKind      string                  `json:"secretKind,omitempty"`
 }
 
+type ThreeXUINodeCommandTask struct {
+	Action              string `json:"action"`
+	WorkerApplicationID string `json:"workerApplicationId"`
+	Name                string `json:"name"`
+	Address             string `json:"address"`
+	Port                int    `json:"port"`
+	RemoteNodeID        int    `json:"remoteNodeId,omitempty"`
+	APIToken            string `json:"apiToken,omitempty"`
+}
+
+type ThreeXUINodeCommandResult struct {
+	RemoteNodeID int    `json:"remoteNodeId"`
+	Status       string `json:"status"`
+}
+
+type ThreeXUIControllerCommandTask struct {
+	Action              string `json:"action"`
+	MigrationID         string `json:"migrationId,omitempty"`
+	ApplicationID       string `json:"applicationId"`
+	SourceApplicationID string `json:"sourceApplicationId,omitempty"`
+	SourceName          string `json:"sourceName,omitempty"`
+	SourceAddress       string `json:"sourceAddress,omitempty"`
+	SourcePanelPort     int    `json:"sourcePanelPort,omitempty"`
+	SourceRemoteNodeID  int    `json:"sourceRemoteNodeId,omitempty"`
+	BackupRevision      int64  `json:"backupRevision,omitempty"`
+	SourceAPIToken      string `json:"sourceApiToken,omitempty"`
+}
+
+type ThreeXUIControllerCommandResult struct {
+	Action             string `json:"action"`
+	BackupRevision     int64  `json:"backupRevision,omitempty"`
+	BackupSHA256       string `json:"backupSha256,omitempty"`
+	BackupSize         int64  `json:"backupSize,omitempty"`
+	SourceRemoteNodeID int    `json:"sourceRemoteNodeId,omitempty"`
+}
+
 type ApplicationEndpointObservation struct {
-	AppKey      string `json:"appKey"`
-	Name        string `json:"name"`
-	Protocol    string `json:"protocol"`
-	AppProtocol string `json:"appProtocol"`
-	Listen      string `json:"listen"`
-	Port        int    `json:"port"`
-	Enabled     bool   `json:"enabled"`
+	AppKey       string `json:"appKey"`
+	Name         string `json:"name"`
+	Protocol     string `json:"protocol"`
+	AppProtocol  string `json:"appProtocol"`
+	Listen       string `json:"listen"`
+	Port         int    `json:"port"`
+	Enabled      bool   `json:"enabled"`
+	RemoteNodeID int    `json:"remoteNodeId,omitempty"`
 }
 
 func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken string) (Enrollment, error) {
@@ -264,6 +314,7 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 			Port     int             `json:"port"`
 			Listen   string          `json:"listen"`
 			Enable   bool            `json:"enable"`
+			NodeID   *int            `json:"nodeId,omitempty"`
 			Stream   json.RawMessage `json:"streamSettings"`
 		} `json:"obj"`
 	}
@@ -285,7 +336,11 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 		if security := strings.ToLower(strings.TrimSpace(stream.Security)); security != "" && security != "none" {
 			appProtocol += "/" + security
 		}
-		result = append(result, ApplicationEndpointObservation{AppKey: threeXUIKey, Name: name, Protocol: "tcp", AppProtocol: appProtocol, Listen: strings.TrimSpace(inbound.Listen), Port: inbound.Port, Enabled: inbound.Enable})
+		remoteNodeID := 0
+		if inbound.NodeID != nil {
+			remoteNodeID = *inbound.NodeID
+		}
+		result = append(result, ApplicationEndpointObservation{AppKey: threeXUIKey, Name: name, Protocol: "tcp", AppProtocol: appProtocol, Listen: strings.TrimSpace(inbound.Listen), Port: inbound.Port, Enabled: inbound.Enable, RemoteNodeID: remoteNodeID})
 	}
 	return result, nil
 }
@@ -341,6 +396,12 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 			if task.ClientCommand != nil {
 				commands++
 			}
+			if task.NodeCommand != nil {
+				commands++
+			}
+			if task.ControllerCommand != nil {
+				commands++
+			}
 			if !c.Capabilities.Docker || commands != 1 {
 				err = errors.New("agent: application command received without Docker capability")
 			} else if task.ApplicationCommand != nil {
@@ -355,11 +416,23 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 				if err == nil {
 					result.SubscriptionCommand = &commandResult
 				}
-			} else {
+			} else if task.ClientCommand != nil {
 				var commandResult ThreeXUIClientCommandResult
 				commandResult, err = applyThreeXUIClientCommand(requestContext, store, *task.ClientCommand)
 				if err == nil {
 					result.ClientCommand = &commandResult
+				}
+			} else if task.NodeCommand != nil {
+				var commandResult ThreeXUINodeCommandResult
+				commandResult, err = applyThreeXUINodeCommand(requestContext, store, *task.NodeCommand)
+				if err == nil {
+					result.NodeCommand = &commandResult
+				}
+			} else {
+				var commandResult ThreeXUIControllerCommandResult
+				commandResult, err = c.applyThreeXUIControllerCommand(requestContext, store, *task.ControllerCommand)
+				if err == nil {
+					result.ControllerCommand = &commandResult
 				}
 			}
 		case "gateway.routes.apply":

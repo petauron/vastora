@@ -17,6 +17,7 @@ import (
 type DeploymentRequest struct {
 	AgentID    string          `json:"agentId"`
 	AppKey     string          `json:"appKey"`
+	Role       string          `json:"role,omitempty"`
 	Config     json.RawMessage `json:"config"`
 	Operation  string          `json:"operation"`
 	DeleteData bool            `json:"deleteData"`
@@ -48,6 +49,7 @@ const cpaAppKey = "vastora-official/cpa"
 const threeXUIAppKey = "vastora-official/3x-ui"
 
 func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest) (DeploymentView, error) {
+	request.Role = strings.TrimSpace(request.Role)
 	if strings.TrimSpace(request.AgentID) == "" || strings.TrimSpace(request.AppKey) == "" {
 		return DeploymentView{}, errors.New("center: agent and app are required")
 	}
@@ -63,6 +65,13 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if exists == 0 {
 		return DeploymentView{}, errors.New("center: agent not found")
+	}
+	if request.AppKey == threeXUIAppKey && request.Operation == "install" {
+		if err := s.validateThreeXUIInstallRole(ctx, request.AgentID, request.Role); err != nil {
+			return DeploymentView{}, err
+		}
+	} else if request.Role != "" {
+		return DeploymentView{}, errors.New("center: application role is only valid while installing 3x-ui")
 	}
 	var activeTasks int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND app_key = ? AND state IN ('pending', 'running')`, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
@@ -80,6 +89,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if (request.Operation == "upgrade" || request.Operation == "configure" || request.Operation == "uninstall") && !active.Installed {
 		return DeploymentView{}, errors.New("center: app is not installed on the target Agent")
+	}
+	if request.AppKey == threeXUIAppKey && request.Operation == "uninstall" {
+		if err := s.validateThreeXUIUninstall(ctx, request.AgentID); err != nil {
+			return DeploymentView{}, err
+		}
 	}
 	var manifest catalog.AppManifest
 	if request.Operation == "install" || request.Operation == "upgrade" {
@@ -149,6 +163,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		secrets, oneTimeCredentials, err = s.withThreeXUISecrets(ctx, request.AgentID, request.Operation, secrets)
 		if err != nil {
 			return DeploymentView{}, err
+		}
+		if request.Operation == "install" && request.Role == threeXUIRoleWorker {
+			oneTimeCredentials = nil
 		}
 	}
 	serializedManifest, err := json.Marshal(manifest)

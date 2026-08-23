@@ -110,10 +110,10 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		return PublicationView{}, err
 	}
 	defer tx.Rollback()
-	var siteID, appNodeID, protocol, endpoint, serviceStatus, observedListen string
+	var siteID, appNodeID, protocol, endpoint, serviceStatus, observedListen, applicationRole string
 	var management int
-	if err := tx.QueryRowContext(ctx, `SELECT s.site_id, a.node_id, s.protocol, s.endpoint, s.status, s.management, s.observed_listen
-		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, input.ServiceID).Scan(&siteID, &appNodeID, &protocol, &endpoint, &serviceStatus, &management, &observedListen); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT s.site_id, a.node_id, s.protocol, s.endpoint, s.status, s.management, s.observed_listen, a.role
+		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, input.ServiceID).Scan(&siteID, &appNodeID, &protocol, &endpoint, &serviceStatus, &management, &observedListen, &applicationRole); errors.Is(err, sql.ErrNoRows) {
 		return PublicationView{}, errors.New("center: service not found")
 	} else if err != nil {
 		return PublicationView{}, err
@@ -128,6 +128,9 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		return PublicationView{}, errors.New("center: stored service endpoint is invalid")
 	}
 	webService := protocol == "http" || protocol == "https"
+	if applicationRole == threeXUIRoleWorker && webService {
+		return PublicationView{}, errors.New("center: a VLESS-only node does not publish its internal 3x-ui panel")
+	}
 	if input.TLSEnabled && !webService {
 		return PublicationView{}, errors.New("center: HTTPS is available only for Web services")
 	}

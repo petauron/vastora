@@ -55,6 +55,32 @@ describe("Center API client", () => {
     expect(JSON.parse(String(init.body))).toEqual({ serviceId: "service-1", kind: "headscale_gateway", gatewayNodeId: "agent-1", hostname: "cpa.internal.example", dnsProvider: "headscale" });
   });
 
+  it("updates HTTPS on an existing private publication", async () => {
+    document.cookie = "vastora_csrf=csrf-value; Path=/";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "publication-1", tlsEnabled: true }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.updatePublicationTLS("publication-1", true);
+
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/v1/publications/publication-1/tls");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toEqual({ enabled: true });
+  });
+
+  it("requires an explicit controller migration confirmation", async () => {
+    document.cookie = "vastora_csrf=csrf-value; Path=/";
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "migration-1" }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.migrateThreeXUIController("controller", "worker", true);
+
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/v1/applications/controller/3xui-controller/migrate");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ targetApplicationId: "worker", confirm: true, allowStaleBackup: true });
+  });
+
   it("preserves Center errors and status codes", async () => {
     vi.stubGlobal(
       "fetch",

@@ -1,7 +1,8 @@
 FROM node:24.19.0-bookworm-slim AS web-build
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
 COPY web/ ./
 RUN npm run build
 
@@ -9,10 +10,13 @@ FROM golang:1.26.6-bookworm AS go-build
 ARG VASTORA_VERSION=0.1.0-dev
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN GOTOOLCHAIN=go1.26.6 go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    GOTOOLCHAIN=go1.26.6 go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-RUN CGO_ENABLED=0 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOTOOLCHAIN=go1.26.6 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
     -o /out/vastora ./cmd/vastora
 RUN mkdir -p /out/agent-binaries && cp /out/vastora /out/agent-binaries/linux-amd64
