@@ -408,6 +408,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TRIGGER application_commands_block_during_three_x_ui_migration`,
+		`DROP TRIGGER deployments_block_during_three_x_ui_migration`,
 		`DROP TABLE three_x_ui_migrations`,
 		`DROP TABLE three_x_ui_backups`,
 		`DROP TABLE three_x_ui_nodes`,
