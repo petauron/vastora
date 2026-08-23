@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,14 +20,21 @@ import (
 )
 
 type threeXUIRealityInbound struct {
-	ID             int             `json:"id"`
-	Remark         string          `json:"remark"`
-	Protocol       string          `json:"protocol"`
-	Listen         string          `json:"listen"`
-	Port           int             `json:"port"`
-	Settings       json.RawMessage `json:"settings"`
-	StreamSettings json.RawMessage `json:"streamSettings"`
-	NodeID         *int            `json:"nodeId,omitempty"`
+	ID              int             `json:"id"`
+	Tag             string          `json:"tag"`
+	Remark          string          `json:"remark"`
+	Protocol        string          `json:"protocol"`
+	Listen          string          `json:"listen"`
+	Port            int             `json:"port"`
+	Enable          bool            `json:"enable"`
+	Up              int64           `json:"up"`
+	Down            int64           `json:"down"`
+	Total           int64           `json:"total"`
+	TrafficReset    string          `json:"trafficReset"`
+	TrafficResetDay int             `json:"trafficResetDay"`
+	Settings        json.RawMessage `json:"settings"`
+	StreamSettings  json.RawMessage `json:"streamSettings"`
+	NodeID          *int            `json:"nodeId,omitempty"`
 }
 
 type threeXUIHostGroup struct {
@@ -62,7 +70,7 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	if command.Action == "rename" {
 		return renameThreeXUIRealityInbound(ctx, baseURL, masterToken, command)
 	}
-	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || !validRealityDisplayName(command.ClientName) {
+	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 || (command.CreateInitialClient && command.ClientResetDays > 0 && command.ClientExpiryTime <= store.now().UTC().UnixMilli()) {
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
 	}
 	listen := strings.TrimSpace(command.TargetAddress)
@@ -78,10 +86,11 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		scanToken = strings.TrimSpace(command.TargetAPIToken)
 	}
 	clientEmail := threeXUIClientEmail(command.ClientName, commandID)
-	if existing, ok, err := findRealityInbound(ctx, baseURL, masterToken, clientEmail, command.TargetNodeID); err != nil {
+	inboundTag := command.InboundTag
+	if existing, ok, err := findRealityInbound(ctx, baseURL, masterToken, inboundTag, clientEmail, command.TargetNodeID); err != nil {
 		return RealityCommandResult{}, err
 	} else if ok {
-		existing, err = updateThreeXUIRealityInboundName(ctx, baseURL, masterToken, existing.ID, command.TargetNodeID, command.DisplayName)
+		existing, err = updateThreeXUIRealityInbound(ctx, baseURL, masterToken, existing.ID, command.TargetNodeID, command.DisplayName, &command.InboundTotalBytes)
 		if err != nil {
 			return RealityCommandResult{}, err
 		}
@@ -89,7 +98,7 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		if err != nil {
 			return RealityCommandResult{}, err
 		}
-		result, err := realityResultFromInbound(existing, command.ConnectHostname, command.DisplayName, command.ClientName, clientEmail)
+		result, err := realityResultFromInbound(existing, existing.Tag, command.ConnectHostname, command.DisplayName, command.ClientName, clientEmail)
 		if err != nil {
 			return RealityCommandResult{}, err
 		}
@@ -98,6 +107,11 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		}
 		if err := attachAllThreeXUIClientsToInbound(ctx, baseURL, masterToken, result.InboundID); err != nil {
 			return RealityCommandResult{}, err
+		}
+		if command.CreateInitialClient && result.ClientCreated {
+			if err := attachThreeXUIClientToAllManagedRealityInbounds(ctx, baseURL, masterToken, clientEmail); err != nil {
+				return RealityCommandResult{}, err
+			}
 		}
 		return result, nil
 	}
@@ -117,9 +131,18 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	if json.Unmarshal(keys, &keyPair) != nil || keyPair.PrivateKey == "" || keyPair.PublicKey == "" {
 		return RealityCommandResult{}, errors.New("agent: 3x-ui returned invalid REALITY keys")
 	}
-	clientID, err := randomUUID()
-	if err != nil {
-		return RealityCommandResult{}, err
+	clientCreated := command.CreateInitialClient
+	clientID := ""
+	clients := []map[string]any{}
+	if clientCreated {
+		clientID, err = randomUUID()
+		if err != nil {
+			return RealityCommandResult{}, err
+		}
+		clients = append(clients, map[string]any{
+			"id": clientID, "email": clientEmail, "flow": "xtls-rprx-vision", "limitIp": 0,
+			"totalGB": command.ClientTotalBytes, "expiryTime": command.ClientExpiryTime, "reset": command.ClientResetDays, "enable": true,
+		})
 	}
 	shortBytes := make([]byte, 8)
 	if _, err := rand.Read(shortBytes); err != nil {
@@ -131,8 +154,9 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		return RealityCommandResult{}, err
 	}
 	payload := map[string]any{
-		"enable": true, "remark": command.DisplayName, "listen": listen, "port": port, "protocol": "vless", "expiryTime": 0, "total": 0,
-		"settings":       map[string]any{"clients": []map[string]any{{"id": clientID, "email": clientEmail, "flow": "xtls-rprx-vision", "limitIp": 0, "totalGB": 0, "expiryTime": 0, "enable": true}}, "decryption": "none", "encryption": "none", "fallbacks": []any{}},
+		"enable": true, "tag": inboundTag, "remark": command.DisplayName, "listen": listen, "port": port, "protocol": "vless", "expiryTime": 0,
+		"total": command.InboundTotalBytes, "trafficReset": "never", "trafficResetDay": 1,
+		"settings":       map[string]any{"clients": clients, "decryption": "none", "encryption": "none", "fallbacks": []any{}},
 		"streamSettings": threeXUIRealityStreamSettings(target, sni, keyPair.PrivateKey, keyPair.PublicKey, shortID),
 		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "metadataOnly": false, "routeOnly": false},
 	}
@@ -147,12 +171,23 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 	if json.Unmarshal(added, &inbound) != nil || inbound.ID < 1 {
 		return RealityCommandResult{}, errors.New("agent: 3x-ui returned an invalid REALITY inbound")
 	}
-	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, Target: target, SNIHostname: sni, ConnectHostname: command.ConnectHostname, ShareURI: realityShareURI(clientID, command.ConnectHostname, command.DisplayName, sni, keyPair.PublicKey, shortID)}
+	if strings.TrimSpace(inbound.Tag) == "" {
+		inbound.Tag = command.InboundTag
+	}
+	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, Target: target, SNIHostname: sni, ConnectHostname: command.ConnectHostname, InboundTag: inbound.Tag, ClientCreated: clientCreated, InboundTotalBytes: command.InboundTotalBytes}
+	if clientCreated {
+		result.ShareURI = realityShareURI(clientID, command.ConnectHostname, command.DisplayName, sni, keyPair.PublicKey, shortID)
+	}
 	if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
 		return RealityCommandResult{}, err
 	}
 	if err := attachAllThreeXUIClientsToInbound(ctx, baseURL, masterToken, result.InboundID); err != nil {
 		return RealityCommandResult{}, err
+	}
+	if clientCreated {
+		if err := attachThreeXUIClientToAllManagedRealityInbounds(ctx, baseURL, masterToken, clientEmail); err != nil {
+			return RealityCommandResult{}, err
+		}
 	}
 	return result, nil
 }
@@ -161,7 +196,7 @@ func renameThreeXUIRealityInbound(ctx context.Context, baseURL, token string, co
 	if command.InboundID < 1 || !validRealityDisplayName(command.DisplayName) {
 		return RealityCommandResult{}, errors.New("agent: REALITY rename parameters are invalid")
 	}
-	inbound, err := updateThreeXUIRealityInboundName(ctx, baseURL, token, command.InboundID, command.TargetNodeID, command.DisplayName)
+	inbound, err := updateThreeXUIRealityInbound(ctx, baseURL, token, command.InboundID, command.TargetNodeID, command.DisplayName, nil)
 	if err != nil {
 		return RealityCommandResult{}, err
 	}
@@ -173,7 +208,7 @@ func renameThreeXUIRealityInbound(ctx context.Context, baseURL, token string, co
 	return RealityCommandResult{Action: "rename", InboundID: inbound.ID, DisplayName: inbound.Remark}, nil
 }
 
-func updateThreeXUIRealityInboundName(ctx context.Context, baseURL, token string, inboundID, nodeID int, displayName string) (threeXUIRealityInbound, error) {
+func updateThreeXUIRealityInbound(ctx context.Context, baseURL, token string, inboundID, nodeID int, displayName string, totalBytes *int64) (threeXUIRealityInbound, error) {
 	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/get/"+strconv.Itoa(inboundID), token, "", nil)
 	if err != nil {
 		return threeXUIRealityInbound{}, fmt.Errorf("agent: get 3x-ui REALITY inbound for rename: %w", err)
@@ -189,10 +224,19 @@ func updateThreeXUIRealityInboundName(ctx context.Context, baseURL, token string
 	if json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Security != "reality" {
 		return threeXUIRealityInbound{}, errors.New("agent: selected inbound is not VLESS REALITY")
 	}
-	if inbound.Remark == displayName {
+	changed := inbound.Remark != displayName || inbound.TrafficReset != "never" || inbound.TrafficResetDay != 1
+	if totalBytes != nil && inbound.Total != *totalBytes {
+		changed = true
+	}
+	if !changed {
 		return inbound, nil
 	}
 	update["remark"] = displayName
+	update["trafficReset"] = "never"
+	update["trafficResetDay"] = 1
+	if totalBytes != nil {
+		update["total"] = *totalBytes
+	}
 	delete(update, "id")
 	delete(update, "clientStats")
 	delete(update, "fallbackParent")
@@ -200,7 +244,17 @@ func updateThreeXUIRealityInboundName(ctx context.Context, baseURL, token string
 		return threeXUIRealityInbound{}, fmt.Errorf("agent: rename 3x-ui REALITY inbound: %w", err)
 	}
 	inbound.Remark = displayName
+	inbound.TrafficReset = "never"
+	inbound.TrafficResetDay = 1
+	if totalBytes != nil {
+		inbound.Total = *totalBytes
+	}
 	return inbound, nil
+}
+
+func threeXUIRealityTag(commandID string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(commandID)))
+	return "vastora-" + hex.EncodeToString(digest[:12])
 }
 
 func validRealityDisplayName(value string) bool {
@@ -245,6 +299,54 @@ func attachAllThreeXUIClientsToInbound(ctx context.Context, baseURL, token strin
 		return errors.New("agent: 3x-ui could not attach every existing client to the new REALITY node")
 	}
 	return nil
+}
+
+func attachThreeXUIClientToAllManagedRealityInbounds(ctx context.Context, baseURL, token, email string) error {
+	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
+	if err != nil {
+		return fmt.Errorf("agent: list managed REALITY nodes for initial client: %w", err)
+	}
+	var inbounds []threeXUIRealityInbound
+	if json.Unmarshal(payload, &inbounds) != nil {
+		return errors.New("agent: 3x-ui returned invalid inbounds while synchronizing the initial client")
+	}
+	detail, err := getThreeXUIClient(ctx, baseURL, token, email)
+	if err != nil {
+		return fmt.Errorf("agent: read initial 3x-ui client associations: %w", err)
+	}
+	desired := append([]int(nil), detail.InboundIDs...)
+	for _, inbound := range inbounds {
+		if inbound.ID < 1 || inbound.Protocol != "vless" || !managedThreeXUIRealityTag(inbound.Tag) || containsInt(desired, inbound.ID) {
+			continue
+		}
+		var stream struct {
+			Security string `json:"security"`
+		}
+		if json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Security != "reality" {
+			continue
+		}
+		desired = append(desired, inbound.ID)
+	}
+	if len(desired) == 0 {
+		return errors.New("agent: no managed REALITY node is available for the initial client")
+	}
+	return syncThreeXUIClientInbounds(ctx, baseURL, token, email, detail.InboundIDs, desired)
+}
+
+func managedThreeXUIRealityTag(tag string) bool {
+	tag = strings.TrimSpace(tag)
+	if strings.HasPrefix(tag, "vastora-") {
+		return true
+	}
+	if !strings.HasPrefix(tag, "n") {
+		return false
+	}
+	separator := strings.IndexByte(tag, '-')
+	if separator < 2 || !strings.HasPrefix(tag[separator+1:], "vastora-") {
+		return false
+	}
+	_, err := strconv.Atoi(tag[1:separator])
+	return err == nil
 }
 
 func containsInt(values []int, expected int) bool {
@@ -456,7 +558,7 @@ func realityScanAllowsSNI(scan realityScanResult, hostname string) bool {
 	return false
 }
 
-func findRealityInbound(ctx context.Context, baseURL, token, clientEmail string, nodeID int) (threeXUIRealityInbound, bool, error) {
+func findRealityInbound(ctx context.Context, baseURL, token, inboundTag, clientEmail string, nodeID int) (threeXUIRealityInbound, bool, error) {
 	result, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
 	if err != nil {
 		return threeXUIRealityInbound{}, false, fmt.Errorf("agent: list 3x-ui inbounds: %w", err)
@@ -464,6 +566,11 @@ func findRealityInbound(ctx context.Context, baseURL, token, clientEmail string,
 	var inbounds []threeXUIRealityInbound
 	if json.Unmarshal(result, &inbounds) != nil {
 		return threeXUIRealityInbound{}, false, errors.New("agent: 3x-ui returned invalid inbound data")
+	}
+	for _, inbound := range inbounds {
+		if normalizedThreeXUIInboundTag(inbound.Tag, nodeID) == normalizedThreeXUIInboundTag(inboundTag, nodeID) && threeXUIInboundMatchesNode(inbound, nodeID) {
+			return inbound, true, nil
+		}
 	}
 	for _, inbound := range inbounds {
 		var settings struct {
@@ -483,7 +590,7 @@ func findRealityInbound(ctx context.Context, baseURL, token, clientEmail string,
 	return threeXUIRealityInbound{}, false, nil
 }
 
-func realityResultFromInbound(inbound threeXUIRealityInbound, connectHostname, displayName, clientName, clientEmail string) (RealityCommandResult, error) {
+func realityResultFromInbound(inbound threeXUIRealityInbound, inboundTag, connectHostname, displayName, clientName, clientEmail string) (RealityCommandResult, error) {
 	var settings struct {
 		Clients []struct {
 			ID    string `json:"id"`
@@ -511,10 +618,11 @@ func realityResultFromInbound(inbound threeXUIRealityInbound, connectHostname, d
 			break
 		}
 	}
-	if clientID == "" {
-		return RealityCommandResult{}, errors.New("agent: existing Vastora REALITY client is unavailable")
+	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: displayName, ClientName: clientName, Listen: inbound.Listen, Port: inbound.Port, Target: stream.Reality.Target, SNIHostname: stream.Reality.ServerNames[0], ConnectHostname: connectHostname, InboundTag: inboundTag, ClientCreated: clientID != "", InboundTotalBytes: inbound.Total}
+	if clientID != "" {
+		result.ShareURI = realityShareURI(clientID, connectHostname, displayName, stream.Reality.ServerNames[0], stream.Reality.Settings.PublicKey, stream.Reality.ShortIDs[0])
 	}
-	return RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: displayName, ClientName: clientName, Listen: inbound.Listen, Port: inbound.Port, Target: stream.Reality.Target, SNIHostname: stream.Reality.ServerNames[0], ConnectHostname: connectHostname, ShareURI: realityShareURI(clientID, connectHostname, displayName, stream.Reality.ServerNames[0], stream.Reality.Settings.PublicKey, stream.Reality.ShortIDs[0])}, nil
+	return result, nil
 }
 
 func threeXUIAPI(ctx context.Context, method, endpoint, token, contentType string, payload any) (json.RawMessage, error) {

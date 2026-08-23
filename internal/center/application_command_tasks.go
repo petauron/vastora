@@ -11,13 +11,18 @@ import (
 	"time"
 )
 
+var (
+	errApplicationCommandDiscarded   = errors.New("center: unclaimable application command was failed closed")
+	errApplicationCommandUnavailable = errors.New("center: application command is permanently unavailable")
+)
+
 func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
 	var id, kind string
 	var inputJSON []byte
 	var attempt int64
 	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt FROM application_commands
 		WHERE agent_id = ? AND state = 'pending'
-		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(input_json, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
+		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
 		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -34,17 +39,20 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	case realityCommandKind, realityRenameCommandKind:
 		var command RealityCommandTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) {
-			return nil, errors.New("center: stored REALITY operation is invalid")
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY operation is invalid"))
 		}
-		if kind == realityCommandKind && (command.Action != "create" || !validThreeXUIClientName(command.ClientName) || command.ConnectHostname == "" || net.ParseIP(command.TargetAddress) == nil) {
-			return nil, errors.New("center: stored REALITY creation operation is invalid")
+		if kind == realityCommandKind && (command.Action != "create" || (command.CreateInitialClient && !validThreeXUIClientName(command.ClientName)) || command.InboundTag != realityCommandInboundTag(id) || command.ConnectHostname == "" || net.ParseIP(command.TargetAddress) == nil || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0) {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY creation operation is invalid"))
 		}
 		if kind == realityRenameCommandKind && (command.Action != "rename" || command.InboundID < 1) {
-			return nil, errors.New("center: stored REALITY rename operation is invalid")
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY rename operation is invalid"))
 		}
 		if kind == realityCommandKind && command.TargetNodeID > 0 {
 			command.TargetAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.TargetApplicationID)
 			if err != nil {
+				if errors.Is(err, errThreeXUIAPISecretUnavailable) {
+					return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+				}
 				return nil, err
 			}
 		}
@@ -52,23 +60,41 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	case subscriptionCommandKind:
 		var command SubscriptionCommandTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.Domain == "" || command.BaseURI == "" || command.PublicationID == "" {
-			return nil, errors.New("center: stored subscription operation is invalid")
+			cause := errors.New("center: stored subscription operation is invalid")
+			if err := s.failUnclaimableSubscriptionCommand(ctx, tx, id, agentID, command, cause); err != nil {
+				return nil, err
+			}
+			return nil, errApplicationCommandDiscarded
 		}
 		subscription = &command
 	case clientCommandKind:
 		var command ThreeXUIClientCommandTask
 		if json.Unmarshal(inputJSON, &command) != nil || !threeXUIClientActions[command.Action] {
-			return nil, errors.New("center: stored 3x-ui client operation is invalid")
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored 3x-ui client operation is invalid"))
+		}
+		if command.Action == "update_inbound" || command.Action == "reset_inbound_plan" {
+			if err := s.hydrateThreeXUIInboundPlanTask(ctx, tx, &command); err != nil {
+				if !errors.Is(err, errApplicationCommandUnavailable) && !errors.Is(err, errThreeXUIAPISecretUnavailable) {
+					return nil, err
+				}
+				if failErr := s.failUnclaimableThreeXUIInboundPlanCommand(ctx, tx, id, agentID, command, err); failErr != nil {
+					return nil, failErr
+				}
+				return nil, errApplicationCommandDiscarded
+			}
 		}
 		client = &command
 	case nodeCommandKind:
 		var command ThreeXUINodeCommandTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.WorkerApplicationID == "" || (command.Action != "reconcile" && command.Action != "remove") {
-			return nil, errors.New("center: stored 3x-ui node operation is invalid")
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, &command, nil, errors.New("center: stored 3x-ui node operation is invalid"))
 		}
 		if command.Action == "reconcile" {
 			command.APIToken, err = s.threeXUIAPISecret(ctx, tx, command.WorkerApplicationID)
 			if err != nil {
+				if errors.Is(err, errThreeXUIAPISecretUnavailable) {
+					return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, &command, nil, err)
+				}
 				return nil, err
 			}
 		}
@@ -76,7 +102,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	case controllerCommandKind:
 		var command ThreeXUIControllerCommandTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || (command.Action != "backup" && command.Action != "promote" && command.Action != "demote") {
-			return nil, errors.New("center: stored 3x-ui controller operation is invalid")
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, &command, errors.New("center: stored 3x-ui controller operation is invalid"))
 		}
 		if command.Action == "promote" {
 			command.SourceAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.SourceApplicationID)
@@ -84,13 +110,20 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			command.SourceAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.ApplicationID)
 		}
 		if err != nil {
+			if errors.Is(err, errThreeXUIAPISecretUnavailable) {
+				return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, &command, err)
+			}
 			return nil, err
 		}
 		controller = &command
 	default:
-		return nil, errors.New("center: stored application operation kind is invalid")
+		return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored application operation kind is invalid"))
 	}
 	now := s.now().UTC()
+	taskRevision := int64(1)
+	if client != nil && client.PlanRevision > 0 {
+		taskRevision = client.PlanRevision
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'running', attempt = attempt + 1, lease_expires_at = ?, error = '', updated_at = ? WHERE id = ? AND state = 'pending' AND attempt = ?`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), id, attempt)
 	if err != nil {
 		return nil, fmt.Errorf("center: claim application operation: %w", err)
@@ -98,7 +131,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return nil, errors.New("center: application operation changed while claiming")
 	}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", taskRevision, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
 		return nil, err
 	}
 	if node != nil {
@@ -106,7 +139,97 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: 1, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller}, nil
+}
+
+func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
+	now := s.now().UTC()
+	if command.Action == "reset_inbound_plan" {
+		plan, err := readThreeXUIInboundPlan(ctx, tx, command.ServiceID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && plan.Revision == command.PlanRevision && plan.NextResetAt == command.ExpectedNextResetAt && plan.Status == "resetting" {
+			if err := s.completeThreeXUIInboundPlanReset(ctx, tx, command, nil, false, applicationCommandFailureMessage(cause), now); err != nil {
+				return err
+			}
+		}
+	}
+	return s.failUnclaimableApplicationCommand(ctx, tx, commandID, agentID, command.PlanRevision, nil, nil, cause)
+}
+
+func (s *Store) failUnclaimableSubscriptionCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command SubscriptionCommandTask, cause error) error {
+	message := applicationCommandFailureMessage(cause)
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if strings.TrimSpace(command.PublicationID) != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND status NOT IN ('ready', 'stopped')`, message, now, command.PublicationID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE routes SET status = 'failed', last_error = ?, updated_at = ? WHERE publication_id = ? AND status <> 'ready'`, message, now, command.PublicationID); err != nil {
+			return err
+		}
+	}
+	return s.failUnclaimableApplicationCommand(ctx, tx, commandID, agentID, 1, nil, nil, cause)
+}
+
+func (s *Store) discardUnclaimableApplicationCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, revision int64, node *ThreeXUINodeCommandTask, controller *ThreeXUIControllerCommandTask, cause error) (*AgentTask, error) {
+	if err := s.failUnclaimableApplicationCommand(ctx, tx, commandID, agentID, revision, node, controller, cause); err != nil {
+		return nil, err
+	}
+	return nil, errApplicationCommandDiscarded
+}
+
+func applicationCommandFailureMessage(cause error) string {
+	message := strings.TrimSpace(cause.Error())
+	message = strings.TrimPrefix(message, errApplicationCommandUnavailable.Error()+": ")
+	if len(message) > 1024 {
+		message = message[:1024]
+	}
+	return message
+}
+
+func (s *Store) failUnclaimableApplicationCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, revision int64, node *ThreeXUINodeCommandTask, controller *ThreeXUIControllerCommandTask, cause error) error {
+	message := applicationCommandFailureMessage(cause)
+	now := s.now().UTC()
+	formattedNow := now.Format(time.RFC3339Nano)
+	if node != nil && strings.TrimSpace(node.WorkerApplicationID) != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'failed', last_error = ?, updated_at = ? WHERE worker_application_id = ? AND status <> 'stopped'`, message, formattedNow, node.WorkerApplicationID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(node.MigrationID) != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND state NOT IN ('ready', 'failed')`, message, formattedNow, node.MigrationID); err != nil {
+				return err
+			}
+		}
+	}
+	if controller != nil {
+		if controller.Action == "backup" && strings.TrimSpace(controller.ApplicationID) != "" && controller.BackupRevision > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_backups SET state = 'failed', last_error = ?, updated_at = ? WHERE application_id = ? AND revision = ? AND state = 'pending'`, message, formattedNow, controller.ApplicationID, controller.BackupRevision); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(controller.MigrationID) != "" {
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND state NOT IN ('ready', 'failed')`, message, formattedNow, controller.MigrationID); err != nil {
+				return err
+			}
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'pending'`, message, now.Format(time.RFC3339Nano), commandID)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("center: application command changed while failing an unsafe claim")
+	}
+	if node != nil && strings.TrimSpace(node.MigrationID) != "" {
+		if err := s.queueNextThreeXUINodeAfterMigration(ctx, tx, node.MigrationID, now); err != nil {
+			return err
+		}
+	}
+	if revision < 1 {
+		revision = 1
+	}
+	return s.recordTaskEvent(ctx, tx, commandID, agentID, "application.command", revision, "failed", message)
 }
 
 func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
@@ -215,6 +338,16 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 				succeeded = false
 				taskError = "center: save REALITY service: " + err.Error()
 			}
+			if succeeded {
+				nextResetAt, planErr := nextThreeXUIInboundResetAt(ctx, tx, serviceID, now, input.InboundResetDays)
+				if planErr == nil {
+					planErr = upsertThreeXUIInboundPlan(ctx, tx, serviceID, result.InboundTag, input.InboundTotalBytes, input.InboundResetDays, nextResetAt, 1, now)
+				}
+				if planErr != nil {
+					succeeded = false
+					taskError = "center: save REALITY inbound traffic plan: " + planErr.Error()
+				}
+			}
 		}
 		if succeeded {
 			result := *envelope.ApplicationCommand
@@ -227,11 +360,16 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 					return err
 				}
 			}
-			secretID, err := s.putSecret(ctx, tx, []byte(result.ShareURI), "application-command:"+taskID)
-			if err != nil {
-				return err
+			var secretID any
+			if result.ClientCreated {
+				value, err := s.putSecret(ctx, tx, []byte(result.ShareURI), "application-command:"+taskID)
+				if err != nil {
+					return err
+				}
+				secretID = value
 			}
 			result.ShareURI = ""
+			result.InboundTag = ""
 			publicResult, _ := json.Marshal(result)
 			if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET result_json = ?, result_secret_id = ?, error = '', updated_at = ? WHERE id = ?`, publicResult, secretID, now.Format(time.RFC3339Nano), taskID); err != nil {
 				return err

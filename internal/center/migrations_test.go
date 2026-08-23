@@ -442,6 +442,85 @@ func TestVersion15MigrationHandsOffPerPublicationCertificateWithoutAGap(t *testi
 	}
 }
 
+func TestVersion17MigrationFailsInFlightThreeXUICommandsClosed(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 16); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, status, runtime, role, created_at, updated_at)
+		VALUES('application-v16-second', 'Second legacy app', 'agent-v3', 'site-v3', ?, 'running', 'docker', 'worker', ?, ?)`, threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO application_commands(
+		id, application_id, agent_id, gateway_node_id, kind, input_json, state, lease_expires_at, created_at, updated_at
+	) VALUES
+		('v16-reality-pending', 'application-v3', 'agent-v3', 'agent-v3', '3xui.reality.create', '{}', 'pending', '', ?, ?),
+		('v16-clients-running', 'application-v16-second', 'agent-v3', 'agent-v3', '3xui.clients.manage', '{}', 'running', ?, ?, ?)`, now, now, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	rows, err := migrated.db.QueryContext(ctx, `SELECT state, lease_expires_at, error FROM application_commands WHERE id IN ('v16-reality-pending', 'v16-clients-running') ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var state, lease, message string
+		if err := rows.Scan(&state, &lease, &message); err != nil {
+			t.Fatal(err)
+		}
+		if state != "failed" || lease != "" || !strings.Contains(message, "upgraded") || !strings.Contains(message, "retry") {
+			t.Fatalf("migrated in-flight command state=%q lease=%q error=%q", state, lease, message)
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("migrated in-flight command count=%d", count)
+	}
+	var indexedColumn string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT name FROM pragma_index_info('application_commands_one_active_idx') ORDER BY seqno LIMIT 1`).Scan(&indexedColumn); err != nil {
+		t.Fatal(err)
+	}
+	if indexedColumn != "agent_id" {
+		t.Fatalf("migrated active command index column=%q", indexedColumn)
+	}
+	var updateGuard int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = 'application_command_updates_block_during_three_x_ui_migration'`).Scan(&updateGuard); err != nil {
+		t.Fatal(err)
+	}
+	if updateGuard != 1 {
+		t.Fatalf("migrated active command update guard count=%d", updateGuard)
+	}
+}
+
 func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -552,6 +631,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	defer tx.Rollback()
 	for _, statement := range []string{
 		`DROP TRIGGER application_commands_block_during_three_x_ui_migration`,
+		`DROP TRIGGER application_command_updates_block_during_three_x_ui_migration`,
 		`DROP TRIGGER deployments_block_during_three_x_ui_migration`,
 		`DROP TABLE site_certificates`,
 		`DROP TABLE three_x_ui_migrations`,

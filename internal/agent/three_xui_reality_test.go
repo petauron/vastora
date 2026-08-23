@@ -175,6 +175,38 @@ func TestAttachAllThreeXUIClientsToInboundKeepsClientIdentity(t *testing.T) {
 	}
 }
 
+func TestInitialClientAttachesToExistingManagedWorkerReality(t *testing.T) {
+	var attached []int
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /panel/api/inbounds/list":
+			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"vastora-master","protocol":"vless","streamSettings":{"security":"reality"}},{"id":90,"tag":"n7-vastora-worker","protocol":"vless","streamSettings":{"security":"reality"}},{"id":50,"tag":"manual","protocol":"vless","streamSettings":{"security":"reality"}}]}`))
+		case "GET /panel/api/clients/get/Phone":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"Phone"},"inboundIds":[9]}}`))
+		case "POST /panel/api/clients/Phone/attach":
+			var payload struct {
+				InboundIDs []int `json:"inboundIds"`
+			}
+			if json.NewDecoder(request.Body).Decode(&payload) != nil {
+				t.Fatal("initial client attachment payload was not decoded")
+			}
+			attached = payload.InboundIDs
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	if err := attachThreeXUIClientToAllManagedRealityInbounds(context.Background(), server.URL, "token", "Phone"); err != nil {
+		t.Fatal(err)
+	}
+	if len(attached) != 1 || attached[0] != 90 {
+		t.Fatalf("initial client attached to %#v", attached)
+	}
+}
+
 func TestSelectRealityTargetUsesNodeLocalFeasibilityAndSkipsUsedSNI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/panel/api/server/scanRealityTargets" || request.Header.Get("Authorization") != "Bearer token" {

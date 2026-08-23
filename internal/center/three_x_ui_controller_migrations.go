@@ -158,16 +158,55 @@ func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApp
 	}
 	sourceSeen, _ := time.Parse(time.RFC3339Nano, source.lastSeen)
 	sourceOnline := sourceSeen.After(s.now().Add(-45 * time.Second))
+	var unsafeTrafficResets int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM three_x_ui_inbound_plans plan
+		JOIN services service ON service.id = plan.service_id
+		WHERE service.site_id = ? AND (plan.status = 'resetting' OR (plan.status = 'failed' AND plan.attempt > 0))`, source.siteID).Scan(&unsafeTrafficResets); err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
+	if sourceOnline && unsafeTrafficResets != 0 {
+		return ThreeXUIControllerMigrationView{}, errors.New("center: finish or explicitly replace the pending VLESS traffic reset before migrating the 3x-ui subscription host")
+	}
 	if !sourceOnline && !input.AllowStaleBackup {
 		return ThreeXUIControllerMigrationView{}, errors.New("center: source node is offline; confirm using the latest restore point")
 	}
 	if !sourceOnline && input.AllowStaleBackup {
+		// An offline controller owns the durable reset journal, so a failover can
+		// no longer prove whether the current boundary was applied. Consume that
+		// boundary fail-closed and require an explicit plan save after migration;
+		// never replay it on the replacement controller.
+		var otherSourceDataCommands int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
+			WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')
+			AND NOT (kind = ? AND json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.action') = 'reset_inbound_plan')`, source.agentID, controllerCommandKind, clientCommandKind).Scan(&otherSourceDataCommands); err != nil {
+			return ThreeXUIControllerMigrationView{}, err
+		}
+		if otherSourceDataCommands != 0 {
+			return ThreeXUIControllerMigrationView{}, errors.New("center: the offline subscription host owns an unfinished 3x-ui operation that cannot be recovered safely")
+		}
+		if unsafeTrafficResets != 0 {
+			now := s.now().UTC().Format(time.RFC3339Nano)
+			message := "offline controller migration consumed an uncertain traffic reset boundary; inspect the node and explicitly save its plan"
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans SET status = 'failed', retry_at = '', last_error = ?, updated_at = ?
+				WHERE service_id IN (SELECT service.id FROM services service WHERE service.site_id = ?)
+				AND (status = 'resetting' OR (status = 'failed' AND attempt > 0))`, message, now, source.siteID); err != nil {
+				return ThreeXUIControllerMigrationView{}, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', lease_expires_at = '', error = ?, updated_at = ?
+				WHERE agent_id = ? AND kind = ? AND state IN ('pending', 'running')
+				AND json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.action') = 'reset_inbound_plan'`, message, now, source.agentID, clientCommandKind); err != nil {
+				return ThreeXUIControllerMigrationView{}, err
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', lease_expires_at = '', error = 'superseded by offline controller recovery', updated_at = ? WHERE application_id = ? AND state IN ('pending', 'running')`, s.now().UTC().Format(time.RFC3339Nano), sourceApplicationID); err != nil {
 			return ThreeXUIControllerMigrationView{}, err
 		}
 	}
 	var activeCommands int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id IN (?, ?) AND state IN ('pending', 'running')`, sourceApplicationID, input.TargetApplicationID).Scan(&activeCommands); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
+		WHERE state IN ('pending', 'running') AND (
+			application_id IN (?, ?) OR (agent_id IN (?, ?) AND kind <> ?)
+		)`, sourceApplicationID, input.TargetApplicationID, source.agentID, target.agentID, controllerCommandKind).Scan(&activeCommands); err != nil {
 		return ThreeXUIControllerMigrationView{}, err
 	}
 	if activeCommands != 0 {
@@ -413,10 +452,10 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, tx *sql.T
 			}
 			message = "3x-ui subscription host migrated"
 		case "demote":
-			if err := s.queueThreeXUINodeReconcileAfterDemotion(ctx, tx, input.ApplicationID, input.MigrationID, now); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'switch', last_error = '', updated_at = ? WHERE id = ? AND state = 'switching'`, now.Format(time.RFC3339Nano), input.MigrationID); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'switch', last_error = '', updated_at = ? WHERE id = ? AND state = 'switching'`, now.Format(time.RFC3339Nano), input.MigrationID); err != nil {
+			if err := s.queueNextThreeXUINodeAfterMigration(ctx, tx, input.MigrationID, now); err != nil {
 				return err
 			}
 			message = "previous 3x-ui subscription host prepared to reconnect as a VLESS node"
@@ -544,7 +583,7 @@ func (s *Store) switchThreeXUIController(ctx context.Context, tx *sql.Tx, input 
 	if err := s.queueThreeXUIControllerCommand(ctx, tx, input.SourceApplicationID, sourceAgentID, command, now, "previous 3x-ui subscription host queued for VLESS-only mode"); err != nil {
 		return err
 	}
-	return s.queueOtherThreeXUINodesAfterMigration(ctx, tx, input.MigrationID, input.ApplicationID, input.SourceApplicationID, now)
+	return s.queueNextThreeXUINodeAfterMigration(ctx, tx, input.MigrationID, now)
 }
 
 func (s *Store) copyApplicationSecrets(ctx context.Context, tx *sql.Tx, sourceApplicationID, targetApplicationID string, now time.Time) error {
@@ -638,38 +677,44 @@ func mustJSON(value any) []byte {
 	return encoded
 }
 
-func (s *Store) queueOtherThreeXUINodesAfterMigration(ctx context.Context, tx *sql.Tx, migrationID, masterApplicationID, sourceApplicationID string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT n.worker_application_id, d.id FROM three_x_ui_nodes n
-		JOIN deployments d ON d.rowid = (SELECT d2.rowid FROM deployments d2 WHERE d2.application_id = n.worker_application_id AND d2.state = 'succeeded' AND d2.operation IN ('install','upgrade','configure') ORDER BY d2.updated_at DESC, d2.rowid DESC LIMIT 1)
-		WHERE n.master_application_id = ? AND n.worker_application_id <> ?`, masterApplicationID, sourceApplicationID)
+func (s *Store) queueNextThreeXUINodeAfterMigration(ctx context.Context, tx *sql.Tx, migrationID string, now time.Time) error {
+	var masterApplicationID, masterAgentID, sourceApplicationID, step string
+	err := tx.QueryRowContext(ctx, `SELECT migration.target_application_id, master.node_id, migration.source_application_id, migration.step
+		FROM three_x_ui_migrations migration JOIN applications master ON master.id = migration.target_application_id
+		WHERE migration.id = ? AND migration.state = 'switching'`, migrationID).Scan(&masterApplicationID, &masterAgentID, &sourceApplicationID, &step)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	type item struct{ applicationID, deploymentID string }
-	items := []item{}
-	for rows.Next() {
-		var value item
-		if err := rows.Scan(&value.applicationID, &value.deploymentID); err != nil {
-			rows.Close()
-			return err
-		}
-		items = append(items, value)
-	}
-	if err := rows.Close(); err != nil {
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
+		WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, masterAgentID, controllerCommandKind).Scan(&active); err != nil {
 		return err
 	}
-	for _, value := range items {
-		if err := s.queueThreeXUINodeReconcile(ctx, tx, value.deploymentID, value.applicationID, migrationID, now); err != nil {
-			return err
-		}
+	if active != 0 {
+		return nil
 	}
-	return nil
-}
-
-func (s *Store) queueThreeXUINodeReconcileAfterDemotion(ctx context.Context, tx *sql.Tx, applicationID, migrationID string, now time.Time) error {
-	var deploymentID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments WHERE application_id = ? AND state = 'succeeded' AND operation IN ('install','upgrade','configure') ORDER BY updated_at DESC, rowid DESC LIMIT 1`, applicationID).Scan(&deploymentID); err != nil {
+	var workerApplicationID, deploymentID string
+	err = tx.QueryRowContext(ctx, `SELECT node.worker_application_id, deployment.id
+		FROM three_x_ui_nodes node
+		JOIN applications worker ON worker.id = node.worker_application_id AND worker.status = 'running'
+		JOIN deployments deployment ON deployment.rowid = (
+			SELECT latest.rowid FROM deployments latest
+			WHERE latest.application_id = node.worker_application_id AND latest.state = 'succeeded'
+			AND latest.operation IN ('install', 'upgrade', 'configure')
+			ORDER BY latest.updated_at DESC, latest.rowid DESC LIMIT 1
+		)
+		WHERE node.master_application_id = ? AND node.status = 'pending'
+		AND (? = 'switch' OR node.worker_application_id <> ?)
+		ORDER BY CASE WHEN node.worker_application_id = ? THEN 0 ELSE 1 END, node.created_at, node.worker_application_id
+		LIMIT 1`, masterApplicationID, step, sourceApplicationID, sourceApplicationID).Scan(&workerApplicationID, &deploymentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
-	return s.queueThreeXUINodeReconcile(ctx, tx, deploymentID, applicationID, migrationID, now)
+	return s.queueThreeXUINodeReconcile(ctx, tx, deploymentID, workerApplicationID, migrationID, now)
 }

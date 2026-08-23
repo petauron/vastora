@@ -11,30 +11,44 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
+	var clientListCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/panel/api/clients/list/paged" || request.Header.Get("Authorization") != "Bearer local-token" {
+		if request.Header.Get("Authorization") != "Bearer local-token" {
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","subId":"private-sub-id","enable":true,"totalGB":10737418240,"expiryTime":0,"limitIp":2,"inboundIds":[9],"traffic":{"up":1024,"down":2048}}],"total":1}}`))
+		switch request.URL.Path {
+		case "/panel/api/clients/list/paged":
+			clientListCalls.Add(1)
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","subId":"private-sub-id","enable":true,"totalGB":10737418240,"expiryTime":0,"reset":30,"limitIp":2,"inboundIds":[9],"traffic":{"up":1024,"down":2048}}],"total":1}}`))
+		case "/panel/api/inbounds/list":
+			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"vastora-node","enable":true,"protocol":"vless","up":2048,"down":4096,"total":21474836480,"streamSettings":{"security":"reality"}}]}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
 	}))
 	defer server.Close()
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
 
-	result, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9", ConnectHostname: "reality.example.test"}}})
+	result, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9", ConnectHostname: "reality.example.test", PlanStatus: "active"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Clients) != 1 || result.Clients[0].Email != "MacBook" || result.Clients[0].UsedBytes != 3072 || !result.Clients[0].HasSubscription || result.Secret != "" {
+	if len(result.Clients) != 1 || result.Clients[0].Email != "MacBook" || result.Clients[0].UsedBytes != 3072 || result.Clients[0].ResetDays != 30 || !result.Clients[0].HasSubscription || result.Secret != "" || !result.InboundsObserved || len(result.Inbounds) != 1 || result.Inbounds[0].TotalBytes != 20*gibibyteForTest || result.Inbounds[0].UsedBytes != 6144 || result.Inbounds[0].InboundTag != "vastora-node" {
 		t.Fatalf("unexpected safe client projection: %#v", result)
 	}
 	encoded, _ := json.Marshal(result)
 	if string(encoded) == "" || containsAny(string(encoded), "private-sub-id", "uuid", "password") {
 		t.Fatalf("client metadata leaked a credential: %s", encoded)
+	}
+	inboundOnly, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "list_inbounds", Inbounds: []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9", ConnectHostname: "reality.example.test", PlanStatus: "active"}}})
+	if err != nil || !inboundOnly.InboundsObserved || inboundOnly.ClientsObserved || clientListCalls.Load() != 1 {
+		t.Fatalf("inbound-only projection=%#v client list calls=%d err=%v", inboundOnly, clientListCalls.Load(), err)
 	}
 }
 
@@ -150,7 +164,8 @@ func TestThreeXUIClientCreateAndUpdateUseFirstClassClientAPI(t *testing.T) {
 				Client     map[string]json.RawMessage `json:"client"`
 				InboundIDs []int                      `json:"inboundIds"`
 			}
-			if json.NewDecoder(request.Body).Decode(&payload) != nil || json.Unmarshal(payload.Client["id"], &createdID) != nil || json.Unmarshal(payload.Client["subId"], &createdSubID) != nil || createdID == "" || createdSubID == "" || len(payload.InboundIDs) != 2 || payload.InboundIDs[0] != 9 || payload.InboundIDs[1] != 10 {
+			var resetDays int
+			if json.NewDecoder(request.Body).Decode(&payload) != nil || json.Unmarshal(payload.Client["id"], &createdID) != nil || json.Unmarshal(payload.Client["subId"], &createdSubID) != nil || json.Unmarshal(payload.Client["reset"], &resetDays) != nil || resetDays != 30 || createdID == "" || createdSubID == "" || len(payload.InboundIDs) != 2 || payload.InboundIDs[0] != 9 || payload.InboundIDs[1] != 10 {
 				t.Fatal("create did not use generated first-class client credentials")
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
@@ -160,7 +175,8 @@ func TestThreeXUIClientCreateAndUpdateUseFirstClassClientAPI(t *testing.T) {
 			var payload map[string]json.RawMessage
 			var email, id, subID, comment string
 			var total int64
-			if json.NewDecoder(request.Body).Decode(&payload) != nil || json.Unmarshal(payload["email"], &email) != nil || json.Unmarshal(payload["id"], &id) != nil || json.Unmarshal(payload["subId"], &subID) != nil || json.Unmarshal(payload["comment"], &comment) != nil || json.Unmarshal(payload["totalGB"], &total) != nil || email != "Phone 2" || id != "preserved-uuid" || subID != "preserved-sub-id" || comment != "keep-me" || total != 20*gibibyteForTest {
+			var resetDays int
+			if json.NewDecoder(request.Body).Decode(&payload) != nil || json.Unmarshal(payload["email"], &email) != nil || json.Unmarshal(payload["id"], &id) != nil || json.Unmarshal(payload["subId"], &subID) != nil || json.Unmarshal(payload["comment"], &comment) != nil || json.Unmarshal(payload["totalGB"], &total) != nil || json.Unmarshal(payload["reset"], &resetDays) != nil || email != "Phone 2" || id != "preserved-uuid" || subID != "preserved-sub-id" || comment != "keep-me" || total != 20*gibibyteForTest || resetDays != 30 {
 				t.Fatal("update did not preserve the complete 3x-ui client payload")
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
@@ -192,10 +208,11 @@ func TestThreeXUIClientCreateAndUpdateUseFirstClassClientAPI(t *testing.T) {
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
 	inbounds := []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9"}, {ID: 10, Name: "inbound-10"}, {ID: 11, Name: "inbound-11"}}
-	if _, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "create", NewEmail: "Phone", InboundIDs: []int{9, 10}, Enabled: true, Inbounds: inbounds}); err != nil {
+	expiry := time.Now().Add(90 * 24 * time.Hour).UnixMilli()
+	if _, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "create", NewEmail: "Phone", InboundIDs: []int{9, 10}, Enabled: true, ResetDays: 30, ExpiryTime: expiry, Inbounds: inbounds}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "update", Email: "Phone", NewEmail: "Phone 2", InboundIDs: []int{10, 11}, TotalBytes: 20 * gibibyteForTest, Inbounds: inbounds}); err != nil {
+	if _, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "update", Email: "Phone", NewEmail: "Phone 2", InboundIDs: []int{10, 11}, TotalBytes: 20 * gibibyteForTest, ResetDays: 30, ExpiryTime: expiry, Inbounds: inbounds}); err != nil {
 		t.Fatal(err)
 	}
 	if len(attached) != 1 || attached[0] != 11 || len(detached) != 1 || detached[0] != 9 {

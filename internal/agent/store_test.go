@@ -93,3 +93,30 @@ func TestGatewayCertificatesAreEncryptedAtRest(t *testing.T) {
 		t.Fatal("encrypted gateway certificate was not restored")
 	}
 }
+
+func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`DROP TABLE three_x_ui_reset_journal; PRAGMA user_version = 2`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var version int
+	if err := store.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != agentSchemaVersion {
+		t.Fatalf("schema version = %d, err=%v", version, err)
+	}
+	if _, _, err := store.beginThreeXUIReset(context.Background(), threeXUIResetOperationKey("service", "2026-09-01T00:00:00Z"), "service", "2026-09-01T00:00:00Z", 1, 9, "vastora-node", 10, true); err != nil {
+		t.Fatalf("migrated reset journal is unavailable: %v", err)
+	}
+}

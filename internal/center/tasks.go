@@ -39,6 +39,9 @@ func (s *Store) recordTaskEvent(ctx context.Context, tx *sql.Tx, taskID, agentID
 	if err == nil {
 		s.taskChanges.notify("agent:" + agentID)
 		s.taskChanges.notify("task:" + taskID)
+		if kind == "application.command" && (event == "succeeded" || event == "failed") {
+			s.taskChanges.notify(threeXUIInboundPlanResetWakeKey)
+		}
 	}
 	return err
 }

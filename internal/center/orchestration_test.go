@@ -515,7 +515,7 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 		t.Fatalf("unexpected command task: %#v", task)
 	}
 	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI}}
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
 	encoded, _ := json.Marshal(result)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
 		t.Fatal(err)
@@ -681,7 +681,7 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 }
 
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
-	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test"}
+	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", InboundTag: "vastora-test", CreateInitialClient: true}
 	valid := RealityCommandResult{
 		Action:          "create",
 		InboundID:       9,
@@ -693,6 +693,8 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 		SNIHostname:     "www.example.com",
 		ConnectHostname: "reality.edge.site.example.test",
 		ShareURI:        "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
+		InboundTag:      "vastora-test",
+		ClientCreated:   true,
 	}
 	if err := validateRealityCommandResult(input, valid); err != nil {
 		t.Fatalf("valid result rejected: %v", err)

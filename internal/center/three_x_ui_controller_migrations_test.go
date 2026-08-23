@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/petauron/vastora/internal/networking"
@@ -35,6 +36,23 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	nodeResult, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
 	if err := store.CompleteTask(ctx, master.ID, master.Credential, nodeTask.ID, nodeTask.Attempt, true, "", nodeResult); err != nil {
 		t.Fatal(err)
+	}
+	remainingWorkerApplications := []string{}
+	for index := range 2 {
+		address := fmt.Sprintf("100.64.0.%d", 30+index)
+		other := enrollOrchestrationNode(t, store, fmt.Sprintf("remaining-worker-%d", index+1), NodeCapabilities{Docker: true}, []networking.Candidate{{Address: address, Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: address, HeadscaleAddress: address, EnabledKinds: []string{networking.KindHeadscale}})
+		deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: other.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleWorker, Config: config})
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherTask := claimTask(t, store, other)
+		completeThreeXUIDeployment(t, store, other, otherTask, address, fmt.Sprintf("worker-%d-token", index+1))
+		reconcile := claimTask(t, store, master)
+		result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 8 + index, Status: "ready"}})
+		if err := store.CompleteTask(ctx, master.ID, master.Credential, reconcile.ID, reconcile.Attempt, true, "", result); err != nil {
+			t.Fatal(err)
+		}
+		remainingWorkerApplications = append(remainingWorkerApplications, deployment.ApplicationID)
 	}
 
 	migration, err := store.CreateThreeXUIControllerMigration(ctx, masterDeployment.ApplicationID, ThreeXUIControllerMigrationInput{TargetApplicationID: workerDeployment.ApplicationID, Confirm: true})
@@ -93,13 +111,24 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	if err := store.CompleteTask(ctx, master.ID, master.Credential, demoteTask.ID, demoteTask.Attempt, true, "", demoteResult); err != nil {
 		t.Fatal(err)
 	}
-	reconnectTask := claimTask(t, store, worker)
-	if reconnectTask.NodeCommand == nil || reconnectTask.NodeCommand.Action != "reconcile" || reconnectTask.NodeCommand.WorkerApplicationID != masterDeployment.ApplicationID {
-		t.Fatalf("old controller reconnect task = %#v", reconnectTask)
+	wantReconciled := map[string]bool{masterDeployment.ApplicationID: true}
+	for _, applicationID := range remainingWorkerApplications {
+		wantReconciled[applicationID] = true
 	}
-	reconnectResult, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
-	if err := store.CompleteTask(ctx, worker.ID, worker.Credential, reconnectTask.ID, reconnectTask.Attempt, true, "", reconnectResult); err != nil {
-		t.Fatal(err)
+	for range len(wantReconciled) {
+		reconnectTask := claimTask(t, store, worker)
+		if reconnectTask.NodeCommand == nil || reconnectTask.NodeCommand.Action != "reconcile" || !wantReconciled[reconnectTask.NodeCommand.WorkerApplicationID] {
+			t.Fatalf("serialized migration reconnect task = %#v", reconnectTask)
+		}
+		remoteNodeID := reconnectTask.NodeCommand.RemoteNodeID
+		if remoteNodeID < 1 {
+			remoteNodeID = 20
+		}
+		reconnectResult, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: remoteNodeID, Status: "ready"}})
+		if err := store.CompleteTask(ctx, worker.ID, worker.Credential, reconnectTask.ID, reconnectTask.Attempt, true, "", reconnectResult); err != nil {
+			t.Fatal(err)
+		}
+		delete(wantReconciled, reconnectTask.NodeCommand.WorkerApplicationID)
 	}
 	completed, err = store.ThreeXUIControllerMigration(ctx, migration.ID)
 	if err != nil {

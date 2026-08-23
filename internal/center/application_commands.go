@@ -2,7 +2,9 @@ package center
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,15 +27,20 @@ const (
 )
 
 type RealityCommandInput struct {
-	ApplicationID string `json:"applicationId"`
-	RegionCode    string `json:"regionCode"`
-	Name          string `json:"name"`
-	ClientName    string `json:"clientName"`
-	GatewayNodeID string `json:"gatewayNodeId"`
-	Hostname      string `json:"hostname"`
-	DNSProvider   string `json:"dnsProvider"`
-	Target        string `json:"target,omitempty"`
-	SNIHostname   string `json:"sniHostname,omitempty"`
+	ApplicationID     string `json:"applicationId"`
+	RegionCode        string `json:"regionCode"`
+	Name              string `json:"name"`
+	ClientName        string `json:"clientName"`
+	GatewayNodeID     string `json:"gatewayNodeId"`
+	Hostname          string `json:"hostname"`
+	DNSProvider       string `json:"dnsProvider"`
+	Target            string `json:"target,omitempty"`
+	SNIHostname       string `json:"sniHostname,omitempty"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes"`
+	InboundResetDays  int    `json:"inboundResetDays"`
+	ClientTotalBytes  int64  `json:"clientTotalBytes"`
+	ClientResetDays   int    `json:"clientResetDays"`
+	ClientExpiryTime  int64  `json:"clientExpiryTime"`
 }
 
 type RealityRenameCommandInput struct {
@@ -58,19 +65,29 @@ type RealityCommandTask struct {
 	TargetPanelPort     int      `json:"targetPanelPort"`
 	TargetNodeID        int      `json:"targetNodeId,omitempty"`
 	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
+	CreateInitialClient bool     `json:"createInitialClient"`
+	InboundTag          string   `json:"inboundTag"`
+	InboundTotalBytes   int64    `json:"inboundTotalBytes"`
+	InboundResetDays    int      `json:"inboundResetDays"`
+	ClientTotalBytes    int64    `json:"clientTotalBytes"`
+	ClientResetDays     int      `json:"clientResetDays"`
+	ClientExpiryTime    int64    `json:"clientExpiryTime"`
 }
 
 type RealityCommandResult struct {
-	Action          string `json:"action"`
-	InboundID       int    `json:"inboundId"`
-	DisplayName     string `json:"displayName"`
-	ClientName      string `json:"clientName,omitempty"`
-	Listen          string `json:"listen"`
-	Port            int    `json:"port"`
-	Target          string `json:"target"`
-	SNIHostname     string `json:"sniHostname"`
-	ConnectHostname string `json:"connectHostname"`
-	ShareURI        string `json:"shareUri"`
+	Action            string `json:"action"`
+	InboundID         int    `json:"inboundId"`
+	DisplayName       string `json:"displayName"`
+	ClientName        string `json:"clientName,omitempty"`
+	Listen            string `json:"listen"`
+	Port              int    `json:"port"`
+	Target            string `json:"target"`
+	SNIHostname       string `json:"sniHostname"`
+	ConnectHostname   string `json:"connectHostname"`
+	ShareURI          string `json:"shareUri"`
+	InboundTag        string `json:"inboundTag"`
+	ClientCreated     bool   `json:"clientCreated"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandInput struct {
@@ -93,20 +110,25 @@ type SubscriptionCommandResult struct {
 }
 
 type ThreeXUIClientCommandInput struct {
-	ApplicationID string `json:"applicationId"`
-	Action        string `json:"action"`
-	Email         string `json:"email,omitempty"`
-	NewEmail      string `json:"newEmail,omitempty"`
-	InboundID     int    `json:"inboundId,omitempty"`
-	InboundIDs    []int  `json:"inboundIds,omitempty"`
-	Enabled       bool   `json:"enabled"`
-	TotalBytes    int64  `json:"totalBytes"`
-	ExpiryTime    int64  `json:"expiryTime"`
-	LimitIP       int    `json:"limitIp"`
+	ApplicationID     string `json:"applicationId"`
+	Action            string `json:"action"`
+	Email             string `json:"email,omitempty"`
+	NewEmail          string `json:"newEmail,omitempty"`
+	InboundID         int    `json:"inboundId,omitempty"`
+	InboundIDs        []int  `json:"inboundIds,omitempty"`
+	Enabled           bool   `json:"enabled"`
+	TotalBytes        int64  `json:"totalBytes"`
+	ResetDays         int    `json:"resetDays"`
+	ExpiryTime        int64  `json:"expiryTime"`
+	LimitIP           int    `json:"limitIp"`
+	ServiceID         string `json:"serviceId,omitempty"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes"`
+	InboundResetDays  int    `json:"inboundResetDays"`
 }
 
 type ThreeXUIClientInbound struct {
 	ID              int    `json:"id"`
+	ServiceID       string `json:"serviceId"`
 	Name            string `json:"name"`
 	DisplayName     string `json:"displayName,omitempty"`
 	ApplicationID   string `json:"applicationId"`
@@ -114,6 +136,15 @@ type ThreeXUIClientInbound struct {
 	NodeName        string `json:"nodeName"`
 	ConnectHostname string `json:"connectHostname,omitempty"`
 	SNIHostname     string `json:"sniHostname,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	TotalBytes      int64  `json:"totalBytes"`
+	UsedBytes       int64  `json:"usedBytes"`
+	ResetDays       int    `json:"resetDays"`
+	NextResetAt     string `json:"nextResetAt,omitempty"`
+	PlanStatus      string `json:"planStatus"`
+	PlanError       string `json:"planError,omitempty"`
+	PlanRevision    int64  `json:"-"`
+	InboundTag      string `json:"inboundTag,omitempty"`
 }
 
 type ThreeXUIClientCommandTask struct {
@@ -124,8 +155,21 @@ type ThreeXUIClientCommandTask struct {
 	InboundIDs          []int                   `json:"inboundIds,omitempty"`
 	Enabled             bool                    `json:"enabled"`
 	TotalBytes          int64                   `json:"totalBytes"`
+	ResetDays           int                     `json:"resetDays"`
 	ExpiryTime          int64                   `json:"expiryTime"`
 	LimitIP             int                     `json:"limitIp"`
+	ServiceID           string                  `json:"serviceId,omitempty"`
+	InboundTotalBytes   int64                   `json:"inboundTotalBytes"`
+	InboundResetDays    int                     `json:"inboundResetDays"`
+	ExpectedNextResetAt string                  `json:"expectedNextResetAt,omitempty"`
+	PlanRevision        int64                   `json:"planRevision,omitempty"`
+	OperationKey        string                  `json:"operationKey,omitempty"`
+	InboundTag          string                  `json:"inboundTag,omitempty"`
+	TargetApplicationID string                  `json:"targetApplicationId,omitempty"`
+	TargetAddress       string                  `json:"targetAddress,omitempty"`
+	TargetPanelPort     int                     `json:"targetPanelPort,omitempty"`
+	TargetNodeID        int                     `json:"targetNodeId,omitempty"`
+	TargetAPIToken      string                  `json:"targetApiToken,omitempty"`
 	Inbounds            []ThreeXUIClientInbound `json:"inbounds"`
 	SubscriptionBaseURI string                  `json:"subscriptionBaseUri,omitempty"`
 }
@@ -135,6 +179,7 @@ type ThreeXUIClientView struct {
 	Enabled         bool   `json:"enabled"`
 	TotalBytes      int64  `json:"totalBytes"`
 	UsedBytes       int64  `json:"usedBytes"`
+	ResetDays       int    `json:"resetDays"`
 	ExpiryTime      int64  `json:"expiryTime"`
 	LimitIP         int    `json:"limitIp"`
 	InboundIDs      []int  `json:"inboundIds"`
@@ -142,11 +187,12 @@ type ThreeXUIClientView struct {
 }
 
 type ThreeXUIClientCommandResult struct {
-	Clients         []ThreeXUIClientView    `json:"clients,omitempty"`
-	ClientsObserved bool                    `json:"clientsObserved"`
-	Inbounds        []ThreeXUIClientInbound `json:"inbounds"`
-	Secret          string                  `json:"secret,omitempty"`
-	SecretKind      string                  `json:"secretKind,omitempty"`
+	Clients          []ThreeXUIClientView    `json:"clients,omitempty"`
+	ClientsObserved  bool                    `json:"clientsObserved"`
+	Inbounds         []ThreeXUIClientInbound `json:"inbounds"`
+	InboundsObserved bool                    `json:"inboundsObserved"`
+	Secret           string                  `json:"secret,omitempty"`
+	SecretKind       string                  `json:"secretKind,omitempty"`
 }
 
 type ThreeXUINodeCommandTask struct {
@@ -201,9 +247,14 @@ type ApplicationCommandView struct {
 	RegionCode            string                  `json:"regionCode,omitempty"`
 	DisplayName           string                  `json:"displayName,omitempty"`
 	InboundID             int                     `json:"inboundId,omitempty"`
+	ClientCreated         bool                    `json:"clientCreated,omitempty"`
+	InboundTotalBytes     int64                   `json:"inboundTotalBytes,omitempty"`
+	InboundResetDays      int                     `json:"inboundResetDays,omitempty"`
+	InboundNextResetAt    string                  `json:"inboundNextResetAt,omitempty"`
 	Clients               []ThreeXUIClientView    `json:"clients,omitempty"`
 	ClientsObserved       bool                    `json:"clientsObserved,omitempty"`
 	Inbounds              []ThreeXUIClientInbound `json:"inbounds,omitempty"`
+	InboundsObserved      bool                    `json:"inboundsObserved,omitempty"`
 	SubscriptionAvailable bool                    `json:"subscriptionAvailable,omitempty"`
 	Error                 string                  `json:"error,omitempty"`
 	ResultAvailable       bool                    `json:"resultAvailable"`
@@ -225,8 +276,11 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
 	input.Target = strings.ToLower(strings.TrimSpace(input.Target))
 	input.SNIHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.SNIHostname), "."))
-	if input.ApplicationID == "" || input.GatewayNodeID == "" || !validThreeXUIClientName(input.ClientName) || !domainSuffixPattern.MatchString(input.Hostname) {
-		return input, "", errors.New("center: application, region, node name, client name, gateway, and a valid connection hostname are required")
+	if input.InboundTotalBytes < 0 || input.InboundResetDays < 0 || input.InboundResetDays > maxThreeXUIResetDays || input.ClientTotalBytes < 0 || input.ClientResetDays < 0 || input.ClientResetDays > maxThreeXUIResetDays || input.ClientExpiryTime < 0 {
+		return input, "", errors.New("center: REALITY node or subscription traffic plan is invalid")
+	}
+	if input.ApplicationID == "" || input.GatewayNodeID == "" || !domainSuffixPattern.MatchString(input.Hostname) {
+		return input, "", errors.New("center: application, region, node name, gateway, and a valid connection hostname are required")
 	}
 	if input.DNSProvider != "manual" && input.DNSProvider != "cloudflare" {
 		return input, "", errors.New("center: REALITY DNS must be manual or Cloudflare")
@@ -247,7 +301,11 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 }
 
 func validateRealityCommandResult(input RealityCommandTask, result RealityCommandResult) error {
-	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || net.ParseIP(result.Listen) == nil || result.Port < 1024 || result.Port > 65535 || result.Port == 443 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.SNIHostname) {
+	expectedTag := input.InboundTag
+	if input.TargetNodeID > 0 {
+		expectedTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + input.InboundTag
+	}
+	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Port < 1024 || result.Port > 65535 || result.Port == 443 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.SNIHostname) || result.InboundTotalBytes != input.InboundTotalBytes {
 		return errors.New("center: Agent returned an unsafe REALITY result")
 	}
 	targetHost, targetPort, err := net.SplitHostPort(strings.ToLower(strings.TrimSpace(result.Target)))
@@ -256,6 +314,15 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	}
 	if input.Target != "" && (result.Target != input.Target || result.SNIHostname != input.SNIHostname) {
 		return errors.New("center: Agent changed the requested REALITY target")
+	}
+	if result.ClientCreated != input.CreateInitialClient {
+		return errors.New("center: Agent changed the requested initial subscription client operation")
+	}
+	if !result.ClientCreated {
+		if strings.TrimSpace(result.ShareURI) != "" {
+			return errors.New("center: Agent returned an unexpected REALITY client link")
+		}
+		return nil
 	}
 	share, err := url.Parse(strings.TrimSpace(result.ShareURI))
 	if err != nil || share.Scheme != "vless" || share.User == nil || share.User.Username() == "" || share.Hostname() != input.ConnectHostname || share.Port() != "443" || share.Fragment != input.DisplayName {
@@ -344,6 +411,14 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if duplicateDisplayName != 0 {
 		return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY node with that display name")
 	}
+	var existingControllerRealityServices int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE application_id = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.ApplicationID).Scan(&existingControllerRealityServices); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	createInitialClient := role == threeXUIRoleMaster && existingControllerRealityServices == 0
+	if createInitialClient && !validThreeXUIClientName(input.ClientName) {
+		return ApplicationCommandView{}, errors.New("center: the first REALITY node requires a valid subscription client name")
+	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
@@ -367,14 +442,26 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if err := rows.Close(); err != nil {
 		return ApplicationCommandView{}, err
 	}
-	task := RealityCommandTask{Action: "create", RegionCode: input.RegionCode, DisplayName: displayName, ClientName: input.ClientName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, Target: input.Target, SNIHostname: input.SNIHostname, ExcludedSNI: excluded,
-		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID}
-	encoded, _ := json.Marshal(task)
+	if createInitialClient && input.ClientResetDays > 0 && input.ClientExpiryTime <= s.now().UTC().UnixMilli() {
+		return ApplicationCommandView{}, errors.New("center: a renewable subscription traffic plan requires a future expiry time")
+	}
 	token, err := randomToken(18)
 	if err != nil {
 		return ApplicationCommandView{}, err
 	}
 	id := "application-command-" + token
+	task := RealityCommandTask{Action: "create", RegionCode: input.RegionCode, DisplayName: displayName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, Target: input.Target, SNIHostname: input.SNIHostname, ExcludedSNI: excluded,
+		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID,
+		CreateInitialClient: createInitialClient,
+		InboundTag:          realityCommandInboundTag(id),
+		InboundTotalBytes:   input.InboundTotalBytes, InboundResetDays: input.InboundResetDays}
+	if createInitialClient {
+		task.ClientName = input.ClientName
+		task.ClientTotalBytes = input.ClientTotalBytes
+		task.ClientResetDays = input.ClientResetDays
+		task.ClientExpiryTime = input.ClientExpiryTime
+	}
+	encoded, _ := json.Marshal(task)
 	now := s.now().UTC()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ApplicationID, agentID, input.GatewayNodeID, realityCommandKind, encoded, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return ApplicationCommandView{}, fmt.Errorf("center: create REALITY operation: %w", err)
@@ -386,6 +473,11 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, err
 	}
 	return s.ApplicationCommand(ctx, id)
+}
+
+func realityCommandInboundTag(commandID string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(commandID)))
+	return "vastora-" + hex.EncodeToString(digest[:12])
 }
 
 func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRenameCommandInput) (ApplicationCommandView, error) {
@@ -486,8 +578,15 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 			return value, errors.New("center: stored application operation is invalid")
 		}
 		value.Action, value.RegionCode, value.DisplayName, value.InboundID = input.Action, input.RegionCode, input.DisplayName, input.InboundID
+		value.InboundTotalBytes = input.InboundTotalBytes
+		value.InboundResetDays = input.InboundResetDays
 		if result.InboundID > 0 {
 			value.InboundID = result.InboundID
+			value.ClientCreated = result.ClientCreated
+			value.InboundTotalBytes = result.InboundTotalBytes
+			var nextResetAt string
+			_ = s.db.QueryRowContext(ctx, `SELECT plan.next_reset_at FROM services service JOIN three_x_ui_inbound_plans plan ON plan.service_id = service.id WHERE service.application_id = ? AND service.name = ?`, value.ApplicationID, fmt.Sprintf("inbound-%d", result.InboundID)).Scan(&nextResetAt)
+			value.InboundNextResetAt = nextResetAt
 		}
 		value.Hostname, value.DNSProvider, value.Target, value.SNIHostname = input.ConnectHostname, input.DNSProvider, result.Target, result.SNIHostname
 		if value.Kind == realityRenameCommandKind {
@@ -518,6 +617,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		value.Clients = result.Clients
 		value.ClientsObserved = result.ClientsObserved
 		value.Inbounds = result.Inbounds
+		value.InboundsObserved = result.InboundsObserved
 		value.SubscriptionAvailable = input.SubscriptionBaseURI != ""
 	case nodeCommandKind:
 		var input ThreeXUINodeCommandTask
