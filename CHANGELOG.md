@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.43](https://github.com/petauron/vastora/compare/v0.1.0-alpha.42...v0.1.0-alpha.43) (2026-08-23)
+
+
+### Features
+
+* add independent VLESS traffic plans ([#130](https://github.com/petauron/vastora/issues/130)) ([4b7a7f8](https://github.com/petauron/vastora/commit/4b7a7f8a8df09d48a26ce946f539aa49c76373df))
+
 ## [0.1.0-alpha.42](https://github.com/petauron/vastora/compare/v0.1.0-alpha.41...v0.1.0-alpha.42) (2026-08-23)
 
 
