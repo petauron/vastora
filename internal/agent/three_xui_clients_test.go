@@ -103,7 +103,7 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 				_, _ = response.Write([]byte(`{"success":false}`))
 				return
 			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"subEnable":true,"subPath":"/sub/","subClashEnable":false}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"subEnable":true,"subPath":"/sub/","subClashEnable":false,"remarkTemplate":"{{INBOUND}}-{{EMAIL}}"}}`))
 		case "POST /panel/api/setting/update":
 			if json.NewDecoder(request.Body).Decode(&updatedSettings) != nil {
 				t.Fatal("Clash subscription settings were not decoded")
@@ -144,6 +144,9 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	}
 	if updatedSettings["subClashEnable"] != true || updatedSettings["subClashPath"] != "/clash/" || updatedSettings["subClashAutoDetect"] != true || updatedSettings["subClashUserAgentRegex"] != `(?i)(clash|mihomo)` {
 		t.Fatalf("Clash/Mihomo output was not enabled: %#v", updatedSettings)
+	}
+	if updatedSettings["remarkTemplate"] != "{{INBOUND}}" {
+		t.Fatalf("subscription node names still include client identity: %#v", updatedSettings["remarkTemplate"])
 	}
 	if restartCount.Load() != 1 {
 		t.Fatalf("3x-ui restart count = %d, want 1", restartCount.Load())

@@ -35,6 +35,16 @@ func TestRestartThreeXUIPanelAcceptsInProcessReload(t *testing.T) {
 	}
 }
 
+func TestManagedThreeXUISubscriptionSettingsUseInboundOnlyRemark(t *testing.T) {
+	settings := threeXUIManagedSubscriptionSettings()
+	if settings["remarkTemplate"] != "{{INBOUND}}" {
+		t.Fatalf("managed subscription remark template = %#v", settings["remarkTemplate"])
+	}
+	if settings["subEnable"] != true {
+		t.Fatalf("managed subscription endpoint is not enabled: %#v", settings["subEnable"])
+	}
+}
+
 func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) {
 	var updated map[string]any
 	var restartPending atomic.Bool
@@ -51,7 +61,7 @@ func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) 
 				_, _ = response.Write([]byte(`{"success":false}`))
 				return
 			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"subListen":"100.64.0.10","subPort":2096,"subPath":"/sub/","subClashEnable":false}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"subListen":"100.64.0.10","subPort":2096,"subPath":"/sub/","subClashEnable":false,"remarkTemplate":"{{INBOUND}}-{{EMAIL}}"}}`))
 		case "/panel/api/setting/update":
 			if err := json.NewDecoder(request.Body).Decode(&updated); err != nil {
 				t.Fatal(err)
@@ -107,6 +117,9 @@ func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) 
 	}
 	if updated["subClashEnable"] != true || updated["subClashPath"] != "/clash/" || updated["subClashURI"] != "https://subscribe.example.com/clash/" || updated["subClashAutoDetect"] != true || updated["subClashUserAgentRegex"] != `(?i)(clash|mihomo)` {
 		t.Fatalf("Clash/Mihomo subscription endpoint was not enabled: %#v", updated)
+	}
+	if updated["remarkTemplate"] != "{{INBOUND}}" {
+		t.Fatalf("subscription node names still include client identity: %#v", updated["remarkTemplate"])
 	}
 	if restartCount.Load() != 1 {
 		t.Fatalf("3x-ui restart count = %d, want 1", restartCount.Load())
