@@ -18,7 +18,7 @@ jobs:
   prepare:
     runs-on: ubuntu-24.04
     permissions:
-      actions: write
+      checks: write
       contents: write
       issues: write
       pull-requests: write
@@ -87,20 +87,38 @@ jobs:
           ref: ${{ steps.release_pr.outputs.head_branch }}
           fetch-depth: 0
 
+      - name: Start release metadata check
+        id: release_metadata_check
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          check_id="$(
+            gh api --method POST "/repos/$GITHUB_REPOSITORY/check-runs" \
+              -f name='Release metadata' \
+              -f head_sha="$(git rev-parse HEAD)" \
+              -f status='in_progress' \
+              --jq '.id'
+          )"
+          echo "id=$check_id" >> "$GITHUB_OUTPUT"
+
       - name: Validate release pull request metadata
+        id: validate_release_metadata
         if: steps.release.outputs.prs_created == 'true'
         env:
           BASE_SHA: ${{ steps.release_pr.outputs.base_sha }}
         run: scripts/validate-release-metadata.sh "$BASE_SHA"
 
-      - name: Run trusted checks for release pull request
-        if: steps.release.outputs.prs_created == 'true'
+      - name: Finish release metadata check
+        if: always() && steps.release.outputs.prs_created == 'true' && steps.release_metadata_check.outputs.id != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_BRANCH: ${{ steps.release_pr.outputs.head_branch }}
+          CHECK_ID: ${{ steps.release_metadata_check.outputs.id }}
+          CHECK_CONCLUSION: ${{ steps.validate_release_metadata.outcome == 'success' && 'success' || 'failure' }}
         run: |
-          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_BRANCH"
-          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_BRANCH"
+          gh api --method PATCH "/repos/$GITHUB_REPOSITORY/check-runs/$CHECK_ID" \
+            -f status='completed' \
+            -f conclusion="$CHECK_CONCLUSION" >/dev/null
 
   publish:
     needs: prepare

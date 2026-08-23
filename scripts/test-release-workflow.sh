@@ -13,11 +13,19 @@ require_line() {
   fi
 }
 
-require_line '      actions: write'
-require_line '      - name: Run trusted checks for release pull request'
+require_line '      checks: write'
+require_line '      - name: Start release metadata check'
 require_line '          GH_TOKEN: ${{ github.token }}'
-require_line '          HEAD_BRANCH: ${{ steps.release_pr.outputs.head_branch }}'
-require_line '          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_BRANCH"'
-require_line '          gh workflow run codeql.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_BRANCH"'
+require_line "              -f name='Release metadata'"
+require_line '            gh api --method POST "/repos/$GITHUB_REPOSITORY/check-runs"'
+require_line '        id: validate_release_metadata'
+require_line '      - name: Finish release metadata check'
+require_line '          CHECK_CONCLUSION: ${{ steps.validate_release_metadata.outcome == '\''success'\'' && '\''success'\'' || '\''failure'\'' }}'
+require_line '          gh api --method PATCH "/repos/$GITHUB_REPOSITORY/check-runs/$CHECK_ID"'
 
-echo "Release workflow dispatch test passed"
+if printf '%s\n' "$prepare_job" | grep -Fq 'gh workflow run'; then
+  echo 'Release metadata pull requests must not duplicate source workflows' >&2
+  exit 1
+fi
+
+echo "Release metadata check workflow test passed"
