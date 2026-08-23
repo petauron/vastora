@@ -102,8 +102,18 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 		t.Fatal("worker API token was persisted in the REALITY command")
 	}
 	realityTask := claimTask(t, store, master)
-	if realityTask.ApplicationCommand == nil || realityTask.ApplicationCommand.TargetApplicationID != workerDeployment.ApplicationID || realityTask.ApplicationCommand.TargetNodeID != 7 || realityTask.ApplicationCommand.TargetAddress != "10.0.0.91" || realityTask.ApplicationCommand.TargetAPIToken != "worker-api-token" {
+	if realityTask.ApplicationCommand == nil || realityTask.ApplicationCommand.TargetApplicationID != workerDeployment.ApplicationID || realityTask.ApplicationCommand.TargetNodeID != 7 || realityTask.ApplicationCommand.TargetAddress != "10.0.0.91" || realityTask.ApplicationCommand.TargetAPIToken != "worker-api-token" || realityTask.ApplicationCommand.CreateInitialClient || realityTask.ApplicationCommand.ClientName != "" {
 		t.Fatalf("unexpected cross-node REALITY task: %#v", realityTask)
+	}
+	if err := store.CompleteTask(ctx, master.ID, master.Credential, realityTask.ID, realityTask.Attempt, false, "simulated worker setup failure", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: masterDeployment.ApplicationID, RegionCode: "US", Name: "Controller", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.controller.example.test", DNSProvider: "manual"}); err != nil {
+		t.Fatal(err)
+	}
+	controllerRealityTask := claimTask(t, store, master)
+	if controllerRealityTask.ApplicationCommand == nil || !controllerRealityTask.ApplicationCommand.CreateInitialClient || controllerRealityTask.ApplicationCommand.ClientName != "Phone" {
+		t.Fatalf("controller did not bootstrap its first subscription client after the worker REALITY service: %#v", controllerRealityTask)
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Operation: "uninstall"}); err == nil || !strings.Contains(err.Error(), "VLESS nodes") {
 		t.Fatalf("controller uninstall error = %v", err)

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 16
+const centerSchemaVersion = 17
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -220,6 +220,21 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(application_id, name)
 		)`,
+		`CREATE TABLE three_x_ui_inbound_plans (
+			service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+			inbound_tag TEXT NOT NULL,
+			total_bytes INTEGER NOT NULL DEFAULT 0 CHECK(total_bytes >= 0),
+			reset_days INTEGER NOT NULL DEFAULT 0 CHECK(reset_days >= 0),
+			next_reset_at TEXT NOT NULL DEFAULT '',
+			last_reset_at TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+			status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'resetting', 'failed')),
+			retry_at TEXT NOT NULL DEFAULT '',
+			attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt >= 0),
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX three_x_ui_inbound_plans_due_idx ON three_x_ui_inbound_plans(status, next_reset_at, retry_at) WHERE reset_days > 0`,
 		`CREATE TABLE publications (
 			id TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -365,19 +380,34 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE UNIQUE INDEX application_commands_one_active_idx ON application_commands(application_id) WHERE state IN ('pending', 'running') AND kind <> '3xui.controller.manage'`,
+		`CREATE UNIQUE INDEX application_commands_one_active_idx ON application_commands(agent_id) WHERE state IN ('pending', 'running') AND kind <> '3xui.controller.manage'`,
 		`CREATE UNIQUE INDEX application_commands_one_active_controller_idx ON application_commands(application_id) WHERE state IN ('pending', 'running') AND kind = '3xui.controller.manage'`,
 		`CREATE TRIGGER application_commands_block_during_three_x_ui_migration
 			BEFORE INSERT ON application_commands
 			WHEN NEW.kind <> '3xui.controller.manage'
 			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
-				WHERE id = json_extract(NEW.input_json, '$.migrationId') AND state = 'switching'
+				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
 			))
 			AND EXISTS (
+				SELECT 1 FROM three_x_ui_migrations migration
+				JOIN applications queued ON queued.id = NEW.application_id
+				WHERE migration.state IN ('backing_up', 'restoring', 'switching')
+				AND migration.site_id = queued.site_id
+			)
+			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
+		`CREATE TRIGGER application_command_updates_block_during_three_x_ui_migration
+			BEFORE UPDATE OF application_id, kind, input_json, state ON application_commands
+			WHEN NEW.kind <> '3xui.controller.manage' AND NEW.state IN ('pending', 'running')
+			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
-				WHERE state IN ('backing_up', 'restoring', 'switching')
-				AND (source_application_id = NEW.application_id OR target_application_id = NEW.application_id)
+				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
+			))
+			AND EXISTS (
+				SELECT 1 FROM three_x_ui_migrations migration
+				JOIN applications queued ON queued.id = NEW.application_id
+				WHERE migration.state IN ('backing_up', 'restoring', 'switching')
+				AND migration.site_id = queued.site_id
 			)
 			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
 		`CREATE TRIGGER deployments_block_during_three_x_ui_migration

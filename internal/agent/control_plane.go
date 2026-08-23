@@ -108,19 +108,29 @@ type RealityCommandTask struct {
 	TargetPanelPort     int      `json:"targetPanelPort"`
 	TargetNodeID        int      `json:"targetNodeId,omitempty"`
 	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
+	CreateInitialClient bool     `json:"createInitialClient"`
+	InboundTag          string   `json:"inboundTag"`
+	InboundTotalBytes   int64    `json:"inboundTotalBytes"`
+	InboundResetDays    int      `json:"inboundResetDays"`
+	ClientTotalBytes    int64    `json:"clientTotalBytes"`
+	ClientResetDays     int      `json:"clientResetDays"`
+	ClientExpiryTime    int64    `json:"clientExpiryTime"`
 }
 
 type RealityCommandResult struct {
-	Action          string `json:"action"`
-	InboundID       int    `json:"inboundId"`
-	DisplayName     string `json:"displayName"`
-	ClientName      string `json:"clientName,omitempty"`
-	Listen          string `json:"listen"`
-	Port            int    `json:"port"`
-	Target          string `json:"target"`
-	SNIHostname     string `json:"sniHostname"`
-	ConnectHostname string `json:"connectHostname"`
-	ShareURI        string `json:"shareUri"`
+	Action            string `json:"action"`
+	InboundID         int    `json:"inboundId"`
+	DisplayName       string `json:"displayName"`
+	ClientName        string `json:"clientName,omitempty"`
+	Listen            string `json:"listen"`
+	Port              int    `json:"port"`
+	Target            string `json:"target"`
+	SNIHostname       string `json:"sniHostname"`
+	ConnectHostname   string `json:"connectHostname"`
+	ShareURI          string `json:"shareUri"`
+	InboundTag        string `json:"inboundTag"`
+	ClientCreated     bool   `json:"clientCreated"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandTask struct {
@@ -136,6 +146,7 @@ type SubscriptionCommandResult struct {
 
 type ThreeXUIClientInbound struct {
 	ID              int    `json:"id"`
+	ServiceID       string `json:"serviceId"`
 	Name            string `json:"name"`
 	DisplayName     string `json:"displayName,omitempty"`
 	ApplicationID   string `json:"applicationId"`
@@ -143,6 +154,14 @@ type ThreeXUIClientInbound struct {
 	NodeName        string `json:"nodeName"`
 	ConnectHostname string `json:"connectHostname,omitempty"`
 	SNIHostname     string `json:"sniHostname,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	TotalBytes      int64  `json:"totalBytes"`
+	UsedBytes       int64  `json:"usedBytes"`
+	ResetDays       int    `json:"resetDays"`
+	NextResetAt     string `json:"nextResetAt,omitempty"`
+	PlanStatus      string `json:"planStatus"`
+	PlanError       string `json:"planError,omitempty"`
+	InboundTag      string `json:"inboundTag,omitempty"`
 }
 
 type ThreeXUIClientCommandTask struct {
@@ -153,8 +172,21 @@ type ThreeXUIClientCommandTask struct {
 	InboundIDs          []int                   `json:"inboundIds,omitempty"`
 	Enabled             bool                    `json:"enabled"`
 	TotalBytes          int64                   `json:"totalBytes"`
+	ResetDays           int                     `json:"resetDays"`
 	ExpiryTime          int64                   `json:"expiryTime"`
 	LimitIP             int                     `json:"limitIp"`
+	ServiceID           string                  `json:"serviceId,omitempty"`
+	InboundTotalBytes   int64                   `json:"inboundTotalBytes"`
+	InboundResetDays    int                     `json:"inboundResetDays"`
+	ExpectedNextResetAt string                  `json:"expectedNextResetAt,omitempty"`
+	PlanRevision        int64                   `json:"planRevision,omitempty"`
+	OperationKey        string                  `json:"operationKey,omitempty"`
+	InboundTag          string                  `json:"inboundTag,omitempty"`
+	TargetApplicationID string                  `json:"targetApplicationId,omitempty"`
+	TargetAddress       string                  `json:"targetAddress,omitempty"`
+	TargetPanelPort     int                     `json:"targetPanelPort,omitempty"`
+	TargetNodeID        int                     `json:"targetNodeId,omitempty"`
+	TargetAPIToken      string                  `json:"targetApiToken,omitempty"`
 	Inbounds            []ThreeXUIClientInbound `json:"inbounds"`
 	SubscriptionBaseURI string                  `json:"subscriptionBaseUri,omitempty"`
 }
@@ -164,6 +196,7 @@ type ThreeXUIClientView struct {
 	Enabled         bool   `json:"enabled"`
 	TotalBytes      int64  `json:"totalBytes"`
 	UsedBytes       int64  `json:"usedBytes"`
+	ResetDays       int    `json:"resetDays"`
 	ExpiryTime      int64  `json:"expiryTime"`
 	LimitIP         int    `json:"limitIp"`
 	InboundIDs      []int  `json:"inboundIds"`
@@ -171,11 +204,12 @@ type ThreeXUIClientView struct {
 }
 
 type ThreeXUIClientCommandResult struct {
-	Clients         []ThreeXUIClientView    `json:"clients,omitempty"`
-	ClientsObserved bool                    `json:"clientsObserved"`
-	Inbounds        []ThreeXUIClientInbound `json:"inbounds"`
-	Secret          string                  `json:"secret,omitempty"`
-	SecretKind      string                  `json:"secretKind,omitempty"`
+	Clients          []ThreeXUIClientView    `json:"clients,omitempty"`
+	ClientsObserved  bool                    `json:"clientsObserved"`
+	Inbounds         []ThreeXUIClientInbound `json:"inbounds"`
+	InboundsObserved bool                    `json:"inboundsObserved"`
+	Secret           string                  `json:"secret,omitempty"`
+	SecretKind       string                  `json:"secretKind,omitempty"`
 }
 
 type ThreeXUINodeCommandTask struct {

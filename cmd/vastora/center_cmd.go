@@ -106,6 +106,9 @@ func runCenter(arguments []string) error {
 		go store.RunRealityNameReconciliation(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center REALITY name reconciliation: %v\n", err)
 		})
+		go store.RunThreeXUIInboundPlanResets(maintenanceContext, time.Minute, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center REALITY traffic plan reset: %v\n", err)
+		})
 		centerServer := center.NewServer(store, *webDir, *tlsCert != "").
 			WithOfficialCatalog(catalogPayload).
 			WithAgentBinaries(*agentBinariesDir).

@@ -18,6 +18,8 @@ const (
 	threeXUIRoleWorker = "worker"
 )
 
+var errThreeXUIAPISecretUnavailable = errors.New("center: 3x-ui node API token is unavailable")
+
 func (s *Store) validateThreeXUIInstallRole(ctx context.Context, agentID, role string) error {
 	if role != threeXUIRoleMaster && role != threeXUIRoleWorker {
 		return errors.New("center: choose whether this 3x-ui installation is the Site controller or a VLESS node")
@@ -232,7 +234,7 @@ func (s *Store) queueThreeXUINodeRemoval(ctx context.Context, tx *sql.Tx, worker
 
 func (s *Store) insertThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, masterAgentID, workerApplicationID string, task ThreeXUINodeCommandTask, now time.Time) error {
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind <> ? AND state IN ('pending', 'running')`, workerApplicationID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, masterAgentID, controllerCommandKind).Scan(&active); err != nil {
 		return err
 	}
 	if active != 0 {
@@ -260,15 +262,18 @@ func (s *Store) insertThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, maste
 func (s *Store) threeXUIAPISecret(ctx context.Context, tx *sql.Tx, applicationID string) (string, error) {
 	var sealed []byte
 	if err := tx.QueryRowContext(ctx, `SELECT s.sealed FROM application_secrets a JOIN secrets s ON s.id = a.secret_id WHERE a.application_id = ?`, applicationID).Scan(&sealed); err != nil {
-		return "", errors.New("center: 3x-ui node API token is unavailable")
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", errThreeXUIAPISecretUnavailable
+		}
+		return "", err
 	}
 	plain, err := secret.Open(s.key, sealed, []byte("application:"+applicationID))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: stored value cannot be decrypted", errThreeXUIAPISecretUnavailable)
 	}
 	var values map[string]string
 	if json.Unmarshal(plain, &values) != nil || strings.TrimSpace(values["api_token"]) == "" {
-		return "", errors.New("center: stored 3x-ui node API token is invalid")
+		return "", fmt.Errorf("%w: stored value is invalid", errThreeXUIAPISecretUnavailable)
 	}
 	return strings.TrimSpace(values["api_token"]), nil
 }
@@ -366,6 +371,11 @@ func (s *Store) completeThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, tas
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
+	}
+	if input.Action == "reconcile" && input.MigrationID != "" {
+		if err := s.queueNextThreeXUINodeAfterMigration(ctx, tx, input.MigrationID, s.now().UTC()); err != nil {
+			return err
+		}
 	}
 	if succeeded && input.Action == "reconcile" {
 		if err := s.completeThreeXUIControllerMigrationIfReady(ctx, tx, input.WorkerApplicationID, now); err != nil {

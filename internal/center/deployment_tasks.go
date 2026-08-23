@@ -74,6 +74,12 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 		FROM deployments d JOIN applications a ON a.id = d.application_id LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.agent_id = ? AND d.state = 'pending' ORDER BY d.created_at, d.rowid LIMIT 1`, agentID).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		commandTask, commandErr := s.claimApplicationCommand(ctx, tx, agentID)
+		if errors.Is(commandErr, errApplicationCommandDiscarded) {
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
 		if commandErr != nil {
 			return nil, commandErr
 		}

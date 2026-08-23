@@ -56,7 +56,7 @@ type Connection struct {
 	Credential string `json:"-"`
 }
 
-const agentSchemaVersion = 2
+const agentSchemaVersion = 3
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -115,6 +115,38 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 2
 		}
+		if version == 2 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE three_x_ui_reset_journal (
+					operation_key TEXT PRIMARY KEY,
+					service_id TEXT NOT NULL,
+					expected_next_reset_at TEXT NOT NULL,
+					plan_revision INTEGER NOT NULL CHECK(plan_revision > 0),
+					target_inbound_id INTEGER NOT NULL CHECK(target_inbound_id > 0),
+					target_inbound_tag TEXT NOT NULL,
+					sync_used_bytes INTEGER NOT NULL CHECK(sync_used_bytes >= 0),
+					desired_enabled INTEGER NOT NULL CHECK(desired_enabled IN (0, 1)),
+					status TEXT NOT NULL CHECK(status IN ('disable_started', 'disabled', 'reset_applied', 'reset_done', 'enable_done', 'retry', 'retry_applied', 'restore_pending', 'restore_pending_applied', 'completed', 'cancelled', 'cancelled_applied')),
+					last_error TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				)`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version = 3`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 2 to 3: %w", migrateErr)
+			}
+			version = 3
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -146,7 +178,21 @@ func Open(dataDir string) (*Store, error) {
 			config_hash TEXT NOT NULL,
 			applied_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 2;`); err != nil {
+		CREATE TABLE three_x_ui_reset_journal (
+			operation_key TEXT PRIMARY KEY,
+			service_id TEXT NOT NULL,
+			expected_next_reset_at TEXT NOT NULL,
+			plan_revision INTEGER NOT NULL CHECK(plan_revision > 0),
+			target_inbound_id INTEGER NOT NULL CHECK(target_inbound_id > 0),
+			target_inbound_tag TEXT NOT NULL,
+			sync_used_bytes INTEGER NOT NULL CHECK(sync_used_bytes >= 0),
+			desired_enabled INTEGER NOT NULL CHECK(desired_enabled IN (0, 1)),
+			status TEXT NOT NULL CHECK(status IN ('disable_started', 'disabled', 'reset_applied', 'reset_done', 'enable_done', 'retry', 'retry_applied', 'restore_pending', 'restore_pending_applied', 'completed', 'cancelled', 'cancelled_applied')),
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+		PRAGMA user_version = 3;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}

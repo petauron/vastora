@@ -15,7 +15,10 @@ import (
 	"strings"
 )
 
-const threeXUIClientPageSize = 200
+const (
+	threeXUIClientPageSize = 200
+	maxThreeXUIResetDays   = 3650
+)
 
 type threeXUIClientPage struct {
 	Items []struct {
@@ -24,6 +27,7 @@ type threeXUIClientPage struct {
 		Enable     bool   `json:"enable"`
 		TotalGB    int64  `json:"totalGB"`
 		ExpiryTime int64  `json:"expiryTime"`
+		Reset      int    `json:"reset"`
 		LimitIP    int    `json:"limitIp"`
 		InboundIDs []int  `json:"inboundIds"`
 		Traffic    struct {
@@ -40,13 +44,16 @@ type threeXUIClientDetail struct {
 }
 
 func applyThreeXUIClientCommand(ctx context.Context, store *Store, command ThreeXUIClientCommandTask) (ThreeXUIClientCommandResult, error) {
+	if command.TotalBytes < 0 || command.ResetDays < 0 || command.ResetDays > maxThreeXUIResetDays || command.ExpiryTime < 0 || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || ((command.Action == "create" || command.Action == "update") && command.ResetDays > 0 && command.ExpiryTime <= store.now().UTC().UnixMilli()) {
+		return ThreeXUIClientCommandResult{}, errors.New("agent: invalid 3x-ui traffic plan")
+	}
 	baseURL, token, err := threeXUIClientAPIConnection(ctx, store)
 	if err != nil {
 		return ThreeXUIClientCommandResult{}, err
 	}
 	result := ThreeXUIClientCommandResult{Inbounds: append([]ThreeXUIClientInbound(nil), command.Inbounds...)}
 	switch command.Action {
-	case "list":
+	case "list", "list_inbounds":
 	case "create":
 		if !clientInboundsAvailable(command.Inbounds, command.InboundIDs) {
 			return result, errors.New("agent: selected 3x-ui nodes are unavailable")
@@ -62,7 +69,7 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 		payload := map[string]any{
 			"client": map[string]any{
 				"email": command.NewEmail, "subId": subID, "id": clientID, "flow": "xtls-rprx-vision",
-				"totalGB": command.TotalBytes, "expiryTime": command.ExpiryTime, "limitIp": command.LimitIP,
+				"totalGB": command.TotalBytes, "expiryTime": command.ExpiryTime, "reset": command.ResetDays, "limitIp": command.LimitIP,
 				"tgId": 0, "enable": command.Enabled,
 			},
 			"inboundIds": command.InboundIDs,
@@ -82,6 +89,7 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 			setClientJSONField(detail.Client, "email", command.NewEmail)
 			setClientJSONField(detail.Client, "totalGB", command.TotalBytes)
 			setClientJSONField(detail.Client, "expiryTime", command.ExpiryTime)
+			setClientJSONField(detail.Client, "reset", command.ResetDays)
 			setClientJSONField(detail.Client, "limitIp", command.LimitIP)
 		} else {
 			setClientJSONField(detail.Client, "enable", command.Enabled)
@@ -102,6 +110,31 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/resetTraffic/"+url.PathEscape(command.Email), token, "application/json", map[string]any{}); err != nil {
 			return result, fmt.Errorf("agent: reset 3x-ui client traffic: %w", err)
 		}
+	case "update_inbound":
+		if err := applyThreeXUIInboundPlan(ctx, store, baseURL, token, command, false); err != nil {
+			return result, err
+		}
+	case "reset_inbound_plan":
+		if err := applyThreeXUIInboundPlan(ctx, store, baseURL, token, command, true); err != nil {
+			return result, err
+		}
+		journal, completed, err := store.completedThreeXUIResetJournal(ctx, command.OperationKey, command.ServiceID, command.ExpectedNextResetAt, command.PlanRevision, command.InboundID, command.InboundTag, command.TargetNodeID)
+		if err != nil {
+			return result, err
+		}
+		if !completed {
+			return result, errors.New("agent: completed REALITY inbound reset journal is unavailable")
+		}
+		target, ok := clientInbound(command.Inbounds, []int{command.InboundID}, command.InboundID)
+		if !ok || target.ServiceID != command.ServiceID {
+			return result, errors.New("agent: completed REALITY inbound reset target is unavailable")
+		}
+		target.Enabled = journal.DesiredEnabled
+		target.TotalBytes = command.InboundTotalBytes
+		target.UsedBytes = journal.SyncUsedBytes
+		target.InboundTag = command.InboundTag
+		result.Inbounds = []ThreeXUIClientInbound{target}
+		result.InboundsObserved = false
 	case "reveal_link":
 		secret, err := revealThreeXUIClientLink(ctx, baseURL, token, command)
 		if err != nil {
@@ -117,15 +150,25 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 	default:
 		return result, errors.New("agent: unsupported 3x-ui client operation")
 	}
-	clients, err := listThreeXUIClients(ctx, baseURL, token)
-	if err != nil {
-		if command.Action == "list" {
+	if command.Action != "list_inbounds" && command.Action != "update_inbound" && command.Action != "reset_inbound_plan" {
+		clients, err := listThreeXUIClients(ctx, baseURL, token)
+		if err != nil {
+			if command.Action == "list" {
+				return result, err
+			}
+		} else {
+			result.Clients = clients
+			result.ClientsObserved = true
+		}
+	}
+	if command.Action == "list" || command.Action == "list_inbounds" || command.Action == "update_inbound" {
+		inbounds, err := observeThreeXUIClientInbounds(ctx, baseURL, token, command.Inbounds)
+		if err != nil {
 			return result, err
 		}
-		return result, nil
+		result.Inbounds = inbounds
+		result.InboundsObserved = true
 	}
-	result.Clients = clients
-	result.ClientsObserved = true
 	return result, nil
 }
 
@@ -162,15 +205,15 @@ func listThreeXUIClients(ctx context.Context, baseURL, token string) ([]ThreeXUI
 			return nil, errors.New("agent: 3x-ui returned invalid client data")
 		}
 		for _, client := range response.Items {
-			if strings.TrimSpace(client.Email) == "" {
-				return nil, errors.New("agent: 3x-ui returned an unnamed client")
+			if strings.TrimSpace(client.Email) == "" || client.TotalGB < 0 || client.Reset < 0 || client.Reset > maxThreeXUIResetDays || client.ExpiryTime < 0 || client.LimitIP < 0 || client.Traffic.Up < 0 || client.Traffic.Down < 0 || client.Traffic.Up > int64(^uint64(0)>>1)-client.Traffic.Down {
+				return nil, errors.New("agent: 3x-ui returned invalid client traffic metadata")
 			}
 			inboundIDs := append([]int(nil), client.InboundIDs...)
 			sort.Ints(inboundIDs)
 			clients = append(clients, ThreeXUIClientView{
 				Email: client.Email, Enabled: client.Enable, TotalBytes: client.TotalGB,
 				UsedBytes: client.Traffic.Up + client.Traffic.Down, ExpiryTime: client.ExpiryTime,
-				LimitIP: client.LimitIP, InboundIDs: inboundIDs, HasSubscription: strings.TrimSpace(client.SubID) != "",
+				ResetDays: client.Reset, LimitIP: client.LimitIP, InboundIDs: inboundIDs, HasSubscription: strings.TrimSpace(client.SubID) != "",
 			})
 		}
 		if len(clients) >= response.Total || len(response.Items) < threeXUIClientPageSize {
