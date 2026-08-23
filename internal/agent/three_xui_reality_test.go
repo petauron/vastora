@@ -68,6 +68,40 @@ func TestEnsureThreeXUIRealityClientVersionRepairsOnceAndPreservesPayload(t *tes
 	}
 }
 
+func TestRenameThreeXUIRealityInboundPreservesConfiguration(t *testing.T) {
+	updates := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /panel/api/inbounds/get/9":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"vastora-reality-old","protocol":"vless","listen":"100.64.0.2","port":39871,"nodeId":7,"settings":{"clients":[{"id":"client-id","email":"MacBook","flow":"xtls-rprx-vision"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"privateKey":"private-key","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}},"sniffing":{"enabled":true},"clientStats":[{"email":"MacBook"}],"customField":"preserve-me"}}`))
+		case "POST /panel/api/inbounds/update/9":
+			updates++
+			var payload map[string]any
+			if json.NewDecoder(request.Body).Decode(&payload) != nil {
+				t.Fatal("renamed inbound payload was not decoded")
+			}
+			settings, _ := payload["settings"].(map[string]any)
+			stream, _ := payload["streamSettings"].(map[string]any)
+			if payload["remark"] != "US Oracle" || payload["listen"] != "100.64.0.2" || payload["port"] != float64(39871) || payload["nodeId"] != float64(7) || payload["customField"] != "preserve-me" || settings == nil || stream["security"] != "reality" || payload["id"] != nil || payload["clientStats"] != nil {
+				t.Fatalf("rename changed the inbound configuration: %#v", payload)
+			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	result, err := renameThreeXUIRealityInbound(context.Background(), server.URL, "token", RealityCommandTask{Action: "rename", DisplayName: "US Oracle", InboundID: 9, TargetNodeID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updates != 1 || result.Action != "rename" || result.InboundID != 9 || result.DisplayName != "US Oracle" {
+		t.Fatalf("unexpected rename result: %#v, updates=%d", result, updates)
+	}
+}
+
 func TestSyncThreeXUIRealityHostUpdatesOnlyManagedGroup(t *testing.T) {
 	var updated threeXUIHostGroup
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -89,7 +123,7 @@ func TestSyncThreeXUIRealityHostUpdatesOnlyManagedGroup(t *testing.T) {
 	if err := syncThreeXUIRealityHost(context.Background(), server.URL, "token", 9, "reality.example.test", "www.example.test"); err != nil {
 		t.Fatal(err)
 	}
-	if updated.GroupID != "vastora-public-9" || len(updated.InboundIDs) != 1 || updated.InboundIDs[0] != 9 || len(updated.Hosts) != 1 || updated.Hosts[0] != "reality.example.test" || updated.Port != 443 || updated.SNI != "www.example.test" {
+	if updated.GroupID != "vastora-public-9" || updated.Remark != "{{INBOUND}}" || len(updated.InboundIDs) != 1 || updated.InboundIDs[0] != 9 || len(updated.Hosts) != 1 || updated.Hosts[0] != "reality.example.test" || updated.Port != 443 || updated.SNI != "www.example.test" {
 		t.Fatalf("unexpected managed Reality host: %#v", updated)
 	}
 }
@@ -100,7 +134,7 @@ func TestSyncThreeXUIRealityHostKeepsMatchingGroup(t *testing.T) {
 			t.Fatalf("matching host should not be rewritten: %s %s", request.Method, request.URL.Path)
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"success":true,"obj":[{"groupId":"vastora-public-9","inboundIds":[9],"hosts":["reality.example.test"],"remark":"{{INBOUND}}-{{EMAIL}}","serverDescription":"Managed by Vastora","tags":["vastora"],"port":443,"security":"same","sni":"www.example.test","fingerprint":"chrome","mihomoIpVersion":"dual"}]}`))
+		_, _ = response.Write([]byte(`{"success":true,"obj":[{"groupId":"vastora-public-9","inboundIds":[9],"hosts":["reality.example.test"],"remark":"{{INBOUND}}","serverDescription":"Managed by Vastora","tags":["vastora"],"port":443,"security":"same","sni":"www.example.test","fingerprint":"chrome","mihomoIpVersion":"dual"}]}`))
 	}))
 	defer server.Close()
 

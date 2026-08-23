@@ -152,7 +152,7 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 }
 
 func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID string) ([]ThreeXUIClientInbound, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT CAST(SUBSTR(s.name, 9) AS INTEGER), s.name, target.id, target.node_id, agent.name,
+	rows, err := tx.QueryContext(ctx, `SELECT CAST(SUBSTR(s.name, 9) AS INTEGER), s.name, s.display_name, target.id, target.node_id, agent.name,
 		COALESCE((SELECT p.hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), ''),
 		COALESCE((SELECT p.sni_hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), '')
 		FROM services s JOIN applications target ON target.id = s.application_id JOIN agents agent ON agent.id = target.node_id
@@ -167,7 +167,7 @@ func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID strin
 	values := []ThreeXUIClientInbound{}
 	for rows.Next() {
 		var value ThreeXUIClientInbound
-		if err := rows.Scan(&value.ID, &value.Name, &value.ApplicationID, &value.NodeID, &value.NodeName, &value.ConnectHostname, &value.SNIHostname); err != nil {
+		if err := rows.Scan(&value.ID, &value.Name, &value.DisplayName, &value.ApplicationID, &value.NodeID, &value.NodeName, &value.ConnectHostname, &value.SNIHostname); err != nil {
 			return nil, err
 		}
 		if value.ID > 0 {

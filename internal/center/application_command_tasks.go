@@ -31,12 +31,18 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	switch kind {
-	case realityCommandKind:
+	case realityCommandKind, realityRenameCommandKind:
 		var command RealityCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.Name == "" || command.ConnectHostname == "" || command.TargetApplicationID == "" || net.ParseIP(command.TargetAddress) == nil {
+		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" || !validThreeXUIClientName(command.DisplayName) {
 			return nil, errors.New("center: stored REALITY operation is invalid")
 		}
-		if command.TargetNodeID > 0 {
+		if kind == realityCommandKind && (command.Action != "create" || !validThreeXUIClientName(command.ClientName) || command.ConnectHostname == "" || net.ParseIP(command.TargetAddress) == nil) {
+			return nil, errors.New("center: stored REALITY creation operation is invalid")
+		}
+		if kind == realityRenameCommandKind && (command.Action != "rename" || command.InboundID < 1) {
+			return nil, errors.New("center: stored REALITY rename operation is invalid")
+		}
+		if kind == realityCommandKind && command.TargetNodeID > 0 {
 			command.TargetAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.TargetApplicationID)
 			if err != nil {
 				return nil, err
@@ -139,6 +145,9 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	if kind == controllerCommandKind {
 		return s.completeThreeXUIControllerCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
+	if kind == realityRenameCommandKind {
+		return s.completeRealityRenameCommand(ctx, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
+	}
 	if kind != realityCommandKind {
 		return errors.New("center: stored application operation kind is invalid")
 	}
@@ -181,16 +190,26 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 			serviceName := fmt.Sprintf("inbound-%d", result.InboundID)
 			err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE application_id = ? AND name = ?`, applicationID, serviceName).Scan(&serviceID)
 			if errors.Is(err, sql.ErrNoRows) {
+				err = nil
+			}
+			var siteID string
+			if err == nil {
+				err = tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID)
+			}
+			var duplicateDisplayName int
+			if err == nil {
+				err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE site_id = ? AND id <> ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped' AND display_name = ? COLLATE NOCASE`, siteID, serviceID, result.DisplayName).Scan(&duplicateDisplayName)
+			}
+			if err == nil && duplicateDisplayName != 0 {
+				err = errors.New("this Site already has a REALITY node with that display name")
+			}
+			if err == nil && serviceID == "" {
 				serviceID, err = randomToken(18)
 				if err == nil {
-					var siteID string
-					err = tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID)
-					if err == nil {
-						_, err = tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at) VALUES(?, ?, ?, ?, 'tcp', ?, ?, ?, 'observed', 'vless/tcp/reality', 0, ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, serviceName, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
-					}
+					_, err = tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, 'tcp', ?, ?, ?, 'observed', 'vless/tcp/reality', 0, ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, serviceName, result.DisplayName, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 				}
 			} else if err == nil {
-				_, err = tx.ExecContext(ctx, `UPDATE services SET protocol = 'tcp', container_port = ?, host_port = ?, endpoint = ?, source = 'observed', app_protocol = 'vless/tcp/reality', observed_listen = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), serviceID)
+				_, err = tx.ExecContext(ctx, `UPDATE services SET display_name = ?, protocol = 'tcp', container_port = ?, host_port = ?, endpoint = ?, source = 'observed', app_protocol = 'vless/tcp/reality', observed_listen = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, result.DisplayName, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), serviceID)
 			}
 			if err != nil {
 				succeeded = false
@@ -275,6 +294,53 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 		return errors.Join(err, commitErr)
 	}
 	return nil
+}
+
+func (s *Store) completeRealityRenameCommand(ctx context.Context, tx *sql.Tx, taskID, agentID, applicationID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+	var input RealityCommandTask
+	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "rename" || input.InboundID < 1 || !validThreeXUIClientName(input.DisplayName) {
+		return errors.New("center: stored REALITY rename operation is invalid")
+	}
+	var envelope ApplicationTaskResult
+	if succeeded {
+		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.ApplicationCommand == nil {
+			succeeded = false
+			taskError = "center: Agent returned an invalid REALITY rename result"
+		} else if result := envelope.ApplicationCommand; result.Action != "rename" || result.InboundID != input.InboundID || result.DisplayName != input.DisplayName {
+			succeeded = false
+			taskError = "center: Agent changed the requested REALITY node name"
+		}
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	state, event, message := "succeeded", "succeeded", "3x-ui REALITY node renamed"
+	resultJSON := []byte(`{}`)
+	if succeeded {
+		serviceName := fmt.Sprintf("inbound-%d", input.InboundID)
+		result, err := tx.ExecContext(ctx, `UPDATE services SET display_name = ?, updated_at = ? WHERE application_id = ? AND name = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.DisplayName, now, applicationID, serviceName)
+		if err != nil {
+			return err
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			succeeded = false
+			taskError = "center: REALITY service changed while renaming"
+		} else {
+			resultJSON, _ = json.Marshal(envelope.ApplicationCommand)
+		}
+	}
+	if !succeeded {
+		state, event = "failed", "failed"
+		if taskError == "" {
+			taskError = "application operation failed"
+		}
+		message = taskError
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, resultJSON, taskError, now, taskID); err != nil {
+		return err
+	}
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gatewayID string, input RealityCommandTask, sniHostname string) error {

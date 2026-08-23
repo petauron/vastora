@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,16 +16,18 @@ import (
 )
 
 const (
-	realityCommandKind      = "3xui.reality.create"
-	subscriptionCommandKind = "3xui.subscription.configure"
-	clientCommandKind       = "3xui.clients.manage"
-	nodeCommandKind         = "3xui.node.reconcile"
-	controllerCommandKind   = "3xui.controller.manage"
+	realityCommandKind       = "3xui.reality.create"
+	realityRenameCommandKind = "3xui.reality.rename"
+	subscriptionCommandKind  = "3xui.subscription.configure"
+	clientCommandKind        = "3xui.clients.manage"
+	nodeCommandKind          = "3xui.node.reconcile"
+	controllerCommandKind    = "3xui.controller.manage"
 )
 
 type RealityCommandInput struct {
 	ApplicationID string `json:"applicationId"`
-	Name          string `json:"name"`
+	DisplayName   string `json:"displayName"`
+	ClientName    string `json:"clientName"`
 	GatewayNodeID string `json:"gatewayNodeId"`
 	Hostname      string `json:"hostname"`
 	DNSProvider   string `json:"dnsProvider"`
@@ -32,8 +35,16 @@ type RealityCommandInput struct {
 	SNIHostname   string `json:"sniHostname,omitempty"`
 }
 
+type RealityRenameCommandInput struct {
+	ServiceID   string `json:"serviceId"`
+	DisplayName string `json:"displayName"`
+}
+
 type RealityCommandTask struct {
-	Name                string   `json:"name"`
+	Action              string   `json:"action"`
+	DisplayName         string   `json:"displayName"`
+	ClientName          string   `json:"clientName,omitempty"`
+	InboundID           int      `json:"inboundId,omitempty"`
 	ConnectHostname     string   `json:"connectHostname"`
 	DNSProvider         string   `json:"dnsProvider"`
 	Target              string   `json:"target,omitempty"`
@@ -47,8 +58,10 @@ type RealityCommandTask struct {
 }
 
 type RealityCommandResult struct {
+	Action          string `json:"action"`
 	InboundID       int    `json:"inboundId"`
-	Name            string `json:"name"`
+	DisplayName     string `json:"displayName"`
+	ClientName      string `json:"clientName,omitempty"`
 	Listen          string `json:"listen"`
 	Port            int    `json:"port"`
 	Target          string `json:"target"`
@@ -92,6 +105,7 @@ type ThreeXUIClientCommandInput struct {
 type ThreeXUIClientInbound struct {
 	ID              int    `json:"id"`
 	Name            string `json:"name"`
+	DisplayName     string `json:"displayName,omitempty"`
 	ApplicationID   string `json:"applicationId"`
 	NodeID          string `json:"nodeId"`
 	NodeName        string `json:"nodeName"`
@@ -180,6 +194,8 @@ type ApplicationCommandView struct {
 	SNIHostname           string                  `json:"sniHostname,omitempty"`
 	PublicationID         string                  `json:"publicationId,omitempty"`
 	Action                string                  `json:"action,omitempty"`
+	DisplayName           string                  `json:"displayName,omitempty"`
+	InboundID             int                     `json:"inboundId,omitempty"`
 	Clients               []ThreeXUIClientView    `json:"clients,omitempty"`
 	ClientsObserved       bool                    `json:"clientsObserved,omitempty"`
 	Inbounds              []ThreeXUIClientInbound `json:"inbounds,omitempty"`
@@ -192,14 +208,15 @@ type ApplicationCommandView struct {
 
 func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInput, error) {
 	input.ApplicationID = strings.TrimSpace(input.ApplicationID)
-	input.Name = strings.TrimSpace(input.Name)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	input.ClientName = strings.TrimSpace(input.ClientName)
 	input.GatewayNodeID = strings.TrimSpace(input.GatewayNodeID)
 	input.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.Hostname), "."))
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
 	input.Target = strings.ToLower(strings.TrimSpace(input.Target))
 	input.SNIHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.SNIHostname), "."))
-	if input.ApplicationID == "" || input.GatewayNodeID == "" || input.Name == "" || len(input.Name) > 64 || !domainSuffixPattern.MatchString(input.Hostname) {
-		return input, errors.New("center: application, name, gateway, and a valid connection hostname are required")
+	if input.ApplicationID == "" || input.GatewayNodeID == "" || !validThreeXUIClientName(input.DisplayName) || !validThreeXUIClientName(input.ClientName) || !domainSuffixPattern.MatchString(input.Hostname) {
+		return input, errors.New("center: application, node name, client name, gateway, and a valid connection hostname are required")
 	}
 	if input.DNSProvider != "manual" && input.DNSProvider != "cloudflare" {
 		return input, errors.New("center: REALITY DNS must be manual or Cloudflare")
@@ -220,7 +237,7 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 }
 
 func validateRealityCommandResult(input RealityCommandTask, result RealityCommandResult) error {
-	if result.InboundID < 1 || result.Name != input.Name || net.ParseIP(result.Listen) == nil || result.Port < 1024 || result.Port > 65535 || result.Port == 443 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.SNIHostname) {
+	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || net.ParseIP(result.Listen) == nil || result.Port < 1024 || result.Port > 65535 || result.Port == 443 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.SNIHostname) {
 		return errors.New("center: Agent returned an unsafe REALITY result")
 	}
 	targetHost, targetPort, err := net.SplitHostPort(strings.ToLower(strings.TrimSpace(result.Target)))
@@ -231,7 +248,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 		return errors.New("center: Agent changed the requested REALITY target")
 	}
 	share, err := url.Parse(strings.TrimSpace(result.ShareURI))
-	if err != nil || share.Scheme != "vless" || share.User == nil || share.User.Username() == "" || share.Hostname() != input.ConnectHostname || share.Port() != "443" {
+	if err != nil || share.Scheme != "vless" || share.User == nil || share.User.Username() == "" || share.Hostname() != input.ConnectHostname || share.Port() != "443" || share.Fragment != input.DisplayName {
 		return errors.New("center: Agent returned an invalid REALITY client link")
 	}
 	if _, hasPassword := share.User.Password(); hasPassword {
@@ -309,12 +326,19 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 			return ApplicationCommandView{}, errors.New("center: connection hostname must belong to the configured Cloudflare Zone")
 		}
 	}
+	var duplicateDisplayName int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE site_id = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped' AND display_name = ? COLLATE NOCASE`, siteID, input.DisplayName).Scan(&duplicateDisplayName); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if duplicateDisplayName != 0 {
+		return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY node with that display name")
+	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind <> ? AND state IN ('pending', 'running')`, input.ApplicationID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
-		return ApplicationCommandView{}, errors.New("center: this 3x-ui application already has a REALITY operation in progress")
+		return ApplicationCommandView{}, errors.New("center: this 3x-ui controller already has an operation in progress")
 	}
 	excluded := []string{}
 	rows, err := tx.QueryContext(ctx, `SELECT sni_hostname FROM publications WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped' ORDER BY sni_hostname`, input.GatewayNodeID)
@@ -332,7 +356,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if err := rows.Close(); err != nil {
 		return ApplicationCommandView{}, err
 	}
-	task := RealityCommandTask{Name: input.Name, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, Target: input.Target, SNIHostname: input.SNIHostname, ExcludedSNI: excluded,
+	task := RealityCommandTask{Action: "create", DisplayName: input.DisplayName, ClientName: input.ClientName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, Target: input.Target, SNIHostname: input.SNIHostname, ExcludedSNI: excluded,
 		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID}
 	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)
@@ -345,6 +369,83 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, fmt.Errorf("center: create REALITY operation: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "3x-ui REALITY creation queued"); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	return s.ApplicationCommand(ctx, id)
+}
+
+func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRenameCommandInput) (ApplicationCommandView, error) {
+	input.ServiceID = strings.TrimSpace(input.ServiceID)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.ServiceID == "" || !validThreeXUIClientName(input.DisplayName) {
+		return ApplicationCommandView{}, errors.New("center: REALITY service and a valid node name are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	defer tx.Rollback()
+	var applicationID, siteID, serviceName, serviceStatus, appProtocol, targetAgentID, appKey, applicationStatus, role string
+	if err := tx.QueryRowContext(ctx, `SELECT s.application_id, s.site_id, s.name, s.status, s.app_protocol, a.node_id, a.app_key, a.status, a.role
+		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, input.ServiceID).Scan(&applicationID, &siteID, &serviceName, &serviceStatus, &appProtocol, &targetAgentID, &appKey, &applicationStatus, &role); errors.Is(err, sql.ErrNoRows) {
+		return ApplicationCommandView{}, errors.New("center: REALITY service not found")
+	} else if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if appKey != threeXUIAppKey || applicationStatus != "running" || appProtocol != "vless/tcp/reality" || (serviceStatus != "running" && serviceStatus != "ready" && serviceStatus != "degraded") || !strings.HasPrefix(serviceName, "inbound-") {
+		return ApplicationCommandView{}, errors.New("center: only an active official 3x-ui REALITY node can be renamed")
+	}
+	inboundID, err := strconv.Atoi(strings.TrimPrefix(serviceName, "inbound-"))
+	if err != nil || inboundID < 1 {
+		return ApplicationCommandView{}, errors.New("center: REALITY service has an invalid inbound identifier")
+	}
+	agentID := targetAgentID
+	targetNodeID := 0
+	if role == threeXUIRoleWorker {
+		if err := tx.QueryRowContext(ctx, `SELECT master.node_id, n.remote_node_id
+			FROM three_x_ui_nodes n JOIN applications master ON master.id = n.master_application_id
+			WHERE n.worker_application_id = ? AND n.status = 'ready' AND master.status = 'running'`, applicationID).Scan(&agentID, &targetNodeID); errors.Is(err, sql.ErrNoRows) {
+			return ApplicationCommandView{}, errors.New("center: this VLESS node is not connected to the Site 3x-ui controller")
+		} else if err != nil {
+			return ApplicationCommandView{}, err
+		}
+	} else if role != threeXUIRoleMaster {
+		return ApplicationCommandView{}, errors.New("center: 3x-ui topology role is not configured")
+	}
+	var duplicateDisplayName int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE site_id = ? AND id <> ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped' AND display_name = ? COLLATE NOCASE`, siteID, input.ServiceID, input.DisplayName).Scan(&duplicateDisplayName); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if duplicateDisplayName != 0 {
+		return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY node with that display name")
+	}
+	var connectHostname, sniHostname string
+	err = tx.QueryRowContext(ctx, `SELECT hostname, sni_hostname FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND status <> 'stopped' ORDER BY updated_at DESC LIMIT 1`, input.ServiceID).Scan(&connectHostname, &sniHostname)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ApplicationCommandView{}, err
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, agentID, controllerCommandKind).Scan(&active); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if active != 0 {
+		return ApplicationCommandView{}, errors.New("center: this 3x-ui controller already has an operation in progress")
+	}
+	task := RealityCommandTask{Action: "rename", DisplayName: input.DisplayName, InboundID: inboundID, ConnectHostname: connectHostname, SNIHostname: sniHostname, TargetApplicationID: applicationID, TargetNodeID: targetNodeID}
+	encoded, _ := json.Marshal(task)
+	token, err := randomToken(18)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	id := "application-command-" + token
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, applicationID, agentID, agentID, realityRenameCommandKind, encoded, now, now); err != nil {
+		return ApplicationCommandView{}, fmt.Errorf("center: rename REALITY node: %w", err)
+	}
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "3x-ui REALITY node rename queued"); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -366,13 +467,20 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		return value, err
 	}
 	switch value.Kind {
-	case realityCommandKind:
+	case realityCommandKind, realityRenameCommandKind:
 		var input RealityCommandTask
 		var result RealityCommandResult
 		if json.Unmarshal(inputJSON, &input) != nil || json.Unmarshal(resultJSON, &result) != nil {
 			return value, errors.New("center: stored application operation is invalid")
 		}
+		value.Action, value.DisplayName, value.InboundID = input.Action, input.DisplayName, input.InboundID
+		if result.InboundID > 0 {
+			value.InboundID = result.InboundID
+		}
 		value.Hostname, value.DNSProvider, value.Target, value.SNIHostname = input.ConnectHostname, input.DNSProvider, result.Target, result.SNIHostname
+		if value.Kind == realityRenameCommandKind {
+			value.DNSProvider = "manual"
+		}
 		if value.Target == "" {
 			value.Target, value.SNIHostname = input.Target, input.SNIHostname
 		}
@@ -425,7 +533,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 }
 
 func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
-	if kind != realityCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
+	if kind != realityCommandKind && kind != realityRenameCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string

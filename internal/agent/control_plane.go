@@ -94,7 +94,10 @@ type ApplicationTaskResult struct {
 }
 
 type RealityCommandTask struct {
-	Name                string   `json:"name"`
+	Action              string   `json:"action"`
+	DisplayName         string   `json:"displayName"`
+	ClientName          string   `json:"clientName,omitempty"`
+	InboundID           int      `json:"inboundId,omitempty"`
 	ConnectHostname     string   `json:"connectHostname"`
 	DNSProvider         string   `json:"dnsProvider"`
 	Target              string   `json:"target,omitempty"`
@@ -108,8 +111,10 @@ type RealityCommandTask struct {
 }
 
 type RealityCommandResult struct {
+	Action          string `json:"action"`
 	InboundID       int    `json:"inboundId"`
-	Name            string `json:"name"`
+	DisplayName     string `json:"displayName"`
+	ClientName      string `json:"clientName,omitempty"`
 	Listen          string `json:"listen"`
 	Port            int    `json:"port"`
 	Target          string `json:"target"`

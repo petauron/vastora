@@ -506,7 +506,7 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	}
 	installTask := claimTask(t, store, node)
 	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.61", "edge-api-token")
-	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, Name: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual"})
+	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, DisplayName: "US Edge", ClientName: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,8 +514,8 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	if task.Kind != "application.command" || task.ApplicationCommand == nil {
 		t.Fatalf("unexpected command task: %#v", task)
 	}
-	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#MacBook"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{InboundID: 9, Name: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI}}
+	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#US%20Edge"
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "US Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI}}
 	encoded, _ := json.Marshal(result)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
 		t.Fatal(err)
@@ -650,17 +650,60 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 	}
 }
 
+func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.71", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.71", LANAddress: "10.0.0.71", EnabledKinds: []string{networking.KindLAN}})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTask := claimTask(t, store, node)
+	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.71", "edge-api-token")
+	now := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)
+		VALUES('reality-service', ?, ?, 'inbound-9', 'Old name', 'tcp', 32009, 32009, '10.0.0.71:32009', 'observed', 'vless/tcp/reality', 0, '10.0.0.71', 'ready', ?, ?)`, deployment.ApplicationID, testSiteID(t, store), now, now); err != nil {
+		t.Fatal(err)
+	}
+	command, err := store.CreateRealityRenameCommand(ctx, RealityRenameCommandInput{ServiceID: "reality-service", DisplayName: "US Oracle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.DisplayName != "US Oracle" {
+		t.Fatalf("unexpected rename task: %#v", task)
+	}
+	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "US Oracle"}})
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.ApplicationCommand(ctx, command.ID)
+	if err != nil || completed.State != "succeeded" || completed.DisplayName != "US Oracle" {
+		t.Fatalf("unexpected completed rename: %#v err=%v", completed, err)
+	}
+	var displayName, serviceName, endpoint string
+	if err := store.db.QueryRowContext(ctx, `SELECT display_name, name, endpoint FROM services WHERE id = 'reality-service'`).Scan(&displayName, &serviceName, &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if displayName != "US Oracle" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
+		t.Fatalf("renamed service = display %q, identity %q, endpoint %q", displayName, serviceName, endpoint)
+	}
+}
+
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
-	input := RealityCommandTask{Name: "MacBook", ConnectHostname: "reality.edge.site.example.test"}
+	input := RealityCommandTask{Action: "create", DisplayName: "US Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test"}
 	valid := RealityCommandResult{
+		Action:          "create",
 		InboundID:       9,
-		Name:            "MacBook",
+		DisplayName:     "US Edge",
+		ClientName:      "MacBook",
 		Listen:          "10.0.0.61",
 		Port:            35443,
 		Target:          "www.example.com:443",
 		SNIHostname:     "www.example.com",
 		ConnectHostname: "reality.edge.site.example.test",
-		ShareURI:        "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#MacBook",
+		ShareURI:        "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#US%20Edge",
 	}
 	if err := validateRealityCommandResult(input, valid); err != nil {
 		t.Fatalf("valid result rejected: %v", err)
