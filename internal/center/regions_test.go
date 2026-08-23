@@ -15,11 +15,23 @@ func TestComposeRealityDisplayNameUsesStableRegionPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != "US" || name != "Oracle 9929" || displayName != "🇺🇸 US · Oracle 9929" {
+	if code != "US" || name != "Oracle 9929" || displayName != "🇺🇸 美国Oracle 9929" {
 		t.Fatalf("composed name = code %q, name %q, display %q", code, name, displayName)
 	}
 	if _, _, _, err := composeRealityDisplayName("ZZ", "Oracle"); err == nil {
 		t.Fatal("unsupported ISO region was accepted")
+	}
+}
+
+func TestRealityBaseNameUnderstandsOldAndCurrentPrefixes(t *testing.T) {
+	for displayName, expected := range map[string]string{
+		"🇺🇸 US · CloudLead": "CloudLead",
+		"🇺🇸 美国CloudLead":    "CloudLead",
+		"CloudLead-test":    "CloudLead-test",
+	} {
+		if actual := realityBaseName(displayName, "US"); actual != expected {
+			t.Fatalf("base name for %q = %q, want %q", displayName, actual, expected)
+		}
 	}
 }
 
@@ -40,7 +52,7 @@ func TestSuggestAgentRegionUsesConfirmedPublicGatewayAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lookedUp != "203.0.113.91" || suggestion.AgentID != node.ID || suggestion.RegionCode != "US" || suggestion.Prefix != "🇺🇸 US" {
+	if lookedUp != "203.0.113.91" || suggestion.AgentID != node.ID || suggestion.RegionCode != "US" || suggestion.Prefix != "🇺🇸 美国" {
 		t.Fatalf("region suggestion = %#v, lookup=%q", suggestion, lookedUp)
 	}
 }

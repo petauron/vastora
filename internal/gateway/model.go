@@ -51,7 +51,7 @@ type Certificate struct {
 func ValidateCertificates(values []Certificate) error {
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		if !hostnamePattern.MatchString(value.Hostname) || strings.TrimSpace(value.CertificatePEM) == "" || strings.TrimSpace(value.PrivateKeyPEM) == "" {
+		if !validCertificateName(value.Hostname) || strings.TrimSpace(value.CertificatePEM) == "" || strings.TrimSpace(value.PrivateKeyPEM) == "" {
 			return errors.New("gateway: invalid TLS certificate")
 		}
 		if _, exists := seen[value.Hostname]; exists {
@@ -65,7 +65,7 @@ func ValidateCertificates(values []Certificate) error {
 		certificate, certificateErr := x509.ParseCertificate(certificateBlock.Bytes)
 		privateKey, keyErr := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
 		signer, signerOK := privateKey.(crypto.Signer)
-		if certificateErr != nil || keyErr != nil || !signerOK || certificate.VerifyHostname(value.Hostname) != nil || time.Now().Before(certificate.NotBefore) || !time.Now().Before(certificate.NotAfter) {
+		if certificateErr != nil || keyErr != nil || !signerOK || !certificateCoversName(certificate, value.Hostname) || time.Now().Before(certificate.NotBefore) || !time.Now().Before(certificate.NotAfter) {
 			return fmt.Errorf("gateway: invalid TLS certificate for %q", value.Hostname)
 		}
 		certificatePublicKey, certificateKeyErr := x509.MarshalPKIXPublicKey(certificate.PublicKey)
@@ -76,6 +76,57 @@ func ValidateCertificates(values []Certificate) error {
 		seen[value.Hostname] = struct{}{}
 	}
 	return nil
+}
+
+func ValidateCertificatesForState(state DesiredState, values []Certificate) error {
+	if err := ValidateCertificates(values); err != nil {
+		return err
+	}
+	for _, route := range state.Routes {
+		if !route.TLSEnabled || route.ListenerKind == "public" {
+			continue
+		}
+		covered := false
+		for _, certificate := range values {
+			if CertificateCoversHostname(certificate, route.Hostname) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return fmt.Errorf("gateway: TLS route %q has no matching certificate", route.Hostname)
+		}
+	}
+	return nil
+}
+
+func CertificateCoversHostname(value Certificate, hostname string) bool {
+	block, _ := pem.Decode([]byte(value.CertificatePEM))
+	if block == nil || block.Type != "CERTIFICATE" {
+		return false
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	return err == nil && certificate.VerifyHostname(hostname) == nil
+}
+
+func validCertificateName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if strings.HasPrefix(name, "*.") {
+		return strings.Count(name, "*") == 1 && hostnamePattern.MatchString(strings.TrimPrefix(name, "*."))
+	}
+	return hostnamePattern.MatchString(name)
+}
+
+func certificateCoversName(certificate *x509.Certificate, name string) bool {
+	if strings.HasPrefix(name, "*.") {
+		for _, dnsName := range certificate.DNSNames {
+			if strings.EqualFold(dnsName, name) {
+				return true
+			}
+		}
+		return false
+	}
+	return certificate.VerifyHostname(name) == nil
 }
 
 // Layer4Route is a raw TCP upstream selected from the TLS ClientHello SNI.

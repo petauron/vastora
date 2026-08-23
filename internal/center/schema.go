@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 14
+const centerSchemaVersion = 15
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -229,8 +229,6 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			sni_hostname TEXT NOT NULL DEFAULT '',
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
 			dns_record_id TEXT NOT NULL DEFAULT '',
-			certificate_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
-			certificate_not_after TEXT NOT NULL DEFAULT '',
 			tls_enabled INTEGER NOT NULL DEFAULT 0,
 			desired_revision INTEGER NOT NULL DEFAULT 1,
 			applied_revision INTEGER NOT NULL DEFAULT 0,
@@ -247,6 +245,16 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			account_uri TEXT NOT NULL,
 			secret_id TEXT NOT NULL REFERENCES secrets(id) ON DELETE RESTRICT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE site_certificates (
+			site_id TEXT PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+			dns_names_json BLOB NOT NULL,
+			secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
+			not_after TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL CHECK(status IN ('pending', 'ready', 'failed')),
+			last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,

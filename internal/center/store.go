@@ -29,10 +29,12 @@ type Store struct {
 	cloudflareOAuthSessions   map[string]*cloudflareOAuthSession
 	cloudflareTokenMu         sync.Mutex
 	certificateMu             sync.Mutex
+	siteCertificateMu         sync.Mutex
 	publicationCleanupMu      sync.Mutex
 	now                       func() time.Time
 	discoverNetworkCandidates func(time.Time) ([]networking.Candidate, error)
 	lookupPublicRegion        func(context.Context, string) (string, error)
+	issuePrivateCertificate   func(context.Context, ...string) (managedCertificate, error)
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
@@ -82,6 +84,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 			},
 		}),
 	}
+	store.issuePrivateCertificate = store.obtainPrivateCertificate
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
 		_ = db.Close()
 		return nil, err

@@ -514,8 +514,8 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	if task.Kind != "application.command" || task.ApplicationCommand == nil {
 		t.Fatalf("unexpected command task: %#v", task)
 	}
-	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20US%20%C2%B7%20Edge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 US · Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI}}
+	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge"
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI}}
 	encoded, _ := json.Marshal(result)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
 		t.Fatal(err)
@@ -606,27 +606,12 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
+	var certificate managedCertificate
+	store.issuePrivateCertificate = func(_ context.Context, dnsNames ...string) (managedCertificate, error) {
+		certificate = testManagedCertificate(t, dnsNames...)
+		return certificate, nil
 	}
-	certificate := managedCertificate{CertificatePEM: "TEST CERTIFICATE", PrivateKeyPEM: "TEST PRIVATE KEY", NotAfter: time.Now().UTC().Add(24 * time.Hour)}
-	encoded, _ := json.Marshal(certificate)
-	secretID, err := store.putSecret(ctx, tx, encoded, "publication-certificate:"+publication.ID)
-	if err == nil {
-		_, err = tx.ExecContext(ctx, `UPDATE publications SET certificate_secret_id = ?, certificate_not_after = ?, tls_enabled = 1 WHERE id = ?`, secretID, certificate.NotAfter.Format(time.RFC3339Nano), publication.ID)
-	}
-	if err == nil {
-		_, err = tx.ExecContext(ctx, `UPDATE routes SET tls_enabled = 1 WHERE publication_id = ?`, publication.ID)
-	}
-	if err == nil {
-		err = store.queueGatewayState(ctx, tx, node.ID, time.Now().UTC())
-	}
-	if err != nil {
-		_ = tx.Rollback()
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
+	if _, err := store.UpdatePublicationTLS(ctx, publication.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	var desiredJSON []byte
@@ -645,7 +630,7 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 		t.Fatal("task events contain a certificate private key")
 	}
 	task := claimTask(t, store, node)
-	if task.Kind != "gateway.routes.apply" || len(task.GatewayCertificates) != 1 || task.GatewayCertificates[0].PrivateKeyPEM != "TEST PRIVATE KEY" {
+	if task.Kind != "gateway.routes.apply" || len(task.GatewayCertificates) != 1 || task.GatewayCertificates[0].PrivateKeyPEM != certificate.PrivateKeyPEM {
 		t.Fatalf("certificate was not delivered only with the Agent task: %#v", task)
 	}
 }
@@ -671,39 +656,39 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.RegionCode != "US" || task.ApplicationCommand.DisplayName != "🇺🇸 US · Oracle" {
+	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.RegionCode != "US" || task.ApplicationCommand.DisplayName != "🇺🇸 美国Oracle" {
 		t.Fatalf("unexpected rename task: %#v", task)
 	}
-	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 US · Oracle"}})
+	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 美国Oracle"}})
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || completed.RegionCode != "US" || completed.DisplayName != "🇺🇸 US · Oracle" {
+	if err != nil || completed.State != "succeeded" || completed.RegionCode != "US" || completed.DisplayName != "🇺🇸 美国Oracle" {
 		t.Fatalf("unexpected completed rename: %#v err=%v", completed, err)
 	}
 	var displayName, region, serviceName, endpoint string
 	if err := store.db.QueryRowContext(ctx, `SELECT display_name, region_code, name, endpoint FROM services WHERE id = 'reality-service'`).Scan(&displayName, &region, &serviceName, &endpoint); err != nil {
 		t.Fatal(err)
 	}
-	if displayName != "🇺🇸 US · Oracle" || region != "US" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
+	if displayName != "🇺🇸 美国Oracle" || region != "US" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
 		t.Fatalf("renamed service = display %q, region %q, identity %q, endpoint %q", displayName, region, serviceName, endpoint)
 	}
 }
 
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
-	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 US · Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test"}
+	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test"}
 	valid := RealityCommandResult{
 		Action:          "create",
 		InboundID:       9,
-		DisplayName:     "🇺🇸 US · Edge",
+		DisplayName:     "🇺🇸 美国Edge",
 		ClientName:      "MacBook",
 		Listen:          "10.0.0.61",
 		Port:            35443,
 		Target:          "www.example.com:443",
 		SNIHostname:     "www.example.com",
 		ConnectHostname: "reality.edge.site.example.test",
-		ShareURI:        "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20US%20%C2%B7%20Edge",
+		ShareURI:        "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
 	}
 	if err := validateRealityCommandResult(input, valid); err != nil {
 		t.Fatalf("valid result rejected: %v", err)

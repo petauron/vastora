@@ -234,6 +234,20 @@ func TestCaddyHTTPSRouteEnablesTLSAndRedirectsPlaintext(t *testing.T) {
 	}
 }
 
+func TestCaddyHTTPSRouteAcceptsSiteWildcardCertificate(t *testing.T) {
+	state := gatewayState(1, 3000)
+	state.Routes[0].Hostname = "panel-3x-ui.home.example.test"
+	state.Routes[0].TLSEnabled = true
+	certificate := testGatewayCertificate(t, "*.home.example.test")
+	payload, err := caddyConfiguration(state, []gateway.Certificate{certificate}, "unix//run/vastora/caddy-admin.sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"host":["panel-3x-ui.home.example.test"]`) {
+		t.Fatalf("wildcard certificate route missing from Caddy configuration: %s", payload)
+	}
+}
+
 func TestGatewayRejectsMismatchedOrWrongHostnameCertificates(t *testing.T) {
 	first := testGatewayCertificate(t, "first.example.test")
 	second := testGatewayCertificate(t, "second.example.test")

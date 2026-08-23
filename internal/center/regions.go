@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"golang.org/x/text/language"
+	"golang.org/x/text/language/display"
 )
 
 const countryISBaseURL = "https://api.country.is/"
@@ -24,8 +27,11 @@ var supportedRegionCodeSet = func() map[string]struct{} {
 	return values
 }()
 
+var chineseRegionNames = display.Regions(language.SimplifiedChinese)
+
 type RegionView struct {
 	Code   string `json:"code"`
+	NameZH string `json:"nameZh"`
 	Prefix string `json:"prefix"`
 }
 
@@ -51,7 +57,19 @@ func regionFlag(code string) string {
 }
 
 func regionPrefix(code string) string {
-	return regionFlag(code) + " " + code
+	return regionFlag(code) + " " + regionNameZH(code)
+}
+
+func regionNameZH(code string) string {
+	region, err := language.ParseRegion(code)
+	if err != nil {
+		return code
+	}
+	name := strings.TrimSpace(chineseRegionNames.Name(region))
+	if name == "" {
+		return code
+	}
+	return name
 }
 
 func composeRealityDisplayName(code, name string) (string, string, string, error) {
@@ -60,7 +78,7 @@ func composeRealityDisplayName(code, name string) (string, string, string, error
 	if !ok || !validThreeXUIClientName(name) {
 		return "", "", "", errors.New("center: a standard region and valid node name are required")
 	}
-	displayName := regionPrefix(code) + " · " + name
+	displayName := regionPrefix(code) + name
 	if !validThreeXUIClientName(displayName) {
 		return "", "", "", errors.New("center: the region-prefixed node name is too long")
 	}
@@ -69,13 +87,13 @@ func composeRealityDisplayName(code, name string) (string, string, string, error
 
 func validRegionPrefixedRealityName(code, displayName string) bool {
 	code, ok := regionCode(code)
-	return ok && validThreeXUIClientName(displayName) && strings.HasPrefix(displayName, regionPrefix(code)+" · ")
+	return ok && validThreeXUIClientName(displayName) && strings.HasPrefix(displayName, regionPrefix(code))
 }
 
 func (s *Store) Regions() []RegionView {
 	regions := make([]RegionView, 0, len(supportedRegionCodes))
 	for _, code := range supportedRegionCodes {
-		regions = append(regions, RegionView{Code: code, Prefix: regionPrefix(code)})
+		regions = append(regions, RegionView{Code: code, NameZH: regionNameZH(code), Prefix: regionPrefix(code)})
 	}
 	return regions
 }
