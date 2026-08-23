@@ -27,7 +27,10 @@ func TestSuggestAgentRegionUsesConfirmedPublicGatewayAddress(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	node := enrollOrchestrationNode(t, store, "gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{{Address: "203.0.113.91", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "203.0.113.91", PublicAddress: "203.0.113.91", EnabledKinds: []string{networking.KindPublic}, DirectPublic: true})
+	node := enrollOrchestrationNode(t, store, "gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{
+		{Address: "10.0.0.91", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN},
+		{Address: "203.0.113.91", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic},
+	}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", PublicAddress: "203.0.113.91", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	var lookedUp string
 	store.lookupPublicRegion = func(_ context.Context, address string) (string, error) {
 		lookedUp = address
