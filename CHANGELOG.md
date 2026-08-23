@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.36](https://github.com/petauron/vastora/compare/v0.1.0-alpha.35...v0.1.0-alpha.36) (2026-08-23)
+
+
+### Bug Fixes
+
+* link release metadata check to workflow logs ([#116](https://github.com/petauron/vastora/issues/116)) ([1525dda](https://github.com/petauron/vastora/commit/1525dda38860c38008ed94767e41c24e35e1a814))
+
 ## [0.1.0-alpha.35](https://github.com/petauron/vastora/compare/v0.1.0-alpha.34...v0.1.0-alpha.35) (2026-08-23)
 
 
