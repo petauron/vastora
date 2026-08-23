@@ -633,6 +633,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TRIGGER application_commands_block_during_three_x_ui_migration`,
 		`DROP TRIGGER application_command_updates_block_during_three_x_ui_migration`,
 		`DROP TRIGGER deployments_block_during_three_x_ui_migration`,
+		`DROP TABLE three_x_ui_inbound_plans`,
 		`DROP TABLE site_certificates`,
 		`DROP TABLE three_x_ui_migrations`,
 		`DROP TABLE three_x_ui_backups`,
