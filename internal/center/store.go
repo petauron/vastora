@@ -32,6 +32,7 @@ type Store struct {
 	publicationCleanupMu      sync.Mutex
 	now                       func() time.Time
 	discoverNetworkCandidates func(time.Time) ([]networking.Candidate, error)
+	lookupPublicRegion        func(context.Context, string) (string, error)
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
@@ -74,6 +75,12 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		cloudflareOAuthSessions:   make(map[string]*cloudflareOAuthSession),
 		now:                       time.Now,
 		discoverNetworkCandidates: networking.Discover,
+		lookupPublicRegion: countryISLookup(&http.Client{
+			Timeout: 8 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}),
 	}
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
 		_ = db.Close()

@@ -33,7 +33,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	switch kind {
 	case realityCommandKind, realityRenameCommandKind:
 		var command RealityCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" || !validThreeXUIClientName(command.DisplayName) {
+		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) {
 			return nil, errors.New("center: stored REALITY operation is invalid")
 		}
 		if kind == realityCommandKind && (command.Action != "create" || !validThreeXUIClientName(command.ClientName) || command.ConnectHostname == "" || net.ParseIP(command.TargetAddress) == nil) {
@@ -206,10 +206,10 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 			if err == nil && serviceID == "" {
 				serviceID, err = randomToken(18)
 				if err == nil {
-					_, err = tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, 'tcp', ?, ?, ?, 'observed', 'vless/tcp/reality', 0, ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, serviceName, result.DisplayName, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+					_, err = tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, region_code, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'tcp', ?, ?, ?, 'observed', 'vless/tcp/reality', 0, ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, serviceName, result.DisplayName, input.RegionCode, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 				}
 			} else if err == nil {
-				_, err = tx.ExecContext(ctx, `UPDATE services SET display_name = ?, protocol = 'tcp', container_port = ?, host_port = ?, endpoint = ?, source = 'observed', app_protocol = 'vless/tcp/reality', observed_listen = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, result.DisplayName, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), serviceID)
+				_, err = tx.ExecContext(ctx, `UPDATE services SET display_name = ?, region_code = ?, protocol = 'tcp', container_port = ?, host_port = ?, endpoint = ?, source = 'observed', app_protocol = 'vless/tcp/reality', observed_listen = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, result.DisplayName, input.RegionCode, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), serviceID)
 			}
 			if err != nil {
 				succeeded = false
@@ -298,7 +298,7 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 
 func (s *Store) completeRealityRenameCommand(ctx context.Context, tx *sql.Tx, taskID, agentID, applicationID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input RealityCommandTask
-	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "rename" || input.InboundID < 1 || !validThreeXUIClientName(input.DisplayName) {
+	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "rename" || input.InboundID < 1 || !validRegionPrefixedRealityName(input.RegionCode, input.DisplayName) {
 		return errors.New("center: stored REALITY rename operation is invalid")
 	}
 	var envelope ApplicationTaskResult
@@ -316,7 +316,7 @@ func (s *Store) completeRealityRenameCommand(ctx context.Context, tx *sql.Tx, ta
 	resultJSON := []byte(`{}`)
 	if succeeded {
 		serviceName := fmt.Sprintf("inbound-%d", input.InboundID)
-		result, err := tx.ExecContext(ctx, `UPDATE services SET display_name = ?, updated_at = ? WHERE application_id = ? AND name = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.DisplayName, now, applicationID, serviceName)
+		result, err := tx.ExecContext(ctx, `UPDATE services SET display_name = ?, region_code = ?, updated_at = ? WHERE application_id = ? AND name = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.DisplayName, input.RegionCode, now, applicationID, serviceName)
 		if err != nil {
 			return err
 		}

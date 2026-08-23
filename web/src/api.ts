@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -89,8 +89,10 @@ export const api = {
 	threeXUIControllerMigrations: () => request<{ migrations: ThreeXUIControllerMigration[] }>("/api/v1/three-x-ui-migrations"),
 	threeXUIControllerMigration: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}`),
 	migrateThreeXUIController: (applicationId: string, targetApplicationId: string, allowStaleBackup: boolean) => request<ThreeXUIControllerMigration>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-controller/migrate`, { method: "POST", body: JSON.stringify({ targetApplicationId, confirm: true, allowStaleBackup }) }),
-	createRealityCommand: (input: { applicationId: string; displayName: string; clientName: string; gatewayNodeId: string; hostname: string; dnsProvider: "manual" | "cloudflare"; target?: string; sniHostname?: string }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
-	renameRealityCommand: (serviceId: string, displayName: string) => request<ApplicationCommand>("/api/v1/application-commands/reality/rename", { method: "POST", body: JSON.stringify({ serviceId, displayName }) }),
+	regions: () => request<{ regions: Region[] }>("/api/v1/regions"),
+	agentRegionSuggestion: (agentId: string) => request<RegionSuggestion>(`/api/v1/agents/${encodeURIComponent(agentId)}/region-suggestion`),
+	createRealityCommand: (input: { applicationId: string; regionCode: string; name: string; clientName: string; gatewayNodeId: string; hostname: string; dnsProvider: "manual" | "cloudflare"; target?: string; sniHostname?: string }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
+	renameRealityCommand: (serviceId: string, regionCode: string, name: string) => request<ApplicationCommand>("/api/v1/application-commands/reality/rename", { method: "POST", body: JSON.stringify({ serviceId, regionCode, name }) }),
 	createSubscriptionCommand: (input: { applicationId: string; gatewayNodeId: string; hostname: string; kind: "public_direct" | "cloudflare_tunnel"; dnsProvider: "manual" | "cloudflare" }) => request<ApplicationCommand>("/api/v1/application-commands/subscription", { method: "POST", body: JSON.stringify(input) }),
 	createThreeXUIClientCommand: (input: ThreeXUIClientCommandInput) => request<ApplicationCommand>("/api/v1/application-commands/clients", { method: "POST", body: JSON.stringify(input) }),
 	latestApplicationCommand: (applicationId: string, kind: ApplicationCommandKind) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/commands/latest?kind=${encodeURIComponent(kind)}`),

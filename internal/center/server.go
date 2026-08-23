@@ -106,6 +106,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/headscale-join", s.requireAuth(true, s.handleCreateHeadscaleJoin))
 	mux.HandleFunc("GET /api/v1/actions", s.requireAuth(false, s.handleListActions))
 	mux.HandleFunc("GET /api/v1/agents", s.requireAuth(false, s.handleListAgents))
+	mux.HandleFunc("GET /api/v1/regions", s.requireAuth(false, s.handleListRegions))
+	mux.HandleFunc("GET /api/v1/agents/{id}/region-suggestion", s.requireAuth(false, s.handleSuggestAgentRegion))
 	mux.HandleFunc("POST /api/v1/agent-enrollments", s.requireAuth(true, s.handleCreateAgentEnrollment))
 	mux.HandleFunc("PATCH /api/v1/agents/{id}", s.requireAuth(true, s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.requireAuth(true, s.handleDisableAgent))

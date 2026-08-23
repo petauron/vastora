@@ -232,6 +232,12 @@ Certificate renewal queues a new full Gateway revision before the old encrypted
 certificate is removed.
 
 The one-click REALITY flow is an authenticated, leased Application command.
+Center owns the subscription-facing node name and composes it from a structured
+ISO 3166-1 region plus the administrator-provided name (for example,
+`🇺🇸 US · Oracle 9929`). The region can be suggested from the selected public
+Gateway address and remains manually searchable and editable. This keeps client
+grouping prefixes stable even when a 3x-ui controller manages nodes on other
+hosts.
 Agent uses 3x-ui's own live target scanner on the application node, accepts only
 a target that passes TLS 1.3, H2, certificate, and X25519 checks, generates the
 keys and client locally, and binds the private inbound to the confirmed service

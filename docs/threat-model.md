@@ -25,6 +25,10 @@
 - Application Web ports bind to the confirmed private service address rather
   than every host interface. A public address is accepted only when Agent finds
   it on a local interface and an administrator explicitly enables direct ingress.
+- When suggesting a VLESS node region, Center sends only the selected Gateway's
+  confirmed public IP address to `api.country.is`. No credentials, node secrets,
+  private addresses, or application data are included. The lookup is optional;
+  failure leaves the searchable manual region selector available.
 - LAN and Headscale Web entries use selected Caddy Gateway nodes. They may use
   HTTP inside the private network, or a browser-trusted certificate obtained
   through Cloudflare DNS-01 without exposing the service publicly. Public Web
