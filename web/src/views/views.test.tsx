@@ -234,7 +234,9 @@ describe("network and app views", () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("目标站点、密钥、端口和共享 443 会自动配置");
+    expect(document.body.textContent).toContain("为订阅节点和第一台设备命名，其余参数由 Vastora 自动配置");
+    expect(document.querySelector<HTMLInputElement>("#reality-display-name")?.value).toBe("home-server");
+    expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
     expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
     expect(document.querySelector<HTMLSelectElement>("#reality-gateway")?.value).toBe("agent");
     expect(document.body.textContent).toContain("高级：自定义伪装目标");
