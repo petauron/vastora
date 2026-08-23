@@ -26,21 +26,21 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	if !validPublicationDNS(input.Kind, input.DNSProvider) {
 		return ApplicationCommandView{}, errors.New("center: DNS provider is not valid for this subscription")
 	}
-	var agentID, appKey, status, serviceID string
-	err := s.db.QueryRowContext(ctx, `SELECT a.node_id, a.app_key, a.status, s.id
+	var agentID, appKey, status, role, serviceID string
+	err := s.db.QueryRowContext(ctx, `SELECT a.node_id, a.app_key, a.status, a.role, s.id
 		FROM applications a JOIN services s ON s.application_id = a.id AND s.name = 'subscription'
-		WHERE a.id = ? AND s.status <> 'stopped'`, input.ApplicationID).Scan(&agentID, &appKey, &status, &serviceID)
+		WHERE a.id = ? AND s.status <> 'stopped'`, input.ApplicationID).Scan(&agentID, &appKey, &status, &role, &serviceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: running 3x-ui subscription service not found")
 	}
 	if err != nil {
 		return ApplicationCommandView{}, err
 	}
-	if appKey != threeXUIAppKey || status != "running" {
-		return ApplicationCommandView{}, errors.New("center: public subscription requires a running official 3x-ui application")
+	if appKey != threeXUIAppKey || status != "running" || role != threeXUIRoleMaster {
+		return ApplicationCommandView{}, errors.New("center: public subscription is available only on the running Site 3x-ui controller")
 	}
 	var active int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND state IN ('pending', 'running')`, input.ApplicationID).Scan(&active); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind <> ? AND state IN ('pending', 'running')`, input.ApplicationID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {

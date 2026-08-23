@@ -17,7 +17,8 @@ export function emptyAppData(status: CenterStatus): AppData {
     publications: [],
     routes: [],
     integrations: [],
-    actions: []
+    actions: [],
+    threeXUIControllerMigrations: []
   };
 }
 
@@ -60,7 +61,7 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
       };
     }
     case "apps": {
-      const [status, apps, agents, deployments, applications, services, publications, integrations, sites] = await Promise.all([
+      const [status, apps, agents, deployments, applications, services, publications, integrations, sites, migrations] = await Promise.all([
         statusPromise,
         api.apps(),
         api.agents(),
@@ -69,7 +70,8 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
         api.services(),
         api.publications(),
         api.integrations(),
-        api.sites()
+        api.sites(),
+        api.threeXUIControllerMigrations()
       ]);
       return {
         status,
@@ -80,7 +82,8 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
         services: services.services,
         publications: publications.publications,
         integrations: integrations.integrations,
-        sites: sites.sites
+        sites: sites.sites,
+        threeXUIControllerMigrations: migrations.migrations
       };
     }
     case "network": {

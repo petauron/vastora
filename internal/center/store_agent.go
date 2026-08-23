@@ -338,6 +338,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			}
 		}
 	}
+	if err := s.queueScheduledThreeXUIBackup(ctx, tx, id, now); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}

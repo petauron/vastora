@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput, ThreeXUIClientCommandInput } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Route, Service, SetupStatus, Site, SiteInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -85,6 +85,10 @@ export const api = {
 	updateAgent: (agentId: string, name: string, siteId: string) => request<{ updated: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", body: JSON.stringify({ name, siteId }) }),
 	disableAgent: (agentId: string) => request<{ disabled: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
 	applications: () => request<{ applications: Application[] }>("/api/v1/applications"),
+	reconcileThreeXUINode: (applicationId: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-node/reconcile`, { method: "POST", body: "{}" }),
+	threeXUIControllerMigrations: () => request<{ migrations: ThreeXUIControllerMigration[] }>("/api/v1/three-x-ui-migrations"),
+	threeXUIControllerMigration: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}`),
+	migrateThreeXUIController: (applicationId: string, targetApplicationId: string, allowStaleBackup: boolean) => request<ThreeXUIControllerMigration>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-controller/migrate`, { method: "POST", body: JSON.stringify({ targetApplicationId, confirm: true, allowStaleBackup }) }),
 	createRealityCommand: (input: { applicationId: string; name: string; gatewayNodeId: string; hostname: string; dnsProvider: "manual" | "cloudflare"; target?: string; sniHostname?: string }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
 	createSubscriptionCommand: (input: { applicationId: string; gatewayNodeId: string; hostname: string; kind: "public_direct" | "cloudflare_tunnel"; dnsProvider: "manual" | "cloudflare" }) => request<ApplicationCommand>("/api/v1/application-commands/subscription", { method: "POST", body: JSON.stringify(input) }),
 	createThreeXUIClientCommand: (input: ThreeXUIClientCommandInput) => request<ApplicationCommand>("/api/v1/application-commands/clients", { method: "POST", body: JSON.stringify(input) }),
@@ -96,9 +100,10 @@ export const api = {
 	publications: () => request<{ publications: Publication[] }>("/api/v1/publications"),
 	integrations: () => request<{ integrations: Integration[] }>("/api/v1/integrations"),
 	actions: (limit = 50) => request<{ actions: Action[] }>(`/api/v1/actions?limit=${encodeURIComponent(String(limit))}`),
-  createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation: Deployment["operation"] = "install", deleteData = false) => request<Deployment>("/api/v1/deployments", { method: "POST", body: JSON.stringify({ agentId, appKey, config, operation, deleteData }) }),
+  createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation: Deployment["operation"] = "install", deleteData = false, role?: "master" | "worker") => request<Deployment>("/api/v1/deployments", { method: "POST", body: JSON.stringify({ agentId, appKey, config, operation, deleteData, role }) }),
   confirmNetworkProfile: (agentId: string, profile: NetworkProfile) => request<NetworkProfile>(`/api/v1/agents/${encodeURIComponent(agentId)}/network-profile`, { method: "PUT", body: JSON.stringify(profile) }),
 	createPublication: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; tlsEnabled?: boolean; confirmHighRisk?: boolean }) => request<Publication>("/api/v1/publications", { method: "POST", body: JSON.stringify(input) }),
+	updatePublicationTLS: (id: string, enabled: boolean) => request<Publication>(`/api/v1/publications/${encodeURIComponent(id)}/tls`, { method: "PUT", body: JSON.stringify({ enabled }) }),
   stopPublication: (id: string) => request<{ stopped: boolean }>(`/api/v1/publications/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
   verifyPublication: (id: string) => request<Publication>(`/api/v1/publications/${encodeURIComponent(id)}/verify`, { method: "POST", body: "{}" }),
   startCloudflareOAuth: () => request<CloudflareOAuthStart>("/api/v1/integrations/cloudflare/oauth/start", { method: "POST", body: "{}" }),

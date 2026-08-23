@@ -36,6 +36,7 @@ export type AppData = {
   routes: Route[];
   integrations: Integration[];
   actions: Action[];
+  threeXUIControllerMigrations: ThreeXUIControllerMigration[];
 };
 
 export type AgentConnectionMode = "lan" | "headscale" | "public";
@@ -126,7 +127,10 @@ export type AppView = {
 
 export type Organization = { id: string; name: string; createdAt: string; updatedAt: string };
 export type Site = { id: string; organizationId: string; name: string; code: string; description: string; timezone: string; domainSuffix: string; status: string; gatewayNodes: string[]; gatewayStatus: string; createdAt: string; updatedAt: string };
-export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; installedVersion?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
+export type ThreeXUIRole = "master" | "worker";
+export type ThreeXUIBackup = { applicationId: string; revision: number; state: "pending" | "ready" | "failed"; sha256?: string; size: number; lastError?: string; updatedAt: string };
+export type ThreeXUIControllerMigration = { id: string; siteId: string; sourceApplicationId: string; targetApplicationId: string; backupRevision: number; state: "backing_up" | "restoring" | "switching" | "ready" | "failed"; step: "backup" | "restore" | "switch" | "complete"; lastError?: string; backup?: ThreeXUIBackup; createdAt: string; updatedAt: string };
+export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
 export type Service = { id: string; applicationId: string; siteId: string; name: string; protocol: "http" | "https" | "tcp" | "udp"; containerPort: number; hostPort: number; endpoint: string; source: "catalog" | "observed"; appProtocol?: string; management: boolean; observedListen?: string; status: string; lastError?: string; createdAt: string; updatedAt: string };
 export type PublicationKind = "lan_gateway" | "headscale_gateway" | "public_direct" | "public_shared_443" | "cloudflare_tunnel";
 export type DNSRecordInstruction = { type: "A" | "AAAA" | "CNAME"; name: string; value: string; proxy: boolean };
@@ -138,8 +142,8 @@ export type CloudflareOAuthStart = { sessionId: string; authorizationUrl: string
 export type CloudflareOAuthPoll = { status: "pending" | "authorized"; zones?: CloudflareZone[] };
 export type HeadscaleJoin = { agentId: string; command: string; expiresAt: string };
 export type Action = { id: string; taskId: string; agentId: string; kind: string; revision: number; event: "queued" | "claimed" | "lease_expired" | "succeeded" | "failed"; message?: string; createdAt: string };
-export type ApplicationCommandKind = "3xui.reality.create" | "3xui.subscription.configure" | "3xui.clients.manage";
-export type ThreeXUIClientInbound = { id: number; name: string; connectHostname?: string; sniHostname?: string };
+export type ApplicationCommandKind = "3xui.reality.create" | "3xui.subscription.configure" | "3xui.clients.manage" | "3xui.node.reconcile" | "3xui.controller.manage";
+export type ThreeXUIClientInbound = { id: number; name: string; applicationId?: string; nodeId?: string; nodeName?: string; connectHostname?: string; sniHostname?: string };
 export type ThreeXUIClient = { email: string; enabled: boolean; totalBytes: number; usedBytes: number; expiryTime: number; limitIp: number; inboundIds: number[]; hasSubscription: boolean };
 export type ThreeXUIClientAction = "list" | "create" | "update" | "set_enabled" | "delete" | "reset_traffic" | "reveal_link" | "reveal_subscription";
 export type ThreeXUIClientCommandInput = { applicationId: string; action: ThreeXUIClientAction; email?: string; newEmail?: string; inboundId?: number; enabled?: boolean; totalBytes?: number; expiryTime?: number; limitIp?: number };

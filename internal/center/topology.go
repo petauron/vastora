@@ -44,13 +44,14 @@ type NodeHeartbeat struct {
 }
 
 type ApplicationEndpointObservation struct {
-	AppKey      string `json:"appKey"`
-	Name        string `json:"name"`
-	Protocol    string `json:"protocol"`
-	AppProtocol string `json:"appProtocol"`
-	Listen      string `json:"listen"`
-	Port        int    `json:"port"`
-	Enabled     bool   `json:"enabled"`
+	AppKey       string `json:"appKey"`
+	Name         string `json:"name"`
+	Protocol     string `json:"protocol"`
+	AppProtocol  string `json:"appProtocol"`
+	Listen       string `json:"listen"`
+	Port         int    `json:"port"`
+	Enabled      bool   `json:"enabled"`
+	RemoteNodeID int    `json:"remoteNodeId,omitempty"`
 }
 
 type SiteInput struct {
@@ -85,19 +86,25 @@ type SiteView struct {
 }
 
 type ApplicationView struct {
-	ID               string    `json:"id"`
-	Name             string    `json:"name"`
-	NodeID           string    `json:"nodeId"`
-	SiteID           string    `json:"siteId"`
-	AppKey           string    `json:"appKey"`
-	Image            string    `json:"image"`
-	Status           string    `json:"status"`
-	Runtime          string    `json:"runtime"`
-	InstalledVersion string    `json:"installedVersion,omitempty"`
-	AvailableVersion string    `json:"availableVersion,omitempty"`
-	UpdateAvailable  bool      `json:"updateAvailable"`
-	CreatedAt        time.Time `json:"createdAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	NodeID            string     `json:"nodeId"`
+	SiteID            string     `json:"siteId"`
+	AppKey            string     `json:"appKey"`
+	Image             string     `json:"image"`
+	Status            string     `json:"status"`
+	Runtime           string     `json:"runtime"`
+	Role              string     `json:"role,omitempty"`
+	ControllerID      string     `json:"controllerApplicationId,omitempty"`
+	NodeSyncStatus    string     `json:"nodeSyncStatus,omitempty"`
+	NodeSyncError     string     `json:"nodeSyncError,omitempty"`
+	RestorePointState string     `json:"restorePointState,omitempty"`
+	RestorePointAt    *time.Time `json:"restorePointAt,omitempty"`
+	InstalledVersion  string     `json:"installedVersion,omitempty"`
+	AvailableVersion  string     `json:"availableVersion,omitempty"`
+	UpdateAvailable   bool       `json:"updateAvailable"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
 }
 
 type ServiceView struct {

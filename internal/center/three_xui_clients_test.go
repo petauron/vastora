@@ -17,7 +17,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	siteID := testSiteID(t, store)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at) VALUES('three-x-ui-clients', '3x-ui', ?, ?, ?, '', 'running', 'docker', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES('three-x-ui-clients', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)

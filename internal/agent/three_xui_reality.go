@@ -25,6 +25,7 @@ type threeXUIRealityInbound struct {
 	Port           int             `json:"port"`
 	Settings       json.RawMessage `json:"settings"`
 	StreamSettings json.RawMessage `json:"streamSettings"`
+	NodeID         *int            `json:"nodeId,omitempty"`
 }
 
 type threeXUIHostGroup struct {
@@ -53,28 +54,27 @@ type realityScanResult struct {
 const threeXUIMihomoMinClientVersion = "1.8.2"
 
 func applyRealityCommand(ctx context.Context, store *Store, commandID string, command RealityCommandTask) (RealityCommandResult, error) {
-	installation, err := store.AppliedInstallation(ctx, threeXUIKey)
-	if err != nil {
-		return RealityCommandResult{}, errors.New("agent: official 3x-ui is not installed")
-	}
-	config, err := decodeThreeXUIConfig(installation.Config)
+	baseURL, masterToken, err := threeXUIClientAPIConnection(ctx, store)
 	if err != nil {
 		return RealityCommandResult{}, err
 	}
-	var secrets map[string]string
-	if json.Unmarshal(installation.Secrets, &secrets) != nil || strings.TrimSpace(secrets["api_token"]) == "" {
-		return RealityCommandResult{}, errors.New("agent: 3x-ui API token is unavailable")
-	}
-	listen := installation.ServiceAddress
+	listen := strings.TrimSpace(command.TargetAddress)
 	if net.ParseIP(listen) == nil {
-		return RealityCommandResult{}, errors.New("agent: 3x-ui private service address is invalid")
+		return RealityCommandResult{}, errors.New("agent: target VLESS node private service address is invalid")
 	}
-	baseURL := "http://" + net.JoinHostPort(listen, strconv.Itoa(config.PanelPort))
+	scanURL, scanToken := baseURL, masterToken
+	if command.TargetNodeID > 0 {
+		if command.TargetPanelPort < 1024 || command.TargetPanelPort > 65535 || strings.TrimSpace(command.TargetAPIToken) == "" {
+			return RealityCommandResult{}, errors.New("agent: target VLESS node API connection is unavailable")
+		}
+		scanURL = "http://" + net.JoinHostPort(listen, strconv.Itoa(command.TargetPanelPort))
+		scanToken = strings.TrimSpace(command.TargetAPIToken)
+	}
 	remark := "vastora-reality-" + strings.TrimPrefix(commandID, "application-command-")
-	if existing, ok, err := findRealityInbound(ctx, baseURL, secrets["api_token"], remark); err != nil {
+	if existing, ok, err := findRealityInbound(ctx, baseURL, masterToken, remark, command.TargetNodeID); err != nil {
 		return RealityCommandResult{}, err
 	} else if ok {
-		existing, err = ensureThreeXUIRealityClientVersion(ctx, baseURL, secrets["api_token"], existing.ID)
+		existing, err = ensureThreeXUIRealityClientVersion(ctx, baseURL, masterToken, existing.ID)
 		if err != nil {
 			return RealityCommandResult{}, err
 		}
@@ -82,17 +82,17 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		if err != nil {
 			return RealityCommandResult{}, err
 		}
-		if err := syncThreeXUIRealityHost(ctx, baseURL, secrets["api_token"], result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
+		if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
 			return RealityCommandResult{}, err
 		}
 		return result, nil
 	}
 
-	target, sni, err := selectRealityTarget(ctx, baseURL, secrets["api_token"], command)
+	target, sni, err := selectRealityTarget(ctx, scanURL, scanToken, command)
 	if err != nil {
 		return RealityCommandResult{}, err
 	}
-	keys, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/server/getNewX25519Cert", secrets["api_token"], "", nil)
+	keys, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/server/getNewX25519Cert", masterToken, "", nil)
 	if err != nil {
 		return RealityCommandResult{}, fmt.Errorf("agent: generate REALITY keys: %w", err)
 	}
@@ -112,7 +112,7 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		return RealityCommandResult{}, fmt.Errorf("agent: generate REALITY short id: %w", err)
 	}
 	shortID := hex.EncodeToString(shortBytes)
-	port, err := availableTCPPort(listen)
+	port, err := availableRealityPort(ctx, baseURL, masterToken, command.TargetNodeID, listen)
 	if err != nil {
 		return RealityCommandResult{}, err
 	}
@@ -122,7 +122,10 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		"streamSettings": threeXUIRealityStreamSettings(target, sni, keyPair.PrivateKey, keyPair.PublicKey, shortID),
 		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "metadataOnly": false, "routeOnly": false},
 	}
-	added, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/add", secrets["api_token"], "application/json", payload)
+	if command.TargetNodeID > 0 {
+		payload["nodeId"] = command.TargetNodeID
+	}
+	added, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/add", masterToken, "application/json", payload)
 	if err != nil {
 		return RealityCommandResult{}, fmt.Errorf("agent: create 3x-ui REALITY inbound: %w", err)
 	}
@@ -131,7 +134,7 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, co
 		return RealityCommandResult{}, errors.New("agent: 3x-ui returned an invalid REALITY inbound")
 	}
 	result := RealityCommandResult{InboundID: inbound.ID, Name: command.Name, Listen: listen, Port: port, Target: target, SNIHostname: sni, ConnectHostname: command.ConnectHostname, ShareURI: realityShareURI(clientID, command.ConnectHostname, command.Name, sni, keyPair.PublicKey, shortID)}
-	if err := syncThreeXUIRealityHost(ctx, baseURL, secrets["api_token"], result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
+	if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
 		return RealityCommandResult{}, err
 	}
 	return result, nil
@@ -337,7 +340,7 @@ func realityScanAllowsSNI(scan realityScanResult, hostname string) bool {
 	return false
 }
 
-func findRealityInbound(ctx context.Context, baseURL, token, remark string) (threeXUIRealityInbound, bool, error) {
+func findRealityInbound(ctx context.Context, baseURL, token, remark string, nodeID int) (threeXUIRealityInbound, bool, error) {
 	result, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
 	if err != nil {
 		return threeXUIRealityInbound{}, false, fmt.Errorf("agent: list 3x-ui inbounds: %w", err)
@@ -347,7 +350,8 @@ func findRealityInbound(ctx context.Context, baseURL, token, remark string) (thr
 		return threeXUIRealityInbound{}, false, errors.New("agent: 3x-ui returned invalid inbound data")
 	}
 	for _, inbound := range inbounds {
-		if inbound.Remark == remark {
+		matchesNode := nodeID == 0 && inbound.NodeID == nil || nodeID > 0 && inbound.NodeID != nil && *inbound.NodeID == nodeID
+		if inbound.Remark == remark && matchesNode {
 			return inbound, true, nil
 		}
 	}
@@ -422,6 +426,40 @@ func availableTCPPort(address string) (int, error) {
 	}
 	defer listener.Close()
 	return listener.Addr().(*net.TCPAddr).Port, nil
+}
+
+func availableRealityPort(ctx context.Context, baseURL, token string, nodeID int, address string) (int, error) {
+	if nodeID == 0 {
+		return availableTCPPort(address)
+	}
+	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
+	if err != nil {
+		return 0, fmt.Errorf("agent: inspect remote REALITY ports: %w", err)
+	}
+	var inbounds []struct {
+		Port   int  `json:"port"`
+		NodeID *int `json:"nodeId,omitempty"`
+	}
+	if json.Unmarshal(payload, &inbounds) != nil {
+		return 0, errors.New("agent: 3x-ui returned invalid remote inbound data")
+	}
+	used := map[int]bool{}
+	for _, inbound := range inbounds {
+		if inbound.NodeID != nil && *inbound.NodeID == nodeID {
+			used[inbound.Port] = true
+		}
+	}
+	for attempt := 0; attempt < 32; attempt++ {
+		value := make([]byte, 2)
+		if _, err := rand.Read(value); err != nil {
+			return 0, fmt.Errorf("agent: generate remote REALITY port: %w", err)
+		}
+		port := 20000 + ((int(value[0])<<8)|int(value[1]))%40000
+		if !used[port] {
+			return port, nil
+		}
+	}
+	return 0, errors.New("agent: could not allocate an unused remote REALITY port")
 }
 
 func randomUUID() (string, error) {

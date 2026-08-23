@@ -74,17 +74,17 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 		return ApplicationCommandView{}, err
 	}
 	defer tx.Rollback()
-	var agentID, appKey, status string
-	if err := tx.QueryRowContext(ctx, `SELECT node_id, app_key, status FROM applications WHERE id = ?`, input.ApplicationID).Scan(&agentID, &appKey, &status); errors.Is(err, sql.ErrNoRows) {
+	var agentID, appKey, status, role string
+	if err := tx.QueryRowContext(ctx, `SELECT node_id, app_key, status, role FROM applications WHERE id = ?`, input.ApplicationID).Scan(&agentID, &appKey, &status, &role); errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: application not found")
 	} else if err != nil {
 		return ApplicationCommandView{}, err
 	}
-	if appKey != threeXUIAppKey || status != "running" {
-		return ApplicationCommandView{}, errors.New("center: client management requires a running official 3x-ui application")
+	if appKey != threeXUIAppKey || status != "running" || role != threeXUIRoleMaster {
+		return ApplicationCommandView{}, errors.New("center: client management is available only on the running Site 3x-ui controller")
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND state IN ('pending', 'running')`, input.ApplicationID).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind <> ? AND state IN ('pending', 'running')`, input.ApplicationID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
@@ -126,11 +126,14 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 }
 
 func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID string) ([]ThreeXUIClientInbound, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT CAST(SUBSTR(s.name, 9) AS INTEGER), s.name,
+	rows, err := tx.QueryContext(ctx, `SELECT CAST(SUBSTR(s.name, 9) AS INTEGER), s.name, target.id, target.node_id, agent.name,
 		COALESCE((SELECT p.hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), ''),
 		COALESCE((SELECT p.sni_hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), '')
-		FROM services s WHERE s.application_id = ? AND s.name GLOB 'inbound-[0-9]*' AND s.app_protocol = 'vless/tcp/reality' AND s.status IN ('running', 'ready')
-		ORDER BY CAST(SUBSTR(s.name, 9) AS INTEGER)`, applicationID)
+		FROM services s JOIN applications target ON target.id = s.application_id JOIN agents agent ON agent.id = target.node_id
+		WHERE target.site_id = (SELECT site_id FROM applications WHERE id = ?)
+		AND target.app_key = ? AND target.status = 'running'
+		AND s.name GLOB 'inbound-[0-9]*' AND s.app_protocol = 'vless/tcp/reality' AND s.status IN ('running', 'ready')
+		ORDER BY agent.name, CAST(SUBSTR(s.name, 9) AS INTEGER)`, applicationID, threeXUIAppKey)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +141,7 @@ func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID strin
 	values := []ThreeXUIClientInbound{}
 	for rows.Next() {
 		var value ThreeXUIClientInbound
-		if err := rows.Scan(&value.ID, &value.Name, &value.ConnectHostname, &value.SNIHostname); err != nil {
+		if err := rows.Scan(&value.ID, &value.Name, &value.ApplicationID, &value.NodeID, &value.NodeName, &value.ConnectHostname, &value.SNIHostname); err != nil {
 			return nil, err
 		}
 		if value.ID > 0 {

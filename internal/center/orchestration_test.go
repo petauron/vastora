@@ -501,7 +501,7 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.61", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}, {Address: "203.0.113.61", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.61", LANAddress: "10.0.0.61", PublicAddress: "203.0.113.61", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at) VALUES('three-x-ui', '3x-ui', ?, ?, ?, '', 'running', 'docker', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES('three-x-ui', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
 	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: "three-x-ui", Name: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual"})
@@ -545,7 +545,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	}, networking.Profile{ServiceAddress: "10.0.0.62", LANAddress: "10.0.0.62", PublicAddress: "203.0.113.62", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, created_at, updated_at) VALUES('three-x-ui-subscription', '3x-ui', ?, ?, ?, '', 'running', 'docker', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES('three-x-ui-subscription', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, service := range []struct {

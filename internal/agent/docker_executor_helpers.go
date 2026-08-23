@@ -16,6 +16,9 @@ import (
 func reportedServices(ctx context.Context, task DeploymentTask, bindAddress string) (ApplicationTaskResult, error) {
 	result := ApplicationTaskResult{Services: make([]ApplicationServiceResult, 0, len(task.Manifest.Services))}
 	for _, service := range task.Manifest.Services {
+		if task.AppKey == threeXUIKey && task.ApplicationRole == "worker" && service.Name == "subscription" {
+			continue
+		}
 		hostPort, err := serviceHostPort(task.Config, service)
 		if err != nil {
 			return ApplicationTaskResult{}, err

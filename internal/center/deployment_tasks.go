@@ -18,24 +18,27 @@ import (
 )
 
 type AgentTask struct {
-	Kind                string                     `json:"kind"`
-	ID                  string                     `json:"id"`
-	Attempt             int64                      `json:"attempt"`
-	AppKey              string                     `json:"appKey"`
-	Manifest            catalog.AppManifest        `json:"manifest"`
-	Config              json.RawMessage            `json:"config"`
-	Secrets             json.RawMessage            `json:"secrets"`
-	Operation           string                     `json:"operation"`
-	DeleteData          bool                       `json:"deleteData"`
-	Revision            int64                      `json:"revision,omitempty"`
-	ApplicationID       string                     `json:"applicationId,omitempty"`
-	ServiceAddress      string                     `json:"serviceAddress,omitempty"`
-	GatewayState        *gateway.DesiredState      `json:"gatewayState,omitempty"`
-	GatewayCertificates []gateway.Certificate      `json:"gatewayCertificates,omitempty"`
-	TunnelState         *TunnelTaskState           `json:"tunnelState,omitempty"`
-	ApplicationCommand  *RealityCommandTask        `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandTask   `json:"subscriptionCommand,omitempty"`
-	ClientCommand       *ThreeXUIClientCommandTask `json:"clientCommand,omitempty"`
+	Kind                string                         `json:"kind"`
+	ID                  string                         `json:"id"`
+	Attempt             int64                          `json:"attempt"`
+	AppKey              string                         `json:"appKey"`
+	Manifest            catalog.AppManifest            `json:"manifest"`
+	Config              json.RawMessage                `json:"config"`
+	Secrets             json.RawMessage                `json:"secrets"`
+	Operation           string                         `json:"operation"`
+	DeleteData          bool                           `json:"deleteData"`
+	Revision            int64                          `json:"revision,omitempty"`
+	ApplicationID       string                         `json:"applicationId,omitempty"`
+	ApplicationRole     string                         `json:"applicationRole,omitempty"`
+	ServiceAddress      string                         `json:"serviceAddress,omitempty"`
+	GatewayState        *gateway.DesiredState          `json:"gatewayState,omitempty"`
+	GatewayCertificates []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
+	TunnelState         *TunnelTaskState               `json:"tunnelState,omitempty"`
+	ApplicationCommand  *RealityCommandTask            `json:"applicationCommand,omitempty"`
+	SubscriptionCommand *SubscriptionCommandTask       `json:"subscriptionCommand,omitempty"`
+	ClientCommand       *ThreeXUIClientCommandTask     `json:"clientCommand,omitempty"`
+	NodeCommand         *ThreeXUINodeCommandTask       `json:"nodeCommand,omitempty"`
+	ControllerCommand   *ThreeXUIControllerCommandTask `json:"controllerCommand,omitempty"`
 }
 
 type TunnelTaskIngress struct {
@@ -67,8 +70,8 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 	var manifest []byte
 	var secretID sql.NullString
 	var attempt int64
-	err = tx.QueryRowContext(ctx, `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.operation, d.delete_data, d.application_id, COALESCE(p.service_address, ''), d.attempt
-		FROM deployments d LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.agent_id = ? AND d.state = 'pending' ORDER BY d.created_at, d.rowid LIMIT 1`, agentID).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ServiceAddress, &attempt)
+	err = tx.QueryRowContext(ctx, `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.operation, d.delete_data, d.application_id, a.role, COALESCE(p.service_address, ''), d.attempt
+		FROM deployments d JOIN applications a ON a.id = d.application_id LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.agent_id = ? AND d.state = 'pending' ORDER BY d.created_at, d.rowid LIMIT 1`, agentID).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		commandTask, commandErr := s.claimApplicationCommand(ctx, tx, agentID)
 		if commandErr != nil {
@@ -272,6 +275,30 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 			}
 			if succeeded && operation != "uninstall" {
 				if err := s.storeApplicationSecrets(ctx, tx, taskID, applicationID, taskResult.GeneratedSecrets, now); err != nil {
+					state = "failed"
+					taskError = err.Error()
+					succeeded = false
+				}
+			}
+			if succeeded {
+				if operation == "uninstall" {
+					err = s.queueThreeXUINodeRemoval(ctx, tx, applicationID, now)
+				} else {
+					err = s.queueThreeXUINodeReconcile(ctx, tx, taskID, applicationID, now)
+				}
+				if err != nil && operation != "uninstall" {
+					var role string
+					if roleErr := tx.QueryRowContext(ctx, `SELECT role FROM applications WHERE id = ?`, applicationID).Scan(&role); roleErr != nil {
+						return roleErr
+					}
+					if role == threeXUIRoleWorker {
+						if _, syncErr := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'failed', last_error = ?, updated_at = ? WHERE worker_application_id = ?`, err.Error(), now.Format(time.RFC3339Nano), applicationID); syncErr != nil {
+							return syncErr
+						}
+						err = nil
+					}
+				}
+				if err != nil {
 					state = "failed"
 					taskError = err.Error()
 					succeeded = false

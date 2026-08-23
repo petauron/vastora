@@ -4,10 +4,49 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/petauron/vastora/internal/networking"
 )
+
+func (s *Server) handleStoreThreeXUIBackup(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	revision, err := strconv.ParseInt(request.PathValue("revision"), 10, 64)
+	if err != nil || revision < 1 {
+		writeError(writer, http.StatusBadRequest, errors.New("center: invalid restore point revision"))
+		return
+	}
+	value, err := s.store.StoreThreeXUIBackup(request.Context(), request.PathValue("id"), credential, request.PathValue("applicationID"), revision, request.Body)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusCreated, value)
+}
+
+func (s *Server) handleThreeXUIMigrationBackup(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	value, err := s.store.ThreeXUIMigrationBackup(request.Context(), request.PathValue("id"), credential, request.PathValue("migrationID"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("Content-Type", "application/octet-stream")
+	writer.Header().Set("Content-Length", strconv.Itoa(len(value)))
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(value)
+}
 
 func (s *Server) handleListAgents(writer http.ResponseWriter, request *http.Request) {
 	agents, err := s.store.ListAgents(request.Context())

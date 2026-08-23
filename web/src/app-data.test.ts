@@ -46,6 +46,7 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
     vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
+	vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
     const actions = vi.spyOn(api, "actions");
 
     const result = await loadScreenData("apps");
