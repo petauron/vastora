@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -24,19 +25,20 @@ type DeploymentRequest struct {
 }
 
 type DeploymentView struct {
-	ID                 string              `json:"id"`
-	AgentID            string              `json:"agentId"`
-	AppKey             string              `json:"appKey"`
-	AppVersion         string              `json:"appVersion"`
-	State              string              `json:"state"`
-	Operation          string              `json:"operation"`
-	DeleteData         bool                `json:"deleteData"`
-	AccessURL          string              `json:"accessUrl,omitempty"`
-	Error              string              `json:"error,omitempty"`
-	CreatedAt          time.Time           `json:"createdAt"`
-	UpdatedAt          time.Time           `json:"updatedAt"`
-	ApplicationID      string              `json:"applicationId,omitempty"`
-	OneTimeCredentials *OneTimeCredentials `json:"oneTimeCredentials,omitempty"`
+	ID                     string              `json:"id"`
+	AgentID                string              `json:"agentId"`
+	AppKey                 string              `json:"appKey"`
+	AppVersion             string              `json:"appVersion"`
+	State                  string              `json:"state"`
+	ReconciliationRequired bool                `json:"reconciliationRequired"`
+	Operation              string              `json:"operation"`
+	DeleteData             bool                `json:"deleteData"`
+	AccessURL              string              `json:"accessUrl,omitempty"`
+	Error                  string              `json:"error,omitempty"`
+	CreatedAt              time.Time           `json:"createdAt"`
+	UpdatedAt              time.Time           `json:"updatedAt"`
+	ApplicationID          string              `json:"applicationId,omitempty"`
+	OneTimeCredentials     *OneTimeCredentials `json:"oneTimeCredentials,omitempty"`
 }
 
 type OneTimeCredentials struct {
@@ -74,7 +76,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, errors.New("center: application role is only valid while installing 3x-ui")
 	}
 	var activeTasks int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND app_key = ? AND state IN ('pending', 'running')`, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND app_key = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: inspect active deployment task: %w", err)
 	}
 	if activeTasks != 0 {
@@ -187,6 +189,17 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if err != nil {
 		return DeploymentView{}, err
 	}
+	var serviceAddress string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(service_address, '') FROM agent_network_profiles WHERE agent_id = ?`, request.AgentID).Scan(&serviceAddress); errors.Is(err, sql.ErrNoRows) {
+		if request.Operation != "uninstall" {
+			return DeploymentView{}, errors.New("center: confirm the Agent private service address before installing or changing applications")
+		}
+	} else if err != nil {
+		return DeploymentView{}, fmt.Errorf("center: capture deployment service address: %w", err)
+	}
+	if request.Operation != "uninstall" && net.ParseIP(serviceAddress) == nil {
+		return DeploymentView{}, errors.New("center: confirm a valid Agent private service address before installing or changing applications")
+	}
 	deployment.ApplicationID = applicationID
 	var secretID any
 	if len(secrets) != 0 && string(secrets) != "{}" {
@@ -195,8 +208,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, secret_id, operation, delete_data, state, error, created_at, updated_at, application_id)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, secretID, deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, operation, delete_data, state, error, created_at, updated_at, application_id)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, deployment.ID, deployment.AgentID, "application.apply", applicationTaskRevision, "queued", deployment.Operation+" "+deployment.AppKey); err != nil {
@@ -225,10 +238,12 @@ func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {
 	for _, app := range apps {
 		homepages[app.Key] = app.App.Homepage
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.agent_id, d.app_key, d.app_version, d.operation, d.delete_data, d.state, d.error, d.created_at, d.updated_at, d.application_id
-		FROM deployments AS d
+	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.agent_id, d.app_key, d.app_version, d.operation, d.delete_data, d.state, d.reconciliation_required, d.error, d.created_at, d.updated_at, d.application_id
+		FROM deployments AS d WHERE d.state IN ('pending', 'running') OR d.reconciliation_required = 1 OR d.id IN (
+			SELECT recent.id FROM deployments recent ORDER BY recent.created_at DESC, recent.rowid DESC LIMIT 200
+		)
 		ORDER BY d.created_at DESC, d.rowid DESC
-		LIMIT 200`)
+	`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list deployments: %w", err)
 	}
@@ -236,7 +251,7 @@ func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {
 	for rows.Next() {
 		var deployment DeploymentView
 		var createdAt, updatedAt string
-		if err := rows.Scan(&deployment.ID, &deployment.AgentID, &deployment.AppKey, &deployment.AppVersion, &deployment.Operation, &deployment.DeleteData, &deployment.State, &deployment.Error, &createdAt, &updatedAt, &deployment.ApplicationID); err != nil {
+		if err := rows.Scan(&deployment.ID, &deployment.AgentID, &deployment.AppKey, &deployment.AppVersion, &deployment.Operation, &deployment.DeleteData, &deployment.State, &deployment.ReconciliationRequired, &deployment.Error, &createdAt, &updatedAt, &deployment.ApplicationID); err != nil {
 			return nil, fmt.Errorf("center: scan deployment: %w", err)
 		}
 		var err error

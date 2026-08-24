@@ -13,8 +13,8 @@ type PublicationTLSInput struct {
 }
 
 type publicationTLSState struct {
-	kind, gatewayID, hostname, protocol, status, siteID string
-	enabled                                             bool
+	kind, gatewayID, hostname, protocol, status, siteID, serviceID string
+	enabled                                                        bool
 }
 
 // UpdatePublicationTLS changes transport security for an existing private Web
@@ -32,6 +32,9 @@ func (s *Store) UpdatePublicationTLS(ctx context.Context, id string, enabled boo
 	if err := validatePublicationTLSState(current); err != nil {
 		return PublicationView{}, err
 	}
+	if err := s.ensureServicePublicationChangeAllowed(ctx, s.db, current.serviceID); err != nil {
+		return PublicationView{}, err
+	}
 	if enabled == current.enabled {
 		return s.Publication(ctx, id)
 	}
@@ -47,9 +50,9 @@ func (s *Store) UpdatePublicationTLS(ctx context.Context, id string, enabled boo
 func (s *Store) publicationTLSState(ctx context.Context, id string) (publicationTLSState, error) {
 	var value publicationTLSState
 	var enabled int
-	err := s.db.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id
+	err := s.db.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id, s.id
 		FROM publications p JOIN services s ON s.id = p.service_id WHERE p.id = ?`, id).Scan(
-		&value.kind, &value.gatewayID, &value.hostname, &value.protocol, &value.status, &enabled, &value.siteID,
+		&value.kind, &value.gatewayID, &value.hostname, &value.protocol, &value.status, &enabled, &value.siteID, &value.serviceID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return publicationTLSState{}, errors.New("center: publication not found")
@@ -86,9 +89,9 @@ func (s *Store) applyPublicationTLS(ctx context.Context, id string, enabled bool
 
 	var current publicationTLSState
 	var currentEnabled int
-	if err := tx.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id
+	if err := tx.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id, s.id
 		FROM publications p JOIN services s ON s.id = p.service_id WHERE p.id = ?`, id).Scan(
-		&current.kind, &current.gatewayID, &current.hostname, &current.protocol, &current.status, &currentEnabled, &current.siteID,
+		&current.kind, &current.gatewayID, &current.hostname, &current.protocol, &current.status, &currentEnabled, &current.siteID, &current.serviceID,
 	); errors.Is(err, sql.ErrNoRows) {
 		return PublicationView{}, errors.New("center: publication not found")
 	} else if err != nil {
@@ -96,6 +99,9 @@ func (s *Store) applyPublicationTLS(ctx context.Context, id string, enabled bool
 	}
 	current.enabled = currentEnabled == 1
 	if err := validatePublicationTLSState(current); err != nil {
+		return PublicationView{}, err
+	}
+	if err := s.ensureServicePublicationChangeAllowed(ctx, tx, current.serviceID); err != nil {
 		return PublicationView{}, err
 	}
 	if enabled == current.enabled {

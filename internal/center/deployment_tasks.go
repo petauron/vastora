@@ -70,8 +70,8 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 	var manifest []byte
 	var secretID sql.NullString
 	var attempt int64
-	err = tx.QueryRowContext(ctx, `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.operation, d.delete_data, d.application_id, a.role, COALESCE(p.service_address, ''), d.attempt
-		FROM deployments d JOIN applications a ON a.id = d.application_id LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.agent_id = ? AND d.state = 'pending' ORDER BY d.created_at, d.rowid LIMIT 1`, agentID).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt)
+	err = tx.QueryRowContext(ctx, `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt
+		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending' ORDER BY d.created_at, d.rowid LIMIT 1`, agentID).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		commandTask, commandErr := s.claimApplicationCommand(ctx, tx, agentID)
 		if errors.Is(commandErr, errApplicationCommandDiscarded) {
@@ -239,19 +239,37 @@ func (s *Store) WaitAndClaimNextTask(ctx context.Context, agentID, credential st
 }
 
 func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
+	return s.completeTaskWithDisposition(ctx, agentID, credential, taskID, expectedAttempt, succeeded, taskError, rawResult, false)
+}
+
+var errInvalidReconciliationDisposition = errors.New("center: invalid task reconciliation disposition")
+
+func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool) error {
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return err
 	}
+	if reconciliationRequired && (succeeded || strings.TrimSpace(taskError) == "") {
+		return errInvalidReconciliationDisposition
+	}
 	if strings.HasPrefix(taskID, "application-command-") {
-		return s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
+		return s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
 	}
 	if revision, gatewayTask := gatewayTaskRevision(taskID); gatewayTask {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
 		return s.CompleteGatewayState(ctx, agentID, credential, revision, expectedAttempt, succeeded, taskError)
 	}
 	if revision, tunnelTask := tunnelTaskRevision(taskID); tunnelTask {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
 		return s.completeTunnelState(ctx, agentID, revision, expectedAttempt, succeeded, taskError)
 	}
 	if generation, componentTask := gatewayComponentTaskGeneration(taskID); componentTask {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
 		return s.completeGatewayComponent(ctx, agentID, generation, expectedAttempt, succeeded, taskError)
 	}
 	state := "succeeded"
@@ -269,13 +287,20 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 	defer tx.Rollback()
 	var applicationID, appKey, role, operation, currentState string
 	var attempt int64
+	var currentReconciliationRequired int
 	var manifestJSON, configJSON []byte
 	var serviceAddress string
-	if err := tx.QueryRowContext(ctx, `SELECT d.application_id, a.app_key, a.role, d.operation, d.state, d.manifest_json, d.config_json, COALESCE(p.service_address, ''), d.attempt
-		FROM deployments d JOIN applications a ON a.id = d.application_id LEFT JOIN agent_network_profiles p ON p.agent_id = d.agent_id WHERE d.id = ? AND d.agent_id = ?`, taskID, agentID).Scan(&applicationID, &appKey, &role, &operation, &currentState, &manifestJSON, &configJSON, &serviceAddress, &attempt); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT d.application_id, a.app_key, a.role, d.operation, d.state, d.reconciliation_required, d.manifest_json, d.config_json, d.service_address, d.attempt
+		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.id = ? AND d.agent_id = ?`, taskID, agentID).Scan(&applicationID, &appKey, &role, &operation, &currentState, &currentReconciliationRequired, &manifestJSON, &configJSON, &serviceAddress, &attempt); err != nil {
 		return errors.New("center: task not found")
 	}
+	if reconciliationRequired && appKey != threeXUIAppKey {
+		return errInvalidReconciliationDisposition
+	}
 	if currentState == "succeeded" || currentState == "failed" {
+		if reconciliationRequired && (currentState != "failed" || currentReconciliationRequired != 1) {
+			return errInvalidReconciliationDisposition
+		}
 		return nil
 	}
 	if currentState != "running" {
@@ -286,11 +311,23 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 	}
 	now := s.now().UTC()
 	publicationCleanups := []publicationCleanup{}
-	if succeeded {
-		var taskResult ApplicationTaskResult
+	var taskResult ApplicationTaskResult
+	if succeeded || reconciliationRequired {
 		if len(rawResult) != 0 && string(rawResult) != "null" && json.Unmarshal(rawResult, &taskResult) != nil {
 			return errors.New("center: invalid Agent task result")
 		}
+	}
+	if reconciliationRequired {
+		if err := validateReconciliationGeneratedSecrets(taskResult.GeneratedSecrets); err != nil {
+			return err
+		}
+		if operation != "uninstall" {
+			if err := s.storeApplicationSecrets(ctx, tx, taskID, applicationID, taskResult.GeneratedSecrets, now); err != nil {
+				return err
+			}
+		}
+	}
+	if succeeded {
 		if operation != "uninstall" {
 			var manifest catalog.AppManifest
 			if json.Unmarshal(manifestJSON, &manifest) != nil || catalog.ValidateApp(manifest) != nil {
@@ -348,7 +385,7 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE deployments SET state = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running'`, state, taskError, now.Format(time.RFC3339Nano), taskID, agentID)
+	result, err := tx.ExecContext(ctx, `UPDATE deployments SET state = ?, reconciliation_required = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running'`, state, reconciliationRequired, taskError, now.Format(time.RFC3339Nano), taskID, agentID)
 	if err != nil {
 		return fmt.Errorf("center: complete task: %w", err)
 	}
@@ -367,6 +404,15 @@ func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID st
 	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
+	return nil
+}
+
+func validateReconciliationGeneratedSecrets(generated map[string]string) error {
+	for key, value := range generated {
+		if key != "api_token" || strings.TrimSpace(value) == "" || len(value) > 4096 {
+			return errors.New("center: invalid Agent reconciliation secrets")
+		}
 	}
 	return nil
 }

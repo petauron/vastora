@@ -97,6 +97,9 @@ func runCenter(arguments []string) error {
 		}
 		maintenanceContext, stopMaintenance := context.WithCancel(context.Background())
 		defer stopMaintenance()
+		if err := store.StartPublicationVerifications(maintenanceContext); err != nil {
+			return fmt.Errorf("resume public entry verification: %w", err)
+		}
 		go store.RunPublicationCleanup(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center publication cleanup: %v\n", err)
 		})

@@ -44,14 +44,16 @@ type NodeHeartbeat struct {
 }
 
 type ApplicationEndpointObservation struct {
-	AppKey       string `json:"appKey"`
-	Name         string `json:"name"`
-	Protocol     string `json:"protocol"`
-	AppProtocol  string `json:"appProtocol"`
-	Listen       string `json:"listen"`
-	Port         int    `json:"port"`
-	Enabled      bool   `json:"enabled"`
-	RemoteNodeID int    `json:"remoteNodeId,omitempty"`
+	AppKey            string `json:"appKey"`
+	Name              string `json:"name"`
+	Protocol          string `json:"protocol"`
+	AppProtocol       string `json:"appProtocol"`
+	Listen            string `json:"listen"`
+	Port              int    `json:"port"`
+	Enabled           bool   `json:"enabled"`
+	RemoteNodeID      int    `json:"remoteNodeId,omitempty"`
+	InboundTag        string `json:"inboundTag,omitempty"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes,omitempty"`
 }
 
 type SiteInput struct {
@@ -462,7 +464,7 @@ func (s *Store) DisableAgent(ctx context.Context, agentID string) error {
 		{`SELECT COUNT(*) FROM applications WHERE node_id = ? AND status <> 'stopped'`, "center: uninstall active applications before disabling this node"},
 		{`SELECT COUNT(*) FROM site_gateways WHERE agent_id = ?`, "center: remove this node as a Site gateway before disabling it"},
 		{`SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND status <> 'stopped'`, "center: stop publications using this node before disabling it"},
-		{`SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND state IN ('pending', 'running')`, "center: wait for active node tasks before disabling it"},
+		{`SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, "center: wait for active node tasks before disabling it"},
 		{`SELECT COUNT(*) FROM cloudflare_tunnels WHERE agent_id = ? AND status <> 'stopped'`, "center: stop the Cloudflare Tunnel connector before disabling this node"},
 	}
 	for _, check := range checks {

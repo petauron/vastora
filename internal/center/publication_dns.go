@@ -11,11 +11,16 @@ import (
 )
 
 func (s *Store) reconcilePublicationDNS(ctx context.Context, id, gatewayID, provider string, revision int64) (bool, error) {
+	// External publication reconciliation and cleanup share one lifecycle lock.
+	// A stop may commit while an API request is in flight, but its cleanup waits
+	// until this operation either records or compensates every remote resource.
+	s.publicationCleanupMu.Lock()
+	defer s.publicationCleanupMu.Unlock()
 	var operationErr error
 	successMessage := ""
 	switch provider {
 	case "cloudflare":
-		operationErr = s.reconcileCloudflarePublication(ctx, id)
+		operationErr = s.reconcileCloudflarePublication(ctx, id, revision)
 		successMessage = "Cloudflare DNS record applied"
 	case "headscale":
 		operationErr = s.reconcileHeadscaleDNS(ctx)
@@ -23,13 +28,16 @@ func (s *Store) reconcilePublicationDNS(ctx context.Context, id, gatewayID, prov
 	default:
 		return true, nil
 	}
+	if errors.Is(operationErr, errStalePublicationReconcile) {
+		return false, nil
+	}
 	taskID := dnsTaskID(id, revision)
 	if operationErr != nil {
 		message := strings.TrimSpace(operationErr.Error())
 		if len(message) > 1024 {
 			message = message[:1024]
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND status <> 'stopped'`, message, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+		if _, err := s.db.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, message, s.now().UTC().Format(time.RFC3339Nano), id, revision); err != nil {
 			return false, errors.Join(operationErr, err)
 		}
 		if err := s.recordStandaloneTaskEvent(ctx, taskID, gatewayID, "dns.record.apply", revision, "failed", message); err != nil {
@@ -37,7 +45,7 @@ func (s *Store) reconcilePublicationDNS(ctx context.Context, id, gatewayID, prov
 		}
 		return false, nil
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE publications SET status = 'pending', last_error = '', updated_at = ? WHERE id = ? AND status = 'failed'`, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE publications SET status = 'pending', last_error = '', updated_at = ? WHERE id = ? AND desired_revision = ? AND status = 'failed'`, s.now().UTC().Format(time.RFC3339Nano), id, revision); err != nil {
 		return false, err
 	}
 	if err := s.recordStandaloneTaskEvent(ctx, taskID, gatewayID, "dns.record.apply", revision, "succeeded", successMessage); err != nil {

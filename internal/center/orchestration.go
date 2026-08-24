@@ -407,12 +407,20 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision,
-			status = CASE WHEN kind = 'public_direct' THEN 'applying' ELSE 'ready' END,
-			last_error = '', updated_at = ?
+			status = CASE
+				WHEN kind = 'public_direct' AND status = 'failed' AND dns_provider <> 'manual' THEN 'failed'
+				WHEN kind = 'public_direct' THEN 'applying'
+				ELSE 'ready'
+			END,
+			last_error = CASE WHEN status = 'failed' AND dns_provider <> 'manual' THEN last_error ELSE '' END,
+			updated_at = ?
 			WHERE id IN (SELECT publication_id FROM routes WHERE gateway_node_id = ? AND applied_revision = ?)`, now, agentID, revision); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision, status = 'applying', last_error = '', updated_at = ?
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision,
+			status = CASE WHEN status = 'failed' AND dns_provider <> 'manual' THEN 'failed' ELSE 'applying' END,
+			last_error = CASE WHEN status = 'failed' AND dns_provider <> 'manual' THEN last_error ELSE '' END,
+			updated_at = ?
 			WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, now, agentID); err != nil {
 			return err
 		}
@@ -424,7 +432,20 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 	if err := s.recordTaskEvent(ctx, tx, gatewayRouteTaskID(agentID, revision), agentID, "gateway.routes.apply", revision, event, taskError); err != nil {
 		return err
 	}
-	return tx.Commit()
+	verificationTargets := []publicationVerificationTarget{}
+	if succeeded {
+		verificationTargets, err = s.publicationVerificationTargetsForGateway(ctx, tx, agentID)
+		if err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, target := range verificationTargets {
+		s.schedulePublicationVerification(target.id, target.revision)
+	}
+	return nil
 }
 
 func gatewayTaskRevision(taskID string) (int64, bool) {

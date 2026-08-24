@@ -11,15 +11,16 @@ import (
 )
 
 const (
-	threeXUIKey       = "vastora-official/3x-ui"
-	threeXUIContainer = "vastora-3x-ui"
-	cpaKey            = "vastora-official/cpa"
-	cpaContainer      = "vastora-cpa"
-	cpaNetwork        = "vastora-cpa-network"
-	keeperKey         = "vastora-official/keeper"
-	keeperContainer   = "vastora-cpa-usage-keeper"
-	komariKey         = "vastora-official/komari-agent"
-	komariContainer   = "vastora-komari-agent"
+	threeXUIKey            = "vastora-official/3x-ui"
+	threeXUIContainer      = "vastora-3x-ui"
+	threeXUIDatabaseVolume = "vastora-3x-ui-db"
+	cpaKey                 = "vastora-official/cpa"
+	cpaContainer           = "vastora-cpa"
+	cpaNetwork             = "vastora-cpa-network"
+	keeperKey              = "vastora-official/keeper"
+	keeperContainer        = "vastora-cpa-usage-keeper"
+	komariKey              = "vastora-official/komari-agent"
+	komariContainer        = "vastora-komari-agent"
 )
 
 type DockerExecutor struct {
@@ -69,25 +70,68 @@ func (e DockerExecutor) Deploy(ctx context.Context, task DeploymentTask) (Applic
 	}
 	result, err := reportedServices(ctx, task, bindAddress)
 	if err != nil {
+		if task.AppKey == threeXUIKey {
+			return ApplicationTaskResult{GeneratedSecrets: generatedSecrets}, deferTaskUntilReconciled(err)
+		}
 		return ApplicationTaskResult{}, err
 	}
 	result.GeneratedSecrets = generatedSecrets
 	return result, nil
 }
 
-func uninstallApp(ctx context.Context, docker *client.Client, appKey string, deleteData bool) error {
+// Maintain cleans committed rollback artifacts and restores an interrupted
+// replacement transaction whose canonical container is absent.
+func (e DockerExecutor) Maintain(ctx context.Context) error {
+	socket := e.Socket
+	if socket == "" {
+		socket = "unix:///var/run/docker.sock"
+	}
+	docker, err := client.New(client.WithHost(socket))
+	if err != nil {
+		return fmt.Errorf("agent: connect Docker for maintenance: %w", err)
+	}
+	defer docker.Close()
+	return maintainThreeXUIContainers(ctx, docker)
+}
+
+type appUninstallEngine interface {
+	ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+	VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
+}
+
+func uninstallApp(ctx context.Context, docker appUninstallEngine, appKey string, deleteData bool) error {
 	containers := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer, komariKey: komariContainer}
 	name, ok := containers[appKey]
 	if !ok {
 		return errors.New("agent: unsupported app package")
 	}
-	if _, err := docker.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("agent: remove %s container: %w", appKey, err)
+	containerNames := []string{name}
+	if appKey == threeXUIKey {
+		if !deleteData {
+			transactionalDocker, ok := docker.(threeXUIContainerEngine)
+			if !ok {
+				return errors.New("agent: Docker engine cannot preserve 3x-ui data before uninstall")
+			}
+			// Keep-data uninstall never starts a stopped service. It only quiesces
+			// the authoritative container and restores a durable rollback snapshot
+			// when that is the only safe copy of the retained database.
+			if err := prepareThreeXUIKeepDataUninstall(ctx, transactionalDocker); err != nil {
+				return fmt.Errorf("agent: preserve 3x-ui data before uninstall: %w", err)
+			}
+		}
+		// Delete-data uninstall is intentionally independent of rollback state:
+		// corrupt snapshots must not block an explicit destructive uninstall.
+		containerNames = []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUICleanupContainer, threeXUIContainer}
+	}
+	for _, containerName := range containerNames {
+		if _, err := docker.ContainerRemove(ctx, containerName, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			return fmt.Errorf("agent: remove %s container: %w", appKey, err)
+		}
 	}
 	if !deleteData {
 		return nil
 	}
-	volumes := map[string][]string{threeXUIKey: {"vastora-3x-ui-db", "vastora-3x-ui-cert", "vastora-3x-ui-acme"}, cpaKey: {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"}, keeperKey: {"vastora-cpa-keeper-data"}}
+	volumes := map[string][]string{threeXUIKey: {threeXUIDatabaseVolume, "vastora-3x-ui-cert", "vastora-3x-ui-acme"}, cpaKey: {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"}, keeperKey: {"vastora-cpa-keeper-data"}}
 	for _, volume := range volumes[appKey] {
 		if _, err := docker.VolumeRemove(ctx, volume, client.VolumeRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			return fmt.Errorf("agent: remove %s data volume: %w", appKey, err)

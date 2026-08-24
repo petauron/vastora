@@ -1,37 +1,106 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { APIError, api } from "../api";
 import type { ApplicationCommand } from "../types";
 
 type StartCommand = () => Promise<ApplicationCommand>;
 type AdoptCommand = (command: ApplicationCommand) => void;
 
+const commandWatchdogMilliseconds = 120_000;
+const maximumReconnectDelayMilliseconds = 4_000;
+
 function waitForCommand(commandId: string, signal: AbortSignal, adopt: AdoptCommand): Promise<ApplicationCommand | null> {
   return new Promise((resolve, reject) => {
-    const source = new EventSource(`/api/v1/application-commands/${encodeURIComponent(commandId)}/events`, { withCredentials: true });
+    let source: EventSource | null = null;
     let settled = false;
-    let timeout = 0;
+    let watchdogTimer = 0;
+    let reconnectTimer = 0;
+    let reconnectAttempts = 0;
+    let recovering = false;
     let abort = () => {};
     const finish = (settle: () => void) => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timeout);
+      window.clearTimeout(watchdogTimer);
+      window.clearTimeout(reconnectTimer);
       signal.removeEventListener("abort", abort);
-      source.close();
+      source?.close();
+      source = null;
       settle();
     };
     abort = () => finish(() => resolve(null));
-    timeout = window.setTimeout(() => finish(() => reject(new Error("The node did not respond in time"))), 120_000);
-    signal.addEventListener("abort", abort, { once: true });
-    source.onmessage = (event) => {
+    const reconnect = () => {
+      if (settled || signal.aborted) return;
+      window.clearTimeout(reconnectTimer);
+      const delay = Math.min(maximumReconnectDelayMilliseconds, 500 * 2 ** Math.min(reconnectAttempts, 3));
+      reconnectTimer = window.setTimeout(connect, delay);
+    };
+    const recover = async () => {
+      if (settled || recovering) return;
+      recovering = true;
       try {
-        const command = JSON.parse(event.data) as ApplicationCommand;
-        adopt(command);
-        if (command.state !== "pending" && command.state !== "running") {
-          finish(() => resolve(command));
+        const current = await api.applicationCommand(commandId);
+        if (settled) return;
+        adopt(current);
+        if (current.state !== "pending" && current.state !== "running") {
+          finish(() => resolve(current));
+          return;
         }
-      } catch {
-        finish(() => reject(new Error("Center returned an invalid command event")));
+        reconnectAttempts += 1;
+        reconnect();
+      } catch (error) {
+        if (settled) return;
+        if (error instanceof APIError && error.status === 401) {
+          finish(() => reject(new Error("Your Center session expired. Sign in again and retry.")));
+          return;
+        }
+        reconnectAttempts += 1;
+        reconnect();
+      } finally {
+        recovering = false;
       }
     };
+    const armWatchdog = (currentSource: EventSource) => {
+      window.clearTimeout(watchdogTimer);
+      watchdogTimer = window.setTimeout(() => {
+        if (settled || source !== currentSource) return;
+        currentSource.close();
+        source = null;
+        void recover();
+      }, commandWatchdogMilliseconds);
+    };
+    function connect() {
+      if (settled || signal.aborted) return;
+      try {
+        const nextSource = new EventSource(`/api/v1/application-commands/${encodeURIComponent(commandId)}/events`, { withCredentials: true });
+        source = nextSource;
+        nextSource.onmessage = (event) => {
+          try {
+            const command = JSON.parse(event.data) as ApplicationCommand;
+            reconnectAttempts = 0;
+            adopt(command);
+            if (command.state !== "pending" && command.state !== "running") {
+              finish(() => resolve(command));
+            } else {
+              armWatchdog(nextSource);
+            }
+          } catch {
+            finish(() => reject(new Error("Center returned an invalid command event")));
+          }
+        };
+        nextSource.onerror = () => {
+          if (settled || source !== nextSource) return;
+          nextSource.close();
+          source = null;
+          window.clearTimeout(watchdogTimer);
+          void recover();
+        };
+        armWatchdog(nextSource);
+      } catch {
+        void recover();
+      }
+    }
+    signal.addEventListener("abort", abort, { once: true });
+    connect();
   });
 }
 

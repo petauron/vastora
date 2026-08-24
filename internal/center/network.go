@@ -13,8 +13,13 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func (s *Store) networkCandidates(ctx context.Context, agentID string) ([]networking.Candidate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT address, interface_name, family, kind, observed_at FROM agent_network_candidates WHERE agent_id = ? ORDER BY kind, interface_name, address`, agentID)
+type networkQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func networkCandidates(ctx context.Context, queryer networkQueryer, agentID string) ([]networking.Candidate, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT address, interface_name, family, kind, observed_at FROM agent_network_candidates WHERE agent_id = ? ORDER BY kind, interface_name, address`, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("center: list network candidates: %w", err)
 	}
@@ -35,12 +40,12 @@ func (s *Store) networkCandidates(ctx context.Context, agentID string) ([]networ
 	return values, rows.Err()
 }
 
-func (s *Store) networkProfile(ctx context.Context, agentID string) (*networking.Profile, error) {
+func networkProfile(ctx context.Context, queryer networkQueryer, agentID string) (*networking.Profile, error) {
 	var value networking.Profile
 	var enabled []byte
 	var direct int
 	var confirmed, observed string
-	err := s.db.QueryRowContext(ctx, `SELECT service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at FROM agent_network_profiles WHERE agent_id = ?`, agentID).Scan(&value.ServiceAddress, &value.LANAddress, &value.HeadscaleAddress, &value.PublicAddress, &enabled, &direct, &confirmed, &observed)
+	err := queryer.QueryRowContext(ctx, `SELECT service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at FROM agent_network_profiles WHERE agent_id = ?`, agentID).Scan(&value.ServiceAddress, &value.LANAddress, &value.HeadscaleAddress, &value.PublicAddress, &enabled, &direct, &confirmed, &observed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -63,20 +68,25 @@ func (s *Store) networkProfile(ctx context.Context, agentID string) (*networking
 }
 
 func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input networking.Profile) (*networking.Profile, error) {
-	var active int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active'`, agentID).Scan(&active); err != nil {
-		return nil, fmt.Errorf("center: inspect Agent: %w", err)
-	}
-	if active == 0 {
-		return nil, errors.New("center: active Agent not found")
-	}
 	input.ServiceAddress = strings.TrimSpace(input.ServiceAddress)
 	input.LANAddress = strings.TrimSpace(input.LANAddress)
 	input.HeadscaleAddress = strings.TrimSpace(input.HeadscaleAddress)
 	input.PublicAddress = strings.TrimSpace(input.PublicAddress)
 	input.EnabledKinds = uniqueStrings(input.EnabledKinds)
 	sort.Strings(input.EnabledKinds)
-	candidates, err := s.networkCandidates(ctx, agentID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active'`, agentID).Scan(&active); err != nil {
+		return nil, fmt.Errorf("center: inspect Agent: %w", err)
+	}
+	if active == 0 {
+		return nil, errors.New("center: active Agent not found")
+	}
+	candidates, err := networkCandidates(ctx, tx, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -86,17 +96,56 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err := networking.ValidateProfile(candidates, input); err != nil {
 		return nil, err
 	}
-	previous, err := s.networkProfile(ctx, agentID)
+	previous, err := networkProfile(ctx, tx, agentID)
 	if err != nil {
 		return nil, err
 	}
-	if previous != nil && previous.ServiceAddress != input.ServiceAddress {
+	if previous == nil || previous.ServiceAddress != input.ServiceAddress {
+		var deploymentCount int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID).Scan(&deploymentCount); err != nil {
+			return nil, err
+		}
+		if deploymentCount != 0 {
+			return nil, errors.New("center: finish or recover deployment tasks before changing the private service address")
+		}
 		var applicationCount int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications WHERE node_id = ? AND status NOT IN ('stopped', 'failed')`, agentID).Scan(&applicationCount); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications WHERE node_id = ? AND status NOT IN ('stopped', 'failed')`, agentID).Scan(&applicationCount); err != nil {
 			return nil, err
 		}
 		if applicationCount != 0 {
 			return nil, errors.New("center: stop applications before changing the private service address")
+		}
+	}
+	if previous != nil {
+		addressChecks := []struct {
+			changed bool
+			kind    string
+			label   string
+		}{
+			{changed: previous.LANAddress != input.LANAddress, kind: publicationLAN, label: "LAN"},
+			{changed: previous.HeadscaleAddress != input.HeadscaleAddress, kind: publicationHeadscale, label: "Headscale"},
+		}
+		for _, check := range addressChecks {
+			if !check.changed {
+				continue
+			}
+			var publicationCount int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.kind).Scan(&publicationCount); err != nil {
+				return nil, err
+			}
+			if publicationCount != 0 {
+				return nil, fmt.Errorf("center: stop %s publications before changing this entry address", check.label)
+			}
+		}
+		if previous.PublicAddress != input.PublicAddress {
+			var publicationCount int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
+				WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
+				return nil, err
+			}
+			if publicationCount != 0 {
+				return nil, errors.New("center: stop direct public publications before changing the public entry address")
+			}
 		}
 	}
 	latest := candidates[0].ObservedAt
@@ -109,7 +158,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	input.ConfirmedAt = s.now().UTC()
 	if !input.DirectPublic {
 		var publicationCount int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
 		if publicationCount != 0 {
@@ -126,7 +175,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 			continue
 		}
 		var publicationCount int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.publication).Scan(&publicationCount); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.publication).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
 		if publicationCount != 0 {
@@ -134,11 +183,6 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		}
 	}
 	enabledJSON, _ := json.Marshal(input.EnabledKinds)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_profiles(agent_id, service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(agent_id) DO UPDATE SET service_address = excluded.service_address, lan_address = excluded.lan_address, headscale_address = excluded.headscale_address, public_address = excluded.public_address, enabled_kinds_json = excluded.enabled_kinds_json, direct_public = excluded.direct_public, confirmed_at = excluded.confirmed_at, candidate_observed_at = excluded.candidate_observed_at`, agentID, input.ServiceAddress, input.LANAddress, input.HeadscaleAddress, input.PublicAddress, enabledJSON, input.DirectPublic, input.ConfirmedAt.Format(time.RFC3339Nano), input.CandidateObserved.Format(time.RFC3339Nano)); err != nil {
@@ -156,7 +200,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err := s.queueAllGatewayStates(ctx); err != nil {
 		return nil, err
 	}
-	return s.networkProfile(ctx, agentID)
+	return networkProfile(ctx, s.db, agentID)
 }
 
 func (s *Store) autoAssignFirstSiteGateway(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {

@@ -233,33 +233,34 @@ type ThreeXUIControllerCommandResult struct {
 }
 
 type ApplicationCommandView struct {
-	ID                    string                  `json:"id"`
-	ApplicationID         string                  `json:"applicationId"`
-	GatewayNodeID         string                  `json:"gatewayNodeId"`
-	Kind                  string                  `json:"kind"`
-	State                 string                  `json:"state"`
-	Hostname              string                  `json:"hostname"`
-	DNSProvider           string                  `json:"dnsProvider"`
-	Target                string                  `json:"target,omitempty"`
-	SNIHostname           string                  `json:"sniHostname,omitempty"`
-	PublicationID         string                  `json:"publicationId,omitempty"`
-	Action                string                  `json:"action,omitempty"`
-	RegionCode            string                  `json:"regionCode,omitempty"`
-	DisplayName           string                  `json:"displayName,omitempty"`
-	InboundID             int                     `json:"inboundId,omitempty"`
-	ClientCreated         bool                    `json:"clientCreated,omitempty"`
-	InboundTotalBytes     int64                   `json:"inboundTotalBytes,omitempty"`
-	InboundResetDays      int                     `json:"inboundResetDays,omitempty"`
-	InboundNextResetAt    string                  `json:"inboundNextResetAt,omitempty"`
-	Clients               []ThreeXUIClientView    `json:"clients,omitempty"`
-	ClientsObserved       bool                    `json:"clientsObserved,omitempty"`
-	Inbounds              []ThreeXUIClientInbound `json:"inbounds,omitempty"`
-	InboundsObserved      bool                    `json:"inboundsObserved,omitempty"`
-	SubscriptionAvailable bool                    `json:"subscriptionAvailable,omitempty"`
-	Error                 string                  `json:"error,omitempty"`
-	ResultAvailable       bool                    `json:"resultAvailable"`
-	CreatedAt             time.Time               `json:"createdAt"`
-	UpdatedAt             time.Time               `json:"updatedAt"`
+	ID                     string                  `json:"id"`
+	ApplicationID          string                  `json:"applicationId"`
+	GatewayNodeID          string                  `json:"gatewayNodeId"`
+	Kind                   string                  `json:"kind"`
+	State                  string                  `json:"state"`
+	ReconciliationRequired bool                    `json:"reconciliationRequired"`
+	Hostname               string                  `json:"hostname"`
+	DNSProvider            string                  `json:"dnsProvider"`
+	Target                 string                  `json:"target,omitempty"`
+	SNIHostname            string                  `json:"sniHostname,omitempty"`
+	PublicationID          string                  `json:"publicationId,omitempty"`
+	Action                 string                  `json:"action,omitempty"`
+	RegionCode             string                  `json:"regionCode,omitempty"`
+	DisplayName            string                  `json:"displayName,omitempty"`
+	InboundID              int                     `json:"inboundId,omitempty"`
+	ClientCreated          bool                    `json:"clientCreated,omitempty"`
+	InboundTotalBytes      int64                   `json:"inboundTotalBytes,omitempty"`
+	InboundResetDays       int                     `json:"inboundResetDays,omitempty"`
+	InboundNextResetAt     string                  `json:"inboundNextResetAt,omitempty"`
+	Clients                []ThreeXUIClientView    `json:"clients,omitempty"`
+	ClientsObserved        bool                    `json:"clientsObserved,omitempty"`
+	Inbounds               []ThreeXUIClientInbound `json:"inbounds,omitempty"`
+	InboundsObserved       bool                    `json:"inboundsObserved,omitempty"`
+	SubscriptionAvailable  bool                    `json:"subscriptionAvailable,omitempty"`
+	Error                  string                  `json:"error,omitempty"`
+	ResultAvailable        bool                    `json:"resultAvailable"`
+	CreatedAt              time.Time               `json:"createdAt"`
+	UpdatedAt              time.Time               `json:"updatedAt"`
 }
 
 func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInput, string, error) {
@@ -305,7 +306,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + input.InboundTag
 	}
-	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Port < 1024 || result.Port > 65535 || result.Port == 443 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.SNIHostname) || result.InboundTotalBytes != input.InboundTotalBytes {
+	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Listen != input.TargetAddress || result.Port < 1024 || result.Port > 65535 || result.Port == 443 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.SNIHostname) || result.InboundTotalBytes != input.InboundTotalBytes {
 		return errors.New("center: Agent returned an unsafe REALITY result")
 	}
 	targetHost, targetPort, err := net.SplitHostPort(strings.ToLower(strings.TrimSpace(result.Target)))
@@ -411,6 +412,9 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if duplicateDisplayName != 0 {
 		return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY node with that display name")
 	}
+	if err := ensureRealityDisplayNameUnreserved(ctx, tx, siteID, displayName); err != nil {
+		return ApplicationCommandView{}, err
+	}
 	var existingControllerRealityServices int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE application_id = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.ApplicationID).Scan(&existingControllerRealityServices); err != nil {
 		return ApplicationCommandView{}, err
@@ -420,7 +424,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, errors.New("center: the first REALITY node requires a valid subscription client name")
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
@@ -463,7 +467,10 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	}
 	encoded, _ := json.Marshal(task)
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ApplicationID, agentID, input.GatewayNodeID, realityCommandKind, encoded, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, site_id, display_name, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ApplicationID, siteID, displayName, agentID, input.GatewayNodeID, realityCommandKind, encoded, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		if strings.Contains(err.Error(), "application_commands.site_id") {
+			return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY operation reserving that node name")
+		}
 		return ApplicationCommandView{}, fmt.Errorf("center: create REALITY operation: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "3x-ui REALITY creation queued"); err != nil {
@@ -526,13 +533,16 @@ func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRen
 	if duplicateDisplayName != 0 {
 		return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY node with that display name")
 	}
+	if err := ensureRealityDisplayNameUnreserved(ctx, tx, siteID, displayName); err != nil {
+		return ApplicationCommandView{}, err
+	}
 	var connectHostname, sniHostname string
 	err = tx.QueryRowContext(ctx, `SELECT hostname, sni_hostname FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND status <> 'stopped' ORDER BY updated_at DESC LIMIT 1`, input.ServiceID).Scan(&connectHostname, &sniHostname)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, err
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
@@ -546,7 +556,10 @@ func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRen
 	}
 	id := "application-command-" + token
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, applicationID, agentID, agentID, realityRenameCommandKind, encoded, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, site_id, display_name, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, applicationID, siteID, displayName, agentID, agentID, realityRenameCommandKind, encoded, now, now); err != nil {
+		if strings.Contains(err.Error(), "application_commands.site_id") {
+			return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY operation reserving that node name")
+		}
 		return ApplicationCommandView{}, fmt.Errorf("center: rename REALITY node: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "3x-ui REALITY node rename queued"); err != nil {
@@ -558,12 +571,25 @@ func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRen
 	return s.ApplicationCommand(ctx, id)
 }
 
+func ensureRealityDisplayNameUnreserved(ctx context.Context, tx *sql.Tx, siteID, displayName string) error {
+	var reserved int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
+		WHERE site_id = ? AND display_name = ? COLLATE NOCASE
+		AND kind IN (?, ?) AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, siteID, displayName, realityCommandKind, realityRenameCommandKind).Scan(&reserved); err != nil {
+		return err
+	}
+	if reserved != 0 {
+		return errors.New("center: this Site already has a REALITY operation reserving that node name")
+	}
+	return nil
+}
+
 func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationCommandView, error) {
 	var value ApplicationCommandView
 	var inputJSON, resultJSON []byte
 	var secretID sql.NullString
 	var created, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT id, application_id, gateway_node_id, kind, input_json, result_json, result_secret_id, state, error, created_at, updated_at FROM application_commands WHERE id = ?`, id).Scan(&value.ID, &value.ApplicationID, &value.GatewayNodeID, &value.Kind, &inputJSON, &resultJSON, &secretID, &value.State, &value.Error, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id, application_id, gateway_node_id, kind, input_json, result_json, result_secret_id, state, reconciliation_required, error, created_at, updated_at FROM application_commands WHERE id = ?`, id).Scan(&value.ID, &value.ApplicationID, &value.GatewayNodeID, &value.Kind, &inputJSON, &resultJSON, &secretID, &value.State, &value.ReconciliationRequired, &value.Error, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return value, errors.New("center: application operation not found")
 	}
@@ -649,7 +675,7 @@ func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kin
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string
-	condition := `(state IN ('pending', 'running') OR result_secret_id IS NOT NULL)`
+	condition := `(state IN ('pending', 'running') OR reconciliation_required = 1 OR result_secret_id IS NOT NULL)`
 	if kind == subscriptionCommandKind {
 		condition = `(state IN ('pending', 'running', 'failed') OR (state = 'succeeded' AND EXISTS (
 			SELECT 1 FROM publications p JOIN services s ON s.id = p.service_id

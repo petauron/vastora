@@ -30,6 +30,15 @@ func (s *Server) handleCreateDeployment(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusCreated, deployment)
 }
 
+func (s *Server) handleRetryTaskReconciliation(writer http.ResponseWriter, request *http.Request) {
+	result, err := s.store.RetryTaskReconciliation(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusAccepted, result)
+}
+
 func (s *Server) handleListSites(writer http.ResponseWriter, request *http.Request) {
 	sites, err := s.store.ListSites(request.Context())
 	if err != nil {

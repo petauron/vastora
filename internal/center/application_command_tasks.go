@@ -232,7 +232,7 @@ func (s *Store) failUnclaimableApplicationCommand(ctx context.Context, tx *sql.T
 	return s.recordTaskEvent(ctx, tx, commandID, agentID, "application.command", revision, "failed", message)
 }
 
-func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool) error {
 	taskError = strings.TrimSpace(taskError)
 	if len(taskError) > 1024 {
 		taskError = taskError[:1024]
@@ -242,19 +242,45 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 		return err
 	}
 	defer tx.Rollback()
-	var applicationID, gatewayID, kind, currentState string
+	var applicationID, gatewayID, kind, currentState, appKey string
 	var inputJSON []byte
 	var attempt int64
-	if err := tx.QueryRowContext(ctx, `SELECT application_id, gateway_node_id, kind, input_json, state, attempt FROM application_commands WHERE id = ? AND agent_id = ?`, taskID, agentID).Scan(&applicationID, &gatewayID, &kind, &inputJSON, &currentState, &attempt); errors.Is(err, sql.ErrNoRows) {
+	var currentReconciliationRequired int
+	if err := tx.QueryRowContext(ctx, `SELECT command.application_id, command.gateway_node_id, command.kind, command.input_json, command.state, command.reconciliation_required, command.attempt, application.app_key
+		FROM application_commands command JOIN applications application ON application.id = command.application_id
+		WHERE command.id = ? AND command.agent_id = ?`, taskID, agentID).Scan(&applicationID, &gatewayID, &kind, &inputJSON, &currentState, &currentReconciliationRequired, &attempt, &appKey); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: application operation not found")
 	} else if err != nil {
 		return err
 	}
 	if currentState == "succeeded" || currentState == "failed" {
+		if reconciliationRequired && (appKey != threeXUIAppKey || currentState != "failed" || currentReconciliationRequired != 1) {
+			return errInvalidReconciliationDisposition
+		}
 		return nil
 	}
 	if currentState != "running" || expectedAttempt <= 0 || expectedAttempt != attempt {
 		return errors.New("center: stale application operation result")
+	}
+	if reconciliationRequired {
+		if succeeded || taskError == "" || appKey != threeXUIAppKey {
+			return errInvalidReconciliationDisposition
+		}
+		now := s.now().UTC().Format(time.RFC3339Nano)
+		result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', reconciliation_required = 1, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, taskError, now, taskID, agentID, expectedAttempt)
+		if err != nil {
+			return err
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return errors.New("center: application operation is not active")
+		}
+		if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, "failed", taskError); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required = 0 WHERE id = ?`, taskID); err != nil {
+		return err
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
@@ -274,162 +300,51 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	if kind != realityCommandKind {
 		return errors.New("center: stored application operation kind is invalid")
 	}
-	now := s.now().UTC()
-	var serviceID string
-	var input RealityCommandTask
-	var envelope ApplicationTaskResult
-	if json.Unmarshal(inputJSON, &input) != nil {
-		return errors.New("center: stored application operation is invalid")
-	}
-	if succeeded {
-		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.ApplicationCommand == nil {
-			succeeded = false
-			taskError = "center: Agent returned an invalid REALITY result"
-		}
-	}
-	if succeeded {
-		result := *envelope.ApplicationCommand
-		if err := validateRealityCommandResult(input, result); err != nil {
-			succeeded = false
-			taskError = err.Error()
-		} else {
-			var serviceAddress string
-			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(p.service_address, '') FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.id = ?`, applicationID).Scan(&serviceAddress); err != nil || result.Listen != serviceAddress {
-				succeeded = false
-				taskError = "center: REALITY inbound is not bound to the confirmed private service address"
-			}
-		}
-		if succeeded {
-			for _, excluded := range input.ExcludedSNI {
-				if result.SNIHostname == excluded {
-					succeeded = false
-					taskError = "center: selected REALITY SNI is already used on this gateway"
-					break
-				}
-			}
-		}
-		if succeeded {
-			result := *envelope.ApplicationCommand
-			serviceName := fmt.Sprintf("inbound-%d", result.InboundID)
-			err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE application_id = ? AND name = ?`, applicationID, serviceName).Scan(&serviceID)
-			if errors.Is(err, sql.ErrNoRows) {
-				err = nil
-			}
-			var siteID string
-			if err == nil {
-				err = tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID)
-			}
-			var duplicateDisplayName int
-			if err == nil {
-				err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE site_id = ? AND id <> ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped' AND display_name = ? COLLATE NOCASE`, siteID, serviceID, result.DisplayName).Scan(&duplicateDisplayName)
-			}
-			if err == nil && duplicateDisplayName != 0 {
-				err = errors.New("this Site already has a REALITY node with that display name")
-			}
-			if err == nil && serviceID == "" {
-				serviceID, err = randomToken(18)
-				if err == nil {
-					_, err = tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, region_code, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'tcp', ?, ?, ?, 'observed', 'vless/tcp/reality', 0, ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, serviceName, result.DisplayName, input.RegionCode, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
-				}
-			} else if err == nil {
-				_, err = tx.ExecContext(ctx, `UPDATE services SET display_name = ?, region_code = ?, protocol = 'tcp', container_port = ?, host_port = ?, endpoint = ?, source = 'observed', app_protocol = 'vless/tcp/reality', observed_listen = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, result.DisplayName, input.RegionCode, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), serviceID)
-			}
-			if err != nil {
-				succeeded = false
-				taskError = "center: save REALITY service: " + err.Error()
-			}
-			if succeeded {
-				nextResetAt, planErr := nextThreeXUIInboundResetAt(ctx, tx, serviceID, now, input.InboundResetDays)
-				if planErr == nil {
-					planErr = upsertThreeXUIInboundPlan(ctx, tx, serviceID, result.InboundTag, input.InboundTotalBytes, input.InboundResetDays, nextResetAt, 1, now)
-				}
-				if planErr != nil {
-					succeeded = false
-					taskError = "center: save REALITY inbound traffic plan: " + planErr.Error()
-				}
-			}
-		}
-		if succeeded {
-			result := *envelope.ApplicationCommand
-			var previousSecret sql.NullString
-			if err := tx.QueryRowContext(ctx, `SELECT result_secret_id FROM application_commands WHERE id = ?`, taskID).Scan(&previousSecret); err != nil {
-				return err
-			}
-			if previousSecret.Valid {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, previousSecret.String); err != nil {
-					return err
-				}
-			}
-			var secretID any
-			if result.ClientCreated {
-				value, err := s.putSecret(ctx, tx, []byte(result.ShareURI), "application-command:"+taskID)
-				if err != nil {
-					return err
-				}
-				secretID = value
-			}
-			result.ShareURI = ""
-			result.InboundTag = ""
-			publicResult, _ := json.Marshal(result)
-			if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET result_json = ?, result_secret_id = ?, error = '', updated_at = ? WHERE id = ?`, publicResult, secretID, now.Format(time.RFC3339Nano), taskID); err != nil {
-				return err
-			}
-		}
-	}
-	if !succeeded {
-		if taskError == "" {
-			taskError = "application operation failed"
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', lease_expires_at = '', error = ?, updated_at = ? WHERE id = ?`, taskError, now.Format(time.RFC3339Nano), taskID); err != nil {
-			return err
-		}
-	}
-	if !succeeded {
-		if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, "failed", taskError); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
+	return s.completeRealityCreateCommand(ctx, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
+}
+
+func (s *Store) resumeSucceededRealityPublications(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT command.id, command.application_id, command.gateway_node_id, command.input_json, command.result_json
+		FROM application_commands command
+		WHERE command.kind = ? AND command.state = 'succeeded'`, realityCommandKind)
+	if err != nil {
 		return err
 	}
-	if !succeeded {
-		return nil
+	defer rows.Close()
+	type recovery struct {
+		commandID, applicationID, gatewayID string
+		input                               RealityCommandTask
+		result                              RealityCommandResult
 	}
-	result := *envelope.ApplicationCommand
-	err = s.ensureRealityPublication(ctx, serviceID, gatewayID, input, result.SNIHostname)
-	if err == nil {
-		finalizeTx, beginErr := s.db.BeginTx(ctx, nil)
-		if beginErr != nil {
-			return beginErr
+	recoveries := []recovery{}
+	for rows.Next() {
+		var value recovery
+		var inputJSON, resultJSON []byte
+		if err := rows.Scan(&value.commandID, &value.applicationID, &value.gatewayID, &inputJSON, &resultJSON); err != nil {
+			return err
 		}
-		defer finalizeTx.Rollback()
-		if _, updateErr := finalizeTx.ExecContext(ctx, `UPDATE application_commands SET state = 'succeeded', lease_expires_at = '', error = '', updated_at = ? WHERE id = ? AND state = 'running'`, s.now().UTC().Format(time.RFC3339Nano), taskID); updateErr != nil {
-			return updateErr
+		if json.Unmarshal(inputJSON, &value.input) != nil || json.Unmarshal(resultJSON, &value.result) != nil || value.result.InboundID < 1 {
+			continue
 		}
-		if eventErr := s.recordTaskEvent(ctx, finalizeTx, taskID, agentID, "application.command", 1, "succeeded", "3x-ui REALITY and shared 443 access created"); eventErr != nil {
-			return eventErr
-		}
-		return finalizeTx.Commit()
+		recoveries = append(recoveries, value)
 	}
-	failure := "center: create REALITY access entry: " + err.Error()
-	cleanupTx, beginErr := s.db.BeginTx(ctx, nil)
-	if beginErr != nil {
-		return errors.Join(err, beginErr)
+	if err := rows.Err(); err != nil {
+		return err
 	}
-	defer cleanupTx.Rollback()
-	var secretID sql.NullString
-	_ = cleanupTx.QueryRowContext(ctx, `SELECT result_secret_id FROM application_commands WHERE id = ?`, taskID).Scan(&secretID)
-	if _, updateErr := cleanupTx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', result_secret_id = NULL, error = ?, updated_at = ? WHERE id = ?`, failure, s.now().UTC().Format(time.RFC3339Nano), taskID); updateErr != nil {
-		return errors.Join(err, updateErr)
-	}
-	if secretID.Valid {
-		_, _ = cleanupTx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, secretID.String)
-	}
-	if eventErr := s.recordTaskEvent(ctx, cleanupTx, taskID, agentID, "application.command", 1, "failed", failure); eventErr != nil {
-		return errors.Join(err, eventErr)
-	}
-	if commitErr := cleanupTx.Commit(); commitErr != nil {
-		return errors.Join(err, commitErr)
+	for _, value := range recoveries {
+		value := value
+		s.startBackground(func() {
+			var serviceID string
+			err := s.db.QueryRowContext(s.backgroundCtx, `SELECT id FROM services WHERE application_id = ? AND name = ? AND status <> 'stopped'`, value.applicationID, fmt.Sprintf("inbound-%d", value.result.InboundID)).Scan(&serviceID)
+			if err == nil {
+				err = s.ensureRealityPublication(s.backgroundCtx, serviceID, value.gatewayID, value.input, value.result.SNIHostname)
+			}
+			warning := ""
+			if err != nil {
+				warning = "center: create REALITY access entry: " + err.Error()
+			}
+			_, _ = s.db.ExecContext(context.WithoutCancel(s.backgroundCtx), `UPDATE application_commands SET error = ?, updated_at = ? WHERE id = ? AND state = 'succeeded'`, warning, s.now().UTC().Format(time.RFC3339Nano), value.commandID)
+		})
 	}
 	return nil
 }
@@ -482,9 +397,15 @@ func (s *Store) completeRealityRenameCommand(ctx context.Context, tx *sql.Tx, ta
 }
 
 func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gatewayID string, input RealityCommandTask, sniHostname string) error {
-	var existingID, existingGateway, existingSNI, existingDNS string
-	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(gateway_node_id, ''), sni_hostname, dns_provider FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ? AND status <> 'stopped'`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS)
+	var existingID, existingGateway, existingSNI, existingDNS, existingStatus string
+	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(gateway_node_id, ''), sni_hostname, dns_provider, status FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ?`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS, &existingStatus)
 	if err == nil {
+		// A stopped publication is an explicit user decision. Startup recovery is
+		// allowed to finish a projection that never existed, but must never turn an
+		// intentionally removed public entry back on.
+		if existingStatus == "stopped" {
+			return nil
+		}
 		if existingGateway != gatewayID || existingSNI != sniHostname || existingDNS != input.DNSProvider {
 			return errors.New("center: existing REALITY access entry does not match the requested gateway, SNI, and DNS")
 		}
@@ -493,8 +414,21 @@ func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gateway
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = s.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: publicationShared443, GatewayNodeID: gatewayID, Hostname: input.ConnectHostname, SNIHostname: sniHostname, DNSProvider: input.DNSProvider})
-	return err
+	_, createErr := s.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: publicationShared443, GatewayNodeID: gatewayID, Hostname: input.ConnectHostname, SNIHostname: sniHostname, DNSProvider: input.DNSProvider})
+	if createErr == nil {
+		return nil
+	}
+	// CreatePublication commits desired state before external reconciliation.
+	// If only its post-commit projection failed, the matching durable entry is
+	// already the recovery source of truth and must not fail the parent command.
+	lookupErr := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(gateway_node_id, ''), sni_hostname, dns_provider, status FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ?`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS, &existingStatus)
+	if lookupErr == nil && (existingStatus == "stopped" || existingGateway == gatewayID && existingSNI == sniHostname && existingDNS == input.DNSProvider) {
+		return nil
+	}
+	if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+		return errors.Join(createErr, lookupErr)
+	}
+	return createErr
 }
 
 func (s *Store) completeSubscriptionCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {

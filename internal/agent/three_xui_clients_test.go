@@ -66,9 +66,9 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 		case "GET /panel/api/clients/get/MacBook":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","id":"11111111-2222-4333-8444-555555555555","subId":"","flow":"xtls-rprx-vision","enable":true},"inboundIds":[9]}}`))
 		case "GET /panel/api/inbounds/get/9":
-			minClientVersion := ""
+			minClientVersion := "1.8.2"
 			if clientVersionUpdated.Load() {
-				minClientVersion = threeXUIMihomoMinClientVersion
+				minClientVersion = ""
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"inbound-9","protocol":"vless","listen":"100.64.0.1","port":39871,"total":0,"expiryTime":0,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"MacBook","flow":"xtls-rprx-vision"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverNames":["www.example.com"],"shortIds":["deadbeef"],"minClientVer":"` + minClientVersion + `","settings":{"publicKey":"public-key"}}},"sniffing":{"enabled":true}}}`))
 		case "POST /panel/api/inbounds/update/9":
@@ -78,7 +78,7 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 			}
 			streamSettings, _ := payload["streamSettings"].(map[string]any)
 			realitySettings, _ := streamSettings["realitySettings"].(map[string]any)
-			if realitySettings["minClientVer"] != threeXUIMihomoMinClientVersion {
+			if realitySettings["minClientVer"] != "" {
 				t.Fatalf("minimum Reality client version = %#v", realitySettings["minClientVer"])
 			}
 			clientVersionUpdateCount.Add(1)
@@ -220,6 +220,129 @@ func TestThreeXUIClientCreateAndUpdateUseFirstClassClientAPI(t *testing.T) {
 	}
 	if len(attached) != 1 || attached[0] != 11 || len(detached) != 1 || detached[0] != 9 {
 		t.Fatalf("attachment changes = attach %#v, detach %#v", attached, detached)
+	}
+}
+
+func TestThreeXUIClientCreateRecoversLostResponseWithoutDuplicate(t *testing.T) {
+	created := false
+	addCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /panel/api/clients/list/paged":
+			if created {
+				_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"Phone","subId":"stable-sub","enable":true,"totalGB":0,"expiryTime":0,"reset":0,"limitIp":0,"inboundIds":[9],"traffic":{"up":0,"down":0}}],"total":1}}`))
+			} else {
+				_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[],"total":0}}`))
+			}
+		case "POST /panel/api/clients/add":
+			addCalls++
+			created = true
+			response.WriteHeader(http.StatusBadGateway)
+			_, _ = response.Write([]byte(`{"success":false,"msg":"response lost"}`))
+		case "GET /panel/api/clients/get/Phone":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"Phone","id":"11111111-2222-4333-8444-555555555555","subId":"stable-sub","flow":"xtls-rprx-vision","enable":true,"totalGB":0,"expiryTime":0,"reset":0,"limitIp":0},"inboundIds":[9]}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	store := threeXUIClientTestStore(t, server, "local-token")
+	defer store.Close()
+
+	result, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{
+		Action: "create", NewEmail: "Phone", InboundIDs: []int{9}, Enabled: true,
+		Inbounds: []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addCalls != 1 || !result.ClientsObserved || len(result.Clients) != 1 || result.Clients[0].Email != "Phone" {
+		t.Fatalf("recovered client result=%#v add calls=%d", result, addCalls)
+	}
+}
+
+func TestThreeXUIClientRenameRetryContinuesFromNewName(t *testing.T) {
+	attached, detached := []int{}, []int{}
+	updatePaths := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /panel/api/clients/get/Phone":
+			response.WriteHeader(http.StatusNotFound)
+			_, _ = response.Write([]byte(`{"success":false,"msg":"not found"}`))
+		case "GET /panel/api/clients/get/Phone 2":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"Phone 2","id":"preserved-uuid","subId":"preserved-sub-id","enable":true,"totalGB":21474836480,"expiryTime":0,"reset":0,"limitIp":0},"inboundIds":[9]}}`))
+		case "POST /panel/api/clients/update/Phone 2":
+			updatePaths = append(updatePaths, request.URL.Path)
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "POST /panel/api/clients/Phone 2/attach":
+			var payload struct {
+				InboundIDs []int `json:"inboundIds"`
+			}
+			_ = json.NewDecoder(request.Body).Decode(&payload)
+			attached = payload.InboundIDs
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "POST /panel/api/clients/Phone 2/detach":
+			var payload struct {
+				InboundIDs []int `json:"inboundIds"`
+			}
+			_ = json.NewDecoder(request.Body).Decode(&payload)
+			detached = payload.InboundIDs
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "GET /panel/api/clients/list/paged":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"Phone 2","subId":"preserved-sub-id","enable":true,"totalGB":21474836480,"expiryTime":0,"reset":0,"limitIp":0,"inboundIds":[10],"traffic":{"up":0,"down":0}}],"total":1}}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	store := threeXUIClientTestStore(t, server, "local-token")
+	defer store.Close()
+
+	_, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{
+		Action: "update", Email: "Phone", NewEmail: "Phone 2", InboundIDs: []int{10}, Enabled: true, TotalBytes: 20 * gibibyteForTest,
+		Inbounds: []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9"}, {ID: 10, Name: "inbound-10"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updatePaths) != 1 || updatePaths[0] != "/panel/api/clients/update/Phone 2" || len(attached) != 1 || attached[0] != 10 || len(detached) != 1 || detached[0] != 9 {
+		t.Fatalf("rename retry update=%#v attach=%#v detach=%#v", updatePaths, attached, detached)
+	}
+}
+
+func TestThreeXUIClientDeleteRecoversLostResponse(t *testing.T) {
+	exists := true
+	deleteCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.Method + " " + request.URL.Path {
+		case "GET /panel/api/clients/list/paged":
+			if exists {
+				_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"Phone","subId":"sub","enable":true,"totalGB":0,"expiryTime":0,"reset":0,"limitIp":0,"inboundIds":[9],"traffic":{"up":0,"down":0}}],"total":1}}`))
+			} else {
+				_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[],"total":0}}`))
+			}
+		case "POST /panel/api/clients/del/Phone":
+			deleteCalls++
+			exists = false
+			response.WriteHeader(http.StatusBadGateway)
+			_, _ = response.Write([]byte(`{"success":false,"msg":"response lost"}`))
+		default:
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	store := threeXUIClientTestStore(t, server, "local-token")
+	defer store.Close()
+
+	result, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "delete", Email: "Phone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleteCalls != 1 || !result.ClientsObserved || len(result.Clients) != 0 {
+		t.Fatalf("delete recovery result=%#v calls=%d", result, deleteCalls)
 	}
 }
 

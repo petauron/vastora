@@ -21,6 +21,8 @@ import (
 
 var Version = "0.1.0-dev"
 
+const maxDeferredTaskAttempts int64 = 4
+
 type Client struct {
 	HTTPClient         *http.Client
 	Executor           Executor
@@ -29,6 +31,60 @@ type Client struct {
 	GatewayDriver      GatewayDriver
 	GatewayProvisioner GatewayProvisioner
 	TunnelProvisioner  TunnelProvisioner
+}
+
+// deferredTaskCompletionError leaves the Center task lease active so the same
+// deterministic operation is retried after lease recovery. It is reserved for
+// cases where reporting a terminal failure could strand an external resource
+// whose cleanup outcome is still unknown.
+type deferredTaskCompletionError struct {
+	cause error
+}
+
+func (e *deferredTaskCompletionError) Error() string { return e.cause.Error() }
+func (e *deferredTaskCompletionError) Unwrap() error { return e.cause }
+
+func deferTaskCompletion(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &deferredTaskCompletionError{cause: cause}
+}
+
+// reconciliationTaskCompletionError represents an operation whose external
+// commit may already be visible. It must keep the same Center task alive until
+// deterministic reconciliation succeeds; converting it to a terminal failure
+// would allow a second command to create a duplicate external resource.
+type reconciliationTaskCompletionError struct {
+	cause error
+}
+
+func (e *reconciliationTaskCompletionError) Error() string { return e.cause.Error() }
+func (e *reconciliationTaskCompletionError) Unwrap() error { return e.cause }
+
+func deferTaskUntilReconciled(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &reconciliationTaskCompletionError{cause: cause}
+}
+
+func taskCompletionIsDeferred(err error) bool {
+	var deferred *deferredTaskCompletionError
+	return errors.As(err, &deferred)
+}
+
+func taskCompletionShouldBeDeferred(err error, attempt int64) bool {
+	var reconciliation *reconciliationTaskCompletionError
+	if errors.As(err, &reconciliation) {
+		return attempt < maxDeferredTaskAttempts
+	}
+	return taskCompletionIsDeferred(err) && attempt < maxDeferredTaskAttempts
+}
+
+func taskCompletionRequiresReconciliation(err error, attempt int64) bool {
+	var reconciliation *reconciliationTaskCompletionError
+	return attempt >= maxDeferredTaskAttempts && errors.As(err, &reconciliation)
 }
 
 type Capabilities struct {
@@ -73,6 +129,10 @@ type DeploymentTask struct {
 
 type Executor interface {
 	Deploy(context.Context, DeploymentTask) (ApplicationTaskResult, error)
+}
+
+type executorMaintainer interface {
+	Maintain(context.Context) error
 }
 
 type ApplicationServiceResult struct {
@@ -249,14 +309,16 @@ type ThreeXUIControllerCommandResult struct {
 }
 
 type ApplicationEndpointObservation struct {
-	AppKey       string `json:"appKey"`
-	Name         string `json:"name"`
-	Protocol     string `json:"protocol"`
-	AppProtocol  string `json:"appProtocol"`
-	Listen       string `json:"listen"`
-	Port         int    `json:"port"`
-	Enabled      bool   `json:"enabled"`
-	RemoteNodeID int    `json:"remoteNodeId,omitempty"`
+	AppKey            string `json:"appKey"`
+	Name              string `json:"name"`
+	Protocol          string `json:"protocol"`
+	AppProtocol       string `json:"appProtocol"`
+	Listen            string `json:"listen"`
+	Port              int    `json:"port"`
+	Enabled           bool   `json:"enabled"`
+	RemoteNodeID      int    `json:"remoteNodeId,omitempty"`
+	InboundTag        string `json:"inboundTag,omitempty"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes,omitempty"`
 }
 
 func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken string) (Enrollment, error) {
@@ -349,14 +411,16 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 	var payload struct {
 		Success bool `json:"success"`
 		Object  []struct {
-			ID       int             `json:"id"`
-			Remark   string          `json:"remark"`
-			Protocol string          `json:"protocol"`
-			Port     int             `json:"port"`
-			Listen   string          `json:"listen"`
-			Enable   bool            `json:"enable"`
-			NodeID   *int            `json:"nodeId,omitempty"`
-			Stream   json.RawMessage `json:"streamSettings"`
+			ID         int             `json:"id"`
+			Remark     string          `json:"remark"`
+			Protocol   string          `json:"protocol"`
+			Port       int             `json:"port"`
+			Listen     string          `json:"listen"`
+			Enable     bool            `json:"enable"`
+			NodeID     *int            `json:"nodeId,omitempty"`
+			Tag        string          `json:"tag"`
+			TotalBytes int64           `json:"total"`
+			Stream     json.RawMessage `json:"streamSettings"`
 		} `json:"obj"`
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(&payload) != nil || !payload.Success {
@@ -381,7 +445,11 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 		if inbound.NodeID != nil {
 			remoteNodeID = *inbound.NodeID
 		}
-		result = append(result, ApplicationEndpointObservation{AppKey: threeXUIKey, Name: name, Protocol: "tcp", AppProtocol: appProtocol, Listen: strings.TrimSpace(inbound.Listen), Port: inbound.Port, Enabled: inbound.Enable, RemoteNodeID: remoteNodeID})
+		result = append(result, ApplicationEndpointObservation{
+			AppKey: threeXUIKey, Name: name, Protocol: "tcp", AppProtocol: appProtocol,
+			Listen: strings.TrimSpace(inbound.Listen), Port: inbound.Port, Enabled: inbound.Enable,
+			RemoteNodeID: remoteNodeID, InboundTag: strings.TrimSpace(inbound.Tag), InboundTotalBytes: inbound.TotalBytes,
+		})
 	}
 	return result, nil
 }
@@ -420,7 +488,17 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 }
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
+	var lastMaintenance time.Time
 	for {
+		if maintainer, ok := c.Executor.(executorMaintainer); ok && (lastMaintenance.IsZero() || time.Since(lastMaintenance) >= time.Minute) {
+			maintenanceContext, maintenanceCancel := context.WithTimeout(ctx, 15*time.Second)
+			maintenanceErr := maintainer.Maintain(maintenanceContext)
+			maintenanceCancel()
+			lastMaintenance = time.Now()
+			if maintenanceErr != nil && report != nil && ctx.Err() == nil {
+				report(maintenanceErr)
+			}
+		}
 		claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 		task, err := c.claimNextTask(claimContext, store, 10*time.Second)
 		cancel()
@@ -478,7 +556,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			err = errors.New("agent: application command received without Docker capability")
 		} else if task.ApplicationCommand != nil {
 			var commandResult RealityCommandResult
-			commandResult, err = applyRealityCommand(ctx, store, task.ID, *task.ApplicationCommand)
+			commandResult, err = applyRealityCommand(ctx, store, task.ID, task.Attempt, *task.ApplicationCommand)
 			if err == nil {
 				result.ApplicationCommand = &commandResult
 			}
@@ -538,18 +616,38 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	default:
 		err = errors.New("agent: unsupported task kind")
 	}
-	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-		if len(result.GeneratedSecrets) != 0 {
-			task.Secrets, err = mergeGeneratedSecrets(task.Secrets, result.GeneratedSecrets)
+	if task.Kind == "application.apply" && task.Operation != "uninstall" && len(result.GeneratedSecrets) != 0 {
+		merged, mergeErr := mergeGeneratedSecrets(task.Secrets, result.GeneratedSecrets)
+		if mergeErr != nil {
+			err = errors.Join(err, mergeErr)
+		} else {
+			task.Secrets = merged
 		}
+	}
+	committedThreeXUI := task.Kind == "application.apply" && task.Operation != "uninstall" && task.AppKey == threeXUIKey && strings.TrimSpace(result.GeneratedSecrets["api_token"]) != ""
+	if err != nil && committedThreeXUI {
+		err = deferTaskUntilReconciled(err)
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
 		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress})
+		if err != nil && committedThreeXUI {
+			err = deferTaskUntilReconciled(err)
+		}
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation == "uninstall" {
 		err = store.RemoveApplied(ctx, task.AppKey)
 	}
-	if completeErr := c.completeTask(ctx, store, task.ID, task.Attempt, result, err); completeErr != nil && report != nil {
+	if taskCompletionShouldBeDeferred(err, task.Attempt) {
+		// Do not turn an uncertain compensation into a terminal failure. Center's
+		// task lease recovery requeues the same command ID, allowing its
+		// deterministic 3x-ui tag/client identifiers to converge safely.
+		if report != nil {
+			report(err)
+		}
+		return
+	}
+	reconciliationRequired := taskCompletionRequiresReconciliation(err, task.Attempt)
+	if completeErr := c.completeTask(ctx, store, task.ID, task.Attempt, result, err, reconciliationRequired); completeErr != nil && report != nil {
 		report(completeErr)
 	}
 	if err != nil && report != nil {
@@ -603,12 +701,12 @@ func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Durat
 	return response.Task, nil
 }
 
-func (c Client) completeTask(ctx context.Context, store *Store, taskID string, attempt int64, result ApplicationTaskResult, deploymentErr error) error {
+func (c Client) completeTask(ctx context.Context, store *Store, taskID string, attempt int64, result ApplicationTaskResult, deploymentErr error, reconciliationRequired bool) error {
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return err
 	}
-	payload := map[string]any{"attempt": attempt, "succeeded": deploymentErr == nil, "error": "", "result": result}
+	payload := map[string]any{"attempt": attempt, "succeeded": deploymentErr == nil, "error": "", "result": result, "reconciliationRequired": reconciliationRequired}
 	if deploymentErr != nil {
 		payload["error"] = deploymentErr.Error()
 	}

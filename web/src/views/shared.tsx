@@ -10,7 +10,7 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
-  if (code === "authentication_required" || normalized.includes("authentication required") || normalized.includes("unauthorized")) {
+  if (code === "authentication_required" || normalized.includes("authentication required") || normalized.includes("unauthorized") || normalized.includes("session expired")) {
     return copy(language, "登录状态已失效，请重新登录后再试。", "Your session has expired. Sign in and try again.");
   }
   if (normalized.includes("invalid credentials") || normalized.includes("incorrect password")) {
@@ -25,10 +25,10 @@ export function userError(language: Language, error: unknown) {
   if (code === "already_installed" || code === "conflict" || normalized.includes("already installed") || normalized.includes("already exists") || normalized.includes("conflict")) {
     return copy(language, "已有相同配置，请刷新页面后检查当前状态。", "This is already configured. Refresh and check its current status.");
   }
-  if (normalized.includes("timeout") || normalized.includes("timed out") || normalized.includes("deadline exceeded")) {
+  if (normalized.includes("timeout") || normalized.includes("timed out") || normalized.includes("deadline exceeded") || normalized.includes("did not respond in time")) {
     return copy(language, "操作等待超时，系统可能仍在后台处理。请稍后刷新后重试。", "The operation timed out and may still be running. Refresh shortly, then retry.");
   }
-  if (normalized.includes("failed to fetch") || normalized.includes("networkerror") || normalized.includes("network error")) {
+  if (normalized.includes("failed to fetch") || normalized.includes("networkerror") || normalized.includes("network error") || normalized.includes("live connection")) {
     return copy(language, "无法连接 Center，请检查网络后重试。", "Could not reach Center. Check the network and try again.");
   }
   if (code === "cloudflare_error" || normalized.includes("cloudflare")) {
@@ -71,11 +71,11 @@ export function PageHeading({ title, description, action }: { title: string; des
 
 export function StateBadge({ value, language = document.documentElement.lang === "zh-CN" ? "zh-CN" : "en" }: { value: string; language?: Language }) {
   const good = ["ready", "running", "succeeded", "configured", "connected", "active"].includes(value);
-  const bad = ["failed", "degraded", "offline", "lease_expired"].includes(value);
+	const bad = ["failed", "degraded", "offline", "lease_expired", "recovery"].includes(value);
   const Icon = good ? CircleCheckIcon : bad ? CircleAlertIcon : Clock3Icon;
   const labels: Record<string, [string, string]> = {
     ready: ["就绪", "Ready"], running: ["运行中", "Running"], succeeded: ["成功", "Succeeded"], configured: ["已配置", "Configured"], connected: ["已连接", "Connected"], active: ["正常", "Active"],
-    failed: ["失败", "Failed"], degraded: ["异常", "Degraded"], offline: ["离线", "Offline"], lease_expired: ["已重试", "Retried"], pending: ["等待中", "Pending"], applying: ["配置中", "Applying"], stopped: ["已停止", "Stopped"], disabled: ["未启用", "Disabled"], unconfigured: ["未配置", "Not configured"], queued: ["已排队", "Queued"], claimed: ["执行中", "In progress"]
+		failed: ["失败", "Failed"], degraded: ["异常", "Degraded"], recovery: ["需恢复", "Recovery needed"], offline: ["离线", "Offline"], lease_expired: ["已重试", "Retried"], pending: ["等待中", "Pending"], applying: ["配置中", "Applying"], stopped: ["已停止", "Stopped"], disabled: ["未启用", "Disabled"], unconfigured: ["未配置", "Not configured"], queued: ["已排队", "Queued"], claimed: ["执行中", "In progress"]
   };
   const label = labels[value];
   return <Badge variant={bad ? "destructive" : good ? "secondary" : "outline"}><Icon data-icon="inline-start" />{label ? copy(language, ...label) : value}</Badge>;
