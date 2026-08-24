@@ -25,12 +25,12 @@ type Server struct {
 	setupAgentConnectURL string
 	secureCookies        bool
 	officialCatalog      []byte
-	headscaleInstaller   deployapi.HeadscaleInstaller
+	infrastructure       deployapi.InfrastructureManager
 	startupReady         atomic.Bool
 }
 
-func (s *Server) WithHeadscaleInstaller(installer deployapi.HeadscaleInstaller) *Server {
-	s.headscaleInstaller = installer
+func (s *Server) WithInfrastructureManager(manager deployapi.InfrastructureManager) *Server {
+	s.infrastructure = manager
 	s.startupReady.Store(false)
 	return s
 }
@@ -105,6 +105,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/integrations/cloudflare/oauth/poll", s.requireAuth(true, s.handlePollCloudflareOAuth))
 	mux.HandleFunc("POST /api/v1/integrations/cloudflare/oauth/complete", s.requireAuth(true, s.handleCompleteCloudflareOAuth))
 	mux.HandleFunc("POST /api/v1/setup/cloudflare/dns", s.requireAuth(true, s.handleConfigureSetupDNS))
+	mux.HandleFunc("POST /api/v1/setup/public-entry/verify", s.requireAuth(true, s.handleVerifySetupPublicEntry))
 	mux.HandleFunc("PUT /api/v1/integrations/headscale", s.requireAuth(true, s.handleConfigureHeadscale))
 	mux.HandleFunc("POST /api/v1/agents/{id}/headscale-join", s.requireAuth(true, s.handleCreateHeadscaleJoin))
 	mux.HandleFunc("GET /api/v1/actions", s.requireAuth(false, s.handleListActions))

@@ -36,6 +36,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	coLocated := false
 	publicAddress := ""
 	headscaleAddress := ""
+	matchedAddresses := make(map[string]networking.Candidate)
 	for rows.Next() {
 		var candidate networking.Candidate
 		var observed string
@@ -48,6 +49,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 			continue
 		}
 		coLocated = true
+		matchedAddresses[candidate.Address] = local
 		if publicAddress == "" && local.Kind == networking.KindPublic && candidate.Kind == networking.KindPublic {
 			publicAddress = candidate.Address
 		}
@@ -64,6 +66,18 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	}
 	if !coLocated {
 		return nil
+	}
+	binding, bindingConfigured, err := readSetupGatewayBinding(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if bindingConfigured {
+		local, localExists := localAddresses[binding.BindAddress]
+		_, agentReported := matchedAddresses[binding.BindAddress]
+		if !localExists || !agentReported || local.Kind != networking.KindLAN && local.Kind != networking.KindPublic {
+			return errors.New("center: the co-located Gateway no longer reports the local address used by bundled services")
+		}
+		publicAddress = binding.BindAddress
 	}
 	if publicAddress == "" {
 		return errors.New("center: the co-located Gateway does not report the public address used by bundled services")

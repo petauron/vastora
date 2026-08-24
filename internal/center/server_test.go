@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/petauron/vastora/internal/networking"
 )
 
 func TestStaticHandlerKeepsRequestsInsideStaticRoot(t *testing.T) {
@@ -185,6 +187,38 @@ func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	}
 	if status["cloudflareConfigured"] != true || status["cloudflareZone"] != "example.com" {
 		t.Fatalf("authenticated setup status hid Cloudflare configuration: %#v", status)
+	}
+}
+
+func TestSetupStatusSuggestsTheKernelRouteForACloudPublicAddress(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	session, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
+		return []networking.Candidate{
+			{Address: "10.0.0.157", Interface: "enp0s6", Family: "ipv4", Kind: networking.KindLAN, ObservedAt: now},
+			{Address: "10.77.0.6", Interface: "wg0", Family: "ipv4", Kind: networking.KindLAN, ObservedAt: now},
+		}, nil
+	}
+	store.lookupPublicAddress = func(context.Context) (string, error) { return "192.9.143.79", nil }
+	store.lookupGatewayAddress = func(string) (string, error) { return "10.0.0.157", nil }
+	server := NewServer(store, "", false).WithInfrastructureManager(&fakeBuiltinHeadscaleInstaller{})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil)
+	request.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+	response := httptest.NewRecorder()
+	server.handleSetupStatus(response, request)
+	var status map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if status["observedPublicAddress"] != "192.9.143.79" || status["suggestedGatewayAddress"] != "10.0.0.157" || status["publicAddressDetection"] != "cloud_mapping_candidate" {
+		t.Fatalf("unexpected cloud public suggestion: %#v", status)
 	}
 }
 

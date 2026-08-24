@@ -152,7 +152,7 @@ func renderHeadscalePolicy() []byte {
 `)
 }
 
-func gatewayBindAddresses(ctx context.Context, endpoints ...string) ([]string, error) {
+func gatewayBindAddresses(ctx context.Context, publicAddress, bindAddress string, endpoints ...string) ([]string, error) {
 	candidates, err := networking.Discover(time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("deployer: discover public gateway addresses: %w", err)
@@ -169,7 +169,47 @@ func gatewayBindAddresses(ctx context.Context, endpoints ...string) ([]string, e
 		}
 		resolutions = append(resolutions, gatewayResolution{hostname: parsed.Hostname(), addresses: resolved})
 	}
-	return selectGatewayBindAddresses(resolutions, candidates)
+	if strings.TrimSpace(publicAddress) == "" && strings.TrimSpace(bindAddress) == "" {
+		return selectGatewayBindAddresses(resolutions, candidates)
+	}
+	return selectMappedGatewayBindAddress(resolutions, candidates, publicAddress, bindAddress)
+}
+
+func selectMappedGatewayBindAddress(resolutions []gatewayResolution, candidates []networking.Candidate, publicValue, bindValue string) ([]string, error) {
+	publicAddress, err := netip.ParseAddr(strings.TrimSpace(publicValue))
+	if err != nil || networking.Classify("external", net.IP(publicAddress.AsSlice())) != networking.KindPublic {
+		return nil, errors.New("deployer: a valid public gateway address is required")
+	}
+	publicAddress = publicAddress.Unmap()
+	bindAddress, err := netip.ParseAddr(strings.TrimSpace(bindValue))
+	if err != nil {
+		return nil, errors.New("deployer: a valid local gateway bind address is required")
+	}
+	bindAddress = bindAddress.Unmap()
+	bindFound := false
+	for _, candidate := range candidates {
+		candidateAddress, parseErr := netip.ParseAddr(candidate.Address)
+		if parseErr == nil && candidateAddress.Unmap() == bindAddress && (candidate.Kind == networking.KindLAN || candidate.Kind == networking.KindPublic) {
+			bindFound = true
+			break
+		}
+	}
+	if !bindFound {
+		return nil, errors.New("deployer: gateway bind address must be assigned to this server")
+	}
+	for _, resolution := range resolutions {
+		matched := false
+		for _, address := range resolution.addresses {
+			if address.Unmap() == publicAddress {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return nil, fmt.Errorf("deployer: gateway hostname %s does not resolve to the confirmed public address", resolution.hostname)
+		}
+	}
+	return formatGatewayBindAddresses([]netip.Addr{bindAddress}), nil
 }
 
 func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []networking.Candidate) ([]string, error) {
@@ -200,7 +240,11 @@ func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []ne
 		addresses = append(addresses, address)
 	}
 	sort.Slice(addresses, func(left, right int) bool { return addresses[left].Compare(addresses[right]) < 0 })
-	result := []string{}
+	return formatGatewayBindAddresses(addresses), nil
+}
+
+func formatGatewayBindAddresses(addresses []netip.Addr) []string {
+	result := make([]string, 0, len(addresses))
 	for _, address := range addresses {
 		if address.Is6() {
 			result = append(result, "["+address.String()+"]")
@@ -208,7 +252,7 @@ func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []ne
 			result = append(result, address.String())
 		}
 	}
-	return result, nil
+	return result
 }
 
 func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses []string) []byte {

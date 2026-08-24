@@ -221,7 +221,11 @@ export function App() {
     cloudflareZone={setupStatus?.cloudflareZone}
     language={language}
     onLanguage={setLanguage}
+    gatewayAddressCandidates={setupStatus?.gatewayAddressCandidates ?? []}
+    observedPublicAddress={setupStatus?.observedPublicAddress ?? ""}
+    publicAddressDetection={setupStatus?.publicAddressDetection ?? "unavailable"}
     publicAddressCandidates={setupStatus?.publicAddressCandidates ?? []}
+    suggestedGatewayAddress={setupStatus?.suggestedGatewayAddress ?? ""}
     suggestedAgentConnectUrl={setupStatus?.suggestedAgentConnectUrl ?? ""}
     onComplete={async (input) => {
       await api.completeSetup(input);

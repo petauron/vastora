@@ -14,11 +14,12 @@ import (
 )
 
 type Server struct {
-	installer deployapi.HeadscaleInstaller
+	installer         deployapi.HeadscaleInstaller
+	publicEntryProber deployapi.PublicEntryProber
 }
 
 func NewServer(installer deployapi.HeadscaleInstaller) *Server {
-	return &Server{installer: installer}
+	return &Server{installer: installer, publicEntryProber: NewPublicEntryProbeService()}
 }
 
 func (server *Server) Handler() http.Handler {
@@ -28,7 +29,30 @@ func (server *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("POST /v1/headscale/install", server.installHeadscale)
 	mux.HandleFunc("POST /v1/headscale/reconcile", server.reconcileHeadscale)
+	mux.HandleFunc("POST /v1/public-entry/probes", server.startPublicEntryProbe)
+	mux.HandleFunc("DELETE /v1/public-entry/probes/{id}", server.stopPublicEntryProbe)
 	return mux
+}
+
+func (server *Server) startPublicEntryProbe(writer http.ResponseWriter, request *http.Request) {
+	var input deployapi.PublicEntryProbeRequest
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	result, err := server.publicEntryProber.StartPublicEntryProbe(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func (server *Server) stopPublicEntryProbe(writer http.ResponseWriter, request *http.Request) {
+	if err := server.publicEntryProber.StopPublicEntryProbe(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "stopped"})
 }
 
 func (server *Server) reconcileHeadscale(writer http.ResponseWriter, request *http.Request) {
@@ -57,22 +81,27 @@ func (server *Server) installHeadscale(writer http.ResponseWriter, request *http
 }
 
 func decodeHeadscaleRequest(writer http.ResponseWriter, request *http.Request) (deployapi.HeadscaleInstallRequest, bool) {
+	var input deployapi.HeadscaleInstallRequest
+	ok := decodeRequest(writer, request, &input)
+	return input, ok
+}
+
+func decodeRequest(writer http.ResponseWriter, request *http.Request, input any) bool {
 	if request.Header.Get("Content-Type") != "application/json" {
 		writeError(writer, http.StatusBadRequest, errors.New("deployer: Content-Type must be application/json"))
-		return deployapi.HeadscaleInstallRequest{}, false
+		return false
 	}
 	decoder := json.NewDecoder(io.LimitReader(request.Body, 64<<10))
 	decoder.DisallowUnknownFields()
-	var input deployapi.HeadscaleInstallRequest
-	if err := decoder.Decode(&input); err != nil {
+	if err := decoder.Decode(input); err != nil {
 		writeError(writer, http.StatusBadRequest, fmt.Errorf("deployer: decode request: %w", err))
-		return deployapi.HeadscaleInstallRequest{}, false
+		return false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(writer, http.StatusBadRequest, errors.New("deployer: request must contain one JSON value"))
-		return deployapi.HeadscaleInstallRequest{}, false
+		return false
 	}
-	return input, true
+	return true
 }
 
 func ServeUnix(socket string, uid, gid int, handler http.Handler) error {

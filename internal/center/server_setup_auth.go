@@ -15,13 +15,17 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 	}
 	cloudflare := IntegrationView{Kind: "cloudflare", Status: "disabled"}
 	publicAddresses := make([]networking.Candidate, 0)
+	gatewayAddresses := make([]networking.Candidate, 0)
+	observedPublicAddress := ""
+	suggestedGatewayAddress := ""
+	publicAddressDetection := "unavailable"
 	if cookie, cookieErr := request.Cookie("vastora_session"); cookieErr == nil && s.store.ValidateSession(request.Context(), cookie.Value, "", false) == nil {
 		cloudflare, err = s.store.Integration(request.Context(), "cloudflare")
 		if err != nil {
 			writeError(writer, http.StatusInternalServerError, err)
 			return
 		}
-		candidates, discoverErr := networking.Discover(s.store.now().UTC())
+		candidates, discoverErr := s.store.discoverNetworkCandidates(s.store.now().UTC())
 		if discoverErr != nil {
 			writeError(writer, http.StatusInternalServerError, discoverErr)
 			return
@@ -30,17 +34,52 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 			if candidate.Kind == networking.KindPublic {
 				publicAddresses = append(publicAddresses, candidate)
 			}
+			if candidate.Kind == networking.KindPublic || candidate.Kind == networking.KindLAN {
+				gatewayAddresses = append(gatewayAddresses, candidate)
+			}
+		}
+		if len(publicAddresses) > 0 {
+			observedPublicAddress = publicAddresses[0].Address
+			suggestedGatewayAddress = publicAddresses[0].Address
+			publicAddressDetection = "direct"
+		}
+		if s.infrastructure != nil {
+			if observed, lookupErr := s.store.lookupPublicAddress(request.Context()); lookupErr == nil {
+				observedPublicAddress = observed
+				publicAddressDetection = "cloud_mapping_candidate"
+				for _, candidate := range publicAddresses {
+					if candidate.Address == observed {
+						suggestedGatewayAddress = observed
+						publicAddressDetection = "direct"
+						break
+					}
+				}
+				if publicAddressDetection == "cloud_mapping_candidate" {
+					if address, routeErr := s.store.lookupGatewayAddress(observed); routeErr == nil {
+						for _, candidate := range gatewayAddresses {
+							if candidate.Address == address {
+								suggestedGatewayAddress = address
+								break
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"administratorConfigured":   status.AdministratorConfigured,
 		"onboardingComplete":        status.OnboardingComplete,
 		"suggestedAgentConnectUrl":  s.setupAgentConnectURL,
-		"builtinHeadscaleAvailable": s.headscaleInstaller != nil,
+		"builtinHeadscaleAvailable": s.infrastructure != nil,
 		"cloudflareOAuthAvailable":  s.store.CloudflareOAuthAvailable(),
 		"cloudflareConfigured":      cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
 		"cloudflareZone":            cloudflare.Endpoint,
 		"publicAddressCandidates":   publicAddresses,
+		"gatewayAddressCandidates":  gatewayAddresses,
+		"observedPublicAddress":     observedPublicAddress,
+		"suggestedGatewayAddress":   suggestedGatewayAddress,
+		"publicAddressDetection":    publicAddressDetection,
 	})
 }
 

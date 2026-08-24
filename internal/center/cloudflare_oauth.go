@@ -23,6 +23,7 @@ const (
 	cloudflareOAuthClientID    = "565bf36df0a8deb0fde1bd27367a44bd"
 	cloudflareOAuthRedirectURI = "https://vastora.petauron.com/oauth/cloudflare/callback"
 	cloudflareOAuthLifetime    = 10 * time.Minute
+	setupGatewayBindingSetting = "cloudflare_setup_gateway_binding"
 )
 
 type cloudflareOAuthConfig struct {
@@ -80,9 +81,11 @@ type CloudflareOAuthPoll struct {
 }
 
 type SetupDNSInput struct {
-	CenterURL     string `json:"centerUrl"`
-	HeadscaleURL  string `json:"headscaleUrl,omitempty"`
-	PublicAddress string `json:"publicAddress"`
+	CenterURL      string `json:"centerUrl"`
+	HeadscaleURL   string `json:"headscaleUrl,omitempty"`
+	PublicAddress  string `json:"publicAddress"`
+	GatewayAddress string `json:"gatewayAddress"`
+	NATConfirmed   bool   `json:"natConfirmed"`
 }
 
 type SetupDNSRecord struct {
@@ -90,6 +93,11 @@ type SetupDNSRecord struct {
 	Type    string `json:"type"`
 	Name    string `json:"name"`
 	Content string `json:"content"`
+}
+
+type setupGatewayBinding struct {
+	PublicAddress string `json:"publicAddress"`
+	BindAddress   string `json:"bindAddress"`
 }
 
 func defaultCloudflareOAuthConfig() cloudflareOAuthConfig {
@@ -286,20 +294,14 @@ func (s *Store) CompleteCloudflareOAuth(ctx context.Context, sessionID, zoneID s
 }
 
 func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, candidates []networking.Candidate) ([]SetupDNSRecord, error) {
-	publicIP := net.ParseIP(strings.TrimSpace(input.PublicAddress))
-	if publicIP == nil {
-		return nil, errors.New("center: select a discovered public address")
+	binding, err := s.resolveSetupGatewayBinding(ctx, input, candidates)
+	if err != nil {
+		return nil, err
 	}
-	validPublic := false
-	for _, candidate := range candidates {
-		if candidate.Kind == networking.KindPublic && candidate.Address == publicIP.String() {
-			validPublic = true
-			break
-		}
+	if err := s.requireFreshPublicEntryVerification(ctx, binding); err != nil {
+		return nil, err
 	}
-	if !validPublic {
-		return nil, errors.New("center: public address is not assigned to this Center server")
-	}
+	publicIP := net.ParseIP(binding.PublicAddress)
 	hostnames := make([]string, 0, 2)
 	headscaleHostname := ""
 	for _, rawURL := range []string{input.CenterURL, input.HeadscaleURL} {
@@ -384,7 +386,98 @@ func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, cand
 		rollback()
 		return nil, err
 	}
+	encodedBinding, err := json.Marshal(binding)
+	if err != nil {
+		rollback()
+		return nil, err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, setupGatewayBindingSetting, string(encodedBinding)); err != nil {
+		rollback()
+		return nil, err
+	}
 	return result, nil
+}
+
+func (s *Store) resolveSetupGatewayBinding(ctx context.Context, input SetupDNSInput, candidates []networking.Candidate) (setupGatewayBinding, error) {
+	observedPublicAddress, suggestedGatewayAddress := "", ""
+	directPublicAddress := false
+	for _, candidate := range candidates {
+		if candidate.Kind == networking.KindPublic && candidate.Address == strings.TrimSpace(input.PublicAddress) {
+			directPublicAddress = true
+			break
+		}
+	}
+	if !directPublicAddress {
+		if observed, lookupErr := s.lookupPublicAddress(ctx); lookupErr == nil {
+			observedPublicAddress = observed
+			if suggested, routeErr := s.lookupGatewayAddress(observed); routeErr == nil {
+				suggestedGatewayAddress = suggested
+			}
+		}
+	}
+	return validateSetupGatewayBinding(input, candidates, observedPublicAddress, suggestedGatewayAddress)
+}
+
+func validateSetupGatewayBinding(input SetupDNSInput, candidates []networking.Candidate, observedPublicAddress, suggestedGatewayAddress string) (setupGatewayBinding, error) {
+	publicIP := net.ParseIP(strings.TrimSpace(input.PublicAddress))
+	if publicIP == nil || networking.Classify("external", publicIP) != networking.KindPublic {
+		return setupGatewayBinding{}, errors.New("center: enter a valid public IP address")
+	}
+	byAddress := make(map[string]networking.Candidate, len(candidates))
+	for _, candidate := range candidates {
+		byAddress[candidate.Address] = candidate
+	}
+	directCandidate, direct := byAddress[publicIP.String()]
+	direct = direct && directCandidate.Kind == networking.KindPublic
+	bindValue := strings.TrimSpace(input.GatewayAddress)
+	if bindValue == "" && direct {
+		bindValue = publicIP.String()
+	}
+	bindIP := net.ParseIP(bindValue)
+	if bindIP == nil {
+		return setupGatewayBinding{}, errors.New("center: select the local address that receives public traffic")
+	}
+	bindCandidate, bindFound := byAddress[bindIP.String()]
+	if !bindFound || bindCandidate.Kind != networking.KindLAN && bindCandidate.Kind != networking.KindPublic {
+		return setupGatewayBinding{}, errors.New("center: gateway address must be assigned to this Center server")
+	}
+	automaticallyDetected := publicIP.String() == strings.TrimSpace(observedPublicAddress) && bindIP.String() == strings.TrimSpace(suggestedGatewayAddress)
+	if !direct {
+		if !automaticallyDetected && !input.NATConfirmed {
+			return setupGatewayBinding{}, errors.New("center: confirm that the cloud public IP forwards ports 80 and 443 to this server")
+		}
+		if (publicIP.To4() == nil) != (bindIP.To4() == nil) {
+			return setupGatewayBinding{}, errors.New("center: public and local gateway addresses must use the same IP family")
+		}
+	} else if bindIP.String() != publicIP.String() && !automaticallyDetected && !input.NATConfirmed {
+		return setupGatewayBinding{}, errors.New("center: confirm the NAT mapping before using a different local gateway address")
+	}
+	return setupGatewayBinding{PublicAddress: publicIP.String(), BindAddress: bindIP.String()}, nil
+}
+
+func (s *Store) setupGatewayBinding(ctx context.Context) (setupGatewayBinding, bool, error) {
+	return readSetupGatewayBinding(ctx, s.db)
+}
+
+type setupGatewayBindingQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func readSetupGatewayBinding(ctx context.Context, queryer setupGatewayBindingQuerier) (setupGatewayBinding, bool, error) {
+	var encoded string
+	if err := queryer.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, setupGatewayBindingSetting).Scan(&encoded); errors.Is(err, sql.ErrNoRows) {
+		return setupGatewayBinding{}, false, nil
+	} else if err != nil {
+		return setupGatewayBinding{}, false, err
+	}
+	var binding setupGatewayBinding
+	if err := json.Unmarshal([]byte(encoded), &binding); err != nil {
+		return setupGatewayBinding{}, false, fmt.Errorf("center: decode setup gateway binding: %w", err)
+	}
+	if net.ParseIP(binding.PublicAddress) == nil || net.ParseIP(binding.BindAddress) == nil {
+		return setupGatewayBinding{}, false, errors.New("center: stored setup gateway binding is invalid")
+	}
+	return binding, true, nil
 }
 
 func (s *Store) removePublicCenterSetupDNS(ctx context.Context, centerURL string) error {

@@ -4,12 +4,10 @@
 package deployapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"time"
@@ -18,6 +16,8 @@ import (
 type HeadscaleInstallRequest struct {
 	CenterURL               string `json:"centerUrl"`
 	HeadscaleURL            string `json:"headscaleUrl"`
+	PublicAddress           string `json:"publicAddress,omitempty"`
+	GatewayBindAddress      string `json:"gatewayBindAddress,omitempty"`
 	CenterCertificatePEM    string `json:"centerCertificatePem"`
 	CenterCertificateKeyPEM string `json:"centerCertificateKeyPem"`
 }
@@ -73,28 +73,5 @@ func (client *Client) requestHeadscale(ctx context.Context, path string, input H
 	if err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://deployer"+path, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.http.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("center: contact deployment helper: %w", err)
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("center: read deployment helper response: %w", err)
-	}
-	if response.StatusCode != http.StatusOK {
-		var failure struct {
-			Error string `json:"error"`
-		}
-		if json.Unmarshal(body, &failure) == nil && failure.Error != "" {
-			return nil, errors.New(failure.Error)
-		}
-		return nil, fmt.Errorf("center: deployment helper returned HTTP %d", response.StatusCode)
-	}
-	return body, nil
+	return client.request(ctx, http.MethodPost, path, payload)
 }
