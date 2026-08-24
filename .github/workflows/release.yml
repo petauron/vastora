@@ -152,7 +152,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.center
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
             VASTORA_VERSION=${{ needs.prepare.outputs.release_version }}
@@ -187,7 +187,7 @@ jobs:
         run: |
           (cd dist && sha256sum --check vastora-center-install.tar.gz.sha256)
           anonymous_config="$(mktemp -d)"
-          DOCKER_CONFIG="$anonymous_config" docker buildx imagetools inspect "$VASTORA_CENTER_IMAGE"
+          DOCKER_CONFIG="$anonymous_config" scripts/assert-image-platforms.sh "$VASTORA_CENTER_IMAGE"
 
       - name: Upload assets and publish release
         env:

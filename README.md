@@ -27,6 +27,8 @@ when the Center is unavailable.
   raw TCP must share `443`.
 - Signed 3x-ui, CPA, Keeper, and Komari Agent application packages with
   images pinned by digest.
+- One Ubuntu 24.04 installation path for x86_64 and ARM64 Centers and Agents,
+  including mixed-architecture Sites and architecture-aware Agent updates.
 
 ## Development
 

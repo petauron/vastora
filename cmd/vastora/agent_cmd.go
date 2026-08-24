@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 func runAgent(arguments []string) error {
@@ -297,10 +298,10 @@ func validatedNodeRuntime(rolesValue, capabilitiesValue string) ([]string, agent
 }
 
 func updateAgentExecutable(ctx context.Context, client *http.Client, connection agent.Connection, executable string, restart func() error) (string, error) {
-	if runtime.GOARCH != "amd64" {
-		return "", errors.New("agent update is available only for amd64")
+	endpoint, err := agentUpdateEndpoint(connection, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", err
 	}
-	endpoint := strings.TrimRight(connection.CenterURL, "/") + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/binary/linux/" + runtime.GOARCH
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return "", fmt.Errorf("create Agent update request: %w", err)
@@ -376,6 +377,14 @@ func updateAgentExecutable(ctx context.Context, client *http.Client, connection 
 		return "", fmt.Errorf("restart updated Agent; previous binary restored: %w", err)
 	}
 	return expectedVersion, nil
+}
+
+func agentUpdateEndpoint(connection agent.Connection, operatingSystem, architecture string) (string, error) {
+	target, err := platform.Parse(operatingSystem, architecture)
+	if err != nil {
+		return "", fmt.Errorf("agent update target: %w", err)
+	}
+	return strings.TrimRight(connection.CenterURL, "/") + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/binary/" + target.OS + "/" + target.Architecture, nil
 }
 
 const vastoraAgentUnitPath = "/etc/systemd/system/vastora-agent.service"

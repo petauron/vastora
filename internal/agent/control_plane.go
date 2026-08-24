@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -331,7 +332,7 @@ func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	}
 	var response Enrollment
 	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]string{
-		"token": enrollmentToken, "version": Version,
+		"token": enrollmentToken, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH,
 	}, "", &response); err != nil {
 		return Enrollment{}, err
 	}

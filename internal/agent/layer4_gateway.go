@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	defaultHAProxyImage      = "docker.io/library/haproxy:3.2.7-alpine@sha256:a9b408a818f5d0d9a6a042ec2957921038399f7a515f8b7bfef2054ef7f4ce05"
+	defaultHAProxyImage      = "docker.io/library/haproxy:3.2.7-alpine@sha256:3b80483d47e1c7d1fc7eb4b9104f33d9a51259769be299eb675524dca2bc8157"
 	defaultHAProxyContainer  = gatewayruntime.HAProxyContainer
 	haproxyConfigurationDir  = "/usr/local/etc/haproxy"
 	haproxyConfigurationPath = haproxyConfigurationDir + "/haproxy.cfg"

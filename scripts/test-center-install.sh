@@ -60,6 +60,7 @@ if grep -Fq '${VASTORA_CENTER_PORT:-443}:8080' "$temporary_dir/compose.yaml"; th
 fi
 grep -Fq 'ssh -N -L 18082:127.0.0.1:$bootstrap_port' "$temporary_dir/setup.sh"
 grep -Fq 'Public port 443: unchanged' "$temporary_dir/setup.sh"
+grep -Fq 'aarch64|arm64)' "$project_dir/install.sh"
 
 fake_bin="$temporary_dir/fake-bin"
 existing="$temporary_dir/existing"

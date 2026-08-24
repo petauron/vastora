@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +15,34 @@ import (
 
 	"github.com/petauron/vastora/internal/gateway"
 )
+
+func TestEnrollmentReportsNativePlatform(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var input struct {
+			Token           string `json:"token"`
+			Version         string `json:"version"`
+			OperatingSystem string `json:"operatingSystem"`
+			Architecture    string `json:"architecture"`
+		}
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/agents/enroll" || json.NewDecoder(request.Body).Decode(&input) != nil {
+			t.Fatalf("unexpected enrollment request: %s %s", request.Method, request.URL.Path)
+		}
+		if input.Token != "one-time-token" || input.Version != Version || input.OperatingSystem != runtime.GOOS || input.Architecture != runtime.GOARCH {
+			t.Fatalf("enrollment platform payload = %#v", input)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"id":"agent-1","credential":"credential","name":"arm-node","roles":["worker"],"capabilities":{"docker":true}}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := (Client{HTTPClient: server.Client()}).Enroll(context.Background(), store, server.URL, "one-time-token"); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testing.T) {
 	requestCount := 0

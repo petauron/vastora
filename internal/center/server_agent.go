@@ -122,14 +122,16 @@ func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request
 
 func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
-		Token   string `json:"token"`
-		Version string `json:"version"`
+		Token           string `json:"token"`
+		Version         string `json:"version"`
+		OperatingSystem string `json:"operatingSystem"`
+		Architecture    string `json:"architecture"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Version)
+	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Version, input.OperatingSystem, input.Architecture)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return

@@ -13,8 +13,9 @@ not require Git, a domain, a certificate, or an unused public port 443.
 
 ## Open the first-run wizard
 
-Prepare an Ubuntu 24.04 amd64 server with Docker Engine, Docker Compose v2, and
-SSH access. The installer prints an SSH tunnel command after Center is healthy:
+Prepare an Ubuntu 24.04 x86_64 or ARM64 server with Docker Engine, Docker
+Compose v2, and SSH access. The same command selects the matching Center image
+automatically. The installer prints an SSH tunnel command after Center is healthy:
 
 ```sh
 ssh -N -L 18082:127.0.0.1:8080 root@server.example.com
@@ -93,10 +94,11 @@ request changes only `.release-please-manifest.json`, `CHANGELOG.md`, and
 `version.txt`; the trusted release workflow validates that exact allowlist and
 its version metadata, then records a visible `Release metadata` check on the
 pull request. It does not repeat source checks for the already-tested `main`
-commit. Merging that pull request creates a draft release, builds and pushes the
-`linux/amd64` Center image to GHCR, packages the installer against the image
-manifest digest, uploads all three assets, and publishes the release only after
-every step succeeds. Failed builds leave the release as a draft. The Cloudflare
+commit. Merging that pull request creates a draft release, builds and pushes one
+`linux/amd64` + `linux/arm64` Center image index to GHCR, verifies both
+platforms, packages the installer against the immutable index digest, uploads
+all three assets, and publishes the release only after every step succeeds.
+Failed builds leave the release as a draft. The Cloudflare
 Worker behind `vastora.petauron.com` selects the newest
 non-draft release containing all three assets, including prereleases, so it does
 not depend on GitHub's stable-only `releases/latest` endpoint.

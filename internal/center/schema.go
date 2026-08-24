@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 19
+const centerSchemaVersion = 20
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -113,6 +113,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			name TEXT NOT NULL,
 			credential_hash BLOB NOT NULL UNIQUE,
 			version TEXT NOT NULL,
+			operating_system TEXT NOT NULL DEFAULT 'linux' CHECK(operating_system = 'linux'),
+			architecture TEXT NOT NULL DEFAULT 'amd64' CHECK(architecture IN ('amd64', 'arm64')),
 			status TEXT NOT NULL CHECK(status IN ('active', 'disabled')),
 			applied_installations INTEGER NOT NULL DEFAULT 0,
 			enrolled_at TEXT NOT NULL,

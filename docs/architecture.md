@@ -57,7 +57,13 @@ that bundle; it never builds source on the user's server. Center initially maps
 only to the server loopback interface, and the administrator opens the first-run
 wizard through an SSH tunnel. Domain, TLS, Headscale, and public Gateway setup
 therefore do not block installation or claim public port 443. Each running
-Center then serves its own Agent installer and architecture-specific Agent binaries.
+Center serves the same Agent installer plus both `linux/amd64` and
+`linux/arm64` Agent binaries. A Center on either architecture can therefore
+manage a mixed x64 and ARM64 Site; the installer and self-updater select the
+node's native binary and reject unsupported platforms.
+Official Catalog and infrastructure images must publish both Linux platforms.
+CI resolves every pinned runtime image and fails before merge if either
+`linux/amd64` or `linux/arm64` is missing; production never relies on emulation.
 The administrator chooses the node name, site, purpose, and connection method
 before Center issues a short-lived credential. Center binds those choices to
 the credential and returns an authenticated installer, so the copied command

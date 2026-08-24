@@ -166,7 +166,7 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 	if err != nil || !strings.Contains(profile.HeadscaleCommand, "bootstrap-one-time-key") {
 		t.Fatalf("installer profile bootstrap = %q, err = %v", profile.HeadscaleCommand, err)
 	}
-	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test"); err != nil {
+	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64"); err != nil {
 		t.Fatal(err)
 	}
 	var remaining int

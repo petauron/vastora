@@ -16,7 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/secret"
 )
 
-const cloudflaredImage = "docker.io/cloudflare/cloudflared:2026.7.2"
+const cloudflaredImage = "docker.io/cloudflare/cloudflared:2026.7.2@sha256:4f6655284ab3d252b7f28fedb19fe6c8fc82ee5b1295c20ac74d475e5398a52d"
 
 func (s *Store) queueTunnelState(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
 	var current int64
