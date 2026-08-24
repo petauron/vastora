@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.46](https://github.com/petauron/vastora/compare/v0.1.0-alpha.45...v0.1.0-alpha.46) (2026-08-24)
+
+
+### Features
+
+* support amd64 and arm64 deployments ([#137](https://github.com/petauron/vastora/issues/137)) ([65dc87c](https://github.com/petauron/vastora/commit/65dc87cc32c5219ce105d4b794e1fdf5fb1d0c6f))
+
 ## [0.1.0-alpha.45](https://github.com/petauron/vastora/compare/v0.1.0-alpha.44...v0.1.0-alpha.45) (2026-08-24)
 
 
