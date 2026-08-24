@@ -24,6 +24,9 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	if err := os.WriteFile(filepath.Join(binaries, "linux-amd64"), []byte("binary-linux-amd64"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(binaries, "linux-arm64"), []byte("binary-linux-arm64"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	server := NewServer(store, "", false).WithAgentBinaries(binaries)
 	if !server.agentInstallerAvailable() {
 		t.Fatal("complete Agent binary set was not detected")
@@ -62,10 +65,10 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	request.Header.Set("Authorization", "Bearer "+enrollment.Token)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("arm64 binary download status = %d", response.Code)
+	if response.Code != http.StatusOK || response.Body.String() != "binary-linux-arm64" {
+		t.Fatalf("arm64 binary download failed: status=%d body=%q", response.Code, response.Body.String())
 	}
-	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test"); err != nil {
+	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64"); err != nil {
 		t.Fatalf("binary download consumed enrollment token: %v", err)
 	}
 }
@@ -85,7 +88,7 @@ func TestEnrolledAgentCanDownloadAuthenticatedUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "old-version")
+	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "old-version", "linux", "amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +151,7 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatalf("authenticated installer status = %d, body = %q", response.Code, response.Body.String())
 	}
 	script := response.Body.String()
-	for _, expected := range []string{"center_url='https://center.example.com'", "IFS= read -r token", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "supports only Ubuntu 24.04 on amd64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
+	for _, expected := range []string{"center_url='https://center.example.com'", "IFS= read -r token", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "aarch64|arm64", "supports Ubuntu 24.04 on x86_64 and ARM64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${center_url%/}/api/v1/agent-binaries/linux/$arch", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("installer is missing %q:\n%s", expected, script)
 		}

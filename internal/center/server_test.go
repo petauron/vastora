@@ -350,7 +350,7 @@ func TestDiagnosticsSummarizeHealthWithoutSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := store.EnrollAgent(context.Background(), enrollment.Token, "test")
+	node, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64")
 	if err != nil {
 		t.Fatal(err)
 	}

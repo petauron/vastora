@@ -449,7 +449,7 @@ func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabiliti
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := store.EnrollAgent(ctx, enrollment.Token, "test")
+	node, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +778,7 @@ func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {
 	if enrollment.SiteID != site.ID {
 		t.Fatalf("enrollment site = %q, want %q", enrollment.SiteID, site.ID)
 	}
-	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test"); err != nil {
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64"); err != nil {
 		t.Fatal(err)
 	}
 	agents, err := store.ListAgents(ctx)
@@ -788,7 +788,7 @@ func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {
 	if len(agents) != 1 || agents[0].SiteID != site.ID || agents[0].Name != "sg-node" || !agents[0].Capabilities.Docker || !containsString(agents[0].Roles, "worker") {
 		t.Fatalf("Agent did not join selected Site: %#v", agents)
 	}
-	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test"); err == nil {
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64"); err == nil {
 		t.Fatal("single-use enrollment token was accepted twice")
 	}
 }

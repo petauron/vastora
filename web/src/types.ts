@@ -73,6 +73,8 @@ export type AgentView = {
   id: string;
   name: string;
   version: string;
+  operatingSystem: "linux";
+  architecture: "amd64" | "arm64";
   status: "active" | "disabled";
   appliedInstallations: number;
   enrolledAt: string;

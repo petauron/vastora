@@ -89,6 +89,23 @@ func TestAgentUpdateVerifiesAndKeepsRollbackBinary(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateEndpointSupportsBothLinuxArchitectures(t *testing.T) {
+	connection := agent.Connection{AgentID: "node id", CenterURL: "https://center.example.com/"}
+	for _, architecture := range []string{"amd64", "arm64"} {
+		endpoint, err := agentUpdateEndpoint(connection, "linux", architecture)
+		if err != nil {
+			t.Fatalf("agentUpdateEndpoint(%s): %v", architecture, err)
+		}
+		want := "https://center.example.com/api/v1/agents/node%20id/binary/linux/" + architecture
+		if endpoint != want {
+			t.Fatalf("endpoint = %q, want %q", endpoint, want)
+		}
+	}
+	if _, err := agentUpdateEndpoint(connection, "linux", "386"); err == nil {
+		t.Fatal("unsupported update architecture was accepted")
+	}
+}
+
 func TestAgentUpdateRestoresPreviousBinaryWhenRestartFails(t *testing.T) {
 	newBinary := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then printf '0.2.0\\n'; fi\n")
 	digest := sha256.Sum256(newBinary)

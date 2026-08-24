@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 type AgentEnrollment struct {
@@ -50,6 +51,8 @@ type AgentView struct {
 	ID                   string                 `json:"id"`
 	Name                 string                 `json:"name"`
 	Version              string                 `json:"version"`
+	OperatingSystem      string                 `json:"operatingSystem"`
+	Architecture         string                 `json:"architecture"`
 	Status               string                 `json:"status"`
 	AppliedInstallations int                    `json:"appliedInstallations"`
 	EnrolledAt           time.Time              `json:"enrolledAt"`
@@ -196,10 +199,14 @@ func agentEnrollmentSecretContext(token string) string {
 	return "agent-enrollment:" + hex.EncodeToString(tokenHash(token))
 }
 
-func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version string) (AgentCredential, error) {
+func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, operatingSystem, architecture string) (AgentCredential, error) {
 	version = strings.TrimSpace(version)
 	if version == "" || len(version) > 128 {
 		return AgentCredential{}, errors.New("center: agent version is required")
+	}
+	target, err := platform.Parse(operatingSystem, architecture)
+	if err != nil {
+		return AgentCredential{}, fmt.Errorf("center: invalid Agent platform: %w", err)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -233,7 +240,7 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version string
 		return AgentCredential{}, err
 	}
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`, id, name, tokenHash(credential), version, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID, rolesJSON, capabilitiesJSON); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, operating_system, architecture, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`, id, name, tokenHash(credential), version, target.OS, target.Architecture, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID, rolesJSON, capabilitiesJSON); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: save agent: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash(enrollmentToken))
@@ -351,7 +358,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy FROM agents ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
@@ -361,7 +368,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		var enrolledAt, lastSeenAt string
 		var rolesJSON, capabilitiesJSON []byte
 		var gatewayHealthy int
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy); err != nil {
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy); err != nil {
 			return nil, fmt.Errorf("center: scan agent: %w", err)
 		}
 		var err error

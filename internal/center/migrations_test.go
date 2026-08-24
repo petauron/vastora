@@ -155,6 +155,10 @@ func TestOpenMigratesVersion3WithoutLosingPublicationsOrRoutes(t *testing.T) {
 			t.Fatalf("%s count = %d, err = %v", table, count, err)
 		}
 	}
+	var operatingSystem, architecture string
+	if err := store.db.QueryRowContext(ctx, `SELECT operating_system, architecture FROM agents WHERE id = 'agent-v3'`).Scan(&operatingSystem, &architecture); err != nil || operatingSystem != "linux" || architecture != "amd64" {
+		t.Fatalf("migrated Agent platform = %s/%s, err = %v", operatingSystem, architecture, err)
+	}
 	var routePublication string
 	if err := store.db.QueryRowContext(ctx, `SELECT publication_id FROM routes WHERE id = 'route-v3'`).Scan(&routePublication); err != nil || routePublication != "publication-v3" {
 		t.Fatalf("route publication = %q, err = %v", routePublication, err)
@@ -702,6 +706,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE three_x_ui_backups`,
 		`DROP TABLE three_x_ui_nodes`,
 		`DROP INDEX applications_one_three_x_ui_master_idx`,
+		`ALTER TABLE agents DROP COLUMN operating_system`,
+		`ALTER TABLE agents DROP COLUMN architecture`,
 		`ALTER TABLE applications DROP COLUMN role`,
 		`ALTER TABLE services DROP COLUMN region_code`,
 		`ALTER TABLE services DROP COLUMN display_name`,

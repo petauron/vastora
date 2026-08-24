@@ -56,7 +56,7 @@ func runCenter(arguments []string) error {
 		listen := flags.String("listen", "127.0.0.1:8080", "listen address")
 		webDir := flags.String("web-dir", "web/dist", "compiled React web directory")
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
-		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing the linux-amd64 Agent binary")
+		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
 		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
 		deployerSocket := flags.String("deployer-socket", "", "Unix socket for the restricted infrastructure deployment helper")
 		var headscaleAllowedURLs stringListFlag

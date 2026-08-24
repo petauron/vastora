@@ -44,7 +44,8 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 case "$(uname -m)" in
   x86_64|amd64) ;;
-  *) echo "Vastora Center currently supports only Ubuntu 24.04 on amd64." >&2; exit 1 ;;
+  aarch64|arm64) ;;
+  *) echo "Vastora Center supports Ubuntu 24.04 on x86_64 and ARM64." >&2; exit 1 ;;
 esac
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run the Center installer with sudo." >&2

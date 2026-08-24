@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/petauron/vastora/internal/platform"
 )
 
 const agentTailscaleVersion = "1.102.3"
@@ -76,7 +78,8 @@ fi
 
 case "$(uname -m)" in
   x86_64|amd64) arch="amd64" ;;
-  *) echo "Vastora Agent currently supports only Ubuntu 24.04 on amd64." >&2; exit 1 ;;
+  aarch64|arm64) arch="arm64" ;;
+  *) echo "Vastora Agent supports Ubuntu 24.04 on x86_64 and ARM64." >&2; exit 1 ;;
 esac
 
 @@HEADSCALE_BOOTSTRAP@@
@@ -171,9 +174,12 @@ func (s *Store) ValidateAgentEnrollment(ctx context.Context, token string) error
 }
 
 func (s *Server) agentInstallerAvailable() bool {
-	info, err := os.Stat(filepath.Join(s.agentBinariesDir, "linux-amd64"))
-	if err != nil || !info.Mode().IsRegular() {
-		return false
+	for _, architecture := range []string{platform.AMD64, platform.ARM64} {
+		target, _ := platform.Parse(platform.Linux, architecture)
+		info, err := os.Stat(filepath.Join(s.agentBinariesDir, target.AgentBinaryName()))
+		if err != nil || !info.Mode().IsRegular() {
+			return false
+		}
 	}
 	return true
 }
@@ -240,11 +246,12 @@ func (s *Server) handleAgentUpdateBinary(writer http.ResponseWriter, request *ht
 }
 
 func (s *Server) serveAgentBinary(writer http.ResponseWriter, request *http.Request, operatingSystem, architecture string) {
-	if operatingSystem != "linux" || architecture != "amd64" {
+	target, err := platform.Parse(operatingSystem, architecture)
+	if err != nil {
 		writeError(writer, http.StatusNotFound, errors.New("center: Agent binary target is not available"))
 		return
 	}
-	path := filepath.Join(s.agentBinariesDir, operatingSystem+"-"+architecture)
+	path := filepath.Join(s.agentBinariesDir, target.AgentBinaryName())
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		writeError(writer, http.StatusNotFound, errors.New("center: Agent binary target is not available"))
