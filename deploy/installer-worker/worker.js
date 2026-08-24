@@ -1,3 +1,5 @@
+import { connect } from "cloudflare:sockets";
+
 const repository = "petauron/vastora";
 const releaseAssets = new Set([
   "install.sh",
@@ -9,6 +11,8 @@ const lastKnownCacheKey = new Request("https://vastora-installer.internal/last-k
 const versionURL = `https://raw.githubusercontent.com/${repository}/main/version.txt`;
 const oauthCallbackPath = "/oauth/cloudflare/callback";
 const oauthSessionPrefix = "/oauth/cloudflare/sessions/";
+const publicAddressPath = "/network/public-address";
+const verifyPublicEntryPath = "/network/verify-public-entry";
 const oauthSessionLifetimeMs = 10 * 60 * 1000;
 const oauthStatePattern = /^v1\.([A-Za-z0-9_-]{24,64})\.([A-Za-z0-9_-]{43})$/;
 
@@ -97,6 +101,78 @@ function oauthHeaders(contentType = "application/json; charset=utf-8") {
   };
 }
 
+function handlePublicAddress(request) {
+  const address = (request.headers.get("CF-Connecting-IP") || "").trim();
+  if (!address || address.length > 45 || !/^[0-9a-f:.]+$/i.test(address)) {
+    return new Response("Public address unavailable\n", {
+      status: 503,
+      headers: oauthHeaders("text/plain; charset=utf-8"),
+    });
+  }
+  return Response.json({ address }, { headers: oauthHeaders() });
+}
+
+async function handlePublicEntryVerification(request) {
+  const sourceAddress = (request.headers.get("CF-Connecting-IP") || "").trim();
+  if (!sourceAddress || sourceAddress.length > 45 || !/^[0-9a-f:.]+$/i.test(sourceAddress)) {
+    return Response.json({ status: "unavailable", error: "The caller public address is unavailable." }, { status: 503, headers: oauthHeaders() });
+  }
+  const contentLength = Number(request.headers.get("Content-Length") || "0");
+  if (contentLength > 2048) {
+    return Response.json({ status: "invalid", error: "The verification request is too large." }, { status: 413, headers: oauthHeaders() });
+  }
+  let input;
+  try {
+    input = await request.json();
+  } catch {
+    return Response.json({ status: "invalid", error: "The verification request is invalid." }, { status: 400, headers: oauthHeaders() });
+  }
+  const ports = input?.ports;
+  const challenge = String(input?.challenge || "");
+  if (!Array.isArray(ports) || ports.length !== 2 || ports[0] !== 80 || ports[1] !== 443 || !/^[A-Za-z0-9_-]{43}$/.test(challenge)) {
+    return Response.json({ status: "invalid", error: "The public entry challenge is invalid." }, { status: 400, headers: oauthHeaders() });
+  }
+  const results = await Promise.all(ports.map(async (port) => {
+    try {
+      await probePublicPort(sourceAddress, port, challenge);
+      return { port, ready: true };
+    } catch {
+      return { port, ready: false };
+    }
+  }));
+  if (results.some((result) => !result.ready)) {
+    return Response.json({ status: "unreachable", address: sourceAddress, ports: results, error: "The public address did not reach every required TCP port." }, { status: 409, headers: oauthHeaders() });
+  }
+  return Response.json({ status: "ready", address: sourceAddress, ports: results }, { headers: oauthHeaders() });
+}
+
+async function probePublicPort(address, port, challenge) {
+  const socket = connect({ hostname: address, port }, { allowHalfOpen: true, secureTransport: "off" });
+  const timeout = (promise) => {
+    let timer;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("probe timed out")), 8000); }),
+    ]).finally(() => clearTimeout(timer));
+  };
+  try {
+    await timeout(socket.opened);
+    const writer = socket.writable.getWriter();
+    await timeout(writer.write(new TextEncoder().encode(`VASTORA-PROBE/1 ${challenge}\n`)));
+    await timeout(writer.close());
+    const reader = socket.readable.getReader();
+    let response = "";
+    while (response.length <= 256 && !response.includes("\n")) {
+      const result = await timeout(reader.read());
+      if (result.done) break;
+      response += new TextDecoder().decode(result.value, { stream: true });
+    }
+    if (response !== `VASTORA-OK/1 ${challenge}\n`) throw new Error("challenge mismatch");
+  } finally {
+    await socket.close().catch(() => {});
+  }
+}
+
 function parseOAuthState(value) {
   const match = oauthStatePattern.exec(value || "");
   return match ? { id: match[1], commitment: match[2] } : null;
@@ -166,6 +242,14 @@ async function handleOAuthPoll(request, url, env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    if (url.pathname === publicAddressPath) {
+      if (request.method !== "GET") return new Response("Method not allowed\n", { status: 405, headers: { ...oauthHeaders("text/plain; charset=utf-8"), Allow: "GET" } });
+      return handlePublicAddress(request);
+    }
+    if (url.pathname === verifyPublicEntryPath) {
+      if (request.method !== "POST") return new Response("Method not allowed\n", { status: 405, headers: { ...oauthHeaders("text/plain; charset=utf-8"), Allow: "POST" } });
+      return handlePublicEntryVerification(request);
+    }
     if (url.pathname === oauthCallbackPath) {
       if (request.method !== "GET") return new Response("Method not allowed\n", { status: 405, headers: { ...oauthHeaders("text/plain; charset=utf-8"), Allow: "GET" } });
       return handleOAuthCallback(url, env);

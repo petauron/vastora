@@ -156,6 +156,9 @@ func TestConfigureSetupDNSDoesNotCreateAPublicCenterRecord(t *testing.T) {
 	store.cloudflareOAuth = cloudflareOAuthConfig{ClientID: "oauth-client", APIURL: server.URL, HTTPClient: server.Client()}
 	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access-secret", RefreshToken: "refresh-secret", ExpiresAt: time.Now().Add(time.Hour)})
 	candidates := []networking.Candidate{{Address: "203.0.113.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}
+	if err := store.savePublicEntryVerification(context.Background(), setupGatewayBinding{PublicAddress: "203.0.113.10", BindAddress: "203.0.113.10"}); err != nil {
+		t.Fatal(err)
+	}
 	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.vastora.example.com", HeadscaleURL: "https://headscale.vastora.example.com", PublicAddress: "203.0.113.10"}, candidates)
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("conflicting DNS record was accepted: %v", err)
@@ -176,8 +179,28 @@ func TestConfigureSetupDNSRejectsAnUnreportedPublicAddress(t *testing.T) {
 	}
 	defer store.Close()
 	_, err = store.ConfigureSetupDNS(context.Background(), SetupDNSInput{CenterURL: "https://center.example.com", PublicAddress: "203.0.113.10"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "not assigned") {
+	if err == nil || !strings.Contains(err.Error(), "local address") {
 		t.Fatalf("unreported public address was accepted: %v", err)
+	}
+}
+
+func TestSetupGatewayBindingAcceptsAnAutomaticallyObservedCloudMapping(t *testing.T) {
+	candidates := []networking.Candidate{{Address: "10.0.0.157", Interface: "enp0s6", Family: "ipv4", Kind: networking.KindLAN}}
+	binding, err := validateSetupGatewayBinding(SetupDNSInput{
+		PublicAddress:  "192.9.143.79",
+		GatewayAddress: "10.0.0.157",
+	}, candidates, "192.9.143.79", "10.0.0.157")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding.PublicAddress != "192.9.143.79" || binding.BindAddress != "10.0.0.157" {
+		t.Fatalf("unexpected automatic cloud mapping: %#v", binding)
+	}
+	if _, err := validateSetupGatewayBinding(SetupDNSInput{
+		PublicAddress:  "192.9.143.80",
+		GatewayAddress: "10.0.0.157",
+	}, candidates, "192.9.143.79", "10.0.0.157"); err == nil || !strings.Contains(err.Error(), "confirm") {
+		t.Fatalf("an unobserved cloud mapping was accepted without confirmation: %v", err)
 	}
 }
 

@@ -121,7 +121,7 @@ func runCenter(arguments []string) error {
 			if err != nil {
 				return err
 			}
-			centerServer.WithHeadscaleInstaller(installer)
+			centerServer.WithInfrastructureManager(installer)
 			go func() {
 				reconcileContext, cancel := context.WithTimeout(maintenanceContext, 8*time.Minute)
 				defer cancel()

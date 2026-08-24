@@ -5,7 +5,9 @@ package networking
 
 import (
 	"errors"
+	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -79,6 +81,30 @@ func Discover(now time.Time) ([]Candidate, error) {
 		return result[i].Address < result[j].Address
 	})
 	return result, nil
+}
+
+// DefaultRouteAddress returns the local address selected by the kernel for
+// ordinary outbound traffic in the same address family as remoteAddress. A UDP
+// connect performs route selection without sending a packet.
+func DefaultRouteAddress(remoteAddress string) (string, error) {
+	remote, err := netip.ParseAddr(strings.TrimSpace(remoteAddress))
+	if err != nil {
+		return "", errors.New("network: invalid remote address")
+	}
+	network, target := "udp6", "[2606:4700:4700::1111]:53"
+	if remote.Unmap().Is4() {
+		network, target = "udp4", "1.1.1.1:53"
+	}
+	connection, err := net.Dial(network, target)
+	if err != nil {
+		return "", fmt.Errorf("network: select default route: %w", err)
+	}
+	defer connection.Close()
+	address, ok := connection.LocalAddr().(*net.UDPAddr)
+	if !ok || address.IP == nil {
+		return "", errors.New("network: default route did not provide a local address")
+	}
+	return address.IP.String(), nil
 }
 
 func Classify(interfaceName string, ip net.IP) string {

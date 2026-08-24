@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const source = await readFile(
+const source = (await readFile(
   new URL("../deploy/installer-worker/worker.js", import.meta.url),
   "utf8",
-);
+)).replace('import { connect } from "cloudflare:sockets";', "const connect = globalThis.__vastoraConnect;");
+let connectImplementation = () => { throw new Error("unexpected TCP connection"); };
+globalThis.__vastoraConnect = (...arguments_) => connectImplementation(...arguments_);
 const workerModule = await import(
   `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`
 );
@@ -127,6 +129,75 @@ function oauthEnvironment() {
 {
   const response = await worker.fetch(request("/install.sh", "POST"), {}, executionContext().context);
   assert.equal(response.status, 405);
+}
+
+{
+  const publicAddressRequest = request("/network/public-address");
+  publicAddressRequest.headers.set("CF-Connecting-IP", "192.0.2.42");
+  const response = await worker.fetch(publicAddressRequest, {}, executionContext().context);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { address: "192.0.2.42" });
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal((await worker.fetch(request("/network/public-address"), {}, executionContext().context)).status, 503);
+}
+
+{
+  const connected = [];
+  connectImplementation = ({ hostname, port }) => {
+    connected.push({ hostname, port });
+    let controller;
+    const readable = new ReadableStream({ start(value) { controller = value; } });
+    const writable = new WritableStream({
+      write(chunk) {
+        const requestLine = new TextDecoder().decode(chunk);
+        const challenge = requestLine.match(/^VASTORA-PROBE\/1 ([A-Za-z0-9_-]{43})\n$/)?.[1];
+        controller.enqueue(new TextEncoder().encode(`VASTORA-OK/1 ${challenge}\n`));
+        controller.close();
+      },
+    });
+    return { opened: Promise.resolve({}), readable, writable, close: async () => {} };
+  };
+  const challenge = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
+  const verifyRequest = new Request("https://vastora.petauron.com/network/verify-public-entry", {
+    method: "POST",
+    headers: { "CF-Connecting-IP": "192.0.2.42", "Content-Type": "application/json" },
+    body: JSON.stringify({ ports: [80, 443], challenge }),
+  });
+  const response = await worker.fetch(verifyRequest, {}, executionContext().context);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: "ready", address: "192.0.2.42", ports: [{ port: 80, ready: true }, { port: 443, ready: true }] });
+  assert.deepEqual(connected, [{ hostname: "192.0.2.42", port: 80 }, { hostname: "192.0.2.42", port: 443 }]);
+}
+
+{
+  connectImplementation = ({ port }) => {
+    if (port === 443) throw new Error("unreachable");
+    let controller;
+    const readable = new ReadableStream({ start(value) { controller = value; } });
+    const writable = new WritableStream({
+      write(chunk) {
+        const challenge = new TextDecoder().decode(chunk).match(/^VASTORA-PROBE\/1 ([A-Za-z0-9_-]{43})\n$/)?.[1];
+        controller.enqueue(new TextEncoder().encode(`VASTORA-OK/1 ${challenge}\n`));
+        controller.close();
+      },
+    });
+    return { opened: Promise.resolve({}), readable, writable, close: async () => {} };
+  };
+  const failedRequest = new Request("https://vastora.petauron.com/network/verify-public-entry", {
+    method: "POST",
+    headers: { "CF-Connecting-IP": "192.0.2.42", "Content-Type": "application/json" },
+    body: JSON.stringify({ ports: [80, 443], challenge: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" }),
+  });
+  const failed = await worker.fetch(failedRequest, {}, executionContext().context);
+  assert.equal(failed.status, 409);
+  assert.deepEqual((await failed.json()).ports, [{ port: 80, ready: true }, { port: 443, ready: false }]);
+
+  const invalidRequest = new Request("https://vastora.petauron.com/network/verify-public-entry", {
+    method: "POST",
+    headers: { "CF-Connecting-IP": "192.0.2.42", "Content-Type": "application/json" },
+    body: JSON.stringify({ ports: [22, 443], challenge: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ" }),
+  });
+  assert.equal((await worker.fetch(invalidRequest, {}, executionContext().context)).status, 400);
 }
 
 {

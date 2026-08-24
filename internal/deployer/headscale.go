@@ -71,7 +71,7 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	if err != nil {
 		return "", "", err
 	}
-	bindAddresses, err := gatewayBindAddresses(ctx, headscaleURL)
+	bindAddresses, err := gatewayBindAddresses(ctx, input.PublicAddress, input.GatewayBindAddress, headscaleURL)
 	if err != nil {
 		return "", "", err
 	}

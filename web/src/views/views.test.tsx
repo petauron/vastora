@@ -835,7 +835,8 @@ describe("network and app views", () => {
   });
 
 		it("starts first-run onboarding with a real location and the browser timezone", () => {
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-19T00:00:00Z" }]} suggestedAgentConnectUrl="" />);
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
     expect(container.textContent).toContain("创建第一个位置");
     expect(container.textContent).toContain("位置通常是一处家庭、办公室或数据中心");
     expect(container.querySelector<HTMLInputElement>("#setup-timezone")?.value).not.toBe("");
@@ -856,13 +857,105 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("登录 Cloudflare");
 		expect(container.textContent).toContain("Center 私网地址");
 		expect(container.textContent).toContain("Headscale 公网地址");
-    const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("Headscale 来源"));
+    const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("高级设置"));
     expect(advanced?.open).toBe(false);
     expect(container.querySelector("#setup-headscale-key")).toBeNull();
   });
 
+  it("allows the detected setup timezone to be searched and changed", async () => {
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
+    const timezone = container.querySelector<HTMLInputElement>("#setup-timezone")!;
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="打开时区列表"]')?.click();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(timezone, "Tokyo");
+      timezone.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+    const option = [...document.body.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("Asia/Tokyo"));
+    expect(option).toBeDefined();
+    await act(async () => {
+      option?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(timezone.value).toBe("Asia/Tokyo");
+  });
+
+  it("shows a cloud public mapping as unverified before the pre-install probe", () => {
+    const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", family: "ipv4" as const, kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="192.9.143.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
+    const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Oracle ARM");
+      location.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+
+    expect(container.textContent).toContain("发现云公网地址 192.9.143.79");
+    expect(container.textContent).toContain("本机 10.0.0.157");
+    expect(container.textContent).toContain("这还不代表公网能够访问");
+    expect(container.textContent).toContain("不需要先安装 Caddy");
+    expect(container.querySelector<HTMLInputElement>("#setup-public-address")?.value).toBe("192.9.143.79");
+    expect(container.querySelector<HTMLSelectElement>("#setup-gateway-address")?.value).toBe("10.0.0.157");
+    expect(container.querySelector<HTMLButtonElement>("#setup-nat-confirmed")?.disabled).toBe(true);
+  });
+
+  it("verifies temporary public listeners before showing the setup review", async () => {
+    let completeVerification: (() => void) | undefined;
+    const verification = new Promise<{ status: "ready"; publicAddress: string; gatewayAddress: string; ports: number[] }>((resolve) => {
+      completeVerification = () => resolve({ status: "ready", publicAddress: "192.9.143.79", gatewayAddress: "10.0.0.157", ports: [80, 443] });
+    });
+    const verify = vi.spyOn(api, "verifySetupPublicEntry").mockReturnValue(verification);
+    const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", family: "ipv4" as const, kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="192.9.143.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
+    const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Oracle ARM");
+      location.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click();
+      await Promise.resolve();
+    });
+    expect(verify).toHaveBeenCalledWith({ publicAddress: "192.9.143.79", gatewayAddress: "10.0.0.157", natConfirmed: false });
+    expect(container.textContent).toContain("正在检测公网入口");
+    expect(container.textContent).toContain("完成后会立即释放端口");
+
+    await act(async () => {
+      completeVerification?.();
+      await verification;
+    });
+    expect(container.textContent).toContain("公网入口已验证");
+    expect(container.textContent).toContain("80、443 已验证");
+  });
+
+  it("keeps setup on the network step when the public probe fails", async () => {
+    vi.spyOn(api, "verifySetupPublicEntry").mockRejectedValue(new APIError("center: public ports 80 and 443 are not reachable", 400, "invalid_request"));
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
+    const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Public host");
+      location.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("你准备在哪里使用 Vastora");
+    expect(container.textContent).not.toContain("确认首次设置");
+    expect(container.textContent).toContain("public ports 80 and 443 are not reachable");
+  });
+
   it("keeps a non-sensitive setup draft after a reload", () => {
-    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, language: "zh-CN" as const, onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }], suggestedAgentConnectUrl: "" };
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, gatewayAddressCandidates: addresses, language: "zh-CN" as const, observedPublicAddress: "203.0.113.10", onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: addresses, publicAddressDetection: "direct" as const, suggestedAgentConnectUrl: "", suggestedGatewayAddress: "203.0.113.10" };
     let container = render(<SetupWizard {...props} />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
@@ -893,7 +986,8 @@ describe("network and app views", () => {
       headscaleUrl: "https://headscale.kuddyx.com",
       publicAddress: "203.0.113.10"
     }));
-    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, language: "zh-CN" as const, onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }], suggestedAgentConnectUrl: "" };
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, gatewayAddressCandidates: addresses, language: "zh-CN" as const, observedPublicAddress: "203.0.113.10", onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: addresses, publicAddressDetection: "direct" as const, suggestedAgentConnectUrl: "", suggestedGatewayAddress: "203.0.113.10" };
     const container = render(<SetupWizard {...props} />);
 
     expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://center.vastora.kuddyx.com");
@@ -915,7 +1009,8 @@ describe("network and app views", () => {
       headscaleUrl: "https://mesh.ops.example.net",
       publicAddress: "203.0.113.10"
     }));
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="kuddyx.com" language="zh-CN" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-19T00:00:00Z" }]} suggestedAgentConnectUrl="" />);
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="kuddyx.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
 
     expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://control.ops.example.net");
     expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://mesh.ops.example.net");
@@ -932,7 +1027,7 @@ describe("network and app views", () => {
   it("keeps the technical reason when initial setup fails", async () => {
     const failure = new APIError("center: verify Headscale: dial tcp: lookup headscale.example.com: no such host", 400, "invalid_request");
     const onComplete = vi.fn().mockRejectedValue(failure);
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable={false} language="zh-CN" onComplete={onComplete} onLanguage={() => undefined} publicAddressCandidates={[]} suggestedAgentConnectUrl="https://center.example.com" />);
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable={false} gatewayAddressCandidates={[]} language="zh-CN" observedPublicAddress="" onComplete={onComplete} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="unavailable" suggestedAgentConnectUrl="https://center.example.com" suggestedGatewayAddress="" />);
     const fill = (selector: string, value: string) => {
       const input = container.querySelector<HTMLInputElement>(selector)!;
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
@@ -941,6 +1036,9 @@ describe("network and app views", () => {
     act(() => fill("#setup-location-name", "Cloudlead"));
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
 		act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
+		const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("高级设置"))!;
+		act(() => { advanced.open = true; advanced.dispatchEvent(new Event("toggle", { bubbles: true })); });
+		act(() => container.querySelector<HTMLButtonElement>("#setup-external-headscale")?.click());
 		act(() => fill("#setup-headscale-url", "https://headscale.example.com"));
 		act(() => fill("#setup-headscale-key", "hskey-api-abcdefghijklmnopqrstuvwxyz"));
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());

@@ -49,6 +49,10 @@ export type SetupStatus = {
   cloudflareConfigured: boolean;
   cloudflareZone?: string;
   publicAddressCandidates: NetworkCandidate[];
+  gatewayAddressCandidates: NetworkCandidate[];
+  observedPublicAddress?: string;
+  suggestedGatewayAddress?: string;
+  publicAddressDetection?: "direct" | "cloud_mapping_candidate" | "unavailable";
 };
 export type SiteInput = { name: string; code: string; description: string; timezone: string; domainSuffix: string; gatewayNodes: string[] };
 export type InitialSetupInput = {

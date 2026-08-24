@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
@@ -44,6 +45,9 @@ type Store struct {
 	now                            func() time.Time
 	discoverNetworkCandidates      func(time.Time) ([]networking.Candidate, error)
 	lookupPublicRegion             func(context.Context, string) (string, error)
+	lookupPublicAddress            func(context.Context) (string, error)
+	lookupGatewayAddress           func(string) (string, error)
+	verifyPublicEntry              func(context.Context, string, deployapi.PublicEntryProbe) error
 	issuePrivateCertificate        func(context.Context, ...string) (managedCertificate, error)
 }
 
@@ -98,6 +102,9 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 				return http.ErrUseLastResponse
 			},
 		}),
+		lookupPublicAddress:  vastoraPublicAddressLookup(&http.Client{Timeout: 5 * time.Second}),
+		lookupGatewayAddress: networking.DefaultRouteAddress,
+		verifyPublicEntry:    vastoraPublicEntryVerifier(&http.Client{Timeout: 12 * time.Second}),
 	}
 	store.verifyPublication = store.verifyPublicationRevision
 	store.issuePrivateCertificate = store.obtainPrivateCertificate

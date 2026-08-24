@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/petauron/vastora/internal/deployapi"
-	"github.com/petauron/vastora/internal/networking"
 )
 
 func (s *Server) handleListIntegrations(writer http.ResponseWriter, request *http.Request) {
@@ -68,7 +67,7 @@ func (s *Server) handleConfigureSetupDNS(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	candidates, err := networking.Discover(s.store.now().UTC())
+	candidates, err := s.store.discoverNetworkCandidates(s.store.now().UTC())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, err)
 		return
@@ -104,7 +103,7 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if strings.TrimSpace(input.Mode) != "builtin" {
 		return s.store.ConfigureHeadscale(ctx, input)
 	}
-	if s.headscaleInstaller == nil {
+	if s.infrastructure == nil {
 		return IntegrationView{}, errors.New("center: this installation does not include the Headscale deployment helper")
 	}
 	if strings.TrimSpace(input.APIKey) != "" {
@@ -114,9 +113,15 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, fmt.Errorf("center: prepare private Center HTTPS: %w", err)
 	}
-	result, err := s.headscaleInstaller.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
+	binding, _, err := s.store.setupGatewayBinding(ctx)
+	if err != nil {
+		return IntegrationView{}, err
+	}
+	result, err := s.infrastructure.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
 		CenterURL:               centerURL,
 		HeadscaleURL:            input.URL,
+		PublicAddress:           binding.PublicAddress,
+		GatewayBindAddress:      binding.BindAddress,
 		CenterCertificatePEM:    centerCertificate.CertificatePEM,
 		CenterCertificateKeyPEM: centerCertificate.PrivateKeyPEM,
 	})
@@ -144,7 +149,7 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) (err error) {
 			s.startupReady.Store(true)
 		}
 	}()
-	if s.headscaleInstaller == nil {
+	if s.infrastructure == nil {
 		return nil
 	}
 	endpoint, runtime, configured, err := s.store.builtinHeadscaleRuntime(ctx)
@@ -159,9 +164,15 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	if err := s.headscaleInstaller.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
+	binding, _, err := s.store.setupGatewayBinding(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.infrastructure.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
 		CenterURL:               network.AgentConnectURL,
 		HeadscaleURL:            endpoint,
+		PublicAddress:           binding.PublicAddress,
+		GatewayBindAddress:      binding.BindAddress,
 		CenterCertificatePEM:    centerCertificate.CertificatePEM,
 		CenterCertificateKeyPEM: centerCertificate.PrivateKeyPEM,
 	}); err != nil {

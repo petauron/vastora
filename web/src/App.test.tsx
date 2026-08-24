@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 function mockReadyCenter() {
-  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, cloudflareConfigured: false, publicAddressCandidates: [] });
+  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, cloudflareConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
   const status = vi.spyOn(api, "status").mockResolvedValue({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" });
   vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
   vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
@@ -47,7 +47,7 @@ async function renderReadyApp() {
 
 describe("application shell", () => {
   it("requires ten characters when creating the administrator", async () => {
-    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, cloudflareConfigured: false, publicAddressCandidates: [] });
+    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, cloudflareConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
