@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.47](https://github.com/petauron/vastora/compare/v0.1.0-alpha.46...v0.1.0-alpha.47) (2026-08-24)
+
+
+### Features
+
+* verify public ingress before installation ([#139](https://github.com/petauron/vastora/issues/139)) ([d0b6388](https://github.com/petauron/vastora/commit/d0b63882edfa9b13a611857056027cdcd1f94d6c))
+
 ## [0.1.0-alpha.46](https://github.com/petauron/vastora/compare/v0.1.0-alpha.45...v0.1.0-alpha.46) (2026-08-24)
 
 
