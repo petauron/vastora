@@ -62,13 +62,13 @@ func normalizeThreeXUIDatabaseSnapshot(data []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA && header.Typeflag != tar.TypeDir {
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeDir {
 			return nil, fmt.Errorf("3x-ui database snapshot contains unsupported entry %q", name)
 		}
 		if name == "x-ui/x-ui.db" {
 			databaseFound = true
 		}
-		if header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA {
+		if header.Typeflag == tar.TypeReg {
 			fileFound = true
 		}
 		if _, ok := journalNames[name]; ok {

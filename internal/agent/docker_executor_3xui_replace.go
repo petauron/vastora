@@ -302,20 +302,6 @@ func inspectThreeXUIVolume(ctx context.Context, docker threeXUIContainerEngine, 
 	return result, err == nil, err
 }
 
-func restartThreeXUIContainerAfterUncertainStop(ctx context.Context, docker threeXUIContainerEngine, containerID string) error {
-	inspected, err := docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
-	if err != nil {
-		return fmt.Errorf("agent: inspect current 3x-ui container after uncertain stop: %w", err)
-	}
-	if inspected.Container.State != nil && inspected.Container.State.Running {
-		return nil
-	}
-	if err := restartThreeXUIContainerIfNeeded(ctx, docker, containerID, true); err != nil {
-		return fmt.Errorf("agent: restart current 3x-ui container after uncertain stop: %w", err)
-	}
-	return nil
-}
-
 func recoverInterruptedThreeXUIDeploy(ctx context.Context, docker threeXUIContainerEngine) error {
 	current, currentExists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
 	if err != nil {
