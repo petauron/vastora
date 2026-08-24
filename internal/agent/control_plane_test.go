@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +26,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 			t.Fatalf("missing 3x-ui Bearer token: %q", request.Header.Get("Authorization"))
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":7,"remark":"vless","protocol":"vless","port":443,"listen":"0.0.0.0","enable":true,"streamSettings":{"network":"tcp","security":"reality"}},{"id":8,"remark":"disabled","protocol":"vmess","port":8443,"listen":"127.0.0.1","enable":false,"streamSettings":{"network":"ws"}}]}`))
+		_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":7,"remark":"vless","protocol":"vless","port":443,"listen":"0.0.0.0","enable":true,"tag":"vastora-reality-7","total":1073741824,"streamSettings":{"network":"tcp","security":"reality"}},{"id":8,"remark":"disabled","protocol":"vmess","port":8443,"listen":"127.0.0.1","enable":false,"streamSettings":{"network":"ws"}}]}`))
 	}))
 	defer server.Close()
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
@@ -50,7 +51,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 	if requestCount != 1 || len(observed) != 2 {
 		t.Fatalf("unexpected 3x-ui observation: requests=%d values=%#v", requestCount, observed)
 	}
-	if observed[0].Name != "inbound-7" || observed[0].AppProtocol != "vless/tcp/reality" || observed[0].Protocol != "tcp" || !observed[0].Enabled || observed[0].Port != 443 {
+	if observed[0].Name != "inbound-7" || observed[0].AppProtocol != "vless/tcp/reality" || observed[0].Protocol != "tcp" || !observed[0].Enabled || observed[0].Port != 443 || observed[0].InboundTag != "vastora-reality-7" || observed[0].InboundTotalBytes != 1073741824 {
 		t.Fatalf("enabled inbound was not synchronized: %#v", observed[0])
 	}
 	if observed[1].Name != "inbound-8" || observed[1].AppProtocol != "vmess/ws" || observed[1].Enabled {
@@ -70,6 +71,24 @@ func TestThreeXUIClientInboundDisplayNameSurvivesAgentRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(string(payload), `"displayName":"美国CloudLead"`) {
 		t.Fatalf("display name was lost from Agent result: %s", payload)
+	}
+}
+
+func TestDeferredTaskCompletionErrorKeepsItsCause(t *testing.T) {
+	cause := errors.New("external cleanup outcome is unknown")
+	deferred := deferTaskCompletion(cause)
+	if !taskCompletionIsDeferred(deferred) || !errors.Is(deferred, cause) || deferred.Error() != cause.Error() {
+		t.Fatalf("deferred task error = %#v", deferred)
+	}
+	if taskCompletionIsDeferred(cause) || taskCompletionIsDeferred(nil) {
+		t.Fatal("ordinary task errors were incorrectly deferred")
+	}
+	if !taskCompletionShouldBeDeferred(deferred, 1) || taskCompletionShouldBeDeferred(deferred, maxDeferredTaskAttempts) {
+		t.Fatal("deferred task completion did not honor its bounded attempt budget")
+	}
+	reconciliation := deferTaskUntilReconciled(cause)
+	if !errors.Is(reconciliation, cause) || !taskCompletionShouldBeDeferred(reconciliation, 1) || taskCompletionShouldBeDeferred(reconciliation, maxDeferredTaskAttempts) || !taskCompletionRequiresReconciliation(reconciliation, maxDeferredTaskAttempts) {
+		t.Fatal("externally committed task did not defer and then quarantine at its retry limit")
 	}
 }
 

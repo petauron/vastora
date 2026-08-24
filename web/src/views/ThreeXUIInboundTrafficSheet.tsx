@@ -3,7 +3,7 @@ import { GaugeIcon, PencilIcon, RefreshCwIcon, ShieldAlertIcon } from "lucide-re
 import { api } from "../api";
 import type { Application, ApplicationCommand, Service, ThreeXUIClientCommandInput } from "../types";
 import type { Language } from "../translations";
-import { copy } from "./shared";
+import { copy, userError } from "./shared";
 import { bytesFromGB, dateInputValueInTimeZone, formatBytes, gigabytesFromBytes, InboundTrafficPlanFields } from "./TrafficPlanFields";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { FieldError } from "@/components/ui/field";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
+import { hasObservedThreeXUIState, mergeCachedCommand, mergeCommandUpdate } from "./threeXUICommandState";
 
 type TrafficDraft = { quota: string; resetDays: string; nextResetAt: string };
 
@@ -21,6 +22,8 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
   const [resetDays, setResetDays] = useState("0");
   const [nextResetAt, setNextResetAt] = useState("");
   const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
+  const [showingCached, setShowingCached] = useState(false);
   const [notice, setNotice] = useState("");
   const baseline = useRef<TrafficDraft>({ quota: "", resetDays: "0", nextResetAt: "" });
   const { execute, running } = useApplicationCommandExecutor(controller?.id);
@@ -32,14 +35,7 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
     setError("");
     const next = await execute(
       () => api.createThreeXUIClientCommand({ applicationId: controller.id, ...input }),
-      (value) => setCommand((current) => {
-        if (!current) return value;
-        return {
-          ...value,
-          inbounds: value.inboundsObserved ? value.inbounds : current.inbounds,
-          inboundsObserved: value.inboundsObserved || current.inboundsObserved
-        };
-      })
+      (value) => setCommand((current) => mergeCommandUpdate(current, value))
     );
     if (next?.state === "failed") throw new Error(next.error || "The 3x-ui operation failed");
     return next;
@@ -47,12 +43,22 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
 
   useEffect(() => {
     if (!controller || !service) {
-      setCommand(null); setEditing(false); setError(""); setNotice("");
+      setCommand(null); setEditing(false); setError(""); setRefreshError(""); setShowingCached(false); setNotice("");
       return;
     }
     let cancelled = false;
-    void run({ action: "list_inbounds" }).catch((loadError) => {
-      if (!cancelled) setError(readableError(language, loadError));
+    let freshResolved = false;
+    setRefreshError("");
+    void api.latestApplicationCommand(controller.id, "3xui.clients.manage").then((cached) => {
+      if (cancelled || freshResolved || !hasObservedThreeXUIState(cached) || !cached.inbounds?.some((value) => value.serviceId === service.id)) return;
+      setCommand((current) => mergeCachedCommand(current, cached));
+      setShowingCached(true);
+    }).catch(() => { /* The first read has no cached observation yet. */ });
+    void run({ action: "list_inbounds" }).then(() => {
+      freshResolved = true;
+      if (!cancelled) setShowingCached(false);
+    }).catch((loadError) => {
+      if (!cancelled) setRefreshError(readableError(language, loadError));
     });
     return () => { cancelled = true; };
   }, [controller?.id, language, run, service?.id]);
@@ -91,7 +97,8 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
 
   const retryLoad = () => {
     setNotice("");
-    void run({ action: "list_inbounds" }).catch((loadError) => setError(readableError(language, loadError)));
+    setRefreshError("");
+    void run({ action: "list_inbounds" }).then(() => setShowingCached(false)).catch((loadError) => setRefreshError(readableError(language, loadError)));
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -119,8 +126,10 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
         <SheetDescription>{copy(language, `单独管理“${service?.displayName || service?.name || ""}”的流量，不会占用或修改其他节点的套餐。`, `Manage traffic for “${service?.displayName || service?.name || ""}” independently without changing other nodes.`)}</SheetDescription>
       </SheetHeader>
       {running && !inbound ? <div className="flex flex-1 items-center justify-center gap-2 px-4 text-sm text-muted-foreground"><Spinner />{copy(language, "正在读取节点套餐…", "Loading node plan…")}</div> : null}
-      {!running && !inbound && !error ? <div className="px-4"><Alert><AlertTitle>{copy(language, "暂时没有读到这个入站", "This inbound is not available yet")}</AlertTitle><AlertDescription><p>{copy(language, "请确认节点已连接到订阅主机，然后重试。", "Confirm the node is connected to the subscription controller, then retry.")}</p><Button className="mt-3" onClick={retryLoad} size="sm" variant="outline"><RefreshCwIcon data-icon="inline-start" />{copy(language, "重新读取", "Retry")}</Button></AlertDescription></Alert></div> : null}
+      {!running && !inbound && !refreshError && !error ? <div className="px-4"><Alert><AlertTitle>{copy(language, "暂时没有读到这个入站", "This inbound is not available yet")}</AlertTitle><AlertDescription><p>{copy(language, "请确认节点已连接到订阅主机，然后重试。", "Confirm the node is connected to the subscription controller, then retry.")}</p><Button className="mt-3" onClick={retryLoad} size="sm" variant="outline"><RefreshCwIcon data-icon="inline-start" />{copy(language, "重新读取", "Retry")}</Button></AlertDescription></Alert></div> : null}
       {inbound && !editing ? <div className="flex flex-1 flex-col gap-4 px-4">
+        {running || showingCached ? <p aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground">{running ? <Spinner className="size-3.5" /> : null}{running ? copy(language, "正在后台刷新，当前套餐仍可查看。", "Refreshing in the background; the current plan remains visible.") : copy(language, "当前显示上次同步的套餐。", "Showing the last synced plan.")}</p> : null}
+        {refreshError ? <Alert><RefreshCwIcon /><AlertTitle>{copy(language, "当前显示上次同步结果", "Showing the last synced result")}</AlertTitle><AlertDescription><p>{refreshError}</p><Button className="mt-3" disabled={running} onClick={retryLoad} size="sm" variant="outline">{running ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "重新读取", "Retry")}</Button></AlertDescription></Alert> : null}
         <div className="rounded-2xl border bg-muted/20 p-4">
           <div className="flex items-start gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><GaugeIcon aria-hidden="true" className="size-5" /></span><div className="min-w-0"><p className="font-medium">{inbound.displayName || inbound.nodeName || service?.displayName || inbound.name}</p><p className="mt-1 text-sm text-muted-foreground">{copy(language, "此节点单独计量", "Metered independently")}</p></div></div>
           <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "已用流量", "Used")}</dt><dd className="mt-1 font-medium tabular-nums">{formatBytes(inbound.usedBytes)}</dd></div><div><dt className="text-muted-foreground">{copy(language, "套餐总量", "Allowance")}</dt><dd className="mt-1 font-medium tabular-nums">{inbound.totalBytes ? formatBytes(inbound.totalBytes) : copy(language, "不限", "Unlimited")}</dd></div><div><dt className="text-muted-foreground">{copy(language, "下次续期", "Next renewal")}</dt><dd className="mt-1 font-medium tabular-nums">{inbound.resetDays && inbound.nextResetAt ? formatDate(inbound.nextResetAt, language, siteTimezone) : copy(language, "不自动续期", "No auto-renewal")}</dd></div></dl>
@@ -131,14 +140,17 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
         <Button className="w-fit" disabled={inbound.planStatus === "resetting"} onClick={() => { setNotice(""); setEditing(true); }} size="sm"><PencilIcon data-icon="inline-start" />{copy(language, "修改节点套餐", "Edit node plan")}</Button>
       </div> : null}
       {inbound && editing ? <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><InboundTrafficPlanFields idPrefix="inbound-plan" language={language} nextResetAt={nextResetAt} onQuotaChange={setQuota} onResetDaysChange={(value) => { setResetDays(value); setNextResetAt(value === baseline.current.resetDays ? baseline.current.nextResetAt : ""); }} quota={quota} resetDays={resetDays} />{error ? <FieldError className="mt-4" role="alert">{error}</FieldError> : null}</div><SheetFooter><Button disabled={running} onClick={discardEdit} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={running || !dirty} type="submit">{running ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存套餐", "Save plan")}</Button></SheetFooter></form> : null}
-      {!editing && error ? <div className="flex flex-col items-start gap-3 px-4"><FieldError role="alert">{error}</FieldError>{!inbound ? <Button disabled={running} onClick={retryLoad} size="sm" variant="outline">{running ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "重新读取", "Retry")}</Button> : null}</div> : null}
+      {!editing && (error || refreshError && !inbound) ? <div className="flex flex-col items-start gap-3 px-4"><FieldError role="alert">{error || refreshError}</FieldError>{!inbound ? <Button disabled={running} onClick={retryLoad} size="sm" variant="outline">{running ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "重新读取", "Retry")}</Button> : null}</div> : null}
       {!editing ? <SheetFooter><Button onClick={requestClose} variant="outline">{copy(language, "关闭", "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
 }
 
 function readableError(language: Language, error: unknown) {
-  return error instanceof Error && error.message ? error.message.replace(/^center:\s*/i, "") : copy(language, "操作失败，请稍后重试。", "Operation failed. Try again shortly.");
+  if (!(error instanceof Error) || !error.message) return copy(language, "操作失败，请稍后重试。", "Operation failed. Try again shortly.");
+  const normalized = error.message.toLowerCase();
+  if (normalized.includes("session expired") || normalized.includes("live connection") || normalized.includes("did not respond in time")) return userError(language, error);
+  return error.message.replace(/^center:\s*/i, "");
 }
 
 function formatDate(value: string, language: Language, timeZone?: string) {

@@ -120,6 +120,9 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	if serviceStatus == "stopped" || serviceStatus == "failed" {
 		return PublicationView{}, errors.New("center: service must be running before it can be published")
 	}
+	if err := s.ensureServicePublicationChangeAllowed(ctx, tx, input.ServiceID); err != nil {
+		return PublicationView{}, err
+	}
 	if management == 1 && (input.Kind == publicationPublic || input.Kind == publicationCloudflare) && !input.ConfirmHighRisk {
 		return PublicationView{}, errors.New("center: publishing a management page publicly requires explicit high-risk confirmation")
 	}
@@ -237,6 +240,9 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 			return PublicationView{}, err
 		}
 		defer tx.Rollback()
+		if err := s.ensureServicePublicationChangeAllowed(ctx, tx, input.ServiceID); err != nil {
+			return PublicationView{}, err
+		}
 	}
 	now := s.now().UTC()
 	tlsEnabled := webService && (input.Kind == publicationPublic || input.Kind == publicationCloudflare || privateTLS)
@@ -289,10 +295,40 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	if err := tx.Commit(); err != nil {
 		return PublicationView{}, err
 	}
-	if _, err := s.reconcilePublicationDNS(ctx, id, gatewayID, input.DNSProvider, revision); err != nil {
+	dnsReady, err := s.reconcilePublicationDNS(ctx, id, gatewayID, input.DNSProvider, revision)
+	if err != nil {
 		return PublicationView{}, err
 	}
+	needsGatewayApply := isGatewayPublication(input.Kind, webService) || input.Kind == publicationShared443
+	if (input.Kind == publicationPublic || input.Kind == publicationShared443) && !needsGatewayApply {
+		s.schedulePublicationVerification(id, revision)
+	} else if input.Kind == publicationCloudflare && !dnsReady {
+		s.schedulePublicationVerification(id, revision)
+	}
 	return s.Publication(ctx, id)
+}
+
+func (s *Store) ensureServicePublicationChangeAllowed(ctx context.Context, queryer networkQueryer, serviceID string) error {
+	var applicationID, serviceStatus, applicationStatus string
+	if err := queryer.QueryRowContext(ctx, `SELECT s.application_id, s.status, a.status
+		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, serviceID).Scan(&applicationID, &serviceStatus, &applicationStatus); errors.Is(err, sql.ErrNoRows) {
+		return errors.New("center: service not found")
+	} else if err != nil {
+		return err
+	}
+	if applicationStatus != "running" || (serviceStatus != "ready" && serviceStatus != "publishing") {
+		return errors.New("center: service must be healthy before its access can be changed")
+	}
+	var blocked int
+	if err := queryer.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM deployments WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)) +
+		(SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1))`, applicationID, applicationID).Scan(&blocked); err != nil {
+		return err
+	}
+	if blocked != 0 {
+		return errors.New("center: recover or finish the application operation before changing service access")
+	}
+	return nil
 }
 
 func (s *Store) StopPublication(ctx context.Context, id string) error {

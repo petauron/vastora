@@ -75,7 +75,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if listedWorker.Role != threeXUIRoleWorker || listedWorker.ControllerID != masterDeployment.ApplicationID || listedWorker.NodeSyncStatus != "ready" {
 		t.Fatalf("unexpected VLESS worker topology: %#v", listedWorker)
 	}
-	if err := store.RecordAgentHeartbeat(ctx, master.ID, master.Credential, NodeHeartbeat{Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, GatewayHealthy: true, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-12", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Listen: "10.0.0.91", Port: 32123, Enabled: true, RemoteNodeID: 7}}}); err != nil {
+	if err := store.RecordAgentHeartbeat(ctx, master.ID, master.Credential, NodeHeartbeat{Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, GatewayHealthy: true, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-12", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Listen: "10.0.0.91", Port: 32123, Enabled: true, RemoteNodeID: 7, InboundTag: "advanced-reality-12", InboundTotalBytes: 1073741824}}}); err != nil {
 		t.Fatal(err)
 	}
 	services, err := store.ListServices(ctx)
@@ -90,6 +90,26 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	}
 	if !workerInboundFound {
 		t.Fatalf("controller observation was not assigned to its worker: %#v", services)
+	}
+	var observedPlan threeXUIInboundPlan
+	if err := store.db.QueryRowContext(ctx, `SELECT service_id, inbound_tag, total_bytes, reset_days, next_reset_at, last_reset_at, revision, status, retry_at, attempt, last_error
+		FROM three_x_ui_inbound_plans WHERE service_id = (SELECT id FROM services WHERE application_id = ? AND name = 'inbound-12')`, workerDeployment.ApplicationID).Scan(&observedPlan.ServiceID, &observedPlan.InboundTag, &observedPlan.TotalBytes, &observedPlan.ResetDays, &observedPlan.NextResetAt, &observedPlan.LastResetAt, &observedPlan.Revision, &observedPlan.Status, &observedPlan.RetryAt, &observedPlan.Attempt, &observedPlan.LastError); err != nil {
+		t.Fatal(err)
+	}
+	if observedPlan.InboundTag != "advanced-reality-12" || observedPlan.TotalBytes != 1073741824 || observedPlan.ResetDays != 0 || observedPlan.Revision != 1 || observedPlan.Status != "active" {
+		t.Fatalf("observed REALITY plan was not adopted: %#v", observedPlan)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans SET total_bytes = 2147483648, reset_days = 30, revision = 2 WHERE service_id = ?`, observedPlan.ServiceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, master.ID, master.Credential, NodeHeartbeat{Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, GatewayHealthy: true, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-12", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Listen: "10.0.0.91", Port: 32123, Enabled: true, RemoteNodeID: 7, InboundTag: "advanced-reality-12", InboundTotalBytes: 536870912}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT total_bytes, reset_days, revision FROM three_x_ui_inbound_plans WHERE service_id = ?`, observedPlan.ServiceID).Scan(&observedPlan.TotalBytes, &observedPlan.ResetDays, &observedPlan.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if observedPlan.TotalBytes != 2147483648 || observedPlan.ResetDays != 30 || observedPlan.Revision != 2 {
+		t.Fatalf("heartbeat overwrote a Center-managed REALITY plan: %#v", observedPlan)
 	}
 	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, RegionCode: "US", Name: "Worker", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual"})
 	if err != nil {

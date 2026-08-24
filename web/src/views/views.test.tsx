@@ -205,7 +205,7 @@ describe("network and app views", () => {
 	expect(document.body.textContent).toContain("自动启用 HAProxy");
   });
 
-  it("shows a failed install with its reason and a retry action", () => {
+	it("shows a failed install with its reason and a retry action", () => {
     const data = dashboard();
     data.deployments = [{ id: "failed-install", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "install", deleteData: false, error: "container could not start", applicationId: "failed", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -214,8 +214,49 @@ describe("network and app views", () => {
     const technical = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("container could not start"));
     expect(technical?.open).toBe(false);
     expect(container.textContent).toContain("重试");
-    expect(container.textContent).toContain("无需手动刷新");
-  });
+		expect(container.textContent).toContain("无需手动刷新");
+	});
+
+	it("requeues a quarantined deployment with the same task", async () => {
+		const data = dashboard();
+		data.deployments = [{ id: "deploy-recovery", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", reconciliationRequired: true, operation: "upgrade", deleteData: false, error: "container outcome is unknown", applicationId: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+		const retry = vi.spyOn(api, "retryTaskReconciliation").mockResolvedValue({ taskId: "deploy-recovery", kind: "application.apply", queued: true });
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+		expect(container.textContent).toContain("需恢复");
+		expect(container.textContent).toContain("不会重复安装");
+		await act(async () => {
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续恢复"))?.click();
+			await Promise.resolve();
+		});
+		expect(retry).toHaveBeenCalledWith("deploy-recovery");
+	});
+
+	it("locks service changes during deployment recovery but still allows stopping an existing access point", async () => {
+		const data = dashboard();
+		data.apps[0].app.config = [{ key: "endpoint", label: { en: "Endpoint", "zh-CN": "地址" }, description: { en: "Service endpoint", "zh-CN": "服务地址" }, type: "string", required: true, secret: false }];
+		data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
+		data.deployments = [{ id: "deploy-recovery", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", reconciliationRequired: true, operation: "configure", deleteData: false, error: "container outcome is unknown", applicationId: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+		data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+		data.publications = [{ id: "private-panel", serviceId: "manager", kind: "headscale_gateway", gatewayNodeId: "agent", hostname: "panel.home.example", dnsProvider: "headscale", tlsEnabled: false, desiredRevision: 2, appliedRevision: 1, status: "degraded", accessUrl: "http://panel.home.example/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+		const stop = vi.spyOn(api, "stopPublication").mockResolvedValue({ stopped: true });
+		const verify = vi.spyOn(api, "verifyPublication");
+		const updateTLS = vi.spyOn(api, "updatePublicationTLS");
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+
+		expect(container.textContent).toContain("已有入口仍可停止");
+		expect([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.disabled).toBe(true);
+		expect([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("检查"))?.disabled).toBe(true);
+		expect([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("修改配置"))?.disabled).toBe(true);
+		const tlsSwitch = container.querySelector<HTMLElement>('[role="switch"]');
+		expect(tlsSwitch?.getAttribute("aria-disabled")).toBe("true");
+
+		const stopButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("停止"));
+		expect(stopButton?.disabled).toBe(false);
+		await act(async () => { stopButton?.click(); await Promise.resolve(); });
+		expect(stop).toHaveBeenCalledWith("private-panel");
+		expect(verify).not.toHaveBeenCalled();
+		expect(updateTLS).not.toHaveBeenCalled();
+	});
 
   it("guides a new administrator to add the first node", () => {
     const data = dashboard();
@@ -277,6 +318,50 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("管理面板仍只在私网开放");
     expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("subscription-3x-ui.home.vastora.example.com");
     expect(document.querySelector<HTMLSelectElement>("#subscription-kind")?.value).toBe("cloudflare_tunnel");
+  });
+
+  it("turns a completed subscription command into an actionable access check", async () => {
+    const data = realityDashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
+    data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const publication = { id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel" as const, gatewayNodeId: "agent", hostname: "subscription.example.test", dnsProvider: "cloudflare" as const, tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "applying" as const, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" };
+    data.publications = [publication];
+    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "subscription-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: publication.hostname, dnsProvider: "cloudflare", publicationId: publication.id, resultAvailable: false, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" });
+    const verify = vi.spyOn(api, "verifyPublication").mockResolvedValue({ ...publication, status: "ready", accessUrl: `https://${publication.hostname}/` });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("公网订阅"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("3x-ui 已配置，入口尚未确认");
+    expect(document.body.textContent).toContain("不需要继续等待");
+    expect(document.body.textContent).not.toContain("正在自动配置");
+    await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("立即检查入口"))?.click();
+      await Promise.resolve();
+    });
+    expect(verify).toHaveBeenCalledWith("subscription-publication");
+  });
+
+  it("surfaces degraded subscription details and a configuration retry", async () => {
+    const data = realityDashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
+    data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", gatewayNodeId: "agent", hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "degraded", lastError: "TLS health check failed", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
+    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "subscription-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: "subscription.example.test", dnsProvider: "cloudflare", publicationId: "subscription-publication", resultAvailable: false, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("公网订阅"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("订阅入口需要处理");
+    expect(document.body.textContent).toContain("TLS health check failed");
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("重试配置"))).toBe(true);
   });
 
   it("automatically installs later 3x-ui instances as VLESS-only nodes", async () => {
@@ -422,6 +507,32 @@ describe("network and app views", () => {
     expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "reset_traffic", email: "MacBook" });
   });
 
+  it("shows cached clients immediately while refreshing and formats expiry in the Site timezone", async () => {
+    class IdleEventSource {
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      close() {}
+    }
+    vi.stubGlobal("EventSource", IdleEventSource);
+    const data = realityDashboard();
+    const cached: ApplicationCommand = { id: "cached-clients", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 0, usedBytes: 1024, expiryTime: Date.parse("2026-08-23T16:30:00Z"), resetDays: 0, limitIp: 0, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test" }], inboundsObserved: true, subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(cached);
+    vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ ...cached, id: "refresh-clients", state: "pending", clients: undefined, clientsObserved: false, inbounds: undefined, inboundsObserved: false });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理客户端"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("MacBook");
+    expect(document.body.textContent).toContain("正在后台刷新");
+    expect(document.body.textContent).toContain("2026年8月24日");
+  });
+
   it("offers browser-trusted HTTPS only when Cloudflare is connected", () => {
     const data = dashboard();
     data.sites[0].domainSuffix = "vastora.example.com";
@@ -477,6 +588,19 @@ describe("network and app views", () => {
 		expect(document.body.textContent).toContain("vless://one-time-client-link");
 	});
 
+	it("keeps the one-time REALITY link available when only public access fails", async () => {
+		const data = realityDashboard();
+		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-degraded", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "cloudflare", displayName: "🇺🇸 美国Edge", target: "www.example.com:443", sniHostname: "www.example.com", clientCreated: true, error: "center: create REALITY access entry: SNI conflict", resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+		await act(async () => {
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
+			await Promise.resolve();
+		});
+		expect(document.body.textContent).toContain("REALITY 已创建，公网入口待处理");
+		expect(document.body.textContent).toContain("客户端凭据已安全保留");
+		expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("显示一次性链接"))).toBe(true);
+	});
+
 	it("returns to the REALITY form after a previous creation failed", async () => {
 		const data = realityDashboard();
 		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "failed-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "failed", hostname: "reality.failed.example.test", dnsProvider: "manual", action: "create", error: "node plan rejected", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
@@ -487,6 +611,58 @@ describe("network and app views", () => {
 		});
 		expect(document.querySelector("#reality-name")).not.toBeNull();
 		expect(document.body.textContent).not.toContain("node plan rejected");
+	});
+
+	it("continues a quarantined REALITY task without creating a duplicate command", async () => {
+		const data = realityDashboard();
+		const quarantined: ApplicationCommand = { id: "reality-recovery", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "failed", reconciliationRequired: true, hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", error: "remote outcome is unknown", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+		const pending = { ...quarantined, state: "pending" as const, reconciliationRequired: false };
+		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(quarantined);
+		const retry = vi.spyOn(api, "retryTaskReconciliation").mockResolvedValue({ taskId: "reality-recovery", kind: "application.command", queued: true });
+		vi.spyOn(api, "applicationCommand").mockResolvedValue(pending);
+		const create = vi.spyOn(api, "createRealityCommand");
+		mockCommandEvent({ ...pending, state: "succeeded" });
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+		await act(async () => {
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
+			await Promise.resolve();
+		});
+		expect(document.body.textContent).toContain("需要继续恢复");
+		await act(async () => {
+			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("继续恢复"))?.click();
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		expect(retry).toHaveBeenCalledWith("reality-recovery");
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it("keeps a REALITY task locally pending when recovery was queued but the immediate refresh fails", async () => {
+		const data = realityDashboard();
+		const quarantined: ApplicationCommand = { id: "reality-recovery", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "failed", reconciliationRequired: true, hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", error: "remote outcome is unknown", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(quarantined);
+		const retry = vi.spyOn(api, "retryTaskReconciliation").mockResolvedValue({ taskId: "reality-recovery", kind: "application.command", queued: true });
+		vi.spyOn(api, "applicationCommand").mockRejectedValue(new APIError("temporary refresh failure", 503, "unavailable"));
+		const create = vi.spyOn(api, "createRealityCommand");
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+		await act(async () => {
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
+			await Promise.resolve();
+		});
+
+		expect(document.body.textContent).toContain("需要继续恢复");
+		await act(async () => {
+			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("继续恢复"))?.click();
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(retry).toHaveBeenCalledTimes(1);
+		expect(document.body.textContent).toContain("正在自动配置");
+		expect(document.body.textContent).toContain("等待 Agent 接收任务");
+		expect(document.body.textContent).not.toContain("需要继续恢复");
+		expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("继续恢复"))).toBe(false);
+		expect(create).not.toHaveBeenCalled();
 	});
 
 	it("specifies separate subscription-node and initial-client names when creating REALITY", async () => {
@@ -599,6 +775,41 @@ describe("network and app views", () => {
     });
     expect(command).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "update_inbound", serviceId: "reality-service", inboundId: 9, inboundTotalBytes: 300 * 1024 ** 3, inboundResetDays: 31 });
     expect(document.body.textContent).toContain("节点套餐已保存");
+  });
+
+  it("keeps a cached node plan visible while the live refresh is pending", async () => {
+    class IdleEventSource {
+      onopen: (() => void) | null = null;
+      onmessage: ((event: MessageEvent<string>) => void) | null = null;
+      onerror: (() => void) | null = null;
+      close() {}
+    }
+    vi.stubGlobal("EventSource", IdleEventSource);
+    const data = realityDashboard();
+    data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
+    const cached: ApplicationCommand = { id: "cached-traffic", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDays: 30, nextResetAt: "2026-09-22T00:00:00Z" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(cached);
+    vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ ...cached, id: "refresh-traffic", state: "pending", inbounds: undefined, inboundsObserved: false });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("节点套餐"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(document.body.textContent).toContain("200.0 GB");
+    expect(document.body.textContent).toContain("正在后台刷新，当前套餐仍可查看");
+  });
+
+  it("keeps service origin details collapsed by default", () => {
+    const data = realityDashboard();
+    data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const details = [...container.querySelectorAll("details")].find((value) => value.querySelector("summary")?.textContent?.includes("技术信息"));
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain("tcp · 10.0.0.10:30443");
   });
 
   it("shows a recovery path when a node plan renewal fails", async () => {

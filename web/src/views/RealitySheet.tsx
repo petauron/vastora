@@ -77,8 +77,8 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     setBusy(false);
     setError("");
     let cancelled = false;
-    void api.latestApplicationCommand(application.id, "3xui.reality.create").then((latest) => {
-      if (cancelled || latest.state === "failed") return;
+		void api.latestApplicationCommand(application.id, "3xui.reality.create").then((latest) => {
+			if (cancelled || latest.state === "failed" && !latest.reconciliationRequired) return;
       setCommand(latest);
       setDraft((current) => ({ ...current, gatewayID: latest.gatewayNodeId, hostname: latest.hostname, dnsProvider: latest.dnsProvider }));
       if (latest.state === "pending" || latest.state === "running") {
@@ -118,7 +118,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     onClose();
   };
 
-  const reveal = async () => {
+	const reveal = async () => {
     if (!command || command.state !== "succeeded" || !command.clientCreated || !command.resultAvailable) return;
     setBusy(true);
     setError("");
@@ -130,7 +130,25 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     } finally {
       setBusy(false);
     }
-  };
+	};
+
+	const resumeReconciliation = async () => {
+		if (!command?.reconciliationRequired) return;
+		setBusy(true);
+		setError("");
+		let queued = false;
+		try {
+			await api.retryTaskReconciliation(command.id);
+			queued = true;
+			setCommand((current) => current?.id === command.id ? { ...current, state: "pending", reconciliationRequired: false, error: "" } : current);
+			await execute(() => api.applicationCommand(command.id), setCommand);
+		} catch (resumeError) {
+			setError(userError(language, resumeError));
+			if (!queued) setCommand(command);
+		} finally {
+			setBusy(false);
+		}
+	};
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -173,7 +191,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
         <SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle>
         <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、共享 443 网关和 DNS。", "Vastora is configuring 3x-ui, the shared 443 gateway, and DNS on the node.") : copy(language, "选择公网入口后，Vastora 会自动识别地区并生成标准节点名。", "After choosing a public entry, Vastora detects its region and creates a standard node name.")}</SheetDescription>
       </SheetHeader>
-      {command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} manualRecordType={manualRecordType} onReveal={() => void reveal()} onRetry={() => { baseline.current = draft; setCommand(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} />}
+		{command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} manualRecordType={manualRecordType} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} />}
       {command ? <SheetFooter><Button onClick={requestClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
@@ -255,16 +273,19 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
 }
 
 function RealityResult({ busy, command, displayName, dnsProvider, error, gateway, language, manualRecordType, onReveal, onRetry, shareURI }: { busy: boolean; command: ApplicationCommand; displayName: string; dnsProvider: "manual" | "cloudflare"; error: string; gateway?: AgentView; language: Language; manualRecordType: "A" | "AAAA"; onReveal: () => void; onRetry: () => void; shareURI: string }) {
+	const publicationWarning = command.state === "succeeded" && Boolean(command.error);
+	const recoveryRequired = command.state === "failed" && Boolean(command.reconciliationRequired);
   return <div aria-live="polite" className="flex flex-1 flex-col gap-4 px-4">
     <Alert>
       {command.state === "pending" || command.state === "running" ? <Spinner /> : <RadioTowerIcon />}
-      <AlertTitle>{command.state === "succeeded" ? copy(language, "REALITY 已创建", "REALITY is ready") : command.state === "failed" ? copy(language, "创建失败", "Creation failed") : copy(language, "正在自动配置…", "Configuring automatically…")}</AlertTitle>
-      <AlertDescription>{command.state === "pending" ? copy(language, "等待 Agent 接收任务。", "Waiting for the Agent to receive the task.") : command.state === "running" ? copy(language, "正在节点上扫描可用目标并创建入站。", "Scanning feasible targets and creating the inbound on the node.") : command.state === "succeeded" ? copy(language, `“${command.displayName ?? displayName}”已创建独立节点套餐，客户端连接 ${command.hostname}:443。`, `“${command.displayName ?? displayName}” is ready with its independent node plan; clients connect to ${command.hostname}:443.`) : command.error}</AlertDescription>
+			<AlertTitle>{recoveryRequired ? copy(language, "需要继续恢复", "Recovery needs to continue") : publicationWarning ? copy(language, "REALITY 已创建，公网入口待处理", "REALITY was created; public access needs attention") : command.state === "succeeded" ? copy(language, "REALITY 已创建", "REALITY is ready") : command.state === "failed" ? copy(language, "创建失败", "Creation failed") : copy(language, "正在自动配置…", "Configuring automatically…")}</AlertTitle>
+			<AlertDescription>{command.state === "pending" ? copy(language, "等待 Agent 接收任务。", "Waiting for the Agent to receive the task.") : command.state === "running" ? copy(language, "正在节点上扫描可用目标并创建入站。", "Scanning feasible targets and creating the inbound on the node.") : recoveryRequired ? copy(language, "Agent 无法确认上次操作是否已经写入 3x-ui。Vastora 已锁定原任务；继续恢复会核对原结果，不会创建第二个节点。", "The Agent could not confirm whether the last operation reached 3x-ui. Vastora locked the original task; continuing recovery verifies it instead of creating a second node.") : publicationWarning ? copy(language, `“${command.displayName ?? displayName}”和客户端凭据已安全保留；请在应用中重新添加或检查公网入口。`, `“${command.displayName ?? displayName}” and its client credential were kept safely. Re-add or inspect its public access entry in Apps.`) : command.state === "succeeded" ? copy(language, `“${command.displayName ?? displayName}”已创建独立节点套餐，客户端连接 ${command.hostname}:443。`, `“${command.displayName ?? displayName}” is ready with its independent node plan; clients connect to ${command.hostname}:443.`) : command.error}</AlertDescription>
     </Alert>
+		{publicationWarning ? <FieldError>{userError(language, new Error(command.error))}</FieldError> : null}
     {command.state === "succeeded" && command.clientCreated && command.resultAvailable && !shareURI ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "客户端链接只显示一次", "The client link is shown once")}</AlertTitle><AlertDescription><p>{copy(language, "准备好立即导入客户端后再显示；显示后 Center 会删除保存的副本。", "Reveal it only when you are ready to import it. Center deletes its saved copy afterward.")}</p><Button className="mt-3" disabled={busy} onClick={onReveal} size="sm">{busy ? <Spinner data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}{copy(language, "显示一次性链接", "Reveal one-time link")}</Button></AlertDescription></Alert> : null}
     {shareURI ? <div><p className="mb-2 text-sm font-medium">{copy(language, "一次性客户端链接", "One-time client link")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{shareURI}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制链接", "Copy link")} language={language} size="icon" value={shareURI} /></div><p className="mt-2 text-xs text-muted-foreground">{copy(language, "请立即导入客户端并保存；Center 已删除这份一次性链接。", "Import and save it now. Center has deleted its one-time copy.")}</p></div> : null}
     {command.state === "failed" && command.error ? <FieldError>{userError(language, new Error(command.error))}</FieldError> : null}
-    {command.state === "failed" ? <Button className="w-fit" onClick={onRetry} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "修改后重试", "Edit and retry")}</Button> : null}
+		{command.state === "failed" ? <Button className="w-fit" disabled={busy} onClick={onRetry} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{recoveryRequired ? copy(language, "继续恢复", "Continue recovery") : copy(language, "修改后重试", "Edit and retry")}</Button> : null}
     {error ? <FieldError role="alert">{error}</FieldError> : null}
     {dnsProvider === "manual" && gateway?.networkProfile?.publicAddress ? <Alert><Globe2Icon /><AlertTitle>{copy(language, "还需添加一条 DNS 记录", "One DNS record is still needed")}</AlertTitle><AlertDescription><code className="break-all">{manualRecordType} {command.hostname} → {gateway.networkProfile.publicAddress}</code></AlertDescription></Alert> : null}
   </div>;

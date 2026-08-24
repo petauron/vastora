@@ -149,7 +149,7 @@ export type ThreeXUIClientInbound = { id: number; serviceId?: string; name: stri
 export type ThreeXUIClient = { email: string; enabled: boolean; totalBytes: number; usedBytes: number; expiryTime: number; resetDays?: number; limitIp: number; inboundIds: number[]; hasSubscription: boolean };
 export type ThreeXUIClientAction = "list" | "list_inbounds" | "create" | "update" | "update_inbound" | "set_enabled" | "delete" | "reset_traffic" | "reveal_link" | "reveal_subscription";
 export type ThreeXUIClientCommandInput = { applicationId: string; action: ThreeXUIClientAction; serviceId?: string; email?: string; newEmail?: string; inboundId?: number; inboundIds?: number[]; enabled?: boolean; totalBytes?: number; expiryTime?: number; resetDays?: number; limitIp?: number; inboundTotalBytes?: number; inboundResetDays?: number };
-export type ApplicationCommand = { id: string; applicationId: string; gatewayNodeId: string; kind: ApplicationCommandKind; state: "pending" | "running" | "succeeded" | "failed"; hostname: string; dnsProvider: "manual" | "cloudflare"; target?: string; sniHostname?: string; publicationId?: string; action?: ThreeXUIClientAction | "rename" | "create"; regionCode?: string; displayName?: string; inboundId?: number; inboundTotalBytes?: number; inboundUsedBytes?: number; inboundResetDays?: number; inboundNextResetAt?: string; clientCreated?: boolean; clients?: ThreeXUIClient[]; clientsObserved?: boolean; inbounds?: ThreeXUIClientInbound[]; inboundsObserved?: boolean; subscriptionAvailable?: boolean; error?: string; resultAvailable: boolean; createdAt: string; updatedAt: string };
+export type ApplicationCommand = { id: string; applicationId: string; gatewayNodeId: string; kind: ApplicationCommandKind; state: "pending" | "running" | "succeeded" | "failed"; reconciliationRequired?: boolean; hostname: string; dnsProvider: "manual" | "cloudflare"; target?: string; sniHostname?: string; publicationId?: string; action?: ThreeXUIClientAction | "rename" | "create"; regionCode?: string; displayName?: string; inboundId?: number; inboundTotalBytes?: number; inboundUsedBytes?: number; inboundResetDays?: number; inboundNextResetAt?: string; clientCreated?: boolean; clients?: ThreeXUIClient[]; clientsObserved?: boolean; inbounds?: ThreeXUIClientInbound[]; inboundsObserved?: boolean; subscriptionAvailable?: boolean; error?: string; resultAvailable: boolean; createdAt: string; updatedAt: string };
 
 export type Deployment = {
   id: string;
@@ -161,6 +161,7 @@ export type Deployment = {
   deleteData: boolean;
   accessUrl?: string;
   error?: string;
+  reconciliationRequired?: boolean;
   applicationId?: string;
   oneTimeCredentials?: { username: string; password: string };
   createdAt: string;

@@ -521,6 +521,66 @@ func TestVersion17MigrationFailsInFlightThreeXUICommandsClosed(t *testing.T) {
 	}
 }
 
+func TestVersion18MigrationRejectsPreexistingDeploymentCommandRace(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 17); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id)
+		VALUES('agent-v17-worker', 'Legacy Worker', X'0506', '0.1.0', 'active', ?, ?, 'site-v3')`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
+		VALUES('controller-v17', 'Legacy Controller', 'agent-v3', 'site-v3', ?, '', 'running', 'docker', 'master', ?, ?),
+		('worker-v17', 'Legacy Worker', 'agent-v17-worker', 'site-v3', ?, '', 'running', 'docker', 'worker', ?, ?)`, threeXUIAppKey, now, now, threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, operation, state, created_at, updated_at, application_id)
+		VALUES('deployment-v17-active', 'agent-v17-worker', ?, '3.6.0', '{}', '{}', 'configure', 'pending', ?, ?, 'worker-v17')`, threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
+		VALUES('application-command-v17-race', 'controller-v17', 'agent-v3', 'agent-v3', '3xui.clients.manage', '{}', 'pending', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("migrate database from 17 to %d", centerSchemaVersion)) {
+		t.Fatalf("conflicting v17 state was not rejected: %v", err)
+	}
+	db, err = sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	version, err := sqliteSchemaVersion(ctx, db)
+	if err != nil || version != 17 {
+		t.Fatalf("failed migration schema version=%d err=%v", version, err)
+	}
+	var v18Columns int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('deployments') WHERE name IN ('service_address', 'reconciliation_required')`).Scan(&v18Columns); err != nil || v18Columns != 0 {
+		t.Fatalf("failed migration left v18 columns=%d err=%v", v18Columns, err)
+	}
+}
+
 func TestOpenRejectsDatabaseFromANewerRelease(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -630,6 +690,9 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TRIGGER application_command_updates_block_during_three_x_ui_deployment`,
+		`DROP TRIGGER application_commands_block_during_three_x_ui_deployment`,
+		`DROP TRIGGER deployments_block_during_three_x_ui_data_plane`,
 		`DROP TRIGGER application_commands_block_during_three_x_ui_migration`,
 		`DROP TRIGGER application_command_updates_block_during_three_x_ui_migration`,
 		`DROP TRIGGER deployments_block_during_three_x_ui_migration`,

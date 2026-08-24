@@ -74,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
 	mux.HandleFunc("POST /api/v1/deployments", s.requireAuth(true, s.handleCreateDeployment))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/retry-reconciliation", s.requireAuth(true, s.handleRetryTaskReconciliation))
 	mux.HandleFunc("GET /api/v1/organizations", s.requireAuth(false, s.handleListOrganizations))
 	mux.HandleFunc("GET /api/v1/sites", s.requireAuth(false, s.handleListSites))
 	mux.HandleFunc("POST /api/v1/sites", s.requireAuth(true, s.handleCreateSite))

@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,6 +99,33 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
+	store.publicationVerificationBackoff = func(int) time.Duration { return 0 }
+	var sharedPublicationID string
+	var verificationAttempts atomic.Int32
+	verificationDone := make(chan struct{})
+	firstObservedStatus := make(chan string, 1)
+	store.verifyPublication = func(ctx context.Context, id string, _ int64) (PublicationView, error) {
+		if id != sharedPublicationID {
+			return store.markPublicationReady(ctx, id, 0)
+		}
+		attempt := verificationAttempts.Add(1)
+		if attempt < 3 {
+			value, err := store.Publication(ctx, id)
+			if err == nil {
+				if attempt == 1 {
+					firstObservedStatus <- value.Status
+				}
+				value.Status = "pending"
+				value.LastError = "DNS record has not propagated"
+			}
+			return value, err
+		}
+		value, err := store.markPublicationReady(ctx, id, 0)
+		if err == nil {
+			close(verificationDone)
+		}
+		return value, err
+	}
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "public-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}, {Address: "203.0.113.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", PublicAddress: "203.0.113.10", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Public", Code: "public", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID}}); err != nil {
@@ -121,6 +149,10 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sharedPublicationID = shared.ID
+	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET dns_provider = 'cloudflare', status = 'failed', last_error = 'Cloudflare DNS unavailable' WHERE id = ?`, shared.ID); err != nil {
+		t.Fatal(err)
+	}
 	task := claimTask(t, store, node)
 	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil || task.GatewayState.SharedHTTPS == nil {
 		t.Fatalf("shared 443 did not queue a combined gateway state: %#v", task)
@@ -132,9 +164,17 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case <-verificationDone:
+	case <-time.After(time.Second):
+		t.Fatal("shared 443 publication was not verified after gateway apply")
+	}
+	if status := <-firstObservedStatus; status != "failed" {
+		t.Fatalf("gateway success discarded the managed DNS failure before retry: %q", status)
+	}
 	publication, err := store.Publication(ctx, shared.ID)
-	if err != nil || publication.Status != "applying" || publication.Hostname != "vless.example.test" || publication.SNIHostname != "www.example.test" {
-		t.Fatalf("shared publication did not wait for external verification: %#v err=%v", publication, err)
+	if err != nil || publication.Status != "ready" || publication.Hostname != "vless.example.test" || publication.SNIHostname != "www.example.test" || verificationAttempts.Load() != 3 {
+		t.Fatalf("shared publication did not converge after automatic verification: publication=%#v attempts=%d err=%v", publication, verificationAttempts.Load(), err)
 	}
 }
 
@@ -681,7 +721,7 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 }
 
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
-	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", InboundTag: "vastora-test", CreateInitialClient: true}
+	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", TargetAddress: "10.0.0.61", InboundTag: "vastora-test", CreateInitialClient: true}
 	valid := RealityCommandResult{
 		Action:          "create",
 		InboundID:       9,
@@ -700,6 +740,9 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 		t.Fatalf("valid result rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*RealityCommandResult){
+		"private service address": func(value *RealityCommandResult) {
+			value.Listen = "10.0.0.62"
+		},
 		"connection hostname": func(value *RealityCommandResult) {
 			value.ShareURI = strings.Replace(value.ShareURI, "reality.edge.site.example.test", "attacker.example.test", 1)
 		},

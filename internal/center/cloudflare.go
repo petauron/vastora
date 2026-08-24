@@ -42,6 +42,8 @@ type cloudflareError struct {
 	Message string `json:"message"`
 }
 
+var errStalePublicationReconcile = errors.New("center: publication changed during external reconciliation")
+
 type cloudflareEnvelope struct {
 	Success bool              `json:"success"`
 	Errors  []cloudflareError `json:"errors"`
@@ -166,10 +168,10 @@ func (s *Store) ensureCloudflareTunnel(ctx context.Context, agentID string) erro
 	return tx.Commit()
 }
 
-func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationID string) error {
+func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationID string, revision int64) error {
 	var kind, gatewayID, hostname, dnsRecordID string
-	if err := s.db.QueryRowContext(ctx, `SELECT kind, COALESCE(gateway_node_id, ''), hostname, dns_record_id FROM publications WHERE id = ? AND status <> 'stopped'`, publicationID).Scan(&kind, &gatewayID, &hostname, &dnsRecordID); errors.Is(err, sql.ErrNoRows) {
-		return errors.New("center: publication not found")
+	if err := s.db.QueryRowContext(ctx, `SELECT kind, COALESCE(gateway_node_id, ''), hostname, dns_record_id FROM publications WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, publicationID, revision).Scan(&kind, &gatewayID, &hostname, &dnsRecordID); errors.Is(err, sql.ErrNoRows) {
+		return errStalePublicationReconcile
 	} else if err != nil {
 		return err
 	}
@@ -193,19 +195,34 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			return err
 		}
 		if dnsRecordID == "" {
-			dnsRecordID, err = client.createDNSRecord(ctx, "CNAME", hostname, tunnelID+".cfargotunnel.com", true)
+			createdRecordID, createErr := client.createDNSRecord(ctx, "CNAME", hostname, tunnelID+".cfargotunnel.com", true)
+			err = createErr
 			if err != nil {
 				return err
 			}
-			if _, err := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, updated_at = ? WHERE id = ?`, dnsRecordID, s.now().UTC().Format(time.RFC3339Nano), publicationID); err != nil {
-				return err
+			updated, updateErr := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped' AND dns_record_id = ''`, createdRecordID, s.now().UTC().Format(time.RFC3339Nano), publicationID, revision)
+			if updateErr != nil {
+				return errors.Join(updateErr, s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID))
 			}
+			if changed, _ := updated.RowsAffected(); changed != 1 {
+				if cleanupErr := s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID); cleanupErr != nil {
+					return cleanupErr
+				}
+				return errStalePublicationReconcile
+			}
+			dnsRecordID = createdRecordID
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
+		var active int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM publications WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, publicationID, revision).Scan(&active); errors.Is(err, sql.ErrNoRows) {
+			return errStalePublicationReconcile
+		} else if err != nil {
+			return err
+		}
 		if err := s.queueTunnelState(ctx, tx, gatewayID, s.now().UTC()); err != nil {
 			return err
 		}
@@ -225,13 +242,30 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			recordType = "A"
 		}
 		if dnsRecordID == "" {
-			dnsRecordID, err = client.createDNSRecord(ctx, recordType, hostname, ip.String(), false)
-			if err != nil {
-				return err
+			createdRecordID, createErr := client.createDNSRecord(ctx, recordType, hostname, ip.String(), false)
+			if createErr != nil {
+				return createErr
 			}
-			_, err = s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, updated_at = ? WHERE id = ?`, dnsRecordID, s.now().UTC().Format(time.RFC3339Nano), publicationID)
+			updated, updateErr := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped' AND dns_record_id = ''`, createdRecordID, s.now().UTC().Format(time.RFC3339Nano), publicationID, revision)
+			if updateErr != nil {
+				return errors.Join(updateErr, s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID))
+			}
+			if changed, _ := updated.RowsAffected(); changed != 1 {
+				if cleanupErr := s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID); cleanupErr != nil {
+					return cleanupErr
+				}
+				return errStalePublicationReconcile
+			}
 		}
-		return err
+		return nil
+	}
+	return nil
+}
+
+func (s *Store) compensateUntrackedCloudflareDNS(ctx context.Context, client cloudflareClient, publicationID, recordID string) error {
+	if err := client.deleteDNSRecord(ctx, recordID); err != nil {
+		_, saveErr := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, cleanup_pending = CASE WHEN status = 'stopped' THEN 1 ELSE cleanup_pending END, updated_at = ? WHERE id = ? AND dns_record_id = ''`, recordID, s.now().UTC().Format(time.RFC3339Nano), publicationID)
+		return errors.Join(fmt.Errorf("center: remove untracked Cloudflare DNS record: %w", err), saveErr)
 	}
 	return nil
 }

@@ -146,6 +146,10 @@ func (s *Store) completeTunnelState(ctx context.Context, agentID string, revisio
 		return err
 	}
 	publicationStatus := "ready"
+	verificationTargets := []publicationVerificationTarget{}
+	if succeeded {
+		publicationStatus = "applying"
+	}
 	if !succeeded {
 		publicationStatus = "failed"
 	}
@@ -155,7 +159,31 @@ func (s *Store) completeTunnelState(ctx context.Context, agentID string, revisio
 	if err := s.recordTaskEvent(ctx, tx, tunnelTaskID(agentID, revision), agentID, "tunnel.state.apply", revision, event, taskError); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if succeeded {
+		rows, err := tx.QueryContext(ctx, `SELECT id, desired_revision FROM publications
+			WHERE gateway_node_id = ? AND kind = 'cloudflare_tunnel' AND desired_revision <= ? AND status <> 'stopped'`, agentID, revision)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var target publicationVerificationTarget
+			if err := rows.Scan(&target.id, &target.revision); err != nil {
+				rows.Close()
+				return err
+			}
+			verificationTargets = append(verificationTargets, target)
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, target := range verificationTargets {
+		s.schedulePublicationVerification(target.id, target.revision)
+	}
+	return nil
 }
 
 func tunnelTaskID(agentID string, revision int64) string {

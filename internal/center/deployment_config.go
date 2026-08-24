@@ -174,9 +174,21 @@ func (s *Store) storeApplicationSecrets(ctx context.Context, tx *sql.Tx, deploym
 	if err != nil {
 		return err
 	}
+	var previousApplicationSecretID sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT secret_id FROM application_secrets WHERE application_id = ?`, applicationID).Scan(&previousApplicationSecretID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO application_secrets(application_id, secret_id, updated_at) VALUES(?, ?, ?)
 		ON CONFLICT(application_id) DO UPDATE SET secret_id = excluded.secret_id, updated_at = excluded.updated_at`, applicationID, applicationSecretID, now.Format(time.RFC3339Nano))
-	return err
+	if err != nil {
+		return err
+	}
+	if previousApplicationSecretID.Valid && previousApplicationSecretID.String != applicationSecretID {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, previousApplicationSecretID.String); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizeDeploymentConfig(manifest catalog.AppManifest, raw json.RawMessage) ([]byte, json.RawMessage, error) {

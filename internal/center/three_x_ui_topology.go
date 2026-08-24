@@ -160,10 +160,9 @@ func (s *Store) queueThreeXUINodeReconcile(ctx context.Context, tx *sql.Tx, depl
 	var role, siteID, workerName, address, masterApplicationID, masterAgentID string
 	var configJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT a.role, a.site_id, ag.name,
-		COALESCE(p.service_address, ''), d.config_json
+		d.service_address, d.config_json
 		FROM applications a
 		JOIN agents ag ON ag.id = a.node_id
-		LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id
 		JOIN deployments d ON d.id = ? AND d.application_id = a.id
 		WHERE a.id = ?`, deploymentID, workerApplicationID).Scan(&role, &siteID, &workerName, &address, &configJSON); err != nil {
 		return fmt.Errorf("center: read 3x-ui node topology: %w", err)
@@ -234,7 +233,7 @@ func (s *Store) queueThreeXUINodeRemoval(ctx context.Context, tx *sql.Tx, worker
 
 func (s *Store) insertThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, masterAgentID, workerApplicationID string, task ThreeXUINodeCommandTask, now time.Time) error {
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, masterAgentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, masterAgentID, controllerCommandKind).Scan(&active); err != nil {
 		return err
 	}
 	if active != 0 {

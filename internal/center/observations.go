@@ -16,12 +16,14 @@ var observedEndpointNamePattern = regexp.MustCompile(`^inbound-[1-9][0-9]*$`)
 
 func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
 	seen := map[string]bool{}
-	for _, value := range observations {
+	for index := range observations {
+		value := &observations[index]
 		value.AppKey = strings.TrimSpace(value.AppKey)
 		value.Name = strings.TrimSpace(value.Name)
 		value.Protocol = strings.TrimSpace(value.Protocol)
 		value.AppProtocol = strings.TrimSpace(value.AppProtocol)
 		value.Listen = strings.TrimSpace(value.Listen)
+		value.InboundTag = strings.TrimSpace(value.InboundTag)
 		if value.AppKey != threeXUIAppKey || !observedEndpointNamePattern.MatchString(value.Name) || (value.Protocol != "tcp" && value.Protocol != "udp") || value.AppProtocol == "" || value.Port < 1 || value.Port > 65535 {
 			return errors.New("center: Agent reported an invalid application endpoint")
 		}
@@ -30,6 +32,9 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 		}
 		if value.RemoteNodeID < 0 {
 			return errors.New("center: Agent reported an invalid remote 3x-ui node")
+		}
+		if value.InboundTotalBytes < 0 || (value.InboundTag != "" && !validThreeXUIInboundTag(value.InboundTag)) {
+			return errors.New("center: Agent reported invalid 3x-ui inbound traffic metadata")
 		}
 		key := strconv.Itoa(value.RemoteNodeID) + ":" + value.Name
 		if seen[key] {
@@ -134,6 +139,9 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 		} else if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol = ?, container_port = ?, host_port = ?, endpoint = ?, app_protocol = ?, observed_listen = ?, status = ?, last_error = '', updated_at = ? WHERE id = ?`, value.Protocol, value.Port, value.Port, endpoint, value.AppProtocol, value.Listen, status, now.Format(time.RFC3339Nano), serviceID); err != nil {
 			return err
 		}
+		if err := adoptObservedThreeXUIInboundPlan(ctx, tx, serviceID, value, now); err != nil {
+			return err
+		}
 		delete(existing, value.Name)
 		if !value.Enabled {
 			if err := s.stopServicePublications(ctx, tx, serviceID, now, cleanups); err != nil {
@@ -148,6 +156,32 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 		if err := s.stopServicePublications(ctx, tx, serviceID, now, cleanups); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func adoptObservedThreeXUIInboundPlan(ctx context.Context, tx *sql.Tx, serviceID string, observation ApplicationEndpointObservation, now time.Time) error {
+	if observation.AppProtocol != "vless/tcp/reality" || observation.InboundTag == "" {
+		return nil
+	}
+	updatedAt := now.UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(
+		service_id, inbound_tag, total_bytes, reset_days, next_reset_at, last_reset_at,
+		revision, status, retry_at, attempt, last_error, updated_at
+	) VALUES(?, ?, ?, 0, '', '', 1, 'active', '', 0, '', ?)
+	ON CONFLICT(service_id) DO NOTHING`, serviceID, observation.InboundTag, observation.InboundTotalBytes, updatedAt)
+	if err != nil {
+		return fmt.Errorf("center: adopt observed REALITY traffic plan: %w", err)
+	}
+	if inserted, _ := result.RowsAffected(); inserted == 1 {
+		return nil
+	}
+	// A blank tag identifies a pre-management plan created by the v17 migration.
+	// Once adopted, later heartbeats must not overwrite Center-owned quota settings.
+	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans
+		SET inbound_tag = ?, total_bytes = ?, updated_at = ?
+		WHERE service_id = ? AND inbound_tag = ''`, observation.InboundTag, observation.InboundTotalBytes, updatedAt, serviceID); err != nil {
+		return fmt.Errorf("center: adopt legacy REALITY traffic plan: %w", err)
 	}
 	return nil
 }

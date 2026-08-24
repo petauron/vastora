@@ -58,6 +58,16 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 		if !clientInboundsAvailable(command.Inbounds, command.InboundIDs) {
 			return result, errors.New("agent: selected 3x-ui nodes are unavailable")
 		}
+		existing, found, err := findListedThreeXUIClient(ctx, baseURL, token, command.NewEmail)
+		if err != nil {
+			return result, err
+		}
+		if found {
+			if !threeXUIClientMatchesCommand(existing, command) {
+				return result, errors.New("agent: a different 3x-ui client already uses this name")
+			}
+			break
+		}
 		clientID, err := randomUUID()
 		if err != nil {
 			return result, err
@@ -75,10 +85,16 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 			"inboundIds": command.InboundIDs,
 		}
 		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/add", token, "application/json", payload); err != nil {
-			return result, fmt.Errorf("agent: create 3x-ui client: %w", err)
+			existing, found, recoveryErr := findListedThreeXUIClient(ctx, baseURL, token, command.NewEmail)
+			if recoveryErr != nil {
+				return result, errors.Join(fmt.Errorf("agent: create 3x-ui client: %w", err), recoveryErr)
+			}
+			if !found || !threeXUIClientMatchesCommand(existing, command) {
+				return result, fmt.Errorf("agent: create 3x-ui client: %w", err)
+			}
 		}
 	case "update", "set_enabled":
-		detail, err := getThreeXUIClient(ctx, baseURL, token, command.Email)
+		detail, currentEmail, err := getThreeXUIClientForUpdate(ctx, baseURL, token, command)
 		if err != nil {
 			return result, err
 		}
@@ -94,17 +110,26 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 		} else {
 			setClientJSONField(detail.Client, "enable", command.Enabled)
 		}
-		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(command.Email), token, "application/json", detail.Client); err != nil {
-			return result, fmt.Errorf("agent: update 3x-ui client: %w", err)
+		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(currentEmail), token, "application/json", detail.Client); err != nil {
+			recovered, recoveredEmail, recoveryErr := getThreeXUIClientForUpdate(ctx, baseURL, token, command)
+			if recoveryErr != nil || !threeXUIClientMatchesCommand(recovered, command) {
+				if recoveryErr != nil {
+					return result, errors.Join(fmt.Errorf("agent: update 3x-ui client: %w", err), recoveryErr)
+				}
+				return result, fmt.Errorf("agent: update 3x-ui client: %w", err)
+			}
+			detail, currentEmail = recovered, recoveredEmail
+		} else if command.Action == "update" {
+			currentEmail = command.NewEmail
 		}
 		if command.Action == "update" {
-			if err := syncThreeXUIClientInbounds(ctx, baseURL, token, command.NewEmail, detail.InboundIDs, command.InboundIDs); err != nil {
+			if err := syncThreeXUIClientInbounds(ctx, baseURL, token, currentEmail, detail.InboundIDs, command.InboundIDs); err != nil {
 				return result, err
 			}
 		}
 	case "delete":
-		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/del/"+url.PathEscape(command.Email), token, "application/json", map[string]any{}); err != nil {
-			return result, fmt.Errorf("agent: delete 3x-ui client: %w", err)
+		if err := deleteThreeXUIClientIfExists(ctx, baseURL, token, command.Email); err != nil {
+			return result, err
 		}
 	case "reset_traffic":
 		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/resetTraffic/"+url.PathEscape(command.Email), token, "application/json", map[string]any{}); err != nil {
@@ -238,6 +263,131 @@ func getThreeXUIClient(ctx context.Context, baseURL, token, email string) (three
 	return detail, nil
 }
 
+func findListedThreeXUIClient(ctx context.Context, baseURL, token, email string) (threeXUIClientDetail, bool, error) {
+	exists, err := listedThreeXUIClientExists(ctx, baseURL, token, email)
+	if err != nil {
+		return threeXUIClientDetail{}, false, err
+	}
+	if !exists {
+		return threeXUIClientDetail{}, false, nil
+	}
+	detail, err := getThreeXUIClient(ctx, baseURL, token, email)
+	return detail, err == nil, err
+}
+
+func listedThreeXUIClientExists(ctx context.Context, baseURL, token, email string) (bool, error) {
+	clients, err := listThreeXUIClients(ctx, baseURL, token)
+	if err != nil {
+		return false, err
+	}
+	for _, client := range clients {
+		if client.Email == email {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func deleteThreeXUIClientIfExists(ctx context.Context, baseURL, token, email string) error {
+	exists, err := listedThreeXUIClientExists(ctx, baseURL, token, email)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/del/"+url.PathEscape(email), token, "application/json", map[string]any{}); err != nil {
+		stillExists, recoveryErr := listedThreeXUIClientExists(ctx, baseURL, token, email)
+		if recoveryErr != nil {
+			return errors.Join(fmt.Errorf("agent: delete 3x-ui client: %w", err), recoveryErr)
+		}
+		if stillExists {
+			return fmt.Errorf("agent: delete 3x-ui client: %w", err)
+		}
+	}
+	return nil
+}
+
+func getThreeXUIClientForUpdate(ctx context.Context, baseURL, token string, command ThreeXUIClientCommandTask) (threeXUIClientDetail, string, error) {
+	detail, err := getThreeXUIClient(ctx, baseURL, token, command.Email)
+	if err == nil {
+		return detail, command.Email, nil
+	}
+	if command.Action != "update" || command.NewEmail == "" || command.NewEmail == command.Email {
+		return threeXUIClientDetail{}, "", err
+	}
+	clients, listErr := listThreeXUIClients(ctx, baseURL, token)
+	if listErr != nil {
+		return threeXUIClientDetail{}, "", errors.Join(err, listErr)
+	}
+	newNameExists := false
+	for _, client := range clients {
+		if client.Email == command.Email {
+			return threeXUIClientDetail{}, "", err
+		}
+		if client.Email == command.NewEmail {
+			newNameExists = true
+		}
+	}
+	if !newNameExists {
+		return threeXUIClientDetail{}, "", err
+	}
+	recovered, recoveryErr := getThreeXUIClient(ctx, baseURL, token, command.NewEmail)
+	if recoveryErr != nil {
+		return threeXUIClientDetail{}, "", errors.Join(err, recoveryErr)
+	}
+	return recovered, command.NewEmail, nil
+}
+
+func threeXUIClientMatchesCommand(detail threeXUIClientDetail, command ThreeXUIClientCommandTask) bool {
+	expectedEmail := command.NewEmail
+	if command.Action == "set_enabled" {
+		expectedEmail = command.Email
+	}
+	if clientJSONText(detail.Client, "email") != expectedEmail {
+		return false
+	}
+	var enabled bool
+	if json.Unmarshal(detail.Client["enable"], &enabled) != nil || enabled != command.Enabled {
+		return false
+	}
+	if command.Action == "set_enabled" {
+		return true
+	}
+	var totalBytes, expiryTime int64
+	var resetDays, limitIP int
+	if json.Unmarshal(detail.Client["totalGB"], &totalBytes) != nil || totalBytes != command.TotalBytes ||
+		json.Unmarshal(detail.Client["expiryTime"], &expiryTime) != nil || expiryTime != command.ExpiryTime ||
+		json.Unmarshal(detail.Client["reset"], &resetDays) != nil || resetDays != command.ResetDays ||
+		json.Unmarshal(detail.Client["limitIp"], &limitIP) != nil || limitIP != command.LimitIP {
+		return false
+	}
+	if command.Action == "create" {
+		if clientJSONText(detail.Client, "id") == "" || clientJSONText(detail.Client, "subId") == "" {
+			return false
+		}
+		return sameThreeXUIInboundIDs(detail.InboundIDs, command.InboundIDs)
+	}
+	return true
+}
+
+func sameThreeXUIInboundIDs(actual, expected []int) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	counts := make(map[int]int, len(actual))
+	for _, id := range actual {
+		counts[id]++
+	}
+	for _, id := range expected {
+		if counts[id] == 0 {
+			return false
+		}
+		counts[id]--
+	}
+	return true
+}
+
 func setClientJSONField(client map[string]json.RawMessage, key string, value any) {
 	encoded, _ := json.Marshal(value)
 	client[key] = encoded
@@ -323,7 +473,7 @@ func revealThreeXUIClientLink(ctx context.Context, baseURL, token string, comman
 	if !ok || strings.TrimSpace(inboundRef.ConnectHostname) == "" {
 		return "", errors.New("agent: this client has no ready public REALITY entry")
 	}
-	inbound, err := ensureThreeXUIRealityClientVersion(ctx, baseURL, token, inboundRef.ID)
+	inbound, err := ensureThreeXUIRealityUnrestrictedClientVersion(ctx, baseURL, token, inboundRef.ID)
 	if err != nil {
 		return "", err
 	}
@@ -368,7 +518,7 @@ func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string
 		if strings.TrimSpace(inbound.ConnectHostname) == "" || strings.TrimSpace(inbound.SNIHostname) == "" {
 			continue
 		}
-		if _, err := ensureThreeXUIRealityClientVersion(ctx, baseURL, token, inbound.ID); err != nil {
+		if _, err := ensureThreeXUIRealityUnrestrictedClientVersion(ctx, baseURL, token, inbound.ID); err != nil {
 			return "", err
 		}
 		if err := syncThreeXUIRealityHost(ctx, baseURL, token, inbound.ID, inbound.ConnectHostname, inbound.SNIHostname); err != nil {

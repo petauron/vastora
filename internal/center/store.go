@@ -19,23 +19,32 @@ import (
 )
 
 type Store struct {
-	db                        *sql.DB
-	dataDir                   string
-	key                       []byte
-	headscaleAllowedEndpoints []string
-	headscaleHTTPClient       *http.Client
-	cloudflareOAuth           cloudflareOAuthConfig
-	cloudflareOAuthMu         sync.Mutex
-	cloudflareOAuthSessions   map[string]*cloudflareOAuthSession
-	cloudflareTokenMu         sync.Mutex
-	certificateMu             sync.Mutex
-	siteCertificateMu         sync.Mutex
-	publicationCleanupMu      sync.Mutex
-	taskChanges               changeNotifier
-	now                       func() time.Time
-	discoverNetworkCandidates func(time.Time) ([]networking.Candidate, error)
-	lookupPublicRegion        func(context.Context, string) (string, error)
-	issuePrivateCertificate   func(context.Context, ...string) (managedCertificate, error)
+	db                             *sql.DB
+	dataDir                        string
+	key                            []byte
+	backgroundCtx                  context.Context
+	backgroundCancel               context.CancelFunc
+	backgroundMu                   sync.Mutex
+	backgroundClosed               bool
+	backgroundWG                   sync.WaitGroup
+	headscaleAllowedEndpoints      []string
+	headscaleHTTPClient            *http.Client
+	cloudflareOAuth                cloudflareOAuthConfig
+	cloudflareOAuthMu              sync.Mutex
+	cloudflareOAuthSessions        map[string]*cloudflareOAuthSession
+	cloudflareTokenMu              sync.Mutex
+	certificateMu                  sync.Mutex
+	siteCertificateMu              sync.Mutex
+	publicationCleanupMu           sync.Mutex
+	publicationVerificationMu      sync.Mutex
+	publicationVerificationJobs    map[string]*publicationVerificationJob
+	publicationVerificationBackoff func(int) time.Duration
+	verifyPublication              func(context.Context, string, int64) (PublicationView, error)
+	taskChanges                    changeNotifier
+	now                            func() time.Time
+	discoverNetworkCandidates      func(time.Time) ([]networking.Candidate, error)
+	lookupPublicRegion             func(context.Context, string) (string, error)
+	issuePrivateCertificate        func(context.Context, ...string) (managedCertificate, error)
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
@@ -70,14 +79,19 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		return nil, fmt.Errorf("center: open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
+	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
 	store := &Store{
 		db: db, dataDir: dataDir, key: key,
-		headscaleAllowedEndpoints: headscaleAllowedEndpoints,
-		headscaleHTTPClient:       &http.Client{Timeout: 20 * time.Second},
-		cloudflareOAuth:           defaultCloudflareOAuthConfig(),
-		cloudflareOAuthSessions:   make(map[string]*cloudflareOAuthSession),
-		now:                       time.Now,
-		discoverNetworkCandidates: networking.Discover,
+		backgroundCtx:                  backgroundCtx,
+		backgroundCancel:               backgroundCancel,
+		headscaleAllowedEndpoints:      headscaleAllowedEndpoints,
+		headscaleHTTPClient:            &http.Client{Timeout: 20 * time.Second},
+		cloudflareOAuth:                defaultCloudflareOAuthConfig(),
+		cloudflareOAuthSessions:        make(map[string]*cloudflareOAuthSession),
+		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),
+		publicationVerificationBackoff: defaultPublicationVerificationBackoff,
+		now:                            time.Now,
+		discoverNetworkCandidates:      networking.Discover,
 		lookupPublicRegion: countryISLookup(&http.Client{
 			Timeout: 8 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -85,16 +99,20 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 			},
 		}),
 	}
+	store.verifyPublication = store.verifyPublicationRevision
 	store.issuePrivateCertificate = store.obtainPrivateCertificate
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
+		backgroundCancel()
 		_ = db.Close()
 		return nil, err
 	}
 	if err := store.ensureHeadscaleDNSFile(); err != nil {
+		backgroundCancel()
 		_ = db.Close()
 		return nil, err
 	}
 	if err := store.enforceThreeXUIWorkerIsolation(context.Background()); err != nil {
+		backgroundCancel()
 		_ = db.Close()
 		return nil, err
 	}
@@ -102,5 +120,28 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 }
 
 func (s *Store) Close() error {
+	s.backgroundMu.Lock()
+	if !s.backgroundClosed {
+		s.backgroundClosed = true
+		if s.backgroundCancel != nil {
+			s.backgroundCancel()
+		}
+	}
+	s.backgroundMu.Unlock()
+	s.backgroundWG.Wait()
 	return s.db.Close()
+}
+
+func (s *Store) startBackground(run func()) bool {
+	s.backgroundMu.Lock()
+	defer s.backgroundMu.Unlock()
+	if s.backgroundClosed {
+		return false
+	}
+	s.backgroundWG.Add(1)
+	go func() {
+		defer s.backgroundWG.Done()
+		run()
+	}()
+	return true
 }

@@ -61,7 +61,7 @@ func (s *Store) queueScheduledThreeXUIBackup(ctx context.Context, tx *sql.Tx, ag
 		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
 		WHERE a.node_id = ? AND a.app_key = ? AND a.role = 'master' AND a.status = 'running'
 		AND (b.application_id IS NULL OR b.state = 'failed' OR b.updated_at < ?)
-		AND NOT EXISTS (SELECT 1 FROM application_commands c WHERE c.application_id = a.id AND c.state IN ('pending', 'running'))
+		AND NOT EXISTS (SELECT 1 FROM application_commands c WHERE c.application_id = a.id AND (c.state IN ('pending', 'running') OR c.reconciliation_required = 1))
 		AND NOT EXISTS (SELECT 1 FROM three_x_ui_migrations m WHERE m.site_id = a.site_id AND m.state IN ('backing_up', 'restoring', 'switching'))
 		LIMIT 1`, agentID, threeXUIAppKey, now.Add(-threeXUIBackupInterval).Format(time.RFC3339Nano)).Scan(&applicationID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -177,7 +177,7 @@ func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApp
 		// never replay it on the replacement controller.
 		var otherSourceDataCommands int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
-			WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')
+			WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)
 			AND NOT (kind = ? AND json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.action') = 'reset_inbound_plan')`, source.agentID, controllerCommandKind, clientCommandKind).Scan(&otherSourceDataCommands); err != nil {
 			return ThreeXUIControllerMigrationView{}, err
 		}
@@ -204,7 +204,7 @@ func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApp
 	}
 	var activeCommands int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
-		WHERE state IN ('pending', 'running') AND (
+		WHERE (state IN ('pending', 'running') OR reconciliation_required = 1) AND (
 			application_id IN (?, ?) OR (agent_id IN (?, ?) AND kind <> ?)
 		)`, sourceApplicationID, input.TargetApplicationID, source.agentID, target.agentID, controllerCommandKind).Scan(&activeCommands); err != nil {
 		return ThreeXUIControllerMigrationView{}, err
@@ -492,7 +492,7 @@ func (s *Store) RetryThreeXUIControllerMigrationCleanup(ctx context.Context, mig
 		return ThreeXUIControllerMigrationView{}, errors.New("center: old 3x-ui controller cleanup does not need a retry")
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind = ? AND state IN ('pending', 'running')`, sourceApplicationID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, sourceApplicationID, controllerCommandKind).Scan(&active); err != nil {
 		return ThreeXUIControllerMigrationView{}, err
 	}
 	if active != 0 {
@@ -690,7 +690,7 @@ func (s *Store) queueNextThreeXUINodeAfterMigration(ctx context.Context, tx *sql
 	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
-		WHERE agent_id = ? AND kind <> ? AND state IN ('pending', 'running')`, masterAgentID, controllerCommandKind).Scan(&active); err != nil {
+		WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, masterAgentID, controllerCommandKind).Scan(&active); err != nil {
 		return err
 	}
 	if active != 0 {

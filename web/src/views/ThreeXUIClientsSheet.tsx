@@ -3,7 +3,7 @@ import { CheckIcon, CopyIcon, ExternalLinkIcon, LinkIcon, PencilIcon, PlusIcon, 
 import { api } from "../api";
 import type { Application, ApplicationCommand, ThreeXUIClient, ThreeXUIClientCommandInput, ThreeXUIClientInbound } from "../types";
 import type { Language } from "../translations";
-import { copy } from "./shared";
+import { copy, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 import { bytesFromGB, dateInputValueInTimeZone, endOfDayEpochInTimeZone, formatBytes, gigabytesFromBytes, nextRenewalDateInTimeZone, SubscriptionTrafficPlanFields } from "./TrafficPlanFields";
+import { hasObservedThreeXUIState, mergeCachedCommand, mergeCommandUpdate } from "./threeXUICommandState";
 
 type Editor = { client?: ThreeXUIClient } | null;
 type RevealedLink = { title: string; value: string } | null;
@@ -22,6 +23,8 @@ type RevealedLink = { title: string; value: string } | null;
 export function ThreeXUIClientsSheet({ application, advancedURL, language, onClose, siteTimezone }: { application: Application | null; advancedURL?: string; language: Language; onClose: () => void; siteTimezone?: string }) {
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
   const [error, setError] = useState("");
+  const [refreshError, setRefreshError] = useState("");
+  const [showingCached, setShowingCached] = useState(false);
   const [notice, setNotice] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -53,16 +56,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
     setError("");
     const next = await execute(
       () => api.createThreeXUIClientCommand({ applicationId: application.id, ...input }),
-      (value) => setCommand((current) => {
-        if (!current) return value;
-        return {
-          ...value,
-          clients: value.clientsObserved ? value.clients : current.clients,
-          clientsObserved: value.clientsObserved || current.clientsObserved,
-          inbounds: value.inboundsObserved ? value.inbounds : current.inbounds,
-          inboundsObserved: value.inboundsObserved || current.inboundsObserved
-        };
-      })
+      (value) => setCommand((current) => mergeCommandUpdate(current, value))
     );
     if (next?.state === "failed") throw new Error(next.error || "The 3x-ui operation failed");
     return next;
@@ -70,17 +64,32 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 
   useEffect(() => {
     setEditor(null); setEditorDirty(false); setDeleteClient(null); setResetClient(null); setRevealed(null);
-    setNotice(""); setSearch(""); setPage(1); setError(""); setCommand(null);
+    setNotice(""); setSearch(""); setPage(1); setError(""); setRefreshError(""); setShowingCached(false); setCommand(null);
   }, [application?.id]);
 
   useEffect(() => {
     if (!application) return;
     let cancelled = false;
-    void runCommand({ action: "list" }).catch((loadError) => {
-      if (!cancelled) setError(readableError(language, loadError));
+    let freshResolved = false;
+    setRefreshError("");
+    void api.latestApplicationCommand(application.id, "3xui.clients.manage").then((cached) => {
+      if (cancelled || freshResolved || !hasObservedThreeXUIState(cached)) return;
+      setCommand((current) => mergeCachedCommand(current, cached));
+      setShowingCached(true);
+    }).catch(() => { /* First use has no cached observation yet. */ });
+    void runCommand({ action: "list" }).then(() => {
+      freshResolved = true;
+      if (!cancelled) setShowingCached(false);
+    }).catch((loadError) => {
+      if (!cancelled) setRefreshError(readableError(language, loadError));
     });
     return () => { cancelled = true; };
   }, [application?.id, language, runCommand]);
+
+  const refresh = () => {
+    setRefreshError("");
+    void runCommand({ action: "list" }).then(() => setShowingCached(false)).catch((loadError) => setRefreshError(readableError(language, loadError)));
+  };
 
   const run = async (input: Omit<ThreeXUIClientCommandInput, "applicationId">) => {
     setRevealed(null);
@@ -121,8 +130,8 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button disabled={busy || inbounds.length === 0} onClick={() => openEditor({})} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加客户端", "Add client")}</Button>
-            <Button aria-label={copy(language, "刷新客户端", "Refresh clients")} disabled={busy} onClick={() => void run({ action: "list" }).catch(() => undefined)} size="icon-sm" variant="outline">{busy ? <Spinner /> : <RefreshCwIcon />}</Button>
-            <span aria-live="polite" className="text-xs text-muted-foreground">{busy ? copy(language, "正在等待节点响应…", "Waiting for the node…") : copy(language, `${clients.length} 个客户端`, `${clients.length} clients`)}</span>
+            <Button aria-label={copy(language, "刷新客户端", "Refresh clients")} disabled={busy} onClick={refresh} size="icon-sm" variant="outline">{busy ? <Spinner /> : <RefreshCwIcon />}</Button>
+            <span aria-live="polite" className="text-xs text-muted-foreground">{busy && clients.length ? copy(language, `正在后台刷新 · 当前显示 ${clients.length} 个客户端`, `Refreshing in the background · showing ${clients.length} clients`) : busy ? copy(language, "正在等待节点响应…", "Waiting for the node…") : showingCached ? copy(language, `${clients.length} 个客户端 · 上次同步结果`, `${clients.length} clients · last synced result`) : copy(language, `${clients.length} 个客户端`, `${clients.length} clients`)}</span>
             {advancedURL ? <Button className="ml-auto" nativeButton={false} render={<a href={advancedURL} rel="noreferrer" target="_blank" />} size="sm" variant="ghost"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "高级设置", "Advanced settings")}</Button> : null}
           </div>
 
@@ -131,10 +140,12 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
           {revealed ? <Alert><LinkIcon /><AlertTitle>{revealed.title}</AlertTitle><AlertDescription><p>{copy(language, "地址已尝试复制到剪贴板。请只发送给你信任的设备。", "The URL was copied when permitted. Share it only with devices you trust.")}</p><div className="mt-3 flex items-start gap-2 rounded-lg bg-muted p-3"><code className="min-w-0 flex-1 break-all text-xs">{revealed.value}</code><Button aria-label={copy(language, "复制地址", "Copy URL")} onClick={() => void navigator.clipboard?.writeText(revealed.value)} size="icon-sm" variant="outline"><CopyIcon /></Button></div></AlertDescription></Alert> : null}
           {notice ? <p aria-live="polite" className="text-sm text-muted-foreground">{notice}</p> : null}
           {error ? <Alert variant="destructive"><AlertTitle>{copy(language, "操作没有完成", "Operation did not complete")}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
+          {refreshError && clients.length ? <Alert><RefreshCwIcon /><AlertTitle>{copy(language, "正在显示上次同步结果", "Showing the last synced result")}</AlertTitle><AlertDescription><p>{refreshError}</p><Button className="mt-3" disabled={busy} onClick={refresh} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "重新读取", "Retry")}</Button></AlertDescription></Alert> : null}
           {busy && clients.length === 0 ? <div className="flex min-h-28 items-center justify-center gap-2 rounded-2xl border text-sm text-muted-foreground"><Spinner />{copy(language, "正在从节点读取客户端…", "Loading clients from the node…")}</div> : null}
-          {inbounds.length === 0 && !busy ? <Alert><AlertTitle>{copy(language, "还没有 VLESS REALITY 入站", "No VLESS REALITY inbound yet")}</AlertTitle><AlertDescription>{copy(language, "先返回应用卡片一键创建入站，再来添加客户端。", "Create a VLESS REALITY inbound from the app card first, then add clients here.")}</AlertDescription></Alert> : null}
+          {!busy && refreshError && clients.length === 0 ? <Alert variant="destructive"><AlertTitle>{copy(language, "无法读取客户端", "Could not load clients")}</AlertTitle><AlertDescription><p>{refreshError}</p><Button className="mt-3" onClick={refresh} size="sm" variant="outline"><RefreshCwIcon data-icon="inline-start" />{copy(language, "重试", "Retry")}</Button></AlertDescription></Alert> : null}
+          {inbounds.length === 0 && !busy && !refreshError ? <Alert><AlertTitle>{copy(language, "还没有 VLESS REALITY 入站", "No VLESS REALITY inbound yet")}</AlertTitle><AlertDescription>{copy(language, "先返回应用卡片一键创建入站，再来添加客户端。", "Create a VLESS REALITY inbound from the app card first, then add clients here.")}</AlertDescription></Alert> : null}
 
-          {!busy && clients.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><UsersIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有客户端", "No clients yet")}</EmptyTitle><EmptyDescription>{copy(language, "为手机、电脑或路由器各创建一个客户端，便于单独停用和查看流量。", "Create one client per phone, computer, or router so each can be disabled and tracked separately.")}</EmptyDescription>{inbounds.length ? <Button className="mt-3" onClick={() => openEditor({})} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加第一个客户端", "Add first client")}</Button> : null}</EmptyHeader></Empty> : null}
+          {!busy && clients.length === 0 && !refreshError ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><UsersIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有客户端", "No clients yet")}</EmptyTitle><EmptyDescription>{copy(language, "为手机、电脑或路由器各创建一个客户端，便于单独停用和查看流量。", "Create one client per phone, computer, or router so each can be disabled and tracked separately.")}</EmptyDescription>{inbounds.length ? <Button className="mt-3" onClick={() => openEditor({})} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加第一个客户端", "Add first client")}</Button> : null}</EmptyHeader></Empty> : null}
 
           <div className="grid gap-3">
             {visibleClients.map((client) => {
@@ -145,7 +156,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
                   <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-medium">{client.email}</h3><Badge variant={client.enabled ? "secondary" : "outline"}>{client.enabled ? copy(language, "已启用", "Enabled") : copy(language, "已停用", "Disabled")}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{inboundNames.length ? copy(language, `已接入 ${inboundNames.length} 个节点：${inboundNames.join("、")}`, `Connected to ${inboundNames.length} node(s): ${inboundNames.join(", ")}`) : copy(language, "未连接节点", "No node attached")}</p></div>
                   <Switch aria-label={copy(language, `启用 ${client.email}`, `Enable ${client.email}`)} checked={client.enabled} disabled={busy} onCheckedChange={(enabled) => void run({ action: "set_enabled", email: client.email, enabled }).catch(() => undefined)} />
                 </div>
-                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-4"><Metric label={copy(language, "全节点已用", "Used across all nodes")} value={`${formatBytes(client.usedBytes)}${client.totalBytes ? ` / ${formatBytes(client.totalBytes)}` : ""}`} /><Metric label={copy(language, "有效期", "Expires")} value={formatExpiry(client.expiryTime, language)} /><Metric label={copy(language, "自动续期", "Auto-renewal")} value={client.resetDays ? copy(language, `每 ${client.resetDays} 天`, `Every ${client.resetDays} days`) : copy(language, "关闭", "Off")} /><Metric label={copy(language, "设备数限制", "IP limit")} value={client.limitIp ? String(client.limitIp) : copy(language, "不限", "Unlimited")} /></div>
+                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-4"><Metric label={copy(language, "全节点已用", "Used across all nodes")} value={`${formatBytes(client.usedBytes)}${client.totalBytes ? ` / ${formatBytes(client.totalBytes)}` : ""}`} /><Metric label={copy(language, "有效期", "Expires")} value={formatExpiry(client.expiryTime, language, siteTimezone)} /><Metric label={copy(language, "自动续期", "Auto-renewal")} value={client.resetDays ? copy(language, `每 ${client.resetDays} 天`, `Every ${client.resetDays} days`) : copy(language, "关闭", "Off")} /><Metric label={copy(language, "设备数限制", "IP limit")} value={client.limitIp ? String(client.limitIp) : copy(language, "不限", "Unlimited")} /></div>
 	                {resetClient?.email === client.email ? <Alert className="mt-4"><RotateCcwIcon /><AlertTitle>{copy(language, `重置“${client.email}”的订阅用量？`, `Reset subscription usage for “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "这会把该客户端在所有 VLESS 节点上的合计用量清零，相当于立即开始一个新套餐周期，且不能撤销。", "This clears the client's combined usage across every VLESS node, immediately starting a new allowance cycle. It cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setResetClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).then(() => setResetClient(null)).catch(() => undefined)} size="sm">{copy(language, "确认重置", "Reset usage")}</Button></div></AlertDescription></Alert> : null}
                 {deleteClient?.email === client.email ? <Alert className="mt-4" variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : <div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy || !publishedInbound} onClick={() => void reveal(client, "reveal_link")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制 VLESS", "Copy VLESS")}</Button><Button disabled={busy || !command?.subscriptionAvailable} onClick={() => void reveal(client, "reveal_subscription")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制订阅", "Copy subscription")}</Button><Button disabled={busy} onClick={() => openEditor({ client })} size="icon-sm" title={copy(language, "编辑", "Edit")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑", "Edit")}</span></Button><Button disabled={busy} onClick={() => { setDeleteClient(null); setResetClient(client); }} size="icon-sm" title={copy(language, "重置流量", "Reset traffic")} variant="ghost"><RotateCcwIcon /><span className="sr-only">{copy(language, "重置流量", "Reset traffic")}</span></Button><Button disabled={busy} onClick={() => { setResetClient(null); setDeleteClient(client); }} size="icon-sm" title={copy(language, "删除", "Delete")} variant="ghost"><Trash2Icon /><span className="sr-only">{copy(language, "删除", "Delete")}</span></Button></div>}
                 {!publishedInbound ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "为入站完成公网发布后才能导出 VLESS 链接。", "Publish the inbound before exporting a VLESS URL.")}</p> : null}
@@ -253,5 +264,17 @@ function sameSelection(left: number[], right: number[]) {
 
 function Metric({ label, value }: { label: string; value: string }) { return <div><p className="text-muted-foreground">{label}</p><p className="mt-1 font-medium tabular-nums">{value}</p></div>; }
 
-function formatExpiry(value: number, language: Language) { return value ? new Intl.DateTimeFormat(language, { dateStyle: "medium" }).format(value) : copy(language, "永不过期", "Never"); }
-function readableError(language: Language, error: unknown) { return error instanceof Error && error.message ? error.message.replace(/^center:\s*/i, "") : copy(language, "操作失败，请稍后重试。", "Operation failed. Try again shortly."); }
+function formatExpiry(value: number, language: Language, timeZone?: string) {
+  if (!value) return copy(language, "永不过期", "Never");
+  try {
+    return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeZone: timeZone || "UTC" }).format(value);
+  } catch {
+    return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeZone: "UTC" }).format(value);
+  }
+}
+function readableError(language: Language, error: unknown) {
+  if (!(error instanceof Error) || !error.message) return copy(language, "操作失败，请稍后重试。", "Operation failed. Try again shortly.");
+  const normalized = error.message.toLowerCase();
+  if (normalized.includes("session expired") || normalized.includes("live connection") || normalized.includes("did not respond in time")) return userError(language, error);
+  return error.message.replace(/^center:\s*/i, "");
+}

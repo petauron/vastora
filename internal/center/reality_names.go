@@ -49,7 +49,7 @@ func (s *Store) RunRealityNameReconciliation(ctx context.Context, interval time.
 
 func (s *Store) reconcileRealityDisplayName(ctx context.Context) error {
 	var active int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE state IN ('pending', 'running')`).Scan(&active); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE state IN ('pending', 'running') OR reconciliation_required = 1`).Scan(&active); err != nil {
 		return err
 	}
 	if active != 0 {

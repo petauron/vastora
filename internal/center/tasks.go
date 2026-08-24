@@ -37,13 +37,27 @@ func (s *Store) recordTaskEvent(ctx context.Context, tx *sql.Tx, taskID, agentID
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO task_events(id, task_id, agent_id, kind, revision, event, message, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, id, taskID, agentID, kind, revision, event, message, s.now().UTC().Format(time.RFC3339Nano))
 	if err == nil {
+		s.notifyTaskEventAfterCommit(id, taskID, agentID, kind, event)
+	}
+	return err
+}
+
+// notifyTaskEventAfterCommit waits until SQLite exposes the inserted event on
+// the Store connection before waking any waiter. Store transactions own the
+// single database connection, so the visibility check cannot pass before the
+// transaction commits. Rolled-back events never produce a notification.
+func (s *Store) notifyTaskEventAfterCommit(eventID, taskID, agentID, kind, event string) {
+	s.startBackground(func() {
+		var committed int
+		if err := s.db.QueryRowContext(s.backgroundCtx, `SELECT 1 FROM task_events WHERE id = ?`, eventID).Scan(&committed); err != nil {
+			return
+		}
 		s.taskChanges.notify("agent:" + agentID)
 		s.taskChanges.notify("task:" + taskID)
 		if kind == "application.command" && (event == "succeeded" || event == "failed") {
 			s.taskChanges.notify(threeXUIInboundPlanResetWakeKey)
 		}
-	}
-	return err
+	})
 }
 
 func (s *Store) recordStandaloneTaskEvent(ctx context.Context, taskID, agentID, kind string, revision int64, event, message string) error {

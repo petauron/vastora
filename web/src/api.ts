@@ -98,6 +98,7 @@ export const api = {
 	createThreeXUIClientCommand: (input: ThreeXUIClientCommandInput) => request<ApplicationCommand>("/api/v1/application-commands/clients", { method: "POST", body: JSON.stringify(input) }),
 	latestApplicationCommand: (applicationId: string, kind: ApplicationCommandKind) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/commands/latest?kind=${encodeURIComponent(kind)}`),
 	applicationCommand: (id: string) => request<ApplicationCommand>(`/api/v1/application-commands/${encodeURIComponent(id)}`),
+	retryTaskReconciliation: (id: string) => request<{ taskId: string; kind: string; queued: boolean }>(`/api/v1/tasks/${encodeURIComponent(id)}/retry-reconciliation`, { method: "POST", body: "{}" }),
 	revealApplicationCommand: (id: string) => request<{ shareUri: string }>(`/api/v1/application-commands/${encodeURIComponent(id)}/reveal`, { method: "POST", body: "{}" }),
 	services: () => request<{ services: Service[] }>("/api/v1/services"),
 	routes: () => request<{ routes: Route[] }>("/api/v1/routes"),
