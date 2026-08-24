@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.45](https://github.com/petauron/vastora/compare/v0.1.0-alpha.44...v0.1.0-alpha.45) (2026-08-24)
+
+
+### Bug Fixes
+
+* harden 3x-ui lifecycle reliability ([#135](https://github.com/petauron/vastora/issues/135)) ([457d3b3](https://github.com/petauron/vastora/commit/457d3b3d7a2f55fd4a3cef42d57758b0497686b8))
+
 ## [0.1.0-alpha.44](https://github.com/petauron/vastora/compare/v0.1.0-alpha.43...v0.1.0-alpha.44) (2026-08-23)
 
 
