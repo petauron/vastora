@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.48](https://github.com/petauron/vastora/compare/v0.1.0-alpha.47...v0.1.0-alpha.48) (2026-08-25)
+
+
+### Features
+
+* add built-in Center updates ([#141](https://github.com/petauron/vastora/issues/141)) ([b11054b](https://github.com/petauron/vastora/commit/b11054b5625cb216d54623494d0747940b11ccc2))
+
 ## [0.1.0-alpha.47](https://github.com/petauron/vastora/compare/v0.1.0-alpha.46...v0.1.0-alpha.47) (2026-08-24)
 
 
