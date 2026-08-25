@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.49](https://github.com/petauron/vastora/compare/v0.1.0-alpha.48...v0.1.0-alpha.49) (2026-08-25)
+
+
+### Features
+
+* polish setup controls and REALITY defaults ([#143](https://github.com/petauron/vastora/issues/143)) ([9f39459](https://github.com/petauron/vastora/commit/9f394593e665dedd46e0f67b39907913a617ffc5))
+
 ## [0.1.0-alpha.48](https://github.com/petauron/vastora/compare/v0.1.0-alpha.47...v0.1.0-alpha.48) (2026-08-25)
 
 
