@@ -473,7 +473,7 @@ func revealThreeXUIClientLink(ctx context.Context, baseURL, token string, comman
 	if !ok || strings.TrimSpace(inboundRef.ConnectHostname) == "" {
 		return "", errors.New("agent: this client has no ready public REALITY entry")
 	}
-	inbound, err := ensureThreeXUIRealityUnrestrictedClientVersion(ctx, baseURL, token, inboundRef.ID)
+	inbound, err := ensureThreeXUIRealityMinimumClientVersion(ctx, baseURL, token, inboundRef.ID)
 	if err != nil {
 		return "", err
 	}
@@ -518,7 +518,7 @@ func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string
 		if strings.TrimSpace(inbound.ConnectHostname) == "" || strings.TrimSpace(inbound.SNIHostname) == "" {
 			continue
 		}
-		if _, err := ensureThreeXUIRealityUnrestrictedClientVersion(ctx, baseURL, token, inbound.ID); err != nil {
+		if _, err := ensureThreeXUIRealityMinimumClientVersion(ctx, baseURL, token, inbound.ID); err != nil {
 			return "", err
 		}
 		if err := syncThreeXUIRealityHost(ctx, baseURL, token, inbound.ID, inbound.ConnectHostname, inbound.SNIHostname); err != nil {

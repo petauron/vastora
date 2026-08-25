@@ -12,7 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { SelectControl } from "@/components/SelectControl";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -219,10 +219,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="reality-gateway">{copy(language, "公网入口", "Public entry")}</FieldLabel>
-          <NativeSelect id="reality-gateway" onChange={(event) => onField("gatewayID", event.target.value)} required value={draft.gatewayID}>
-            <option disabled value="">{copy(language, "没有可用的公网网关", "No public gateway available")}</option>
-            {gateways.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
-          </NativeSelect>
+          <SelectControl id="reality-gateway" onValueChange={(value) => onField("gatewayID", value)} options={[{ value: "", label: copy(language, "没有可用的公网网关", "No public gateway available"), disabled: true }, ...gateways.map((agent) => ({ value: agent.id, label: agent.name }))]} required value={draft.gatewayID} />
           <FieldDescription>{copy(language, "按这个入口的真实公网 IP 自动识别节点地区。", "The node region is detected from this entry's confirmed public IP.")}</FieldDescription>
         </Field>
         <Field>
@@ -252,10 +249,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
         </Field>
         <Field>
           <FieldLabel htmlFor="reality-dns">DNS</FieldLabel>
-          <NativeSelect id="reality-dns" onChange={(event) => onField("dnsProvider", event.target.value as RealityDraft["dnsProvider"])} value={draft.dnsProvider}>
-            <option value="manual">{copy(language, "手动添加 A/AAAA", "Add A/AAAA manually")}</option>
-            {cloudflareReady ? <option value="cloudflare">{copy(language, "Cloudflare 自动管理", "Manage with Cloudflare")}</option> : null}
-          </NativeSelect>
+          <SelectControl id="reality-dns" onValueChange={(value) => onField("dnsProvider", value as RealityDraft["dnsProvider"])} options={[{ value: "manual", label: copy(language, "手动添加 A/AAAA", "Add A/AAAA manually") }, ...(cloudflareReady ? [{ value: "cloudflare", label: copy(language, "Cloudflare 自动管理", "Manage with Cloudflare") }] : [])]} value={draft.dnsProvider} />
         </Field>
         <details className="rounded-xl border p-3">
           <summary className="cursor-pointer text-sm font-medium">{copy(language, "高级：自定义伪装目标", "Advanced: custom camouflage target")}</summary>

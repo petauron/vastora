@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { SelectControl } from "@/components/SelectControl";
+import { ThemeToggle } from "@/components/theme";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -276,7 +277,8 @@ export function App() {
             <span className="text-sm font-medium text-muted-foreground">{currentLabel ? copy(language, currentLabel.zh, currentLabel.en) : copy(language, "设置", "Settings")}</span>
             <div className="flex-1" />
             {loadingScreen === screen ? <span aria-live="polite" className="flex items-center gap-2 text-xs text-muted-foreground"><Spinner />{copy(language, "正在更新", "Updating")}</span> : null}
-            <NativeSelect aria-label={copy(language, "界面语言", "Interface language")} onChange={(event) => setLanguage(event.target.value as Language)} size="sm" value={language}><option value="zh-CN">简体中文</option><option value="en">English</option></NativeSelect>
+            <ThemeToggle language={language} />
+            <SelectControl aria-label={copy(language, "界面语言", "Interface language")} className="w-auto" onValueChange={(value) => setLanguage(value as Language)} options={[{ value: "zh-CN", label: "简体中文" }, { value: "en", label: "English" }]} size="sm" value={language} />
           </header>
           <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content" ref={mainRef} tabIndex={-1}>
             {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><WifiOffIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
@@ -314,7 +316,7 @@ function CredentialPage({ language, mode, onLanguage, onSubmit }: { language: La
   return (
     <main className="grid min-h-svh place-items-center bg-muted/35 p-5">
       <div className="flex w-full max-w-sm flex-col gap-5">
-        <div className="flex items-center justify-between"><Brand /><Button aria-label={copy(language, "切换语言", "Change language")} onClick={() => onLanguage(language === "zh-CN" ? "en" : "zh-CN")} size="icon" variant="ghost"><LanguagesIcon /></Button></div>
+        <div className="flex items-center justify-between"><Brand /><div className="flex items-center gap-1"><ThemeToggle language={language} /><Button aria-label={copy(language, "切换语言", "Change language")} onClick={() => onLanguage(language === "zh-CN" ? "en" : "zh-CN")} size="icon" variant="ghost"><LanguagesIcon /></Button></div></div>
         <Card>
           <CardHeader><CardTitle>{mode === "setup" ? copy(language, "创建管理员", "Create administrator") : copy(language, "登录 Center", "Sign in to Center")}</CardTitle><CardDescription>{mode === "setup" ? copy(language, "先保护 Center，下一步再配置位置和网络。不需要 bootstrap token。", "Secure Center first, then configure its location and network. No bootstrap token is required.") : copy(language, "使用管理员账号继续。", "Continue with your administrator account.")}</CardDescription></CardHeader>
           <CardContent>

@@ -159,7 +159,8 @@
     min-height: 44px;
   }
   [data-slot="input"],
-  [data-slot="native-select"] {
+  [data-slot="select-trigger"],
+  [data-slot="select-item"] {
     min-height: 44px;
   }
   [data-slot="switch"]::after {

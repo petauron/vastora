@@ -143,16 +143,26 @@ function oauthEnvironment() {
 
 {
   const connected = [];
+  let prematureCloses = 0;
   connectImplementation = ({ hostname, port }) => {
     connected.push({ hostname, port });
     let controller;
+    let writableClosed = false;
     const readable = new ReadableStream({ start(value) { controller = value; } });
     const writable = new WritableStream({
       write(chunk) {
         const requestLine = new TextDecoder().decode(chunk);
         const challenge = requestLine.match(/^VASTORA-PROBE\/1 ([A-Za-z0-9_-]{43})\n$/)?.[1];
-        controller.enqueue(new TextEncoder().encode(`VASTORA-OK/1 ${challenge}\n`));
-        controller.close();
+        setTimeout(() => {
+          if (writableClosed) return;
+          controller.enqueue(new TextEncoder().encode(`VASTORA-OK/1 ${challenge}\n`));
+          controller.close();
+        }, 0);
+      },
+      close() {
+        writableClosed = true;
+        prematureCloses += 1;
+        controller.error(new Error("writable closed before response"));
       },
     });
     return { opened: Promise.resolve({}), readable, writable, close: async () => {} };
@@ -167,6 +177,7 @@ function oauthEnvironment() {
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: "ready", address: "192.0.2.42", ports: [{ port: 80, ready: true }, { port: 443, ready: true }] });
   assert.deepEqual(connected, [{ hostname: "192.0.2.42", port: 80 }, { hostname: "192.0.2.42", port: 443 }]);
+  assert.equal(prematureCloses, 0);
 }
 
 {

@@ -14,6 +14,7 @@ import { NodesView, agentInstallCommand, validCenterURL } from "./NodesView";
 import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
+import { ThemeProvider } from "../components/theme";
 import { defaultPublicationHostname, defaultRealityHostname } from "./appAccess";
 import { CopyButton, userError } from "./shared";
 
@@ -57,7 +58,7 @@ function render(element: ReactNode) {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  act(() => root?.render(element));
+  act(() => root?.render(<ThemeProvider>{element}</ThemeProvider>));
   return container;
 }
 
@@ -150,9 +151,13 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("高权限");
     expect(container.textContent).not.toContain("Failed");
     expect(container.textContent).toContain("先把应用安装为私有服务");
+    const installed = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("已安装"));
     const store = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"));
+    expect(installed?.querySelector('[data-slot="app-section-count"]')?.getAttribute("data-active")).toBe("true");
     act(() => store?.click());
     expect(store?.getAttribute("aria-pressed")).toBe("true");
+    expect(store?.querySelector('[data-slot="app-section-count"]')?.getAttribute("data-active")).toBe("true");
+    expect(store?.querySelector('[data-slot="app-section-count"]')?.textContent).toBe("1");
     expect(container.textContent).toContain("所有可用节点都已安装或正在安装此应用");
   });
 
@@ -202,6 +207,7 @@ describe("network and app views", () => {
 	const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 	const add = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"));
 	act(() => add?.click());
+	act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
 	expect(document.body.textContent).toContain("共享 443");
 	expect(document.body.textContent).toContain("自动启用 HAProxy");
   });
@@ -309,7 +315,7 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#reality-inbound-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-subscription-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
-    expect(document.querySelector<HTMLSelectElement>("#reality-gateway")?.value).toBe("agent");
+    expect(document.querySelector<HTMLButtonElement>("#reality-gateway")?.textContent).toContain("home-server");
     expect(document.body.textContent).toContain("高级：自定义伪装目标");
   });
 
@@ -326,7 +332,7 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("发布独立订阅服务");
     expect(document.body.textContent).toContain("管理面板仍只在私网开放");
     expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("subscription-3x-ui.home.vastora.example.com");
-    expect(document.querySelector<HTMLSelectElement>("#subscription-kind")?.value).toBe("cloudflare_tunnel");
+    expect(document.querySelector<HTMLButtonElement>("#subscription-kind")?.textContent).toContain("Cloudflare Tunnel");
   });
 
   it("turns a completed subscription command into an actionable access check", async () => {
@@ -898,7 +904,7 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("这还不代表公网能够访问");
     expect(container.textContent).toContain("不需要先安装 Caddy");
     expect(container.querySelector<HTMLInputElement>("#setup-public-address")?.value).toBe("192.9.143.79");
-    expect(container.querySelector<HTMLSelectElement>("#setup-gateway-address")?.value).toBe("10.0.0.157");
+    expect(container.querySelector<HTMLButtonElement>("#setup-gateway-address")?.textContent).toContain("10.0.0.157");
     expect(container.querySelector<HTMLButtonElement>("#setup-nat-confirmed")?.disabled).toBe(true);
   });
 

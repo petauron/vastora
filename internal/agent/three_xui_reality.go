@@ -19,6 +19,8 @@ import (
 	"unicode"
 )
 
+const threeXUIRealityMinClientVersion = "1.8.2"
+
 type threeXUIRealityInbound struct {
 	ID              int             `json:"id"`
 	Tag             string          `json:"tag"`
@@ -154,7 +156,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		if err != nil {
 			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
 		}
-		existing, err = ensureThreeXUIRealityUnrestrictedClientVersion(ctx, baseURL, masterToken, existing.ID)
+		existing, err = ensureThreeXUIRealityMinimumClientVersion(ctx, baseURL, masterToken, existing.ID)
 		if err != nil {
 			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
 		}
@@ -549,14 +551,14 @@ func threeXUIRealityStreamSettings(target, sni, privateKey, publicKey, shortID s
 		"security":    "reality",
 		"realitySettings": map[string]any{
 			"show": false, "xver": 0, "target": target, "serverNames": []string{sni},
-			"privateKey": privateKey, "minClientVer": "",
+			"privateKey": privateKey, "minClientVer": threeXUIRealityMinClientVersion,
 			"maxClientVer": "", "maxTimediff": 0, "shortIds": []string{shortID},
 			"settings": map[string]any{"publicKey": publicKey, "fingerprint": "chrome", "serverName": "", "spiderX": "/"},
 		},
 	}
 }
 
-func ensureThreeXUIRealityUnrestrictedClientVersion(ctx context.Context, baseURL, token string, inboundID int) (threeXUIRealityInbound, error) {
+func ensureThreeXUIRealityMinimumClientVersion(ctx context.Context, baseURL, token string, inboundID int) (threeXUIRealityInbound, error) {
 	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/get/"+strconv.Itoa(inboundID), token, "", nil)
 	if err != nil {
 		return threeXUIRealityInbound{}, fmt.Errorf("agent: get 3x-ui REALITY inbound: %w", err)
@@ -574,15 +576,15 @@ func ensureThreeXUIRealityUnrestrictedClientVersion(ctx context.Context, baseURL
 	if !ok {
 		return threeXUIRealityInbound{}, errors.New("agent: selected REALITY inbound is incomplete")
 	}
-	if minClientVersion, _ := realitySettings["minClientVer"].(string); strings.TrimSpace(minClientVersion) == "" {
+	if minClientVersion, _ := realitySettings["minClientVer"].(string); strings.TrimSpace(minClientVersion) == threeXUIRealityMinClientVersion {
 		return inbound, nil
 	}
-	realitySettings["minClientVer"] = ""
+	realitySettings["minClientVer"] = threeXUIRealityMinClientVersion
 	delete(update, "id")
 	delete(update, "clientStats")
 	delete(update, "fallbackParent")
 	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/update/"+strconv.Itoa(inboundID), token, "application/json", update); err != nil {
-		return threeXUIRealityInbound{}, fmt.Errorf("agent: remove 3x-ui REALITY client-version restriction: %w", err)
+		return threeXUIRealityInbound{}, fmt.Errorf("agent: set 3x-ui REALITY minimum client version: %w", err)
 	}
 	encodedStreamSettings, err := json.Marshal(streamSettings)
 	if err != nil {
