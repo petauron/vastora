@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { MoonIcon, SunIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { observeMediaQuery } from "@/lib/media-query";
 import type { Language } from "@/translations";
 
 type Theme = "light" | "dark";
@@ -49,8 +50,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const followSystem = () => {
       if (!storedTheme()) setTheme(media.matches ? "dark" : "light");
     };
-    media.addEventListener("change", followSystem);
-    return () => media.removeEventListener("change", followSystem);
+    return observeMediaQuery(media, followSystem);
   }, []);
 
   const toggleTheme = useCallback(() => {
