@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.50](https://github.com/petauron/vastora/compare/v0.1.0-alpha.49...v0.1.0-alpha.50) (2026-08-25)
+
+
+### Bug Fixes
+
+* support browsers without media query events ([#145](https://github.com/petauron/vastora/issues/145)) ([e1c1d0f](https://github.com/petauron/vastora/commit/e1c1d0f7a9c84636d0ff44bd65bb9de6e37da8b1))
+
 ## [0.1.0-alpha.49](https://github.com/petauron/vastora/compare/v0.1.0-alpha.48...v0.1.0-alpha.49) (2026-08-25)
 
 
