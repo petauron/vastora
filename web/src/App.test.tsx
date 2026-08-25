@@ -50,6 +50,16 @@ async function renderReadyApp() {
 }
 
 describe("application shell", () => {
+  it("renders when the browser cannot observe system theme changes", async () => {
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn().mockImplementation((query: string) => ({ matches: true, media: query })) });
+    mockReadyCenter();
+
+    const container = await renderReadyApp();
+
+    expect(container.textContent).toContain("Center connected");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
   it("lets the user switch themes and remembers the choice", async () => {
     mockReadyCenter();
     const container = await renderReadyApp();
