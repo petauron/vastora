@@ -6,6 +6,7 @@ export type AppDataPatch = Partial<AppData> & { status: CenterStatus };
 export function emptyAppData(status: CenterStatus): AppData {
   return {
     status,
+    centerUpdate: { currentVersion: status.version, updateAvailable: false, automatic: false, state: "idle" },
     sources: [],
     apps: [],
     agents: [],
@@ -27,8 +28,9 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
 
   switch (screen) {
     case "home": {
-      const [status, sites, agents, applications, publications, actions] = await Promise.all([
+      const [status, centerUpdate, sites, agents, applications, publications, actions] = await Promise.all([
         statusPromise,
+        api.centerUpdate(),
         api.sites(),
         api.agents(),
         api.applications(),
@@ -37,6 +39,7 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
       ]);
       return {
         status,
+        centerUpdate,
         sites: sites.sites,
         agents: agents.agents,
         applications: applications.applications,
@@ -103,14 +106,16 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
       return { status, actions: actions.actions, agents: agents.agents };
     }
     case "settings": {
-      const [status, sources, applications, agents] = await Promise.all([
+      const [status, centerUpdate, sources, applications, agents] = await Promise.all([
         statusPromise,
+        api.centerUpdate(),
         api.sources(),
         api.applications(),
         api.agents()
       ]);
       return {
         status,
+        centerUpdate,
         sources: sources.sources,
         applications: applications.applications,
         agents: agents.agents

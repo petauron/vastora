@@ -24,6 +24,7 @@ export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "setti
 
 export type AppData = {
   status: CenterStatus;
+  centerUpdate: CenterUpdateStatus;
   sources: CatalogSource[];
   apps: AppView[];
   agents: AgentView[];
@@ -37,6 +38,19 @@ export type AppData = {
   integrations: Integration[];
   actions: Action[];
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
+};
+
+export type CenterUpdateStatus = {
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  automatic: boolean;
+  state: "idle" | "queued" | "applying" | "succeeded" | "failed";
+  targetVersion?: string;
+  message?: string;
+  checkedAt?: string;
+  updatedAt?: string;
+  error?: string;
 };
 
 export type AgentConnectionMode = "lan" | "headscale" | "public";

@@ -26,12 +26,24 @@ type Server struct {
 	secureCookies        bool
 	officialCatalog      []byte
 	infrastructure       deployapi.InfrastructureManager
+	updates              deployapi.CenterUpdater
+	releaseChecker       CenterReleaseChecker
 	startupReady         atomic.Bool
 }
 
 func (s *Server) WithInfrastructureManager(manager deployapi.InfrastructureManager) *Server {
 	s.infrastructure = manager
 	s.startupReady.Store(false)
+	return s
+}
+
+func (s *Server) WithCenterUpdater(updates deployapi.CenterUpdater) *Server {
+	s.updates = updates
+	return s
+}
+
+func (s *Server) WithCenterReleaseChecker(checker CenterReleaseChecker) *Server {
+	s.releaseChecker = checker
 	return s
 }
 
@@ -71,6 +83,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/auth/password", s.requireAuth(true, s.handleChangePassword))
 	mux.HandleFunc("GET /api/v1/status", s.requireAuth(false, s.handleStatus))
 	mux.HandleFunc("GET /api/v1/diagnostics", s.requireAuth(false, s.handleDiagnostics))
+	mux.HandleFunc("GET /api/v1/system/update", s.requireAuth(false, s.handleCenterUpdateStatus))
+	mux.HandleFunc("POST /api/v1/system/update", s.requireAuth(true, s.handleStartCenterUpdate))
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
 	mux.HandleFunc("POST /api/v1/deployments", s.requireAuth(true, s.handleCreateDeployment))

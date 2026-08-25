@@ -30,7 +30,7 @@ if [ ! -f "$install_dir/.env" ] || [ ! -f "$install_dir/compose.yaml" ]; then
   echo "$install_dir is not a complete Center installation." >&2
   exit 1
 fi
-for required_file in setup.sh upgrade.sh compose.yaml release.env; do
+for required_file in setup.sh upgrade.sh install-update-service.sh update-center.sh compose.yaml release.env; do
   if [ ! -f "$source_dir/$required_file" ]; then
     echo "The upgrade bundle is incomplete: missing $required_file" >&2
     exit 1
@@ -75,7 +75,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' vastora-gateway-haproxy 2>/dev/nu
 fi
 
 restore_files() {
-  for relative in setup.sh upgrade.sh compose.yaml release.env .env; do
+  for relative in setup.sh upgrade.sh install-update-service.sh update-center.sh compose.yaml release.env .env; do
     if [ -f "$backup_dir/$relative" ]; then
       install -d -m 0755 "$(dirname "$install_dir/$relative")"
       install -m 0644 "$backup_dir/$relative" "$install_dir/$relative"
@@ -85,6 +85,8 @@ restore_files() {
   done
   chmod 0755 "$install_dir/setup.sh"
   if [ -f "$install_dir/upgrade.sh" ]; then chmod 0755 "$install_dir/upgrade.sh"; fi
+  if [ -f "$install_dir/install-update-service.sh" ]; then chmod 0755 "$install_dir/install-update-service.sh"; fi
+  if [ -f "$install_dir/update-center.sh" ]; then chmod 0755 "$install_dir/update-center.sh"; fi
 }
 
 cleanup() {
@@ -158,7 +160,7 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
   echo "Co-located Agent updated to $new_version before Center reconciliation."
 fi
 
-for relative in setup.sh upgrade.sh compose.yaml release.env .env; do
+for relative in setup.sh upgrade.sh install-update-service.sh update-center.sh compose.yaml release.env .env; do
   if [ -f "$install_dir/$relative" ]; then
     install -d -m 0755 "$(dirname "$backup_dir/$relative")"
     install -m 0644 "$install_dir/$relative" "$backup_dir/$relative"
@@ -167,6 +169,8 @@ done
 
 install -m 0755 "$source_dir/setup.sh" "$install_dir/setup.sh"
 install -m 0755 "$source_dir/upgrade.sh" "$install_dir/upgrade.sh"
+install -m 0755 "$source_dir/install-update-service.sh" "$install_dir/install-update-service.sh"
+install -m 0755 "$source_dir/update-center.sh" "$install_dir/update-center.sh"
 install -m 0644 "$source_dir/compose.yaml" "$install_dir/compose.yaml"
 install -m 0644 "$source_dir/release.env" "$install_dir/release.env"
 install -m 0600 "$candidate_env" "$install_dir/.env"
@@ -235,4 +239,5 @@ fi
 files_changed=no
 agent_changed=no
 center_started=no
+"$install_dir/install-update-service.sh" --install-dir "$install_dir"
 echo "Vastora Center was updated successfully${new_version:+ to $new_version}."

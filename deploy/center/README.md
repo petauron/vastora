@@ -73,17 +73,22 @@ supports `--release-url` for a trusted mirror and `--install-dir` for a custom
 location. `setup.sh` supports `--bootstrap-port` and `--ssh-host` after the `--`
 separator.
 
-Run the same public command to upgrade. It keeps `.env`, replaces only managed
-deployment files, validates and pulls the new immutable image before changing
-anything, then starts Center and waits for health. If this host also runs the
-official Vastora Agent service, the upgrader first extracts the matching Agent
-from that pinned image and restarts it before Center can reconcile a newer
-Gateway desired-state schema. It then waits for Center and built-in Headscale
-startup readiness and restarts the Agent again, restoring any shared HTTPS
-gateway from encrypted local desired state. If the new Center has already
-started, the upgrader never rolls the database or image backward automatically;
-inspect the printed logs and restore Center's pre-migration SQLite backup when a
-manual downgrade is required.
+Center checks the same public endpoint for a complete official release. An
+administrator can confirm the update in Settings; a narrow deployer operation
+queues a root systemd one-shot service on the host, so Center still never mounts
+the Docker socket. For the first release containing this updater, run the same
+public command once to install the service.
+
+Both entry points keep `.env`, replace only managed deployment files, validate
+and pull the new immutable image before changing anything, then start Center and
+wait for health. If this host also runs the official Vastora Agent service, the
+upgrader first extracts the matching Agent from that pinned image and restarts
+it before Center can reconcile a newer Gateway desired-state schema. It then
+waits for Center and built-in Headscale startup readiness and restarts the Agent
+again, restoring any shared HTTPS gateway from encrypted local desired state.
+If the new Center has already started, the upgrader never rolls the database or
+image backward automatically; inspect the printed logs and restore Center's
+pre-migration SQLite backup when a manual downgrade is required.
 
 ## Automated releases
 

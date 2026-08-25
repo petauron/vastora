@@ -115,13 +115,15 @@ func runCenter(arguments []string) error {
 		centerServer := center.NewServer(store, *webDir, *tlsCert != "").
 			WithOfficialCatalog(catalogPayload).
 			WithAgentBinaries(*agentBinariesDir).
-			WithSetupAgentConnectURL(normalizedAgentConnectURL)
+			WithSetupAgentConnectURL(normalizedAgentConnectURL).
+			WithCenterReleaseChecker(center.NewOfficialReleaseChecker(""))
 		if *deployerSocket != "" {
 			installer, err := deployapi.NewClient(*deployerSocket)
 			if err != nil {
 				return err
 			}
 			centerServer.WithInfrastructureManager(installer)
+			centerServer.WithCenterUpdater(installer)
 			go func() {
 				reconcileContext, cancel := context.WithTimeout(maintenanceContext, 8*time.Minute)
 				defer cancel()

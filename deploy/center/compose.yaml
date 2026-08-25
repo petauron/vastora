@@ -35,6 +35,8 @@ services:
       - /run/vastora-deployer/deployer.sock
       - --headscale-config-dir
       - /var/lib/vastora-headscale-config
+      - --center-install-dir
+      - /var/lib/vastora-center-install
       - --center-origin
       - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}
     network_mode: host
@@ -44,6 +46,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /run/vastora:/run/vastora
+      - .:/var/lib/vastora-center-install
       - deployer-socket:/run/vastora-deployer
       - headscale-config:/var/lib/vastora-headscale-config
     security_opt:

@@ -18,6 +18,7 @@ func runDeployer(arguments []string) error {
 	socket := flags.String("socket", "/run/vastora-deployer/deployer.sock", "Unix socket exposed to Center")
 	dockerSocket := flags.String("docker-socket", "unix:///var/run/docker.sock", "Docker Engine socket")
 	configDir := flags.String("headscale-config-dir", "/var/lib/vastora-headscale-config", "persisted generated Headscale configuration")
+	centerInstallDir := flags.String("center-install-dir", "/var/lib/vastora-center-install", "host Center installation directory mounted into the helper")
 	centerOrigin := flags.String("center-origin", "127.0.0.1:8080", "loopback Center origin used by the HTTPS gateway")
 	centerUID := flags.Int("center-uid", 65532, "Center user ID allowed to connect")
 	centerGID := flags.Int("center-gid", 65532, "Center group ID allowed to connect")
@@ -33,5 +34,6 @@ func runDeployer(arguments []string) error {
 		CenterOrigin: *centerOrigin,
 	}
 	fmt.Printf("Deployment helper listening on %s\n", *socket)
-	return deployer.ServeUnix(*socket, *centerUID, *centerGID, deployer.NewServer(installer).Handler())
+	server := deployer.NewServer(installer).WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir})
+	return deployer.ServeUnix(*socket, *centerUID, *centerGID, server.Handler())
 }

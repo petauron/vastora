@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { AppWindowIcon, ArrowRightIcon, CircleCheckIcon, PencilIcon, PlusIcon, ServerIcon } from "lucide-react";
+import { AppWindowIcon, ArrowRightIcon, CircleCheckIcon, CircleArrowUpIcon, PencilIcon, PlusIcon, ServerIcon } from "lucide-react";
 import { api } from "../api";
 import { browserTimezone } from "../lib/network";
 import { actionKind, actionMessage, groupActions } from "./ActivityView";
@@ -29,6 +29,7 @@ export function HomeView({ data, language, onNavigate, mutate }: { data: AppData
   return (
     <section className="flex flex-col gap-7">
       <PageHeading title={copy(language, "欢迎回来", "Welcome back")} description={copy(language, "从这里查看节点、应用和访问入口是否正常。", "See whether your nodes, apps, and access points are healthy.")} />
+      {data.centerUpdate.updateAvailable ? <Card size="sm"><CardHeader><CardTitle className="flex items-center gap-2"><CircleArrowUpIcon />{copy(language, `Center ${data.centerUpdate.latestVersion} 已发布`, `Center ${data.centerUpdate.latestVersion} is available`)}</CardTitle><CardDescription>{copy(language, "可在设置中查看并安全更新；配置和数据会保留。", "Review and update safely in Settings; configuration and data are preserved.")}</CardDescription><CardAction><Button onClick={() => onNavigate("settings")} size="sm">{copy(language, "查看更新", "View update")}<ArrowRightIcon data-icon="inline-end" /></Button></CardAction></CardHeader></Card> : null}
       <SetupGuide activeAgents={activeAgents.length} language={language} needsNetwork={needsNetwork} onNavigate={onNavigate} runningApps={data.applications.filter((application) => application.status === "running").length} />
       <div className="grid gap-4 sm:grid-cols-3">
         <SummaryCard description={copy(language, "在线节点", "online nodes")} icon={<ServerIcon />} title={`${connected}/${activeAgents.length}`} />

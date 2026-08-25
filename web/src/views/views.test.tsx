@@ -32,6 +32,7 @@ afterEach(() => {
 
 const dashboard = (): AppData => ({
   status: { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" },
+  centerUpdate: { currentVersion: "test", latestVersion: "test", updateAvailable: false, automatic: true, state: "idle", checkedAt: "2026-08-18T00:00:00Z" },
   sources: [], organizations: [], routes: [], actions: [], integrations: [], threeXUIControllerMigrations: [],
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
   agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", family: "ipv4", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
@@ -1168,5 +1169,17 @@ describe("network and app views", () => {
     act(() => changePassword?.click());
     expect(document.querySelector<HTMLInputElement>("#new-password")?.minLength).toBe(10);
     expect(document.body.textContent).toContain("至少 10 个字符。");
+  });
+
+  it("shows a confirmed Center update instead of exposing Docker access", () => {
+    const data = dashboard();
+    data.centerUpdate = { currentVersion: "0.1.0-alpha.47", latestVersion: "0.1.0-alpha.48", updateAvailable: true, automatic: true, state: "idle", checkedAt: "2026-08-25T00:00:00Z" };
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onLogout={async () => undefined} />);
+    expect(container.textContent).toContain("Center 更新");
+    expect(container.textContent).toContain("0.1.0-alpha.48");
+    const update = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("更新 Center"));
+    act(() => update?.click());
+    expect(document.body.textContent).toContain("预计短暂断开连接");
+    expect(document.body.textContent).toContain("开始更新");
   });
 });
