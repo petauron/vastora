@@ -31,6 +31,8 @@ grep -Fqx 'VASTORA_VERSION=0.1.0-test' "$temporary_dir/release.env"
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$temporary_dir/release.env"
 test -x "$temporary_dir/setup.sh"
 test -x "$temporary_dir/upgrade.sh"
+test -x "$temporary_dir/install-update-service.sh"
+test -x "$temporary_dir/update-center.sh"
 test -f "$temporary_dir/compose.yaml"
 grep -Fq 'docker cp "$agent_container:/usr/local/bin/vastora"' "$temporary_dir/upgrade.sh"
 grep -Fq 'Co-located Agent updated to $new_version before Center reconciliation.' "$temporary_dir/upgrade.sh"
@@ -77,13 +79,22 @@ cat > "$fake_bin/curl" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
-chmod 0755 "$fake_bin/docker" "$fake_bin/curl"
-PATH="$fake_bin:$PATH" "$temporary_dir/upgrade.sh" --install-dir "$existing" >/dev/null
+cat > "$fake_bin/systemctl" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod 0755 "$fake_bin/docker" "$fake_bin/curl" "$fake_bin/systemctl"
+VASTORA_SYSTEMD_UNIT_DIR="$temporary_dir/systemd" PATH="$fake_bin:$PATH" "$temporary_dir/upgrade.sh" --install-dir "$existing" >/dev/null
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$existing/.env"
 grep -Fqx 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' "$existing/.env"
 grep -Fqx 'VASTORA_CUSTOM_VALUE=preserved' "$existing/.env"
 grep -Fqx 'VASTORA_VERSION=0.1.0-test' "$existing/release.env"
 test -x "$existing/upgrade.sh"
+test -x "$existing/update-center.sh"
+test -f "$temporary_dir/systemd/vastora-center-update.service"
+test -f "$temporary_dir/systemd/vastora-center-update.path"
+grep -Fq "PathExists=$existing/.update-request" "$temporary_dir/systemd/vastora-center-update.path"
+grep -Fq "$existing/update-center.sh --install-dir $existing" "$temporary_dir/systemd/vastora-center-update.service"
 
 if "$project_dir/scripts/package-center-install.sh" \
   --version 0.1.0-test \

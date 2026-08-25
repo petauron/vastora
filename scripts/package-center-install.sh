@@ -68,6 +68,8 @@ trap cleanup EXIT HUP INT TERM
 
 install -m 0755 "$project_dir/deploy/center/setup.sh" "$temporary_dir/setup.sh"
 install -m 0755 "$project_dir/deploy/center/upgrade.sh" "$temporary_dir/upgrade.sh"
+install -m 0755 "$project_dir/deploy/center/install-update-service.sh" "$temporary_dir/install-update-service.sh"
+install -m 0755 "$project_dir/deploy/center/update-center.sh" "$temporary_dir/update-center.sh"
 install -m 0644 "$project_dir/deploy/center/compose.yaml" "$temporary_dir/compose.yaml"
 {
   printf 'VASTORA_VERSION=%s\n' "$version"

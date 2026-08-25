@@ -16,10 +16,16 @@ import (
 type Server struct {
 	installer         deployapi.HeadscaleInstaller
 	publicEntryProber deployapi.PublicEntryProber
+	centerUpdater     deployapi.CenterUpdater
 }
 
 func NewServer(installer deployapi.HeadscaleInstaller) *Server {
 	return &Server{installer: installer, publicEntryProber: NewPublicEntryProbeService()}
+}
+
+func (server *Server) WithCenterUpdater(updater deployapi.CenterUpdater) *Server {
+	server.centerUpdater = updater
+	return server
 }
 
 func (server *Server) Handler() http.Handler {
@@ -31,7 +37,41 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/headscale/reconcile", server.reconcileHeadscale)
 	mux.HandleFunc("POST /v1/public-entry/probes", server.startPublicEntryProbe)
 	mux.HandleFunc("DELETE /v1/public-entry/probes/{id}", server.stopPublicEntryProbe)
+	mux.HandleFunc("GET /v1/center/update", server.centerUpdateStatus)
+	mux.HandleFunc("POST /v1/center/update", server.startCenterUpdate)
 	return mux
+}
+
+func (server *Server) centerUpdateStatus(writer http.ResponseWriter, request *http.Request) {
+	if server.centerUpdater == nil {
+		writeJSON(writer, http.StatusOK, deployapi.CenterUpdateExecution{State: "idle"})
+		return
+	}
+	result, err := server.centerUpdater.CenterUpdateStatus(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func (server *Server) startCenterUpdate(writer http.ResponseWriter, request *http.Request) {
+	if server.centerUpdater == nil {
+		writeError(writer, http.StatusConflict, errors.New("deployer: automatic Center updates are unavailable"))
+		return
+	}
+	var input struct {
+		Version string `json:"version"`
+	}
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	result, err := server.centerUpdater.StartCenterUpdate(request.Context(), input.Version)
+	if err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
 }
 
 func (server *Server) startPublicEntryProbe(writer http.ResponseWriter, request *http.Request) {

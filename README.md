@@ -91,9 +91,11 @@ local URL starts the administrator, location, and network wizard without
 claiming public port 443. Users do not clone this repository or enter a
 container image digest. Each Center then generates its own short-lived,
 one-line Agent install command. See [`deploy/center`](deploy/center/README.md)
-for the complete bootstrap flow and local release packaging. Running the same
-command again upgrades an existing managed installation in place while keeping
-its configuration.
+for the complete bootstrap flow and local release packaging. Center checks the
+official complete release selected by that endpoint and offers a confirmed
+in-place update in Settings. The first release with this capability may still
+be installed by running the same command again; later updates preserve the
+configuration and use the built-in updater.
 
 Released Center schemas upgrade in place through ordered, forward-only
 migrations. Center writes a private, consistent SQLite snapshot before applying
