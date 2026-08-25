@@ -27,6 +27,7 @@ afterEach(() => {
 function mockReadyCenter() {
   vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, cloudflareConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
   const status = vi.spyOn(api, "status").mockResolvedValue({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" });
+  vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, automatic: true, state: "idle" });
   vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
   vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
   vi.spyOn(api, "applications").mockResolvedValue({ applications: [] });
