@@ -13,7 +13,7 @@ import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader,
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { SelectControl } from "@/components/SelectControl";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -107,7 +107,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
               <FieldGroup>
                 {firstPrivateNode ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "先让当前 Center 主机加入私网", "Join this Center host first")}</AlertTitle><AlertDescription>{copy(language, "请在安装 Center 的这台服务器运行生成的命令。完成网络确认后，其他节点就能通过私网地址连接。", "Run the generated command on the server hosting Center. After confirming its network, other nodes can connect through the private address.")}</AlertDescription></Alert> : null}
                 <Field><FieldLabel htmlFor="new-node-name">{copy(language, "节点名称", "Node name")}</FieldLabel><Input autoFocus id="new-node-name" maxLength={128} onChange={(event) => setName(event.target.value)} placeholder={copy(language, "例如：新加坡服务器", "For example: Singapore server")} required value={name} /><FieldDescription>{copy(language, "使用容易识别设备或位置的名称。", "Use a name that identifies the device or location.")}</FieldDescription></Field>
-                <Field><FieldLabel htmlFor="new-node-site">{copy(language, "位置", "Location")}</FieldLabel><NativeSelect id="new-node-site" onChange={(event) => setSiteID(event.target.value)} required value={siteID}>{data.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</NativeSelect></Field>
+                <Field><FieldLabel htmlFor="new-node-site">{copy(language, "位置", "Location")}</FieldLabel><SelectControl id="new-node-site" onValueChange={setSiteID} options={data.sites.map((site) => ({ value: site.id, label: site.name }))} required value={siteID} /></Field>
                 <div className="rounded-xl border bg-muted/25 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium">{copy(language, "Agent 将连接 Center", "Agent will connect to Center")}</p><p className="mt-1 text-xs text-muted-foreground">{data.status.agentConnectionMode === "headscale" ? copy(language, "使用安全私网", "Using the secure private network") : data.status.agentConnectionMode === "public" ? copy(language, "使用公网安全连接", "Using a secure public connection") : copy(language, "使用同一局域网", "Using the same local network")}</p></div><Badge variant="secondary">{copy(language, "已自动配置", "Automatic")}</Badge></div></div>
                 <details className="rounded-xl border p-3">
                   <summary className="cursor-pointer text-sm font-medium">{copy(language, "高级设置", "Advanced settings")}</summary>
@@ -198,7 +198,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
         </div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
           <div className="flex-1 overflow-y-auto px-4"><FieldGroup>
             <Field><FieldLabel htmlFor="node-name">{copy(language, "名称", "Name")}</FieldLabel><Input id="node-name" maxLength={128} onChange={(event) => setName(event.target.value)} required value={name} /></Field>
-            <Field><FieldLabel htmlFor="node-site"><MapPinIcon data-icon="inline-start" />{copy(language, "位置", "Location")}</FieldLabel><NativeSelect id="node-site" onChange={(event) => setSiteID(event.target.value)} value={siteID}>{data.sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</NativeSelect></Field>
+            <Field><FieldLabel htmlFor="node-site"><MapPinIcon data-icon="inline-start" />{copy(language, "位置", "Location")}</FieldLabel><SelectControl id="node-site" onValueChange={setSiteID} options={data.sites.map((site) => ({ value: site.id, label: site.name }))} value={siteID} /></Field>
             <div className="rounded-xl border p-4">
               <div className="mb-3 flex items-start justify-between gap-3"><div><p className="text-sm font-medium">{copy(language, "节点用途", "Node purpose")}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{copy(language, "Docker 应用始终可用；按需启用访问网关和 Cloudflare Tunnel。", "Docker apps remain available; enable Gateway and Cloudflare Tunnel only when needed.")}</p></div><Badge variant="secondary">Docker</Badge></div>
               <div className="flex flex-col gap-3">

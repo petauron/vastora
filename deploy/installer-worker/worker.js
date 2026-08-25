@@ -158,14 +158,21 @@ async function probePublicPort(address, port, challenge) {
   try {
     await timeout(socket.opened);
     const writer = socket.writable.getWriter();
-    await timeout(writer.write(new TextEncoder().encode(`VASTORA-PROBE/1 ${challenge}\n`)));
-    await timeout(writer.close());
+    try {
+      await timeout(writer.write(new TextEncoder().encode(`VASTORA-PROBE/1 ${challenge}\n`)));
+    } finally {
+      writer.releaseLock();
+    }
     const reader = socket.readable.getReader();
     let response = "";
-    while (response.length <= 256 && !response.includes("\n")) {
-      const result = await timeout(reader.read());
-      if (result.done) break;
-      response += new TextDecoder().decode(result.value, { stream: true });
+    try {
+      while (response.length <= 256 && !response.includes("\n")) {
+        const result = await timeout(reader.read());
+        if (result.done) break;
+        response += new TextDecoder().decode(result.value, { stream: true });
+      }
+    } finally {
+      reader.releaseLock();
     }
     if (response !== `VASTORA-OK/1 ${challenge}\n`) throw new Error("challenge mismatch");
   } finally {

@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { api } from "./api";
+import { ThemeProvider } from "./components/theme";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -21,6 +22,8 @@ afterEach(() => {
   document.body.replaceChildren();
   window.history.replaceState({}, "", "/");
   window.localStorage.clear();
+  document.documentElement.classList.remove("dark");
+  document.documentElement.style.removeProperty("color-scheme");
   vi.restoreAllMocks();
 });
 
@@ -41,18 +44,33 @@ async function renderReadyApp() {
   const container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  act(() => root?.render(<App />));
+  act(() => root?.render(<ThemeProvider><App /></ThemeProvider>));
   await vi.waitFor(() => expect(container.textContent).toContain("Center connected"));
   return container;
 }
 
 describe("application shell", () => {
+  it("lets the user switch themes and remembers the choice", async () => {
+    mockReadyCenter();
+    const container = await renderReadyApp();
+    const toggle = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Switch to dark mode"]',
+    );
+
+    expect(toggle).not.toBeNull();
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    act(() => toggle?.click());
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(window.localStorage.getItem("vastora.theme")).toBe("dark");
+    expect(toggle?.getAttribute("aria-label")).toBe("Switch to light mode");
+  });
+
   it("requires ten characters when creating the administrator", async () => {
     vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, cloudflareConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    act(() => root?.render(<App />));
+    act(() => root?.render(<ThemeProvider><App /></ThemeProvider>));
     await vi.waitFor(() => expect(container.textContent).toContain("Create administrator"));
     expect(container.querySelector<HTMLInputElement>("#password")?.minLength).toBe(10);
     expect(container.textContent).toContain("At least 10 characters.");
