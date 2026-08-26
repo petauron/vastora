@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.52](https://github.com/petauron/vastora/compare/v0.1.0-alpha.51...v0.1.0-alpha.52) (2026-08-26)
+
+
+### Bug Fixes
+
+* **ci:** allow release PR comments ([#154](https://github.com/petauron/vastora/issues/154)) ([87fa002](https://github.com/petauron/vastora/commit/87fa002297c78bd47ff726459f7a7ebb436266ab))
+* keep Center settings consistent after changes ([#156](https://github.com/petauron/vastora/issues/156)) ([dead798](https://github.com/petauron/vastora/commit/dead798d37aa8aa3310002b8650c99d7521c10de))
+
 ## [0.1.0-alpha.51](https://github.com/petauron/vastora/compare/v0.1.0-alpha.50...v0.1.0-alpha.51) (2026-08-26)
 
 
