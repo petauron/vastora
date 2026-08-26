@@ -89,7 +89,7 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 	if result.CenterURL != "https://center.vastora.new.example.com" || result.HeadscaleURL != "https://headscale.vastora.new.example.com" || result.Namespace != "vastora.new.example.com" || !result.BackupCreated {
 		t.Fatalf("unexpected domain result: %#v", result)
 	}
-	if installer.reconcileInput.CenterURL != result.CenterURL || installer.reconcileInput.HeadscaleURL != result.HeadscaleURL || len(installer.reconcileInput.CenterAliases) != 1 || installer.reconcileInput.CenterAliases[0].URL != "https://center."+oldNamespace || len(installer.reconcileInput.HeadscaleAliases) != 1 {
+	if installer.reconcileInput.CenterURL != result.CenterURL || installer.reconcileInput.HeadscaleURL != result.HeadscaleURL || installer.reconcileInput.CenterPrivateBindAddress != "100.64.0.1" || len(installer.reconcileInput.CenterAliases) != 1 || installer.reconcileInput.CenterAliases[0].URL != "https://center."+oldNamespace || len(installer.reconcileInput.HeadscaleAliases) != 1 {
 		t.Fatalf("unexpected deployment request: %#v", installer.reconcileInput)
 	}
 	updatedSite, err := store.Site(ctx, site.ID)

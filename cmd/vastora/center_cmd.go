@@ -19,6 +19,34 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "decommission-applications":
+		flags := flag.NewFlagSet("center decommission-applications", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "", "Center state directory")
+		deleteData := flags.Bool("delete-data", false, "permanently delete application data")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if *dataDir == "" {
+			return errors.New("--data-dir is required")
+		}
+		if flags.NArg() != 0 {
+			return errors.New("unexpected decommission argument")
+		}
+		store, err := center.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if err := store.DecommissionApplications(ctx, *deleteData, func(message string) {
+			fmt.Println(message)
+		}); err != nil {
+			return err
+		}
+		fmt.Println("All managed applications were removed.")
+		return nil
 	case "agent-token":
 		if len(arguments) < 2 || arguments[1] != "create" {
 			return errors.New("center agent-token create is required")

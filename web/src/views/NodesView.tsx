@@ -157,7 +157,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
   const roles = gateway ? "worker,gateway" : "worker";
   const capabilities = ["docker", gateway ? "gateway" : "", tunnel ? "tunnel" : ""].filter(Boolean).join(",");
   const purposeCommand = `sudo /usr/local/bin/vastora agent configure --data-dir /var/lib/vastora/agent --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
-  const updateCommand = "sudo /usr/local/bin/vastora agent update --data-dir /var/lib/vastora/agent";
+  const updateCommand = `sudo /usr/local/bin/vastora agent update --data-dir /var/lib/vastora/agent --center-url ${shellQuote(data.status.agentConnectUrl)}`;
   const command = commandKind === "purpose" ? purposeCommand : updateCommand;
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

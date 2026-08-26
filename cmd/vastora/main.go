@@ -74,7 +74,7 @@ Usage:
   vastora agent install --center-url URL --token-file FILE [--replace-existing]
   vastora agent status [--data-dir /var/lib/vastora/agent]
   vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
-  vastora agent update [--data-dir /var/lib/vastora/agent]
+  vastora agent update [--data-dir /var/lib/vastora/agent] [--center-url URL]
   vastora agent serve --data-dir DIR [--listen 127.0.0.1:8090]
   vastora catalog keygen --out-dir DIR
   vastora catalog validate --catalog FILE

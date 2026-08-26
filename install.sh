@@ -8,12 +8,14 @@ install_dir="/opt/vastora/center"
 usage() {
   cat <<'EOF'
 Usage: install.sh center [--release-url HTTPS_URL] [--install-dir DIR] [-- SETUP_OPTIONS]
+       install.sh center uninstall [--release-url HTTPS_URL] [--install-dir DIR]
 
 Installs the verified Vastora Center release bundle on loopback, then prints an
 SSH tunnel command for the first-run wizard. Agent commands come from Center.
 
 Examples:
   curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center
+  curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center uninstall
   ./install.sh center -- --ssh-host center.example.com
 EOF
 }
@@ -29,14 +31,33 @@ if [ "${1:-}" != "center" ]; then
 fi
 shift
 
+operation="install"
+if [ "${1:-}" = "uninstall" ]; then
+  operation="uninstall"
+  shift
+fi
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --release-url) release_url="$2"; shift 2 ;;
-    --install-dir) install_dir="$2"; shift 2 ;;
+    --release-url)
+      [ "$#" -ge 2 ] || { echo "--release-url requires a value." >&2; exit 2; }
+      release_url="$2"
+      shift 2
+      ;;
+    --install-dir)
+      [ "$#" -ge 2 ] || { echo "--install-dir requires a value." >&2; exit 2; }
+      install_dir="$2"
+      shift 2
+      ;;
     --) shift; break ;;
     *) break ;;
   esac
 done
+if [ "$operation" = "uninstall" ] && [ "$#" -gt 0 ]; then
+  echo "Unknown uninstall argument: $1" >&2
+  echo "Run 'center uninstall' without cleanup flags; the terminal menu provides every option." >&2
+  exit 2
+fi
 
 if [ "$(uname -s)" != "Linux" ]; then
   echo "Vastora Center installation currently supports Linux hosts." >&2
@@ -119,7 +140,7 @@ fi
 install -d -m 0755 "$(dirname "$install_dir")"
 staging="$(mktemp -d "${install_dir}.new.XXXXXX")"
 tar -xzf "$archive" -C "$staging"
-for required_file in setup.sh upgrade.sh install-update-service.sh update-center.sh compose.yaml release.env; do
+for required_file in setup.sh upgrade.sh uninstall.sh install-update-service.sh update-center.sh compose.yaml release.env; do
   if [ ! -f "$staging/$required_file" ]; then
     echo "The Center release is incomplete: missing $required_file" >&2
     exit 1
@@ -127,8 +148,14 @@ for required_file in setup.sh upgrade.sh install-update-service.sh update-center
 done
 chmod 0755 "$staging/setup.sh"
 chmod 0755 "$staging/upgrade.sh"
+chmod 0755 "$staging/uninstall.sh"
 chmod 0755 "$staging/install-update-service.sh"
 chmod 0755 "$staging/update-center.sh"
+
+if [ "$operation" = "uninstall" ]; then
+  "$staging/uninstall.sh" --install-dir "$install_dir"
+  exit 0
+fi
 
 if [ -d "$install_dir" ]; then
   if [ ! -f "$install_dir/.env" ]; then
