@@ -208,7 +208,7 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 	if err := server.ReconcileBuiltinHeadscale(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if installer.reconcileInput != (deployapi.HeadscaleInstallRequest{}) {
+	if installer.reconcileInput.CenterURL != "" || installer.reconcileInput.HeadscaleURL != "" {
 		t.Fatal("current built-in runtime was reconciled again")
 	}
 }

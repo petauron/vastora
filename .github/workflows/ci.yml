@@ -2,29 +2,138 @@ name: CI
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   pull_request:
+  schedule:
+    - cron: "41 3 * * 1"
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  go:
+  changes:
+    name: Classify changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      web: ${{ steps.filter.outputs.web }}
+      deployment: ${{ steps.filter.outputs.deployment }}
+      security: ${{ steps.filter.outputs.non_release }}
+      container: ${{ steps.filter.outputs.container }}
+      release_metadata: ${{ steps.filter.outputs.release_metadata }}
+      full: ${{ steps.filter.outputs.full == 'true' || steps.filter.outputs.unknown == 'true' }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            go:
+              - 'cmd/**'
+              - 'internal/**'
+              - 'go.mod'
+              - 'go.sum'
+            web:
+              - 'web/**'
+            deployment:
+              - 'deploy/**'
+              - 'scripts/**'
+              - 'install.sh'
+              - 'catalog/**'
+              - 'Dockerfile*'
+              - 'release-please-config.json'
+            container:
+              - 'Dockerfile.center'
+              - '.dockerignore'
+              - 'go.mod'
+              - 'go.sum'
+              - 'web/package.json'
+              - 'web/package-lock.json'
+              - 'catalog/catalog.json'
+            non_release:
+              - '**'
+              - '!CHANGELOG.md'
+              - '!.release-please-manifest.json'
+              - '!version.txt'
+            release_metadata:
+              - 'CHANGELOG.md'
+              - '.release-please-manifest.json'
+              - 'version.txt'
+            full:
+              - '.github/workflows/**'
+              - '.github/dependabot.yml'
+              - 'Makefile'
+              - 'release-please-config.json'
+            unknown:
+              - '**'
+              - '!cmd/**'
+              - '!internal/**'
+              - '!web/**'
+              - '!deploy/**'
+              - '!scripts/**'
+              - '!catalog/**'
+              - '!.github/**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!Dockerfile*'
+              - '!.dockerignore'
+              - '!go.mod'
+              - '!go.sum'
+              - '!install.sh'
+              - '!version.txt'
+              - '!.release-please-manifest.json'
+              - '!release-please-config.json'
+              - '!LICENSE'
+
+  warm-dependency-caches:
+    name: Warm dependency caches
+    if: github.event_name == 'push'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+      - run: go mod download
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: cd web && npm ci --ignore-scripts
+
+  go:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.6"
       - run: make go-check
+      - run: make go-security-check
       - name: Cross-compile Agent binaries
         run: make agent-binaries
 
   web:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'))
+    needs: changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -34,31 +143,38 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: cd web && npm ci --ignore-scripts
       - run: make web-check
+      - run: make web-security-check
 
   deployment:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'))
+    needs: changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: make deployment-check
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.0.0
+      - name: Require x64 and ARM64 runtime images
+        run: scripts/check-runtime-image-platforms.sh
 
   security:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.security == 'true')
+    needs: changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24.19.0"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: cd web && npm ci --ignore-scripts
-      - name: Scan full Git history for secrets
-        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .
-      - run: make dependency-security-check
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -66,13 +182,27 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+  release-metadata:
+    name: Release metadata
+    if: github.event_name == 'pull_request' && needs.changes.outputs.release_metadata == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: .
-          artifact-name: vastora-sbom.spdx.json
+          fetch-depth: 0
+      - name: Validate release pull request metadata
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: scripts/validate-release-metadata.sh "$BASE_SHA"
 
   container-image-security:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.container == 'true' || needs.changes.outputs.full == 'true'))
+    needs: changes
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -80,12 +210,12 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.0.0
-
       - name: Build Center image for scanning
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.0.0
         with:
@@ -97,8 +227,6 @@ jobs:
           build-args: VASTORA_VERSION=0.0.0-ci
           tags: local/vastora-center:${{ github.sha }}-${{ matrix.architecture }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Scan Center image for vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -110,7 +238,6 @@ jobs:
           ignore-unfixed: true
           limit-severities-for-sarif: true
           exit-code: "1"
-
       - name: Upload Center image scan results
         if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
@@ -118,11 +245,26 @@ jobs:
           sarif_file: trivy-center-image-${{ matrix.architecture }}.sarif
           category: trivy-vastora-center-ci-${{ matrix.architecture }}
 
-  runtime-image-platforms:
+  gate:
+    name: CI / gate
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+    needs: [changes, go, web, deployment, security, release-metadata, container-image-security]
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.0.0
-      - name: Require x64 and ARM64 runtime images
-        run: scripts/check-runtime-image-platforms.sh
+      - name: Require every applicable CI job
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          GO_RESULT: ${{ needs.go.result }}
+          WEB_RESULT: ${{ needs.web.result }}
+          DEPLOYMENT_RESULT: ${{ needs.deployment.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
+          CONTAINER_RESULT: ${{ needs.container-image-security.result }}
+        run: |
+          for result in "$CHANGES_RESULT" "$GO_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$CONTAINER_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "Required CI job did not succeed: $result" >&2; exit 1 ;;
+            esac
+          done

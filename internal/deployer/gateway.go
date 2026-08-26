@@ -111,6 +111,21 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			return gatewayReplacement{}, err
 		}
 	}
+	for index, alias := range installer.CenterAliases {
+		for _, file := range []struct {
+			name    string
+			content string
+		}{
+			{filepath.Base(centerAliasCertificatePath(index)), alias.CertificatePEM},
+			{filepath.Base(centerAliasPrivateKeyPath(index)), alias.CertificateKeyPEM},
+		} {
+			if err := copyFile(ctx, docker, created.ID, "/etc/caddy", "system/"+file.name, []byte(file.content)); err != nil {
+				_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
+				_ = replacement.rollback(ctx, docker)
+				return gatewayReplacement{}, err
+			}
+		}
+	}
 	if replacement.legacyWasRunning {
 		if _, err := docker.ContainerStop(ctx, legacy.Container.ID, client.ContainerStopOptions{}); err != nil {
 			_, _ = docker.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})

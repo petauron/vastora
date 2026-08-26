@@ -131,9 +131,15 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 		}
 	}
 	if protected["center"] && protected["headscale"] {
-		route, exists := routes["system-agent-bootstrap"]
-		if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != "public" || route.Path != "/install/agent.sh" {
-			return errors.New("agent: refusing to replace protected system gateway without public Agent bootstrap route")
+		required := []struct{ id, path string }{
+			{"system-agent-bootstrap", "/install/agent.sh"},
+			{"system-agent-binary-bootstrap", "/api/v1/agent-binaries/*"},
+		}
+		for _, expected := range required {
+			route, exists := routes[expected.id]
+			if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != "public" || route.Path != expected.path {
+				return errors.New("agent: refusing to replace protected system gateway without public Agent bootstrap routes")
+			}
 		}
 	}
 	return nil

@@ -44,6 +44,42 @@ func TestEnrollmentReportsNativePlatform(t *testing.T) {
 	}
 }
 
+func TestMigrateEnrollmentReplacesOnlyCenterConnection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"id":"new-agent","credential":"new-credential","name":"moved-node","roles":["worker","gateway"],"capabilities":{"docker":true,"gateway":true}}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "old-agent", Name: "old-node", CenterURL: "https://old-center.example.com", Credential: "old-credential"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "existing-app", AppKey: "vastora-official/cpa", Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`), ServiceAddress: "100.64.0.2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Client{HTTPClient: server.Client()}).MigrateEnrollment(context.Background(), store, server.URL, "one-time-token"); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := store.Connection(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connection.AgentID != "new-agent" || connection.Name != "moved-node" || connection.CenterURL != server.URL || connection.Credential != "new-credential" {
+		t.Fatalf("migrated connection = %#v", connection)
+	}
+	installations, err := store.ListApplied(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(installations) != 1 || installations[0].InstanceID != "existing-app" {
+		t.Fatalf("migration changed local application state: %#v", installations)
+	}
+}
+
 func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -231,6 +267,81 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 	}
 	if observationErr == nil || heartbeats != 1 {
 		t.Fatalf("observation error was not isolated: err=%v heartbeats=%d", observationErr, heartbeats)
+	}
+}
+
+func TestHeartbeatSwitchesToVerifiedCenterURL(t *testing.T) {
+	healthChecks := 0
+	newCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/healthz" {
+			t.Fatalf("unexpected new Center request path: %s", request.URL.Path)
+		}
+		healthChecks++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer newCenter.Close()
+
+	oldCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
+			t.Fatalf("unexpected old Center request path: %s", request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"connected": true, "centerUrl": newCenter.URL})
+	}))
+	defer oldCenter.Close()
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: oldCenter.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	observationErr, heartbeatErr := (Client{}).heartbeat(context.Background(), store)
+	if observationErr != nil || heartbeatErr != nil {
+		t.Fatalf("heartbeat failed: observation=%v heartbeat=%v", observationErr, heartbeatErr)
+	}
+	connection, err := store.Connection(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connection.CenterURL != newCenter.URL || healthChecks != 1 {
+		t.Fatalf("Center URL was not switched after verification: connection=%#v healthChecks=%d", connection, healthChecks)
+	}
+}
+
+func TestHeartbeatKeepsCurrentCenterWhenDesiredURLIsNotReady(t *testing.T) {
+	newCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"status":"reconciling"}`))
+	}))
+	defer newCenter.Close()
+	oldCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"connected": true, "centerUrl": newCenter.URL})
+	}))
+	defer oldCenter.Close()
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: oldCenter.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	_, heartbeatErr := (Client{}).heartbeat(context.Background(), store)
+	if heartbeatErr == nil || !strings.Contains(heartbeatErr.Error(), "health check is not OK") {
+		t.Fatalf("unready Center URL was not rejected: %v", heartbeatErr)
+	}
+	connection, err := store.Connection(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connection.CenterURL != oldCenter.URL {
+		t.Fatalf("unready Center URL replaced the working address: %#v", connection)
 	}
 }
 

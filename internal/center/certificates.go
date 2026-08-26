@@ -33,18 +33,36 @@ type managedCertificate struct {
 }
 
 func (s *Store) obtainPrivateCertificate(ctx context.Context, requestedNames ...string) (managedCertificate, error) {
-	names, err := normalizeCertificateDNSNames(requestedNames)
-	if err != nil {
-		return managedCertificate{}, err
-	}
-	s.certificateMu.Lock()
-	defer s.certificateMu.Unlock()
-
 	cloudflare, err := s.cloudflare(ctx)
 	if err != nil {
 		return managedCertificate{}, errors.New("center: connect Cloudflare before enabling trusted private HTTPS")
 	}
-	client, err := s.acmeClient(ctx)
+	var zoneName string
+	if err := s.db.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&zoneName); err != nil {
+		return managedCertificate{}, errors.New("center: connect Cloudflare before enabling trusted private HTTPS")
+	}
+	return s.obtainPrivateCertificateWithCloudflare(ctx, cloudflare, zoneName, requestedNames...)
+}
+
+func (s *Store) obtainPrivateCertificateWithCloudflare(ctx context.Context, cloudflare cloudflareClient, zoneName string, requestedNames ...string) (managedCertificate, error) {
+	names, err := normalizeCertificateDNSNames(requestedNames)
+	if err != nil {
+		return managedCertificate{}, err
+	}
+	zoneName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(zoneName), "."))
+	if !domainSuffixPattern.MatchString(zoneName) {
+		return managedCertificate{}, errors.New("center: Cloudflare Zone is invalid")
+	}
+	for _, name := range names {
+		base := strings.TrimPrefix(name, "*.")
+		if base != zoneName && !strings.HasSuffix(base, "."+zoneName) {
+			return managedCertificate{}, fmt.Errorf("center: certificate hostname %s is outside the selected Cloudflare Zone %s", name, zoneName)
+		}
+	}
+	s.certificateMu.Lock()
+	defer s.certificateMu.Unlock()
+
+	client, err := s.acmeClient(ctx, zoneName)
 	if err != nil {
 		return managedCertificate{}, err
 	}
@@ -182,7 +200,7 @@ func certificateCoversNames(certificate *x509.Certificate, names []string) bool 
 	return true
 }
 
-func (s *Store) acmeClient(ctx context.Context) (*acme.Client, error) {
+func (s *Store) acmeClient(ctx context.Context, zoneName string) (*acme.Client, error) {
 	var accountURI, secretID string
 	err := s.db.QueryRowContext(ctx, `SELECT account_uri, secret_id FROM certificate_authorities WHERE id = ?`, letsencryptAccountID).Scan(&accountURI, &secretID)
 	if err == nil {
@@ -203,8 +221,8 @@ func (s *Store) acmeClient(ctx context.Context) (*acme.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("center: generate ACME account key: %w", err)
 	}
-	var zoneName string
-	if err := s.db.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&zoneName); err != nil {
+	zoneName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(zoneName), "."))
+	if !domainSuffixPattern.MatchString(zoneName) {
 		return nil, errors.New("center: connect Cloudflare before enabling trusted private HTTPS")
 	}
 	client := &acme.Client{Key: key, DirectoryURL: acme.LetsEncryptURL, UserAgent: "Vastora/" + Version}
@@ -294,11 +312,30 @@ func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID s
 		if err != nil {
 			return nil, err
 		}
+		primaryHostname := hostname
 		certificate, err := s.loadSystemCenterCertificate(ctx, tx, "", hostname)
 		if err != nil {
 			return nil, err
 		}
 		values = append(values, gateway.Certificate{Hostname: hostname, CertificatePEM: certificate.CertificatePEM, PrivateKeyPEM: certificate.PrivateKeyPEM})
+		aliases, err := readSystemEndpointAliases(ctx, tx, "center")
+		if err != nil {
+			return nil, err
+		}
+		for _, alias := range aliases {
+			hostname, err := gatewayEndpointHostname(alias.Endpoint)
+			if err != nil {
+				return nil, err
+			}
+			if hostname == primaryHostname {
+				continue
+			}
+			certificate, err := s.loadSystemCenterCertificate(ctx, tx, alias.CertificateSecretID, hostname)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, gateway.Certificate{Hostname: hostname, CertificatePEM: certificate.CertificatePEM, PrivateKeyPEM: certificate.PrivateKeyPEM})
+		}
 	}
 	siteCertificates, err := s.gatewaySiteCertificates(ctx, tx, gatewayID)
 	if err != nil {

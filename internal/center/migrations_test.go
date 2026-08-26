@@ -705,6 +705,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE three_x_ui_migrations`,
 		`DROP TABLE three_x_ui_backups`,
 		`DROP TABLE three_x_ui_nodes`,
+		`DROP TABLE system_endpoint_aliases`,
 		`DROP INDEX applications_one_three_x_ui_master_idx`,
 		`ALTER TABLE agents DROP COLUMN operating_system`,
 		`ALTER TABLE agents DROP COLUMN architecture`,

@@ -1,13 +1,14 @@
 version: 2
 # Routine version PRs are limited to patch and minor releases. Major upgrades
 # are reviewed and tested manually; Dependabot security updates remain enabled.
-# A high open PR limit avoids GitHub's default five-PR version-update backlog.
+# Keep each ecosystem's routine update backlog bounded so dependency churn does
+# not fan out into an unbounded number of full pull-request checks.
 updates:
   - package-ecosystem: gomod
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 99
+    open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
         update-types:
@@ -17,7 +18,7 @@ updates:
     directory: "/web"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 99
+    open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
         update-types:
@@ -62,7 +63,7 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 99
+    open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
         update-types:
@@ -72,7 +73,7 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 99
+    open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
         update-types:

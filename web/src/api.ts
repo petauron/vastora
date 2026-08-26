@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -72,6 +72,8 @@ export const api = {
   status: () => request<CenterStatus>("/api/v1/status"),
   centerUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update"),
   startCenterUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update", { method: "POST", body: "{}" }),
+  systemDomain: () => request<SystemDomain>("/api/v1/system/domain"),
+  switchSystemDomain: (sessionId: string, zoneId: string) => request<SystemDomainSwitchResult>("/api/v1/system/domain", { method: "POST", body: JSON.stringify({ sessionId, zoneId, confirm: true }) }),
   diagnostics: () => request<Diagnostics>("/api/v1/diagnostics"),
   downloadDiagnostics: () => download("/api/v1/diagnostics", `vastora-diagnostics-${new Date().toISOString().slice(0, 10)}.json`),
   downloadBackup: (password: string) => download("/api/v1/backups", "vastora-center.vastora", { method: "POST", body: JSON.stringify({ password }) }),

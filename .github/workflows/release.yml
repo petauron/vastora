@@ -16,25 +16,25 @@ concurrency:
 
 jobs:
   prepare:
+    name: Prepare existing release
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
-      checks: write
       contents: write
-      issues: write
-      pull-requests: write
     outputs:
       release_created: ${{ steps.retry.outputs.release_created || steps.release.outputs.release_created }}
       release_sha: ${{ steps.retry.outputs.release_sha || steps.release.outputs.sha }}
       release_tag: ${{ steps.retry.outputs.release_tag || steps.release.outputs.tag_name }}
       release_version: ${{ steps.retry.outputs.release_version || steps.release.outputs.version }}
     steps:
-      - name: Create or update release pull request
+      - name: Create a release without updating the next release pull request
         id: release
         if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         with:
           token: ${{ github.token }}
           target-branch: main
+          skip-github-pull-request: true
 
       - name: Resolve draft release retry
         id: retry
@@ -68,68 +68,19 @@ jobs:
             echo "release_version=${RELEASE_TAG#v}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Resolve release pull request
-        id: release_pr
-        if: steps.release.outputs.prs_created == 'true'
-        env:
-          RELEASE_PR: ${{ steps.release.outputs.pr }}
-        run: |
-          head_branch="$(printf '%s' "$RELEASE_PR" | jq -er '.headBranchName')"
-          {
-            echo "head_branch=$head_branch"
-            echo "base_sha=$GITHUB_SHA"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Check out release pull request
-        if: steps.release.outputs.prs_created == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ steps.release_pr.outputs.head_branch }}
-          fetch-depth: 0
-
-      - name: Start release metadata check
-        id: release_metadata_check
-        if: steps.release.outputs.prs_created == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          check_id="$(
-            gh api --method POST "/repos/$GITHUB_REPOSITORY/check-runs" \
-              -f name='Release metadata' \
-              -f head_sha="$(git rev-parse HEAD)" \
-              -f status='in_progress' \
-              -f details_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-              --jq '.id'
-          )"
-          echo "id=$check_id" >> "$GITHUB_OUTPUT"
-
-      - name: Validate release pull request metadata
-        id: validate_release_metadata
-        if: steps.release.outputs.prs_created == 'true'
-        env:
-          BASE_SHA: ${{ steps.release_pr.outputs.base_sha }}
-        run: scripts/validate-release-metadata.sh "$BASE_SHA"
-
-      - name: Finish release metadata check
-        if: always() && steps.release.outputs.prs_created == 'true' && steps.release_metadata_check.outputs.id != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CHECK_ID: ${{ steps.release_metadata_check.outputs.id }}
-          CHECK_CONCLUSION: ${{ steps.validate_release_metadata.outcome == 'success' && 'success' || 'failure' }}
-        run: |
-          gh api --method PATCH "/repos/$GITHUB_REPOSITORY/check-runs/$CHECK_ID" \
-            -f status='completed' \
-            -f conclusion="$CHECK_CONCLUSION" >/dev/null
-
   publish:
     needs: prepare
     if: needs.prepare.outputs.release_created == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
+      artifact-metadata: write
       attestations: write
       contents: write
       id-token: write
       packages: write
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
     steps:
       - name: Check out release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -220,3 +171,82 @@ jobs:
           sha256sum --check vastora-center-install.tar.gz.sha256
           actual_version="$(tar -xOzf vastora-center-install.tar.gz ./release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')"
           test "$actual_version" = "$EXPECTED_VERSION"
+
+  release-pr:
+    name: Prepare next release pull request
+    needs: [prepare, publish]
+    if: always() && needs.prepare.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      checks: write
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Create or update the next release pull request without publishing
+        id: release_pr_action
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
+        with:
+          token: ${{ github.token }}
+          target-branch: main
+          skip-github-release: true
+
+      - name: Resolve release pull request
+        id: release_pr
+        if: steps.release_pr_action.outputs.prs_created == 'true'
+        env:
+          RELEASE_PR: ${{ steps.release_pr_action.outputs.pr }}
+        run: |
+          head_branch="$(printf '%s' "$RELEASE_PR" | jq -er '.headBranchName')"
+          {
+            echo "head_branch=$head_branch"
+            echo "base_sha=$GITHUB_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out release pull request
+        if: steps.release_pr_action.outputs.prs_created == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release_pr.outputs.head_branch }}
+          fetch-depth: 0
+
+      - name: Start release gate checks
+        id: release_gate_checks
+        if: steps.release_pr_action.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          start_check() {
+            gh api --method POST "/repos/$GITHUB_REPOSITORY/check-runs" \
+              -f name="$1" \
+              -f head_sha="$(git rev-parse HEAD)" \
+              -f status='in_progress' \
+              -f details_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --jq '.id'
+          }
+          {
+            echo "ci_id=$(start_check 'CI / gate')"
+            echo "codeql_id=$(start_check 'CodeQL / gate')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate release pull request metadata
+        id: validate_release_metadata
+        if: steps.release_pr_action.outputs.prs_created == 'true'
+        env:
+          BASE_SHA: ${{ steps.release_pr.outputs.base_sha }}
+        run: scripts/validate-release-metadata.sh "$BASE_SHA"
+
+      - name: Finish release gate checks
+        if: always() && steps.release_pr_action.outputs.prs_created == 'true' && steps.release_gate_checks.outputs.ci_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_CHECK_ID: ${{ steps.release_gate_checks.outputs.ci_id }}
+          CODEQL_CHECK_ID: ${{ steps.release_gate_checks.outputs.codeql_id }}
+          CHECK_CONCLUSION: ${{ steps.validate_release_metadata.outcome == 'success' && 'success' || 'failure' }}
+        run: |
+          for check_id in "$CI_CHECK_ID" "$CODEQL_CHECK_ID"; do
+            gh api --method PATCH "/repos/$GITHUB_REPOSITORY/check-runs/$check_id" \
+              -f status='completed' \
+              -f conclusion="$CHECK_CONCLUSION" >/dev/null
+          done

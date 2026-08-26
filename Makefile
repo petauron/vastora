@@ -4,7 +4,7 @@ GO_PACKAGES := ./cmd/... ./internal/...
 STATICCHECK_VERSION := v0.7.0
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: bootstrap check go-check web-check deployment-check security-check dependency-security-check agent-binaries center-install-bundle image-center image-agent
+.PHONY: bootstrap check go-check web-check deployment-check security-check dependency-security-check go-security-check web-security-check agent-binaries center-install-bundle image-center image-agent
 
 bootstrap:
 	$(GO) mod download
@@ -35,6 +35,7 @@ deployment-check:
 	sh -n scripts/test-center-install.sh
 	sh -n scripts/test-release-metadata.sh
 	sh -n scripts/test-release-workflow.sh
+	sh -n scripts/test-ci-workflows.sh
 	node scripts/test-installer-worker.mjs
 	./install.sh --help >/dev/null
 	deploy/center/setup.sh --help >/dev/null
@@ -43,14 +44,21 @@ deployment-check:
 	scripts/test-center-install.sh
 	scripts/test-release-metadata.sh
 	scripts/test-release-workflow.sh
+	scripts/test-ci-workflows.sh
 
 security-check:
 	gitleaks detect --no-git --redact --source .
 	$(MAKE) dependency-security-check
 
 dependency-security-check:
-	cd web && npm audit --audit-level=high
+	$(MAKE) go-security-check
+	$(MAKE) web-security-check
+
+go-security-check:
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) $(GO_PACKAGES)
+
+web-security-check:
+	cd web && npm audit --audit-level=high
 
 agent-binaries:
 	mkdir -p bin/agent-binaries

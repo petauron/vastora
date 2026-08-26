@@ -14,12 +14,20 @@ import (
 )
 
 type HeadscaleInstallRequest struct {
-	CenterURL               string `json:"centerUrl"`
-	HeadscaleURL            string `json:"headscaleUrl"`
-	PublicAddress           string `json:"publicAddress,omitempty"`
-	GatewayBindAddress      string `json:"gatewayBindAddress,omitempty"`
-	CenterCertificatePEM    string `json:"centerCertificatePem"`
-	CenterCertificateKeyPEM string `json:"centerCertificateKeyPem"`
+	CenterURL               string                `json:"centerUrl"`
+	HeadscaleURL            string                `json:"headscaleUrl"`
+	CenterAliases           []CenterEndpointAlias `json:"centerAliases,omitempty"`
+	HeadscaleAliases        []string              `json:"headscaleAliases,omitempty"`
+	PublicAddress           string                `json:"publicAddress,omitempty"`
+	GatewayBindAddress      string                `json:"gatewayBindAddress,omitempty"`
+	CenterCertificatePEM    string                `json:"centerCertificatePem"`
+	CenterCertificateKeyPEM string                `json:"centerCertificateKeyPem"`
+}
+
+type CenterEndpointAlias struct {
+	URL               string `json:"url"`
+	CertificatePEM    string `json:"certificatePem"`
+	CertificateKeyPEM string `json:"certificateKeyPem"`
 }
 
 type HeadscaleInstallResult struct {

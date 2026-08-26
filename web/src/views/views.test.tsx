@@ -35,6 +35,7 @@ const dashboard = (): AppData => ({
   status: { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" },
   centerUpdate: { currentVersion: "test", latestVersion: "test", updateAvailable: false, automatic: true, state: "idle", checkedAt: "2026-08-18T00:00:00Z" },
   sources: [], organizations: [], routes: [], actions: [], integrations: [], threeXUIControllerMigrations: [],
+  systemDomain: { namespace: "vastora.example.com", centerUrl: "https://center.vastora.example.com", headscaleUrl: "https://headscale.vastora.example.com", cloudflareZone: "example.com", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: true, cloudflareOAuthAvailable: true },
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
   agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", family: "ipv4", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
@@ -1175,6 +1176,18 @@ describe("network and app views", () => {
     act(() => changePassword?.click());
     expect(document.querySelector<HTMLInputElement>("#new-password")?.minLength).toBe(10);
     expect(document.body.textContent).toContain("至少 10 个字符。");
+  });
+
+  it("offers one safe workflow for switching the Vastora domain", () => {
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onLogout={async () => undefined} />);
+    expect(container.textContent).toContain("Vastora 域名");
+    expect(container.textContent).toContain("https://center.vastora.example.com");
+    const changeDomain = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("切换域名"));
+    act(() => changeDomain?.click());
+    expect(document.body.textContent).toContain("旧地址不会立即失效");
+    expect(document.body.textContent).toContain("登录 Cloudflare");
+    expect(document.body.textContent).toContain("下一次心跳验证新地址后自动切换");
+    expect(document.body.textContent).toContain("应用访问入口需在切换后重新创建");
   });
 
   it("shows a confirmed Center update instead of exposing Docker access", () => {

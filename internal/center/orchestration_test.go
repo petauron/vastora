@@ -512,7 +512,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil {
 		t.Fatalf("co-located gateway did not receive system desired state: %#v", task)
 	}
-	if len(task.GatewayState.Routes) != 5 || len(task.GatewayState.Listeners) != 3 {
+	if len(task.GatewayState.Routes) != 6 || len(task.GatewayState.Listeners) != 3 {
 		t.Fatalf("unexpected system gateway state: %#v", task.GatewayState)
 	}
 	for _, route := range task.GatewayState.Routes {

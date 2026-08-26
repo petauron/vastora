@@ -35,8 +35,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exec sudo "$0" "$token"
 fi
 
-center_url=@@CENTER_URL@@
-case "$center_url" in
+bootstrap_url=@@CENTER_URL@@
+case "$bootstrap_url" in
   https://*) curl_protocol="https" ;;
   http://127.0.0.1:*|http://127.0.0.1|http://localhost:*|http://localhost) curl_protocol="http" ;;
   *) echo "Center must use HTTPS; only loopback development addresses may use HTTP." >&2; exit 1 ;;
@@ -46,7 +46,7 @@ installer="$(mktemp -t vastora-agent-installer.XXXXXX)"
 trap 'rm -f "$installer"' EXIT HUP INT TERM
 curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
   -H "Authorization: Bearer $token" \
-  "${center_url%/}/install/agent.sh" -o "$installer"
+  "${bootstrap_url%/}/install/agent.sh" -o "$installer"
 printf '%s\n' "$token" | sh "$installer"
 `
 
@@ -54,6 +54,7 @@ const agentInstallScript = `#!/bin/sh
 set -eu
 
 center_url=@@CENTER_URL@@
+bootstrap_url=@@BOOTSTRAP_URL@@
 IFS= read -r token
 if [ -z "$token" ]; then
   echo "The one-time Agent token is required." >&2
@@ -82,12 +83,10 @@ case "$(uname -m)" in
   *) echo "Vastora Agent supports Ubuntu 24.04 on x86_64 and ARM64." >&2; exit 1 ;;
 esac
 
-@@HEADSCALE_BOOTSTRAP@@
-
 temporary="$(mktemp -t vastora-agent.XXXXXX)"
 headers="$(mktemp -t vastora-agent-headers.XXXXXX)"
 trap 'rm -f "$temporary" "$headers"' EXIT HUP INT TERM
-case "$center_url" in
+case "$bootstrap_url" in
   https://*) curl_protocol="https" ;;
   http://127.0.0.1:*|http://127.0.0.1|http://localhost:*|http://localhost) curl_protocol="http" ;;
   *) echo "Center must use HTTPS; only loopback development addresses may use HTTP." >&2; exit 1 ;;
@@ -95,7 +94,7 @@ esac
 echo "Downloading the Vastora Agent for $arch..."
 curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 268435456 -fsS \
   -D "$headers" -H "Authorization: Bearer $token" \
-  "${center_url%/}/api/v1/agent-binaries/linux/$arch" -o "$temporary"
+  "${bootstrap_url%/}/api/v1/agent-binaries/linux/$arch" -o "$temporary"
 expected_digest="$(awk 'tolower($1) == "x-vastora-sha256:" {gsub("\\r", "", $2); value=tolower($2)} END {print value}' "$headers")"
 expected_version="$(awk 'tolower($1) == "x-vastora-version:" {sub("^[^:]*:[[:space:]]*", ""); gsub("\\r", ""); value=$0} END {print value}' "$headers")"
 actual_digest="$(sha256sum "$temporary" | awk '{print tolower($1)}')"
@@ -108,16 +107,69 @@ if [ -z "$expected_version" ] || [ "$("$temporary" version)" != "$expected_versi
   echo "The downloaded Agent failed its version check." >&2
   exit 1
 fi
+
+replace_existing=0
+if [ -s /var/lib/vastora/agent/agent.db ] || systemctl is-enabled --quiet vastora-agent.service 2>/dev/null || systemctl is-active --quiet vastora-agent.service 2>/dev/null; then
+  if ! existing_status="$("$temporary" agent status --data-dir /var/lib/vastora/agent 2>&1)"; then
+    echo "An existing Vastora Agent was found, but its Center registration could not be inspected." >&2
+    echo "$existing_status" >&2
+    echo "The existing Agent was not changed." >&2
+    exit 1
+  fi
+  printf '%s\n' "This server is already registered with a Center:" >&2
+  printf '%s\n' "$existing_status" >&2
+  printf '%s\n' "Requested Center: $center_url" >&2
+  printf '%s\n' "Switching keeps running Docker apps and local Agent state, but does not copy their records from the previous Center." >&2
+  if ! ( : </dev/tty ) 2>/dev/null; then
+    echo "Interactive confirmation is required to switch an existing Agent." >&2
+    exit 1
+  fi
+  printf 'Switch this Agent to the requested Center? [y/N] ' >/dev/tty
+  IFS= read -r answer </dev/tty
+  case "$answer" in
+    y|Y|yes|Yes|YES) replace_existing=1 ;;
+    *) echo "The existing Agent was not changed." >&2; exit 0 ;;
+  esac
+fi
+
+@@HEADSCALE_BOOTSTRAP@@
+
+case "$center_url" in
+  https://*) center_protocol="https" ;;
+  http://127.0.0.1:*|http://127.0.0.1|http://localhost:*|http://localhost) center_protocol="http" ;;
+  *) echo "Center must use HTTPS; only loopback development addresses may use HTTP." >&2; exit 1 ;;
+esac
+echo "Waiting for the requested Center to become reachable..."
+center_ready=0
+attempt=1
+while [ "$attempt" -le 15 ]; do
+  if curl --proto "=$center_protocol" --tlsv1.2 --max-filesize 1048576 -fs \
+    -H "Authorization: Bearer $token" "${center_url%/}/install/agent.sh" -o /dev/null 2>/dev/null; then
+    center_ready=1
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 2
+done
+if [ "$center_ready" -ne 1 ]; then
+  echo "The requested Center did not become reachable after joining the private network. The existing Agent was not migrated." >&2
+  exit 1
+fi
+
 install -m 0755 "$temporary" /usr/local/bin/vastora
 echo "Registering this node and starting the system service..."
-printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file -
+if [ "$replace_existing" -eq 1 ]; then
+  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --replace-existing
+else
+  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file -
+fi
 `
 
 func renderAgentInstallLoader(centerURL string) string {
 	return strings.ReplaceAll(agentInstallLoaderScript, "@@CENTER_URL@@", shellQuote(centerURL))
 }
 
-func renderAgentInstallScript(profile AgentEnrollmentInstallProfile) string {
+func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, bootstrapURL string) string {
 	headscaleBootstrap := ":"
 	if profile.HeadscaleCommand != "" {
 		headscaleBootstrap = `tailscale_version=@@TAILSCALE_VERSION@@
@@ -149,6 +201,7 @@ echo "Joining the private network..."
 	}
 	return strings.NewReplacer(
 		"@@CENTER_URL@@", shellQuote(profile.CenterURL),
+		"@@BOOTSTRAP_URL@@", shellQuote(bootstrapURL),
 		"@@HEADSCALE_BOOTSTRAP@@", headscaleBootstrap,
 	).Replace(agentInstallScript)
 }
@@ -203,9 +256,14 @@ func (s *Server) handleAgentInstallScript(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
+	bootstrapURL, err := agentInstallerRequestURL(request)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
 	writer.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	writer.Header().Set("Content-Disposition", `attachment; filename="vastora-agent-install.sh"`)
-	_, _ = writer.Write([]byte(renderAgentInstallScript(profile)))
+	_, _ = writer.Write([]byte(renderAgentInstallScript(profile, bootstrapURL)))
 }
 
 func agentInstallerRequestURL(request *http.Request) (string, error) {

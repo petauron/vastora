@@ -14,6 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { CenterUpdateCard } from "./CenterUpdateCard";
+import { SystemDomainSettings } from "./SystemDomainSettings";
 
 export function SettingsView({ data, language, mutate, onLogout }: { data: AppData; language: Language; mutate: Mutate; onLogout: () => Promise<void> }) {
   const [adding, setAdding] = useState(false);
@@ -30,6 +31,7 @@ export function SettingsView({ data, language, mutate, onLogout }: { data: AppDa
         <CardContent><dl className="grid gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "版本", "Version")}</dt><dd className="mt-1 font-medium">{data.status.version}</dd></div><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{data.agents.filter((agent) => agent.status === "active").length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "应用", "Apps")}</dt><dd className="mt-1 font-medium">{data.applications.length}</dd></div></dl></CardContent>
         <CardFooter className="justify-end"><Button onClick={() => setPasswordOpen(true)} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "修改管理员密码", "Change administrator password")}</Button></CardFooter>
       </Card>
+      <SystemDomainSettings domain={data.systemDomain} language={language} />
       <CenterUpdateCard initial={data.centerUpdate} language={language} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "数据与故障排查", "Data & troubleshooting")}</CardTitle><CardDescription>{copy(language, "备份 Center 配置，或下载不含密钥的诊断信息。", "Back up Center configuration or download diagnostics that contain no secret values.")}</CardDescription></CardHeader>

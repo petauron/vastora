@@ -8,20 +8,111 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
   security-events: write
 
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
+  changes:
+    name: Classify languages
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [go, javascript-typescript]
+    timeout-minutes: 5
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      javascript: ${{ steps.filter.outputs.javascript }}
+      full: ${{ steps.filter.outputs.full == 'true' || steps.filter.outputs.unknown == 'true' }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            go:
+              - 'cmd/**'
+              - 'internal/**'
+              - 'go.mod'
+              - 'go.sum'
+            javascript:
+              - 'web/**'
+              - 'deploy/installer-worker/**'
+              - 'scripts/**/*.mjs'
+              - 'scripts/**/*.js'
+            full:
+              - '.github/workflows/codeql.yml'
+              - 'Makefile'
+            unknown:
+              - '**'
+              - '!cmd/**'
+              - '!internal/**'
+              - '!web/**'
+              - '!deploy/**'
+              - '!scripts/**'
+              - '!catalog/**'
+              - '!.github/**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!Dockerfile*'
+              - '!.dockerignore'
+              - '!go.mod'
+              - '!go.sum'
+              - '!install.sh'
+              - '!version.txt'
+              - '!.release-please-manifest.json'
+              - '!release-please-config.json'
+              - '!LICENSE'
+
+  analyze-go:
+    name: Analyze (go)
+    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
-          languages: ${{ matrix.language }}
+          languages: go
       - uses: github/codeql-action/autobuild@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
       - uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+
+  analyze-javascript:
+    name: Analyze (javascript-typescript)
+    if: github.event_name != 'pull_request' || needs.changes.outputs.javascript == 'true' || needs.changes.outputs.full == 'true'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/autobuild@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+      - uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+
+  gate:
+    name: CodeQL / gate
+    if: always()
+    needs: [changes, analyze-go, analyze-javascript]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require every applicable CodeQL job
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          GO_RESULT: ${{ needs.analyze-go.result }}
+          JAVASCRIPT_RESULT: ${{ needs.analyze-javascript.result }}
+        run: |
+          for result in "$CHANGES_RESULT" "$GO_RESULT" "$JAVASCRIPT_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "Required CodeQL job did not succeed: $result" >&2; exit 1 ;;
+            esac
+          done

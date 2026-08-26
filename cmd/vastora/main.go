@@ -71,7 +71,8 @@ Usage:
   vastora deployer serve --socket /run/vastora-deployer/deployer.sock
   vastora agent init --data-dir DIR
   vastora agent enroll --data-dir DIR --center-url URL --token-file FILE
-  vastora agent install --center-url URL --token-file FILE
+  vastora agent install --center-url URL --token-file FILE [--replace-existing]
+  vastora agent status [--data-dir /var/lib/vastora/agent]
   vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
   vastora agent update [--data-dir /var/lib/vastora/agent]
   vastora agent serve --data-dir DIR [--listen 127.0.0.1:8090]

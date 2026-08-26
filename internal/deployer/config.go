@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -22,6 +23,13 @@ const (
 	centerCertificatePath = "/etc/caddy/system/center.crt"
 	centerPrivateKeyPath  = "/etc/caddy/system/center.key"
 )
+
+func centerAliasCertificatePath(index int) string {
+	return fmt.Sprintf("/etc/caddy/system/center-alias-%d.crt", index+1)
+}
+func centerAliasPrivateKeyPath(index int) string {
+	return fmt.Sprintf("/etc/caddy/system/center-alias-%d.key", index+1)
+}
 
 type gatewayResolution struct {
 	hostname  string
@@ -255,15 +263,28 @@ func formatGatewayBindAddresses(addresses []netip.Addr) []string {
 	return result
 }
 
-func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses []string) []byte {
-	centerHTTP := "http://" + strings.TrimPrefix(centerURL, "https://")
-	headscaleHTTP := "http://" + strings.TrimPrefix(headscaleURL, "https://")
-	return []byte(fmt.Sprintf(`{
+func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses []string, centerAliases []deployapi.CenterEndpointAlias, headscaleAliases []string) []byte {
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf(`{
 	admin unix/%s|0600
 	persist_config off
 }
 
-%s {
+`, gatewayruntime.CaddyAdminSocket))
+	writeCenterGatewaySite(&result, centerURL, centerOrigin, centerCertificatePath, centerPrivateKeyPath)
+	for index, alias := range centerAliases {
+		writeCenterGatewaySite(&result, alias.URL, centerOrigin, centerAliasCertificatePath(index), centerAliasPrivateKeyPath(index))
+	}
+	writeHeadscaleGatewaySite(&result, headscaleURL, centerOrigin, bindAddresses)
+	for _, alias := range headscaleAliases {
+		writeHeadscaleGatewaySite(&result, alias, centerOrigin, bindAddresses)
+	}
+	return []byte(result.String())
+}
+
+func writeCenterGatewaySite(result *strings.Builder, endpoint, centerOrigin, certificatePath, privateKeyPath string) {
+	httpEndpoint := "http://" + strings.TrimPrefix(endpoint, "https://")
+	result.WriteString(fmt.Sprintf(`%s {
 	bind 127.0.0.1
 	redir https://{host}{uri} 308
 }
@@ -274,7 +295,13 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses
 	reverse_proxy %s
 }
 
-%s {
+`, httpEndpoint, endpoint, certificatePath, privateKeyPath, centerOrigin))
+}
+
+func writeHeadscaleGatewaySite(result *strings.Builder, endpoint, centerOrigin string, bindAddresses []string) {
+	httpEndpoint := "http://" + strings.TrimPrefix(endpoint, "https://")
+	addresses := strings.Join(bindAddresses, " ")
+	result.WriteString(fmt.Sprintf(`%s {
 	bind 127.0.0.1 %s
 	redir https://{host}{uri} 308
 }
@@ -284,9 +311,12 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses
 	handle /install/agent.sh {
 		reverse_proxy %s
 	}
+	handle /api/v1/agent-binaries/* {
+		reverse_proxy %s
+	}
 	handle {
 		reverse_proxy 127.0.0.1:8081
 	}
 }
-`, gatewayruntime.CaddyAdminSocket, centerHTTP, centerURL, centerCertificatePath, centerPrivateKeyPath, centerOrigin, headscaleHTTP, strings.Join(bindAddresses, " "), headscaleURL, strings.Join(bindAddresses, " "), centerOrigin))
+`, httpEndpoint, addresses, endpoint, addresses, centerOrigin, centerOrigin))
 }
