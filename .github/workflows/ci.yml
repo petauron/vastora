@@ -25,75 +25,21 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       web: ${{ steps.filter.outputs.web }}
       deployment: ${{ steps.filter.outputs.deployment }}
-      security: ${{ steps.filter.outputs.non_release }}
+      security: ${{ steps.filter.outputs.security }}
       container: ${{ steps.filter.outputs.container }}
       release_metadata: ${{ steps.filter.outputs.release_metadata }}
-      full: ${{ steps.filter.outputs.full == 'true' || steps.filter.outputs.unknown == 'true' }}
+      full: ${{ steps.filter.outputs.full }}
     steps:
       - if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        with:
-          predicate-quantifier: some-with-excludes
-          filters: |
-            go:
-              - 'cmd/**'
-              - 'internal/**'
-              - 'go.mod'
-              - 'go.sum'
-            web:
-              - 'web/**'
-            deployment:
-              - 'deploy/**'
-              - 'scripts/**'
-              - 'install.sh'
-              - 'catalog/**'
-              - 'Dockerfile*'
-              - 'release-please-config.json'
-            container:
-              - 'Dockerfile.center'
-              - '.dockerignore'
-              - 'go.mod'
-              - 'go.sum'
-              - 'web/package.json'
-              - 'web/package-lock.json'
-              - 'catalog/catalog.json'
-            non_release:
-              - '**'
-              - '!CHANGELOG.md'
-              - '!.release-please-manifest.json'
-              - '!version.txt'
-            release_metadata:
-              - 'CHANGELOG.md'
-              - '.release-please-manifest.json'
-              - 'version.txt'
-            full:
-              - '.github/workflows/**'
-              - '.github/dependabot.yml'
-              - 'Makefile'
-              - 'release-please-config.json'
-            unknown:
-              - '**'
-              - '!cmd/**'
-              - '!internal/**'
-              - '!web/**'
-              - '!deploy/**'
-              - '!scripts/**'
-              - '!catalog/**'
-              - '!.github/**'
-              - '!docs/**'
-              - '!**/*.md'
-              - '!Dockerfile*'
-              - '!.dockerignore'
-              - '!go.mod'
-              - '!go.sum'
-              - '!install.sh'
-              - '!version.txt'
-              - '!.release-please-manifest.json'
-              - '!release-please-config.json'
-              - '!LICENSE'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
   warm-dependency-caches:
     name: Warm dependency caches
@@ -171,10 +117,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
       - name: Scan Git history for secrets
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs

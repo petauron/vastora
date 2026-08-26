@@ -23,49 +23,18 @@ jobs:
     outputs:
       go: ${{ steps.filter.outputs.go }}
       javascript: ${{ steps.filter.outputs.javascript }}
-      full: ${{ steps.filter.outputs.full == 'true' || steps.filter.outputs.unknown == 'true' }}
+      full: ${{ steps.filter.outputs.full }}
     steps:
       - if: github.event_name == 'pull_request'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        with:
-          predicate-quantifier: some-with-excludes
-          filters: |
-            go:
-              - 'cmd/**'
-              - 'internal/**'
-              - 'go.mod'
-              - 'go.sum'
-            javascript:
-              - 'web/**'
-              - 'deploy/installer-worker/**'
-              - 'scripts/**/*.mjs'
-              - 'scripts/**/*.js'
-            full:
-              - '.github/workflows/codeql.yml'
-              - 'Makefile'
-            unknown:
-              - '**'
-              - '!cmd/**'
-              - '!internal/**'
-              - '!web/**'
-              - '!deploy/**'
-              - '!scripts/**'
-              - '!catalog/**'
-              - '!.github/**'
-              - '!docs/**'
-              - '!**/*.md'
-              - '!Dockerfile*'
-              - '!.dockerignore'
-              - '!go.mod'
-              - '!go.sum'
-              - '!install.sh'
-              - '!version.txt'
-              - '!.release-please-manifest.json'
-              - '!release-please-config.json'
-              - '!LICENSE'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/classify-ci-changes.sh --git codeql "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
   analyze-go:
     name: Analyze (go)
