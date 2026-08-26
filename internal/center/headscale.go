@@ -275,6 +275,10 @@ func (s *Store) authorizedHeadscaleEndpoint(value string) (string, error) {
 }
 
 func (s *Store) reconcileHeadscaleDNS(ctx context.Context) error {
+	return s.reconcileHeadscaleDNSForSystem(ctx, "", nil)
+}
+
+func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCenterEndpoint string, additionalCenterEndpoints []string) error {
 	var mode string
 	if err := s.db.QueryRowContext(ctx, `SELECT mode FROM network_integrations WHERE kind = 'headscale' AND status = 'configured'`).Scan(&mode); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: Headscale integration is not configured")
@@ -294,18 +298,32 @@ func (s *Store) reconcileHeadscaleDNS(ctx context.Context) error {
 	modeErr := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectionModeSetting).Scan(&connectionMode)
 	endpointErr := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentConnectURLSetting).Scan(&centerEndpoint)
 	if modeErr == nil && endpointErr == nil && connectionMode == "headscale" {
+		if strings.TrimSpace(primaryCenterEndpoint) != "" {
+			centerEndpoint = primaryCenterEndpoint
+		}
 		if centerAddress, err := s.coLocatedHeadscaleAddress(ctx); err != nil {
 			return err
 		} else if centerAddress != "" {
-			hostname, err := gatewayEndpointHostname(centerEndpoint)
-			if err != nil {
-				return err
-			}
 			recordType := "A"
 			if strings.Contains(centerAddress, ":") {
 				recordType = "AAAA"
 			}
-			records = append(records, record{Name: hostname, Type: recordType, Value: centerAddress})
+			endpoints := []string{centerEndpoint}
+			aliases, err := readSystemEndpointAliases(ctx, s.db, "center")
+			if err != nil {
+				return err
+			}
+			for _, alias := range aliases {
+				endpoints = append(endpoints, alias.Endpoint)
+			}
+			endpoints = append(endpoints, additionalCenterEndpoints...)
+			for _, endpoint := range endpoints {
+				hostname, err := gatewayEndpointHostname(endpoint)
+				if err != nil {
+					return err
+				}
+				records = append(records, record{Name: hostname, Type: recordType, Value: centerAddress})
+			}
 		}
 	} else if (modeErr != nil && !errors.Is(modeErr, sql.ErrNoRows)) || (endpointErr != nil && !errors.Is(endpointErr, sql.ErrNoRows)) {
 		return errors.Join(modeErr, endpointErr)
@@ -333,6 +351,17 @@ func (s *Store) reconcileHeadscaleDNS(ctx context.Context) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
+	unique := make([]record, 0, len(records))
+	seen := make(map[string]struct{}, len(records))
+	for _, value := range records {
+		key := value.Name + "\x00" + value.Type + "\x00" + value.Value
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, value)
+	}
+	records = unique
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].Name == records[j].Name {
 			return records[i].Value < records[j].Value

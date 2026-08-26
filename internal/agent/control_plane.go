@@ -323,6 +323,16 @@ type ApplicationEndpointObservation struct {
 }
 
 func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken string) (Enrollment, error) {
+	return c.enroll(ctx, store, centerURL, enrollmentToken, false)
+}
+
+// MigrateEnrollment explicitly replaces an existing Center identity while
+// preserving all workload state held by the Agent store.
+func (c Client) MigrateEnrollment(ctx context.Context, store *Store, centerURL, enrollmentToken string) (Enrollment, error) {
+	return c.enroll(ctx, store, centerURL, enrollmentToken, true)
+}
+
+func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentToken string, replace bool) (Enrollment, error) {
 	baseURL, err := normalizeCenterURL(centerURL)
 	if err != nil {
 		return Enrollment{}, err
@@ -339,7 +349,13 @@ func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if response.ID == "" || response.Credential == "" || strings.TrimSpace(response.Name) == "" || len(response.Roles) == 0 {
 		return Enrollment{}, errors.New("agent: Center returned an incomplete enrollment response")
 	}
-	if err := store.SaveConnection(ctx, Connection{AgentID: response.ID, Name: response.Name, CenterURL: baseURL, Credential: response.Credential}); err != nil {
+	connection := Connection{AgentID: response.ID, Name: response.Name, CenterURL: baseURL, Credential: response.Credential}
+	if replace {
+		err = store.ReplaceConnection(ctx, connection)
+	} else {
+		err = store.SaveConnection(ctx, connection)
+	}
+	if err != nil {
 		return Enrollment{}, err
 	}
 	return response, nil
@@ -374,11 +390,48 @@ func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 	} else if observeErr != nil {
 		observeErr = fmt.Errorf("agent: observe 3x-ui: %w", observeErr)
 	}
+	var response struct {
+		CenterURL string `json:"centerUrl"`
+	}
 	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/heartbeat", map[string]any{
 		"version": Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
-	}, connection.Credential, nil)
-	return observeErr, err
+	}, connection.Credential, &response)
+	if err != nil {
+		return observeErr, err
+	}
+	if err := c.applyDesiredCenterURL(ctx, store, connection, response.CenterURL); err != nil {
+		return observeErr, err
+	}
+	return observeErr, nil
+}
+
+func (c Client) applyDesiredCenterURL(ctx context.Context, store *Store, connection Connection, desired string) error {
+	desired = strings.TrimSpace(desired)
+	if desired == "" {
+		return nil
+	}
+	normalized, err := normalizeCenterURL(desired)
+	if err != nil {
+		return fmt.Errorf("agent: reject Center-directed URL update: %w", err)
+	}
+	if normalized == connection.CenterURL {
+		return nil
+	}
+	var health struct {
+		Status string `json:"status"`
+	}
+	if err := c.get(ctx, normalized+"/healthz", "", &health); err != nil {
+		return fmt.Errorf("agent: verify new Center URL before switching: %w", err)
+	}
+	if health.Status != "ok" {
+		return errors.New("agent: verify new Center URL before switching: health check is not OK")
+	}
+	connection.CenterURL = normalized
+	if err := store.ReplaceConnection(ctx, connection); err != nil {
+		return fmt.Errorf("agent: save new Center URL: %w", err)
+	}
+	return nil
 }
 
 func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointObservation, error) {

@@ -19,7 +19,8 @@ export function emptyAppData(status: CenterStatus): AppData {
     routes: [],
     integrations: [],
     actions: [],
-    threeXUIControllerMigrations: []
+    threeXUIControllerMigrations: [],
+    systemDomain: { namespace: "", centerUrl: status.agentConnectUrl, headscaleUrl: "", cloudflareZone: "", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: false, cloudflareOAuthAvailable: false }
   };
 }
 
@@ -106,19 +107,21 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
       return { status, actions: actions.actions, agents: agents.agents };
     }
     case "settings": {
-      const [status, centerUpdate, sources, applications, agents] = await Promise.all([
+      const [status, centerUpdate, sources, applications, agents, systemDomain] = await Promise.all([
         statusPromise,
         api.centerUpdate(),
         api.sources(),
         api.applications(),
-        api.agents()
+        api.agents(),
+        api.systemDomain()
       ]);
       return {
         status,
         centerUpdate,
         sources: sources.sources,
         applications: applications.applications,
-        agents: agents.agents
+        agents: agents.agents,
+        systemDomain
       };
     }
   }

@@ -16,9 +16,10 @@ type Props = {
   language: Language;
   zoneName?: string;
   onConnected: (zone: CloudflareZone) => void | Promise<void>;
+  onAuthorized?: (sessionID: string, zone: CloudflareZone) => void | Promise<void>;
 };
 
-export function CloudflareOAuthConnect({ available, connected, language, zoneName, onConnected }: Props) {
+export function CloudflareOAuthConnect({ available, connected, language, zoneName, onConnected, onAuthorized }: Props) {
   const cancelled = useRef(false);
   const authorizationWindow = useRef<Window | null>(null);
   const [sessionID, setSessionID] = useState("");
@@ -120,8 +121,12 @@ export function CloudflareOAuthConnect({ available, connected, language, zoneNam
     setStage("saving");
     setError("");
     try {
-      await api.completeCloudflareOAuth(sessionID, zone.id);
-      await onConnected(zone);
+      if (onAuthorized) {
+        await onAuthorized(sessionID, zone);
+      } else {
+        await api.completeCloudflareOAuth(sessionID, zone.id);
+        await onConnected(zone);
+      }
       setZones([]);
       setSessionID("");
       setStage("idle");

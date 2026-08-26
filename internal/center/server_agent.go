@@ -163,7 +163,12 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]bool{"connected": true})
+	network, err := s.store.CenterNetworkConfig(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"connected": true, "centerUrl": network.AgentConnectURL})
 }
 
 func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Request) {

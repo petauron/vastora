@@ -464,6 +464,7 @@ func TestProtectedSystemGatewayAcceptsCompleteSystemRoutes(t *testing.T) {
 		)
 	}
 	desired.Routes = append(desired.Routes, gateway.Route{ID: "system-agent-bootstrap", Hostname: "headscale.example.test", Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true})
+	desired.Routes = append(desired.Routes, gateway.Route{ID: "system-agent-binary-bootstrap", Hostname: "headscale.example.test", Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true})
 	if err := validateProtectedSystemRoutes(desired, []string{"center", "headscale"}); err != nil {
 		t.Fatalf("complete protected system state was rejected: %v", err)
 	}

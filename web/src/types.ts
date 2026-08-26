@@ -38,6 +38,25 @@ export type AppData = {
   integrations: Integration[];
   actions: Action[];
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
+  systemDomain: SystemDomain;
+};
+
+export type SystemEndpointAlias = { kind: "center" | "headscale"; endpoint: string; certificateNotAfter?: string };
+export type SystemDomain = {
+  namespace: string;
+  centerUrl: string;
+  headscaleUrl: string;
+  cloudflareZone: string;
+  aliases: SystemEndpointAlias[];
+  activePublications: number;
+  pendingCleanup: number;
+  builtinHeadscale: boolean;
+  cloudflareOAuthAvailable: boolean;
+};
+export type SystemDomainSwitchResult = SystemDomain & {
+  previousCenterUrl: string;
+  previousHeadscaleUrl: string;
+  backupCreated: boolean;
 };
 
 export type CenterUpdateStatus = {

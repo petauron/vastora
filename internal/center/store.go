@@ -35,6 +35,7 @@ type Store struct {
 	cloudflareOAuthSessions        map[string]*cloudflareOAuthSession
 	cloudflareTokenMu              sync.Mutex
 	certificateMu                  sync.Mutex
+	domainSwitchMu                 sync.Mutex
 	siteCertificateMu              sync.Mutex
 	publicationCleanupMu           sync.Mutex
 	publicationVerificationMu      sync.Mutex
@@ -49,6 +50,7 @@ type Store struct {
 	lookupGatewayAddress           func(string) (string, error)
 	verifyPublicEntry              func(context.Context, string, deployapi.PublicEntryProbe) error
 	issuePrivateCertificate        func(context.Context, ...string) (managedCertificate, error)
+	issueDomainCertificate         func(context.Context, cloudflareClient, string, ...string) (managedCertificate, error)
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
@@ -108,6 +110,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	}
 	store.verifyPublication = store.verifyPublicationRevision
 	store.issuePrivateCertificate = store.obtainPrivateCertificate
+	store.issueDomainCertificate = store.obtainPrivateCertificateWithCloudflare
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
 		backgroundCancel()
 		_ = db.Close()

@@ -104,9 +104,48 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 		gateway.Route{ID: "system-center", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
 		gateway.Route{ID: "system-headscale", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
 		gateway.Route{ID: "system-agent-bootstrap", Hostname: headscaleHostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		gateway.Route{ID: "system-agent-binary-bootstrap", Hostname: headscaleHostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 		gateway.Route{ID: "system-center-local", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
 		gateway.Route{ID: "system-headscale-local", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
 	)
+	centerAliases, err := readSystemEndpointAliases(ctx, tx, "center")
+	if err != nil {
+		return fmt.Errorf("center: read Center endpoint aliases: %w", err)
+	}
+	for _, alias := range centerAliases {
+		hostname, err := gatewayEndpointHostname(alias.Endpoint)
+		if err != nil {
+			return fmt.Errorf("center: stored Center endpoint alias: %w", err)
+		}
+		if hostname == centerHostname {
+			continue
+		}
+		key := strings.ReplaceAll(hostname, ".", "-")
+		state.Routes = append(state.Routes,
+			gateway.Route{ID: "system-center-alias-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
+			gateway.Route{ID: "system-center-alias-local-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
+		)
+	}
+	headscaleAliases, err := readSystemEndpointAliases(ctx, tx, "headscale")
+	if err != nil {
+		return fmt.Errorf("center: read Headscale endpoint aliases: %w", err)
+	}
+	for _, alias := range headscaleAliases {
+		hostname, err := gatewayEndpointHostname(alias.Endpoint)
+		if err != nil {
+			return fmt.Errorf("center: stored Headscale endpoint alias: %w", err)
+		}
+		if hostname == headscaleHostname {
+			continue
+		}
+		key := strings.ReplaceAll(hostname, ".", "-")
+		state.Routes = append(state.Routes,
+			gateway.Route{ID: "system-headscale-alias-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-agent-bootstrap-alias-" + key, Hostname: hostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-agent-binary-bootstrap-alias-" + key, Hostname: hostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-headscale-alias-local-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
+		)
+	}
 	return nil
 }
 
@@ -124,6 +163,13 @@ func (s *Store) queueAllGatewayStates(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.queueAllGatewayStatesTx(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) queueAllGatewayStatesTx(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, `SELECT gateway_node_id FROM gateway_components WHERE desired_status = 'running' ORDER BY gateway_node_id`)
 	if err != nil {
 		return err
@@ -145,5 +191,5 @@ func (s *Store) queueAllGatewayStates(ctx context.Context) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }

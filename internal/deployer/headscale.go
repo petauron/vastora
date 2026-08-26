@@ -50,6 +50,8 @@ type DockerHeadscaleInstaller struct {
 	CaddyImage            string
 	CenterCertificatePEM  string
 	CenterPrivateKeyPEM   string
+	CenterAliases         []deployapi.CenterEndpointAlias
+	HeadscaleAliases      []string
 	HTTPClient            *http.Client
 }
 
@@ -71,7 +73,8 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	if err != nil {
 		return "", "", err
 	}
-	bindAddresses, err := gatewayBindAddresses(ctx, input.PublicAddress, input.GatewayBindAddress, headscaleURL)
+	publicEndpoints := append([]string{headscaleURL}, settings.HeadscaleAliases...)
+	bindAddresses, err := gatewayBindAddresses(ctx, input.PublicAddress, input.GatewayBindAddress, publicEndpoints...)
 	if err != nil {
 		return "", "", err
 	}
@@ -125,7 +128,7 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			return "", "", err
 		}
 	}
-	replacement, err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, bindAddresses))
+	replacement, err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, bindAddresses, settings.CenterAliases, settings.HeadscaleAliases))
 	if err != nil {
 		return "", "", err
 	}
@@ -159,16 +162,43 @@ func (installer DockerHeadscaleInstaller) settings(input deployapi.HeadscaleInst
 	if centerURL == headscaleURL {
 		return DockerHeadscaleInstaller{}, "", "", errors.New("deployer: Center and Headscale require different hostnames")
 	}
-	certificatePair, err := tls.X509KeyPair([]byte(input.CenterCertificatePEM), []byte(input.CenterCertificateKeyPEM))
-	if err != nil || len(certificatePair.Certificate) == 0 {
-		return DockerHeadscaleInstaller{}, "", "", errors.New("deployer: a valid Center HTTPS certificate and key are required")
+	if err := validateCenterCertificate(centerURL, input.CenterCertificatePEM, input.CenterCertificateKeyPEM); err != nil {
+		return DockerHeadscaleInstaller{}, "", "", err
 	}
-	leaf, err := x509.ParseCertificate(certificatePair.Certificate[0])
-	if err != nil || leaf.VerifyHostname(strings.TrimPrefix(centerURL, "https://")) != nil || time.Now().Before(leaf.NotBefore) || !time.Now().Before(leaf.NotAfter) {
-		return DockerHeadscaleInstaller{}, "", "", errors.New("deployer: Center HTTPS certificate is invalid for its private hostname")
+	seenCenter := map[string]struct{}{centerURL: {}}
+	centerAliases := make([]deployapi.CenterEndpointAlias, 0, len(input.CenterAliases))
+	for _, alias := range input.CenterAliases {
+		aliasURL, normalizeErr := normalizePublicURL(alias.URL)
+		if normalizeErr != nil {
+			return DockerHeadscaleInstaller{}, "", "", fmt.Errorf("deployer: Center alias URL: %w", normalizeErr)
+		}
+		if _, exists := seenCenter[aliasURL]; exists {
+			continue
+		}
+		if certificateErr := validateCenterCertificate(aliasURL, alias.CertificatePEM, alias.CertificateKeyPEM); certificateErr != nil {
+			return DockerHeadscaleInstaller{}, "", "", certificateErr
+		}
+		seenCenter[aliasURL] = struct{}{}
+		alias.URL = aliasURL
+		centerAliases = append(centerAliases, alias)
+	}
+	seenHeadscale := map[string]struct{}{headscaleURL: {}}
+	headscaleAliases := make([]string, 0, len(input.HeadscaleAliases))
+	for _, alias := range input.HeadscaleAliases {
+		aliasURL, normalizeErr := normalizePublicURL(alias)
+		if normalizeErr != nil {
+			return DockerHeadscaleInstaller{}, "", "", fmt.Errorf("deployer: Headscale alias URL: %w", normalizeErr)
+		}
+		if _, exists := seenHeadscale[aliasURL]; exists {
+			continue
+		}
+		seenHeadscale[aliasURL] = struct{}{}
+		headscaleAliases = append(headscaleAliases, aliasURL)
 	}
 	installer.CenterCertificatePEM = input.CenterCertificatePEM
 	installer.CenterPrivateKeyPEM = input.CenterCertificateKeyPEM
+	installer.CenterAliases = centerAliases
+	installer.HeadscaleAliases = headscaleAliases
 	if installer.Socket == "" {
 		installer.Socket = "unix:///var/run/docker.sock"
 	}
@@ -206,6 +236,18 @@ func (installer DockerHeadscaleInstaller) settings(input deployapi.HeadscaleInst
 		installer.HTTPClient = &http.Client{Timeout: 8 * time.Second}
 	}
 	return installer, centerURL, headscaleURL, nil
+}
+
+func validateCenterCertificate(endpoint, certificatePEM, privateKeyPEM string) error {
+	certificatePair, err := tls.X509KeyPair([]byte(certificatePEM), []byte(privateKeyPEM))
+	if err != nil || len(certificatePair.Certificate) == 0 {
+		return errors.New("deployer: a valid Center HTTPS certificate and key are required")
+	}
+	leaf, err := x509.ParseCertificate(certificatePair.Certificate[0])
+	if err != nil || leaf.VerifyHostname(strings.TrimPrefix(endpoint, "https://")) != nil || time.Now().Before(leaf.NotBefore) || !time.Now().Before(leaf.NotAfter) {
+		return errors.New("deployer: Center HTTPS certificate is invalid for its private hostname")
+	}
+	return nil
 }
 
 func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, docker *client.Client) error {

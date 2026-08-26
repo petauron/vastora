@@ -32,6 +32,7 @@ func runAgent(arguments []string) error {
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
 		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
+		replaceExisting := flags.Bool("replace-existing", false, "replace an existing Center enrollment after explicit confirmation")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -49,29 +50,70 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		defer store.Close()
-		if _, connectionErr := store.Connection(context.Background()); connectionErr == nil {
+		existing, connectionErr := store.Connection(context.Background())
+		if connectionErr == nil && !*replaceExisting {
 			return errors.New("agent is already installed; use agent update or agent configure")
+		}
+		if connectionErr != nil && *replaceExisting {
+			return errors.New("agent cannot replace a Center enrollment because no existing enrollment was found")
 		}
 		token, err := readPrivateToken(*tokenFile)
 		if err != nil {
 			return err
 		}
-		enrollment, err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, token)
+		client := agent.Client{}
+		var enrollment agent.Enrollment
+		if *replaceExisting {
+			enrollment, err = client.MigrateEnrollment(context.Background(), store, *centerURL, token)
+		} else {
+			enrollment, err = client.Enroll(context.Background(), store, *centerURL, token)
+		}
 		if err != nil {
 			return err
+		}
+		rollback := func(cause error) error {
+			if !*replaceExisting {
+				return cause
+			}
+			if rollbackErr := store.ReplaceConnection(context.Background(), existing); rollbackErr != nil {
+				return fmt.Errorf("%w; additionally failed to restore the previous Center connection: %v", cause, rollbackErr)
+			}
+			return cause
 		}
 		roles, capabilities, err := validatedNodeRuntime(strings.Join(enrollment.Roles, ","), nodeCapabilitiesString(enrollment.Capabilities))
 		if err != nil {
-			return fmt.Errorf("center returned an invalid Agent profile: %w", err)
+			return rollback(fmt.Errorf("center returned an invalid Agent profile: %w", err))
 		}
 		executable, err := os.Executable()
 		if err != nil {
-			return fmt.Errorf("locate vastora executable: %w", err)
+			return rollback(fmt.Errorf("locate vastora executable: %w", err))
 		}
 		if err := installSystemdAgent(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
-			return err
+			return rollback(err)
+		}
+		if *replaceExisting {
+			if output, restartErr := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput(); restartErr != nil {
+				cause := rollback(fmt.Errorf("restart migrated Agent service: %s: %w", strings.TrimSpace(string(output)), restartErr))
+				_, _ = exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput()
+				return cause
+			}
+			fmt.Printf("Agent %s moved to the new Center and restarted\n", enrollment.Name)
+			return nil
 		}
 		fmt.Printf("Agent %s installed and started\n", enrollment.Name)
+		return nil
+	case "status":
+		flags := flag.NewFlagSet("agent status", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		connection, err := agent.InspectConnection(*dataDir)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Agent: %s\nCenter: %s\nAgent ID: %s\n", connection.Name, connection.CenterURL, connection.AgentID)
 		return nil
 	case "configure":
 		flags := flag.NewFlagSet("agent configure", flag.ContinueOnError)

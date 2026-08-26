@@ -61,6 +61,29 @@ func (s *Server) handleCompleteCloudflareOAuth(writer http.ResponseWriter, reque
 	writeJSON(writer, http.StatusOK, value)
 }
 
+func (s *Server) handleSystemDomain(writer http.ResponseWriter, request *http.Request) {
+	value, err := s.store.SystemDomain(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
+func (s *Server) handleSwitchSystemDomain(writer http.ResponseWriter, request *http.Request) {
+	var input SystemDomainSwitchInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.SwitchSystemDomain(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
 func (s *Server) handleConfigureSetupDNS(writer http.ResponseWriter, request *http.Request) {
 	var input SetupDNSInput
 	if err := decodeJSON(request, &input); err != nil {
@@ -117,9 +140,15 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
+	centerAliases, headscaleAliases, err := s.store.deploymentEndpointAliases(ctx)
+	if err != nil {
+		return IntegrationView{}, err
+	}
 	result, err := s.infrastructure.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
 		CenterURL:               centerURL,
 		HeadscaleURL:            input.URL,
+		CenterAliases:           centerAliases,
+		HeadscaleAliases:        headscaleAliases,
 		PublicAddress:           binding.PublicAddress,
 		GatewayBindAddress:      binding.BindAddress,
 		CenterCertificatePEM:    centerCertificate.CertificatePEM,
@@ -168,9 +197,15 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	centerAliases, headscaleAliases, err := s.store.deploymentEndpointAliases(ctx)
+	if err != nil {
+		return err
+	}
 	if err := s.infrastructure.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
 		CenterURL:               network.AgentConnectURL,
 		HeadscaleURL:            endpoint,
+		CenterAliases:           centerAliases,
+		HeadscaleAliases:        headscaleAliases,
 		PublicAddress:           binding.PublicAddress,
 		GatewayBindAddress:      binding.BindAddress,
 		CenterCertificatePEM:    centerCertificate.CertificatePEM,

@@ -65,8 +65,14 @@ func (s *Store) ensureSystemCenterCertificate(ctx context.Context, endpoint stri
 		}
 	}
 	if secretID != "" && secretID != newSecretID {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, secretID); err != nil {
+		var aliases int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM system_endpoint_aliases WHERE certificate_secret_id = ?`, secretID).Scan(&aliases); err != nil {
 			return managedCertificate{}, false, err
+		}
+		if aliases == 0 {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, secretID); err != nil {
+				return managedCertificate{}, false, err
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

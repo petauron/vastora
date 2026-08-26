@@ -273,12 +273,9 @@ func (s *Store) ClearGatewayState(ctx context.Context) error {
 }
 
 func (s *Store) SaveConnection(ctx context.Context, connection Connection) error {
-	if strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Name) == "" || strings.TrimSpace(connection.CenterURL) == "" || connection.Credential == "" {
-		return errors.New("agent: incomplete Center connection")
-	}
-	sealed, err := secret.Seal(s.key, []byte(connection.Credential), []byte("agent-control-plane:"+connection.AgentID))
+	sealed, err := s.sealConnection(connection)
 	if err != nil {
-		return fmt.Errorf("agent: encrypt Center credential: %w", err)
+		return err
 	}
 	result, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential) VALUES(1, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, connection.AgentID, connection.Name, connection.CenterURL, sealed)
 	if err != nil {
@@ -292,6 +289,36 @@ func (s *Store) SaveConnection(ctx context.Context, connection Connection) error
 		return errors.New("agent: already enrolled; clear the Agent data directory before enrolling again")
 	}
 	return nil
+}
+
+// ReplaceConnection changes only the control-plane identity. Application,
+// gateway, and recovery state remain intact so an explicitly approved Center
+// migration cannot stop or forget locally managed workloads.
+func (s *Store) ReplaceConnection(ctx context.Context, connection Connection) error {
+	sealed, err := s.sealConnection(connection)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential)
+		VALUES(1, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url, sealed_credential = excluded.sealed_credential`, connection.AgentID, connection.Name, connection.CenterURL, sealed); err != nil {
+		return fmt.Errorf("agent: replace Center connection: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) sealConnection(connection Connection) ([]byte, error) {
+	connection.AgentID = strings.TrimSpace(connection.AgentID)
+	connection.Name = strings.TrimSpace(connection.Name)
+	connection.CenterURL = strings.TrimSpace(connection.CenterURL)
+	if connection.AgentID == "" || connection.Name == "" || connection.CenterURL == "" || connection.Credential == "" {
+		return nil, errors.New("agent: incomplete Center connection")
+	}
+	sealed, err := secret.Seal(s.key, []byte(connection.Credential), []byte("agent-control-plane:"+connection.AgentID))
+	if err != nil {
+		return nil, fmt.Errorf("agent: encrypt Center credential: %w", err)
+	}
+	return sealed, nil
 }
 
 func (s *Store) Connection(ctx context.Context) (Connection, error) {

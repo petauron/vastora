@@ -49,8 +49,8 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	if !strings.Contains(headscale, "listen_addr: 0.0.0.0:8081") || !strings.Contains(headscale, "override_local_dns: true") || !strings.Contains(headscale, "      - 1.1.1.1") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
-	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"203.0.113.10"}))
-	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || !strings.Contains(caddy, "bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "tls /etc/caddy/system/center.crt /etc/caddy/system/center.key") || !strings.Contains(caddy, "handle /install/agent.sh") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
+	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"203.0.113.10"}, nil, nil))
+	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || !strings.Contains(caddy, "bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "tls /etc/caddy/system/center.crt /etc/caddy/system/center.key") || !strings.Contains(caddy, "handle /install/agent.sh") || !strings.Contains(caddy, "handle /api/v1/agent-binaries/*") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
 		t.Fatalf("unexpected Caddy configuration:\n%s", caddy)
 	}
 	policy := string(renderHeadscalePolicy())

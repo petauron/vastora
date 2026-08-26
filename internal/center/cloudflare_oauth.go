@@ -230,37 +230,12 @@ func (s *Store) PollCloudflareOAuth(ctx context.Context, sessionID string) (Clou
 }
 
 func (s *Store) CompleteCloudflareOAuth(ctx context.Context, sessionID, zoneID string) (IntegrationView, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	zoneID = strings.TrimSpace(zoneID)
-	s.cloudflareOAuthMu.Lock()
-	s.cleanupCloudflareOAuthSessionsLocked(s.now().UTC())
-	session := s.cloudflareOAuthSessions[sessionID]
-	if session == nil || session.Token.AccessToken == "" {
-		s.cloudflareOAuthMu.Unlock()
-		return IntegrationView{}, errors.New("center: Cloudflare authorization is not complete")
-	}
-	var selected CloudflareZone
-	for _, zone := range session.Zones {
-		if zone.ID == zoneID {
-			selected = zone
-			break
-		}
-	}
-	token := session.Token
-	s.cloudflareOAuthMu.Unlock()
-	if selected.ID == "" {
-		return IntegrationView{}, errors.New("center: selected Cloudflare zone was not authorized")
+	sessionID, selected, token, err := s.cloudflareOAuthSelection(sessionID, zoneID)
+	if err != nil {
+		return IntegrationView{}, err
 	}
 	client := cloudflareClient{accountID: selected.AccountID, zoneID: selected.ID, token: token.AccessToken, baseURL: s.cloudflareOAuth.APIURL, http: s.cloudflareOAuth.HTTPClient}
 	zoneName, err := client.verify(ctx)
-	if err != nil {
-		return IntegrationView{}, err
-	}
-	encoded, err := json.Marshal(token)
-	if err != nil {
-		return IntegrationView{}, err
-	}
-	existingSecretID, _, err := s.integrationSecret(ctx, "cloudflare")
 	if err != nil {
 		return IntegrationView{}, err
 	}
@@ -269,20 +244,8 @@ func (s *Store) CompleteCloudflareOAuth(ctx context.Context, sessionID, zoneID s
 		return IntegrationView{}, err
 	}
 	defer tx.Rollback()
-	secretID, err := s.putSecret(ctx, tx, encoded, "integration:cloudflare")
-	if err != nil {
+	if err := s.saveCloudflareOAuthIntegrationTx(ctx, tx, selected, token, zoneName); err != nil {
 		return IntegrationView{}, err
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, account_id, zone_id, secret_id, status, created_at, updated_at)
-		VALUES('cloudflare', 'oauth', ?, ?, ?, ?, 'configured', ?, ?)
-		ON CONFLICT(kind) DO UPDATE SET mode = 'oauth', endpoint = excluded.endpoint, account_id = excluded.account_id, zone_id = excluded.zone_id, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, zoneName, selected.AccountID, selected.ID, secretID, now, now); err != nil {
-		return IntegrationView{}, fmt.Errorf("center: save Cloudflare OAuth integration: %w", err)
-	}
-	if existingSecretID != "" && existingSecretID != secretID {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, existingSecretID); err != nil {
-			return IntegrationView{}, err
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return IntegrationView{}, err
@@ -291,6 +254,52 @@ func (s *Store) CompleteCloudflareOAuth(ctx context.Context, sessionID, zoneID s
 	delete(s.cloudflareOAuthSessions, sessionID)
 	s.cloudflareOAuthMu.Unlock()
 	return s.Integration(ctx, "cloudflare")
+}
+
+func (s *Store) saveCloudflareOAuthIntegrationTx(ctx context.Context, tx *sql.Tx, selected CloudflareZone, token cloudflareOAuthToken, zoneName string) error {
+	encoded, err := json.Marshal(token)
+	if err != nil {
+		return err
+	}
+	secretID, err := s.putSecret(ctx, tx, encoded, "integration:cloudflare")
+	if err != nil {
+		return err
+	}
+	var existingSecretID string
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(secret_id, '') FROM network_integrations WHERE kind = 'cloudflare'`).Scan(&existingSecretID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("center: read existing Cloudflare integration: %w", err)
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, account_id, zone_id, secret_id, status, created_at, updated_at)
+		VALUES('cloudflare', 'oauth', ?, ?, ?, ?, 'configured', ?, ?)
+		ON CONFLICT(kind) DO UPDATE SET mode = 'oauth', endpoint = excluded.endpoint, account_id = excluded.account_id, zone_id = excluded.zone_id, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, zoneName, selected.AccountID, selected.ID, secretID, now, now); err != nil {
+		return fmt.Errorf("center: save Cloudflare OAuth integration: %w", err)
+	}
+	if existingSecretID != "" && existingSecretID != secretID {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, existingSecretID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) cloudflareOAuthSelection(sessionID, zoneID string) (string, CloudflareZone, cloudflareOAuthToken, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	zoneID = strings.TrimSpace(zoneID)
+	s.cloudflareOAuthMu.Lock()
+	defer s.cloudflareOAuthMu.Unlock()
+	s.cleanupCloudflareOAuthSessionsLocked(s.now().UTC())
+	session := s.cloudflareOAuthSessions[sessionID]
+	if session == nil || session.Token.AccessToken == "" {
+		return "", CloudflareZone{}, cloudflareOAuthToken{}, errors.New("center: Cloudflare authorization is not complete")
+	}
+	for _, zone := range session.Zones {
+		if zone.ID == zoneID {
+			return sessionID, zone, session.Token, nil
+		}
+	}
+	return "", CloudflareZone{}, cloudflareOAuthToken{}, errors.New("center: selected Cloudflare zone was not authorized")
 }
 
 func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, candidates []networking.Candidate) ([]SetupDNSRecord, error) {

@@ -2,7 +2,8 @@
 set -eu
 
 base_ref="${1:-}"
-project_dir="${2:-$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)}"
+script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+project_dir="${2:-$(CDPATH='' cd -- "$script_dir/.." && pwd)}"
 
 usage() {
   echo "Usage: validate-release-metadata.sh BASE_REF [PROJECT_DIR]" >&2
@@ -37,14 +38,24 @@ if [ "$actual_files" != "$expected_files" ]; then
   exit 1
 fi
 
+semver_pattern='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
 version="$(sed -n '1p' "$project_dir/version.txt")"
 version_lines="$(awk 'END {print NR}' "$project_dir/version.txt")"
 if [ -z "$version" ] || [ "$version_lines" -ne 1 ]; then
   echo "version.txt must contain exactly one non-empty line." >&2
   exit 1
 fi
-if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'; then
+if ! printf '%s\n' "$version" | grep -Eq "$semver_pattern"; then
   echo "Release version is not valid SemVer: $version" >&2
+  exit 1
+fi
+base_version="$(git -C "$project_dir" show "$base_ref:version.txt")"
+if ! printf '%s\n' "$base_version" | grep -Eq "$semver_pattern"; then
+  echo "Base release version is not valid SemVer: $base_version" >&2
+  exit 1
+fi
+if [ "$(awk -f "$script_dir/compare-semver.awk" "$base_version" "$version")" != '-1' ]; then
+  echo "Release version must be greater than the base version: $version <= $base_version" >&2
   exit 1
 fi
 if ! jq -e --arg version "$version" \
