@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -73,7 +73,7 @@ export const api = {
   centerUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update"),
   startCenterUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update", { method: "POST", body: "{}" }),
   systemDomain: () => request<SystemDomain>("/api/v1/system/domain"),
-  switchSystemDomain: (sessionId: string, zoneId: string) => request<SystemDomainSwitchResult>("/api/v1/system/domain", { method: "POST", body: JSON.stringify({ sessionId, zoneId, confirm: true }) }),
+  switchSystemDomain: (zoneId: string) => request<SystemDomainSwitchResult>("/api/v1/system/domain", { method: "POST", body: JSON.stringify({ zoneId, confirm: true }) }),
   diagnostics: () => request<Diagnostics>("/api/v1/diagnostics"),
   downloadDiagnostics: () => download("/api/v1/diagnostics", `vastora-diagnostics-${new Date().toISOString().slice(0, 10)}.json`),
   downloadBackup: (password: string) => download("/api/v1/backups", "vastora-center.vastora", { method: "POST", body: JSON.stringify({ password }) }),
@@ -118,6 +118,7 @@ export const api = {
   startCloudflareOAuth: () => request<CloudflareOAuthStart>("/api/v1/integrations/cloudflare/oauth/start", { method: "POST", body: "{}" }),
   pollCloudflareOAuth: (sessionId: string) => request<CloudflareOAuthPoll>("/api/v1/integrations/cloudflare/oauth/poll", { method: "POST", body: JSON.stringify({ sessionId }) }),
   completeCloudflareOAuth: (sessionId: string, zoneId: string) => request<Integration>("/api/v1/integrations/cloudflare/oauth/complete", { method: "POST", body: JSON.stringify({ sessionId, zoneId }) }),
+  cloudflareZones: () => request<{ zones: CloudflareZone[] }>("/api/v1/integrations/cloudflare/zones"),
   configureSetupDNS: (input: { centerUrl: string; headscaleUrl?: string; publicAddress: string; gatewayAddress: string; natConfirmed: boolean }) => request<{ records: Array<{ id: string; type: "A" | "AAAA"; name: string; content: string }> }>("/api/v1/setup/cloudflare/dns", { method: "POST", body: JSON.stringify(input) }),
   verifySetupPublicEntry: (input: { publicAddress: string; gatewayAddress: string; natConfirmed: boolean }) => request<{ status: "ready"; publicAddress: string; gatewayAddress: string; ports: number[] }>("/api/v1/setup/public-entry/verify", { method: "POST", body: JSON.stringify(input) }),
   configureHeadscale: (input: { mode: "builtin" | "external"; url: string; apiKey?: string }) => request<Integration>("/api/v1/integrations/headscale", { method: "PUT", body: JSON.stringify(input) }),

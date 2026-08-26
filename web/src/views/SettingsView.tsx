@@ -3,7 +3,7 @@ import { ChevronDownIcon, DatabaseBackupIcon, DatabaseIcon, DownloadIcon, KeyRou
 import { api } from "../api";
 import { SignOutButton, type AppData, type Mutate } from "../App";
 import { administratorPasswordMinLength } from "../lib/security";
-import type { CatalogSource } from "../types";
+import type { CatalogSource, CenterUpdateStatus } from "../types";
 import type { Language } from "../translations";
 import { PageHeading, StateBadge, TechnicalError, copy, formatDate, userError } from "./shared";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { SystemDomainSettings } from "./SystemDomainSettings";
 
-export function SettingsView({ data, language, mutate, onLogout }: { data: AppData; language: Language; mutate: Mutate; onLogout: () => Promise<void> }) {
+export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onLogout, onRefresh }: { data: AppData; language: Language; mutate: Mutate; onCenterUpdateStatus: (status: CenterUpdateStatus) => void; onLogout: () => Promise<void>; onRefresh: () => Promise<void> }) {
   const [adding, setAdding] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -28,11 +28,11 @@ export function SettingsView({ data, language, mutate, onLogout }: { data: AppDa
       <PageHeading title={copy(language, "设置", "Settings")} description={copy(language, "管理 Center、数据保护、应用目录和登录会话。网络集成位于“网络”页面。", "Manage Center, data protection, app catalogs, and your session. Network integrations live on the Network page.")} action={<SignOutButton language={language} onLogout={onLogout} />} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><SettingsIcon />Center</CardTitle><CardDescription>{copy(language, "当前运行信息", "Current runtime information")}</CardDescription></CardHeader>
-        <CardContent><dl className="grid gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "版本", "Version")}</dt><dd className="mt-1 font-medium">{data.status.version}</dd></div><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{data.agents.filter((agent) => agent.status === "active").length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "应用", "Apps")}</dt><dd className="mt-1 font-medium">{data.applications.length}</dd></div></dl></CardContent>
+        <CardContent><dl className="grid gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "版本", "Version")}</dt><dd className="mt-1 font-medium">{data.centerUpdate.currentVersion}</dd></div><div><dt className="text-muted-foreground">{copy(language, "节点", "Nodes")}</dt><dd className="mt-1 font-medium">{data.agents.filter((agent) => agent.status === "active").length}</dd></div><div><dt className="text-muted-foreground">{copy(language, "应用", "Apps")}</dt><dd className="mt-1 font-medium">{data.applications.length}</dd></div></dl></CardContent>
         <CardFooter className="justify-end"><Button onClick={() => setPasswordOpen(true)} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "修改管理员密码", "Change administrator password")}</Button></CardFooter>
       </Card>
       <SystemDomainSettings domain={data.systemDomain} language={language} />
-      <CenterUpdateCard initial={data.centerUpdate} language={language} />
+      <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} status={data.centerUpdate} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "数据与故障排查", "Data & troubleshooting")}</CardTitle><CardDescription>{copy(language, "备份 Center 配置，或下载不含密钥的诊断信息。", "Back up Center configuration or download diagnostics that contain no secret values.")}</CardDescription></CardHeader>
         <CardContent>

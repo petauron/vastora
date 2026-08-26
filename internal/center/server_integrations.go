@@ -61,6 +61,15 @@ func (s *Server) handleCompleteCloudflareOAuth(writer http.ResponseWriter, reque
 	writeJSON(writer, http.StatusOK, value)
 }
 
+func (s *Server) handleListCloudflareZones(writer http.ResponseWriter, request *http.Request) {
+	values, err := s.store.CloudflareZones(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"zones": values})
+}
+
 func (s *Server) handleSystemDomain(writer http.ResponseWriter, request *http.Request) {
 	value, err := s.store.SystemDomain(request.Context())
 	if err != nil {

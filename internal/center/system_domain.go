@@ -28,9 +28,8 @@ type SystemDomainView struct {
 }
 
 type SystemDomainSwitchInput struct {
-	SessionID string `json:"sessionId"`
-	ZoneID    string `json:"zoneId"`
-	Confirm   bool   `json:"confirm"`
+	ZoneID  string `json:"zoneId"`
+	Confirm bool   `json:"confirm"`
 }
 
 type SystemDomainSwitchResult struct {
@@ -104,11 +103,10 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 	if current.ActivePublications != 0 || current.PendingCleanup != 0 {
 		return SystemDomainSwitchResult{}, errors.New("center: stop all access points and wait for cleanup before switching the system domain")
 	}
-	sessionID, selected, token, err := s.store.cloudflareOAuthSelection(input.SessionID, input.ZoneID)
+	cloudflare, selected, err := s.store.cloudflareForZone(ctx, input.ZoneID)
 	if err != nil {
 		return SystemDomainSwitchResult{}, err
 	}
-	cloudflare := cloudflareClient{accountID: selected.AccountID, zoneID: selected.ID, token: token.AccessToken, baseURL: s.store.cloudflareOAuth.APIURL, http: s.store.cloudflareOAuth.HTTPClient}
 	zoneName, err := cloudflare.verify(ctx)
 	if err != nil {
 		return SystemDomainSwitchResult{}, err
@@ -180,7 +178,7 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 		restoreErr := s.store.reconcileHeadscaleDNS(context.WithoutCancel(ctx))
 		return SystemDomainSwitchResult{}, errors.Join(fmt.Errorf("center: apply the new system domain: %w", err), restoreErr)
 	}
-	if err := s.store.commitSystemDomainSwitch(ctx, current, selected, token, zoneName, centerURL, headscaleURL, newCertificate, newDNS); err != nil {
+	if err := s.store.commitSystemDomainSwitch(ctx, current, selected, zoneName, centerURL, headscaleURL, newCertificate, newDNS); err != nil {
 		rollback := deployapi.HeadscaleInstallRequest{
 			CenterURL: current.CenterURL, HeadscaleURL: current.HeadscaleURL,
 			CenterAliases:    append(centerAliases[:len(centerAliases)-1], deployapi.CenterEndpointAlias{URL: centerURL, CertificatePEM: newCertificate.CertificatePEM, CertificateKeyPEM: newCertificate.PrivateKeyPEM}),
@@ -193,14 +191,34 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 		restoreErr := s.store.reconcileHeadscaleDNS(context.WithoutCancel(ctx))
 		return SystemDomainSwitchResult{}, errors.Join(err, rollbackErr, restoreErr)
 	}
-	s.store.cloudflareOAuthMu.Lock()
-	delete(s.store.cloudflareOAuthSessions, sessionID)
-	s.store.cloudflareOAuthMu.Unlock()
 	updated, err := s.store.SystemDomain(ctx)
 	if err != nil {
 		return SystemDomainSwitchResult{}, err
 	}
 	return SystemDomainSwitchResult{SystemDomainView: updated, PreviousCenterURL: current.CenterURL, PreviousHeadscaleURL: current.HeadscaleURL, BackupCreated: true}, nil
+}
+
+func (s *Store) cloudflareForZone(ctx context.Context, zoneID string) (cloudflareClient, CloudflareZone, error) {
+	zoneID = strings.TrimSpace(zoneID)
+	if zoneID == "" {
+		return cloudflareClient{}, CloudflareZone{}, errors.New("center: select a Cloudflare zone")
+	}
+	client, err := s.cloudflare(ctx)
+	if err != nil {
+		return cloudflareClient{}, CloudflareZone{}, err
+	}
+	zones, err := s.listCloudflareZones(ctx, client.token)
+	if err != nil {
+		return cloudflareClient{}, CloudflareZone{}, err
+	}
+	for _, zone := range zones {
+		if zone.ID == zoneID {
+			client.accountID = zone.AccountID
+			client.zoneID = zone.ID
+			return client, zone, nil
+		}
+	}
+	return cloudflareClient{}, CloudflareZone{}, errors.New("center: selected Cloudflare zone is not available to the saved authorization")
 }
 
 func ensureSystemDNSRecord(ctx context.Context, client cloudflareClient, endpoint, address string) (SetupDNSRecord, bool, error) {
@@ -248,7 +266,7 @@ func (s *Store) createSystemDomainBackup(ctx context.Context) (string, error) {
 	return path, nil
 }
 
-func (s *Store) commitSystemDomainSwitch(ctx context.Context, current SystemDomainView, selected CloudflareZone, token cloudflareOAuthToken, zoneName, centerURL, headscaleURL string, certificate managedCertificate, dns SetupDNSRecord) error {
+func (s *Store) commitSystemDomainSwitch(ctx context.Context, current SystemDomainView, selected CloudflareZone, zoneName, centerURL, headscaleURL string, certificate managedCertificate, dns SetupDNSRecord) error {
 	encodedCertificate, err := json.Marshal(certificate)
 	if err != nil {
 		return err
@@ -309,8 +327,10 @@ func (s *Store) commitSystemDomainSwitch(ctx context.Context, current SystemDoma
 	if _, err := tx.ExecContext(ctx, `UPDATE network_integrations SET endpoint = ?, updated_at = ? WHERE kind = 'headscale' AND mode = 'builtin' AND status = 'configured'`, headscaleURL, now); err != nil {
 		return err
 	}
-	if err := s.saveCloudflareOAuthIntegrationTx(ctx, tx, selected, token, zoneName); err != nil {
+	if result, err := tx.ExecContext(ctx, `UPDATE network_integrations SET endpoint = ?, account_id = ?, zone_id = ?, last_error = '', updated_at = ? WHERE kind = 'cloudflare' AND mode = 'oauth' AND status = 'configured'`, zoneName, selected.AccountID, selected.ID, now); err != nil {
 		return err
+	} else if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("center: Cloudflare authorization changed during the domain switch")
 	}
 	oldNamespace := domainNamespaceFromCenterURL(current.CenterURL)
 	newNamespace := domainNamespaceFromCenterURL(centerURL)

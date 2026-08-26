@@ -127,6 +127,21 @@ func (s *Store) cloudflare(ctx context.Context) (cloudflareClient, error) {
 	return cloudflareClient{accountID: accountID, zoneID: zoneID, token: token.AccessToken, baseURL: s.cloudflareOAuth.APIURL, http: s.cloudflareOAuth.HTTPClient}, nil
 }
 
+func (s *Store) CloudflareZones(ctx context.Context) ([]CloudflareZone, error) {
+	client, err := s.cloudflare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	zones, err := s.listCloudflareZones(ctx, client.token)
+	if err != nil {
+		return nil, err
+	}
+	if len(zones) == 0 {
+		return nil, errors.New("center: Cloudflare authorization has no accessible zones")
+	}
+	return zones, nil
+}
+
 func (s *Store) ensureCloudflareTunnel(ctx context.Context, agentID string) error {
 	var existing int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cloudflare_tunnels WHERE agent_id = ?`, agentID).Scan(&existing); err != nil {
