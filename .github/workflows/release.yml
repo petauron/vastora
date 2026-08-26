@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      pull-requests: write
     outputs:
       release_created: ${{ steps.retry.outputs.release_created || steps.release.outputs.release_created }}
       release_sha: ${{ steps.retry.outputs.release_sha || steps.release.outputs.sha }}

@@ -18,6 +18,7 @@ require_in() {
 }
 
 require_in "$prepare_job" '          skip-github-pull-request: true'
+require_in "$prepare_job" '      pull-requests: write'
 require_in "$publish_job" '      artifact-metadata: write'
 require_in "$publish_job" '          platforms: linux/amd64,linux/arm64'
 require_in "$publish_job" '          DOCKER_CONFIG="$anonymous_config" scripts/assert-image-platforms.sh "$VASTORA_CENTER_IMAGE"'
