@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
@@ -70,15 +69,6 @@ func (s *Store) ListSystemEndpointAliases(ctx context.Context) ([]SystemEndpoint
 		}
 	}
 	return values, nil
-}
-
-func normalizeSystemEndpoint(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	normalized, err := normalizeHeadscaleEndpoint(value)
-	if err != nil {
-		return "", err
-	}
-	return normalized, nil
 }
 
 func (s *Store) deploymentEndpointAliases(ctx context.Context) ([]deployapi.CenterEndpointAlias, []string, error) {
