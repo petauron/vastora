@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.53](https://github.com/petauron/vastora/compare/v0.1.0-alpha.52...v0.1.0-alpha.53) (2026-08-26)
+
+
+### Features
+
+* add guided Center uninstall and domain recovery ([#157](https://github.com/petauron/vastora/issues/157)) ([4824e15](https://github.com/petauron/vastora/commit/4824e15ada3e9b7b59f718d40cf83bea5854d755))
+
 ## [0.1.0-alpha.52](https://github.com/petauron/vastora/compare/v0.1.0-alpha.51...v0.1.0-alpha.52) (2026-08-26)
 
 
