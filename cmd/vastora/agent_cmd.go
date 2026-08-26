@@ -158,6 +158,7 @@ func runAgent(arguments []string) error {
 		flags := flag.NewFlagSet("agent update", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		centerURL := flags.String("center-url", "", "current Center HTTPS URL or loopback HTTP URL")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -173,11 +174,24 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return errors.New("agent must be enrolled before it can update")
 		}
+		httpClient := &http.Client{Timeout: 2 * time.Minute}
+		if strings.TrimSpace(*centerURL) != "" {
+			verified, verifyErr := (agent.Client{HTTPClient: httpClient}).VerifyCenterURL(context.Background(), *centerURL)
+			if verifyErr != nil {
+				return fmt.Errorf("verify requested Center URL: %w", verifyErr)
+			}
+			if verified != connection.CenterURL {
+				connection.CenterURL = verified
+				if err := store.ReplaceConnection(context.Background(), connection); err != nil {
+					return fmt.Errorf("save requested Center URL: %w", err)
+				}
+			}
+		}
 		executable, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("locate vastora executable: %w", err)
 		}
-		version, err := updateAgentExecutable(context.Background(), &http.Client{Timeout: 2 * time.Minute}, connection, executable, func() error {
+		version, err := updateAgentExecutable(context.Background(), httpClient, connection, executable, func() error {
 			output, restartErr := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput()
 			if restartErr != nil {
 				return fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), restartErr)

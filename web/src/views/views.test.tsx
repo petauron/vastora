@@ -1125,6 +1125,10 @@ describe("network and app views", () => {
     act(() => manage?.click());
     expect(document.body.textContent).toContain("节点用途");
     expect(document.body.textContent).toContain("重新安装当前版本");
+    const update = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("重新安装当前版本"));
+    act(() => update?.click());
+    expect(document.body.textContent).toContain("agent update");
+    expect(document.body.textContent).toContain("--center-url 'https://center.example.com'");
     const tunnel = document.querySelector<HTMLElement>("#manage-node-tunnel");
     act(() => tunnel?.click());
     const generate = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("生成修改命令"));

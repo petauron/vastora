@@ -263,7 +263,30 @@ func formatGatewayBindAddresses(addresses []netip.Addr) []string {
 	return result
 }
 
-func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses []string, centerAliases []deployapi.CenterEndpointAlias, headscaleAliases []string) []byte {
+func centerPrivateBindAddresses(value string) ([]string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	requested, err := netip.ParseAddr(value)
+	if err != nil {
+		return nil, errors.New("deployer: Center private bind address is invalid")
+	}
+	requested = requested.Unmap()
+	candidates, err := networking.Discover(time.Now())
+	if err != nil {
+		return nil, fmt.Errorf("deployer: discover Center private address: %w", err)
+	}
+	for _, candidate := range candidates {
+		address, parseErr := netip.ParseAddr(candidate.Address)
+		if parseErr == nil && address.Unmap() == requested && candidate.Kind == networking.KindHeadscale {
+			return formatGatewayBindAddresses([]netip.Addr{requested}), nil
+		}
+	}
+	return nil, errors.New("deployer: Center private bind address must be assigned to this server by Tailscale")
+}
+
+func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, centerBindAddresses, bindAddresses []string, centerAliases []deployapi.CenterEndpointAlias, headscaleAliases []string) []byte {
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf(`{
 	admin unix/%s|0600
@@ -271,9 +294,9 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses
 }
 
 `, gatewayruntime.CaddyAdminSocket))
-	writeCenterGatewaySite(&result, centerURL, centerOrigin, centerCertificatePath, centerPrivateKeyPath)
+	writeCenterGatewaySite(&result, centerURL, centerOrigin, centerCertificatePath, centerPrivateKeyPath, centerBindAddresses)
 	for index, alias := range centerAliases {
-		writeCenterGatewaySite(&result, alias.URL, centerOrigin, centerAliasCertificatePath(index), centerAliasPrivateKeyPath(index))
+		writeCenterGatewaySite(&result, alias.URL, centerOrigin, centerAliasCertificatePath(index), centerAliasPrivateKeyPath(index), centerBindAddresses)
 	}
 	writeHeadscaleGatewaySite(&result, headscaleURL, centerOrigin, bindAddresses)
 	for _, alias := range headscaleAliases {
@@ -282,20 +305,21 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, bindAddresses
 	return []byte(result.String())
 }
 
-func writeCenterGatewaySite(result *strings.Builder, endpoint, centerOrigin, certificatePath, privateKeyPath string) {
+func writeCenterGatewaySite(result *strings.Builder, endpoint, centerOrigin, certificatePath, privateKeyPath string, privateBindAddresses []string) {
 	httpEndpoint := "http://" + strings.TrimPrefix(endpoint, "https://")
+	addresses := strings.Join(append([]string{"127.0.0.1"}, privateBindAddresses...), " ")
 	result.WriteString(fmt.Sprintf(`%s {
-	bind 127.0.0.1
+	bind %s
 	redir https://{host}{uri} 308
 }
 
 %s {
-	bind 127.0.0.1
+	bind %s
 	tls %s %s
 	reverse_proxy %s
 }
 
-`, httpEndpoint, endpoint, certificatePath, privateKeyPath, centerOrigin))
+`, httpEndpoint, addresses, endpoint, addresses, certificatePath, privateKeyPath, centerOrigin))
 }
 
 func writeHeadscaleGatewaySite(result *strings.Builder, endpoint, centerOrigin string, bindAddresses []string) {

@@ -418,20 +418,33 @@ func (c Client) applyDesiredCenterURL(ctx context.Context, store *Store, connect
 	if normalized == connection.CenterURL {
 		return nil
 	}
-	var health struct {
-		Status string `json:"status"`
-	}
-	if err := c.get(ctx, normalized+"/healthz", "", &health); err != nil {
+	if _, err := c.VerifyCenterURL(ctx, normalized); err != nil {
 		return fmt.Errorf("agent: verify new Center URL before switching: %w", err)
-	}
-	if health.Status != "ok" {
-		return errors.New("agent: verify new Center URL before switching: health check is not OK")
 	}
 	connection.CenterURL = normalized
 	if err := store.ReplaceConnection(ctx, connection); err != nil {
 		return fmt.Errorf("agent: save new Center URL: %w", err)
 	}
 	return nil
+}
+
+// VerifyCenterURL validates a user- or Center-supplied control-plane address
+// and confirms that it serves a healthy Center before local state is changed.
+func (c Client) VerifyCenterURL(ctx context.Context, desired string) (string, error) {
+	normalized, err := normalizeCenterURL(desired)
+	if err != nil {
+		return "", err
+	}
+	var health struct {
+		Status string `json:"status"`
+	}
+	if err := c.get(ctx, normalized+"/healthz", "", &health); err != nil {
+		return "", err
+	}
+	if health.Status != "ok" {
+		return "", errors.New("health check is not OK")
+	}
+	return normalized, nil
 }
 
 func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointObservation, error) {

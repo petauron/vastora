@@ -153,15 +153,20 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
+	centerPrivateBindAddress, err := s.store.coLocatedHeadscaleAddress(ctx)
+	if err != nil {
+		return IntegrationView{}, err
+	}
 	result, err := s.infrastructure.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
-		CenterURL:               centerURL,
-		HeadscaleURL:            input.URL,
-		CenterAliases:           centerAliases,
-		HeadscaleAliases:        headscaleAliases,
-		PublicAddress:           binding.PublicAddress,
-		GatewayBindAddress:      binding.BindAddress,
-		CenterCertificatePEM:    centerCertificate.CertificatePEM,
-		CenterCertificateKeyPEM: centerCertificate.PrivateKeyPEM,
+		CenterURL:                centerURL,
+		HeadscaleURL:             input.URL,
+		CenterAliases:            centerAliases,
+		HeadscaleAliases:         headscaleAliases,
+		PublicAddress:            binding.PublicAddress,
+		GatewayBindAddress:       binding.BindAddress,
+		CenterPrivateBindAddress: centerPrivateBindAddress,
+		CenterCertificatePEM:     centerCertificate.CertificatePEM,
+		CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
 	})
 	if err != nil {
 		return IntegrationView{}, err
@@ -210,15 +215,20 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	centerPrivateBindAddress, err := s.store.coLocatedHeadscaleAddress(ctx)
+	if err != nil {
+		return err
+	}
 	if err := s.infrastructure.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
-		CenterURL:               network.AgentConnectURL,
-		HeadscaleURL:            endpoint,
-		CenterAliases:           centerAliases,
-		HeadscaleAliases:        headscaleAliases,
-		PublicAddress:           binding.PublicAddress,
-		GatewayBindAddress:      binding.BindAddress,
-		CenterCertificatePEM:    centerCertificate.CertificatePEM,
-		CenterCertificateKeyPEM: centerCertificate.PrivateKeyPEM,
+		CenterURL:                network.AgentConnectURL,
+		HeadscaleURL:             endpoint,
+		CenterAliases:            centerAliases,
+		HeadscaleAliases:         headscaleAliases,
+		PublicAddress:            binding.PublicAddress,
+		GatewayBindAddress:       binding.BindAddress,
+		CenterPrivateBindAddress: centerPrivateBindAddress,
+		CenterCertificatePEM:     centerCertificate.CertificatePEM,
+		CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
 	}); err != nil {
 		return err
 	}

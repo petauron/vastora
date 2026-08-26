@@ -124,9 +124,10 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 	if !configured || net.ParseIP(binding.PublicAddress) == nil {
 		return SystemDomainSwitchResult{}, errors.New("center: the public gateway address is not configured")
 	}
-	if address, err := s.store.coLocatedHeadscaleAddress(ctx); err != nil {
+	centerPrivateBindAddress, err := s.store.coLocatedHeadscaleAddress(ctx)
+	if err != nil {
 		return SystemDomainSwitchResult{}, err
-	} else if address == "" {
+	} else if centerPrivateBindAddress == "" {
 		return SystemDomainSwitchResult{}, errors.New("center: the co-located Agent must join the private network before switching domains")
 	}
 	if _, err := s.store.createSystemDomainBackup(ctx); err != nil {
@@ -171,7 +172,8 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 	request := deployapi.HeadscaleInstallRequest{
 		CenterURL: centerURL, HeadscaleURL: headscaleURL, CenterAliases: centerAliases, HeadscaleAliases: headscaleAliases,
 		PublicAddress: binding.PublicAddress, GatewayBindAddress: binding.BindAddress,
-		CenterCertificatePEM: newCertificate.CertificatePEM, CenterCertificateKeyPEM: newCertificate.PrivateKeyPEM,
+		CenterPrivateBindAddress: centerPrivateBindAddress,
+		CenterCertificatePEM:     newCertificate.CertificatePEM, CenterCertificateKeyPEM: newCertificate.PrivateKeyPEM,
 	}
 	if err := s.infrastructure.ReconcileHeadscale(ctx, request); err != nil {
 		rollbackDNS()
@@ -184,7 +186,8 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 			CenterAliases:    append(centerAliases[:len(centerAliases)-1], deployapi.CenterEndpointAlias{URL: centerURL, CertificatePEM: newCertificate.CertificatePEM, CertificateKeyPEM: newCertificate.PrivateKeyPEM}),
 			HeadscaleAliases: append(headscaleAliases[:len(headscaleAliases)-1], headscaleURL),
 			PublicAddress:    binding.PublicAddress, GatewayBindAddress: binding.BindAddress,
-			CenterCertificatePEM: oldCertificate.CertificatePEM, CenterCertificateKeyPEM: oldCertificate.PrivateKeyPEM,
+			CenterPrivateBindAddress: centerPrivateBindAddress,
+			CenterCertificatePEM:     oldCertificate.CertificatePEM, CenterCertificateKeyPEM: oldCertificate.PrivateKeyPEM,
 		}
 		rollbackErr := s.infrastructure.ReconcileHeadscale(context.WithoutCancel(ctx), rollback)
 		rollbackDNS()
