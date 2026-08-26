@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.51](https://github.com/petauron/vastora/compare/v0.1.0-alpha.50...v0.1.0-alpha.51) (2026-08-26)
+
+
+### Features
+
+* add safe control plane migrations ([#147](https://github.com/petauron/vastora/issues/147)) ([3eb4a44](https://github.com/petauron/vastora/commit/3eb4a44b5ffe736912e635ce0ba66c77fde6758f))
+
 ## [0.1.0-alpha.50](https://github.com/petauron/vastora/compare/v0.1.0-alpha.49...v0.1.0-alpha.50) (2026-08-25)
 
 
