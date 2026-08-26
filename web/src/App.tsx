@@ -3,7 +3,7 @@ import { AppWindowIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon,
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import { administratorPasswordMinLength } from "./lib/security";
-import type { AppData, Screen, SetupStatus } from "./types";
+import type { AppData, CenterUpdateStatus, Screen, SetupStatus } from "./types";
 import type { Language } from "./translations";
 import { Brand, PageHeading, copy, userError } from "./views/shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -207,6 +207,10 @@ export function App() {
       }
     }
   }, [language, screen, loadScreen]);
+  const updateCenterStatus = useCallback((centerUpdate: CenterUpdateStatus) => {
+    setData((current) => current ? { ...current, centerUpdate, status: { ...current.status, version: centerUpdate.currentVersion } } : current);
+  }, []);
+  const refreshSettings = useCallback(() => loadScreen("settings"), [loadScreen]);
 
   if (phase === "loading") return <CenteredState language={language} loading />;
   if (phase === "unavailable") return <CenteredState language={language} message={notice?.message} onRetry={initialize} />;
@@ -290,7 +294,7 @@ export function App() {
               {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}
-              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} /> : null}
+              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>
         </SidebarInset>

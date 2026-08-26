@@ -13,37 +13,41 @@ import { Spinner } from "@/components/ui/spinner";
 
 const manualCommand = "curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center";
 
-export function CenterUpdateCard({ initial, language }: { initial: CenterUpdateStatus; language: Language }) {
-  const [status, setStatus] = useState(initial);
+export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }: { language: Language; onRefresh: () => Promise<void>; onStatusChange: (status: CenterUpdateStatus) => void; status: CenterUpdateStatus }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const running = status.state === "queued" || status.state === "applying";
 
-  useEffect(() => { setStatus(initial); }, [initial]);
   useEffect(() => {
     if (!running) return;
     let stopped = false;
+    let timer = 0;
     const poll = async () => {
       try {
         const next = await api.centerUpdate();
-        if (!stopped) setStatus(next);
+        if (stopped) return;
+        if (next.state === "succeeded") {
+          await onRefresh();
+          return;
+        }
+        onStatusChange(next);
       } catch {
         // Center restarts during a normal update. Keep the progress state and retry.
       }
+      if (!stopped) timer = window.setTimeout(() => void poll(), 2000);
     };
-    const timer = window.setInterval(() => void poll(), 2000);
     void poll();
-    return () => { stopped = true; window.clearInterval(timer); };
-  }, [running]);
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [onRefresh, onStatusChange, running]);
 
   const refresh = async () => {
     setBusy(true); setError("");
-    try { setStatus(await api.centerUpdate()); } catch (refreshError) { setError(userError(language, refreshError)); } finally { setBusy(false); }
+    try { onStatusChange(await api.centerUpdate()); } catch (refreshError) { setError(userError(language, refreshError)); } finally { setBusy(false); }
   };
   const start = async () => {
     setBusy(true); setError("");
-    try { setStatus(await api.startCenterUpdate()); setConfirming(false); } catch (updateError) { setError(userError(language, updateError)); } finally { setBusy(false); }
+    try { onStatusChange(await api.startCenterUpdate()); setConfirming(false); } catch (updateError) { setError(userError(language, updateError)); } finally { setBusy(false); }
   };
 
   return <>

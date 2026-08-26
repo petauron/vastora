@@ -18,6 +18,11 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 	cloudflare := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/zones":
+			if request.Header.Get("Authorization") != "Bearer saved-access-token" {
+				t.Fatalf("domain switch did not reuse the saved Cloudflare token")
+			}
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"zone","name":"old.example.com","account":{"id":"account","name":"Old account"}},{"id":"new-zone","name":"new.example.com","account":{"id":"new-account","name":"New account"}}],"result_info":{"total_pages":1}}`))
 		case request.Method == http.MethodGet && request.URL.Path == "/accounts/new-account/cfd_tunnel":
 			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
 		case request.Method == http.MethodGet && request.URL.Path == "/zones/new-zone":
@@ -39,13 +44,9 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 	}
 	defer store.Close()
 	store.cloudflareOAuth = cloudflareOAuthConfig{APIURL: cloudflare.URL, HTTPClient: cloudflare.Client()}
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "saved-access-token", RefreshToken: "saved-refresh-token", ExpiresAt: time.Now().Add(time.Hour)})
 	store.discoverNetworkCandidates = func(time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{{Address: "100.64.0.1", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, nil
-	}
-	store.cloudflareOAuthSessions["switch-session"] = &cloudflareOAuthSession{
-		Token:     cloudflareOAuthToken{AccessToken: "new-access-token", RefreshToken: "new-refresh-token", ExpiresAt: time.Now().Add(time.Hour)},
-		Zones:     []CloudflareZone{{ID: "new-zone", Name: "new.example.com", AccountID: "new-account"}},
-		ExpiresAt: time.Now().Add(time.Hour),
 	}
 	store.issueDomainCertificate = func(_ context.Context, _ cloudflareClient, zone string, names ...string) (managedCertificate, error) {
 		if zone != "new.example.com" || len(names) != 1 || names[0] != "center.vastora.new.example.com" {
@@ -77,7 +78,11 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 	}
 	installer := &fakeBuiltinHeadscaleInstaller{}
 	server := NewServer(store, "", false).WithInfrastructureManager(installer)
-	result, err := server.SwitchSystemDomain(ctx, SystemDomainSwitchInput{SessionID: "switch-session", ZoneID: "new-zone", Confirm: true})
+	var previousSecretID string
+	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM network_integrations WHERE kind = 'cloudflare'`).Scan(&previousSecretID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := server.SwitchSystemDomain(ctx, SystemDomainSwitchInput{ZoneID: "new-zone", Confirm: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +115,12 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("domain backups = %v, err = %v", backups, err)
 	}
-	if _, exists := store.cloudflareOAuthSessions["switch-session"]; exists {
-		t.Fatal("completed domain-switch OAuth session was retained")
+	var endpoint, accountID, zoneID, currentSecretID string
+	if err := store.db.QueryRowContext(ctx, `SELECT endpoint, account_id, zone_id, secret_id FROM network_integrations WHERE kind = 'cloudflare'`).Scan(&endpoint, &accountID, &zoneID, &currentSecretID); err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != "new.example.com" || accountID != "new-account" || zoneID != "new-zone" || currentSecretID != previousSecretID {
+		t.Fatalf("Cloudflare selection did not preserve the saved authorization: endpoint=%q account=%q zone=%q secret_changed=%v", endpoint, accountID, zoneID, currentSecretID != previousSecretID)
 	}
 }
 
@@ -138,7 +147,7 @@ func TestSwitchSystemDomainRequiresStoppedAccessPoints(t *testing.T) {
 		}
 	}
 	server := NewServer(store, "", false).WithInfrastructureManager(&fakeBuiltinHeadscaleInstaller{})
-	_, err = server.SwitchSystemDomain(ctx, SystemDomainSwitchInput{SessionID: "missing", ZoneID: "missing", Confirm: true})
+	_, err = server.SwitchSystemDomain(ctx, SystemDomainSwitchInput{ZoneID: "missing", Confirm: true})
 	if err == nil || !strings.Contains(err.Error(), "stop all access points") {
 		t.Fatalf("active publication was accepted: %v", err)
 	}

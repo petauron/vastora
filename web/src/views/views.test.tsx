@@ -14,6 +14,7 @@ import { NodesView, agentInstallCommand, validCenterURL } from "./NodesView";
 import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
+import { CenterUpdateCard } from "./CenterUpdateCard";
 import { ThemeProvider } from "../components/theme";
 import { defaultPublicationHostname, defaultRealityHostname } from "./appAccess";
 import { CopyButton, userError } from "./shared";
@@ -1166,7 +1167,7 @@ describe("network and app views", () => {
   });
 
   it("makes backup and diagnostics discoverable without the CLI", () => {
-    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onLogout={async () => undefined} />);
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     expect(container.textContent).toContain("数据与故障排查");
     expect(container.textContent).toContain("下载加密备份");
     expect(container.textContent).toContain("下载诊断报告");
@@ -1178,27 +1179,61 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("至少 10 个字符。");
   });
 
-  it("offers one safe workflow for switching the Vastora domain", () => {
-    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onLogout={async () => undefined} />);
+  it("offers one safe workflow for switching the Vastora domain", async () => {
+    const startOAuth = vi.spyOn(api, "startCloudflareOAuth");
+    const listZones = vi.spyOn(api, "cloudflareZones").mockResolvedValue({ zones: [
+      { id: "current", name: "example.com", accountId: "account", accountName: "Personal" },
+      { id: "new", name: "new.example", accountId: "account", accountName: "Personal" }
+    ] });
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     expect(container.textContent).toContain("Vastora 域名");
     expect(container.textContent).toContain("https://center.vastora.example.com");
     const changeDomain = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("切换域名"));
-    act(() => changeDomain?.click());
+    await act(async () => {
+      changeDomain?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(document.body.textContent).toContain("旧地址不会立即失效");
-    expect(document.body.textContent).toContain("登录 Cloudflare");
+    expect(document.body.textContent).toContain("使用现有 Cloudflare 授权");
+    expect(document.body.textContent).toContain("切换域名无需重新登录");
+    expect(document.body.textContent).toContain("new.example");
+    expect(document.body.textContent).not.toContain("登录 Cloudflare");
     expect(document.body.textContent).toContain("下一次心跳验证新地址后自动切换");
     expect(document.body.textContent).toContain("应用访问入口需在切换后重新创建");
+    expect(listZones).toHaveBeenCalledOnce();
+    expect(startOAuth).not.toHaveBeenCalled();
   });
 
   it("shows a confirmed Center update instead of exposing Docker access", () => {
     const data = dashboard();
     data.centerUpdate = { currentVersion: "0.1.0-alpha.47", latestVersion: "0.1.0-alpha.48", updateAvailable: true, automatic: true, state: "idle", checkedAt: "2026-08-25T00:00:00Z" };
-    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onLogout={async () => undefined} />);
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     expect(container.textContent).toContain("Center 更新");
     expect(container.textContent).toContain("0.1.0-alpha.48");
     const update = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("更新 Center"));
     act(() => update?.click());
     expect(document.body.textContent).toContain("预计短暂断开连接");
     expect(document.body.textContent).toContain("开始更新");
+  });
+
+  it("uses the update status as the single displayed Center version", () => {
+    const data = dashboard();
+    data.status.version = "0.1.0-alpha.50";
+    data.centerUpdate.currentVersion = "0.1.0-alpha.51";
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    expect(container.textContent).not.toContain("0.1.0-alpha.50");
+    expect(container.textContent?.match(/0\.1\.0-alpha\.51/g)).toHaveLength(2);
+  });
+
+  it("refreshes the complete settings data as soon as a Center update succeeds", async () => {
+    const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.51", updateAvailable: true, state: "applying" as const };
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const onStatusChange = vi.fn();
+    vi.spyOn(api, "centerUpdate").mockResolvedValue({ ...status, currentVersion: "0.1.0-alpha.51", updateAvailable: false, state: "succeeded" });
+    render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onStatusChange={onStatusChange} status={status} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(onStatusChange).not.toHaveBeenCalled();
   });
 });
