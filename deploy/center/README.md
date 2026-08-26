@@ -50,6 +50,22 @@ added to Center's repeated `--headscale-allowed-url` startup option before they
 can be selected in the browser. Agent enrollment tokens expire after ten
 minutes and work only once.
 
+## Uninstall Center
+
+Use the same verified public entry point. It opens an interactive terminal menu
+where you choose to keep applications, remove every managed application while
+keeping its data, or remove every managed application and its data:
+
+```sh
+curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center uninstall
+```
+
+The same menu is available from an already updated installation as
+`sudo /opt/vastora/center/uninstall.sh`. Application cleanup is sent through
+the normal Center-to-Agent task lifecycle. Center is not removed if any node is
+offline or fails to confirm application removal. The Center database, Agents,
+Headscale, Caddy, and HAProxy are always preserved for safe recovery.
+
 ## Release packaging
 
 The public command becomes usable when a release publishes the immutable Center
@@ -67,7 +83,8 @@ VASTORA_CENTER_IMAGE='ghcr.io/petauron/vastora-center@sha256:IMAGE_DIGEST' \
 make center-install-bundle
 ```
 
-The bundle contains `setup.sh`, Compose configuration, plus
+The bundle contains `setup.sh`, `upgrade.sh`, `uninstall.sh`, Compose
+configuration, plus
 `release.env` with the release version and immutable image. `install.sh`
 supports `--release-url` for a trusted mirror and `--install-dir` for a custom
 location. `setup.sh` supports `--bootstrap-port` and `--ssh-host` after the `--`

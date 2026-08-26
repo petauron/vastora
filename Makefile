@@ -28,11 +28,13 @@ deployment-check:
 	sh -n install.sh
 	sh -n deploy/center/setup.sh
 	sh -n deploy/center/upgrade.sh
+	sh -n deploy/center/uninstall.sh
 	sh -n scripts/package-center-install.sh
 	sh -n scripts/validate-release-metadata.sh
 	sh -n scripts/assert-image-platforms.sh
 	sh -n scripts/check-runtime-image-platforms.sh
 	sh -n scripts/test-center-install.sh
+	sh -n scripts/test-center-uninstall.sh
 	sh -n scripts/test-release-metadata.sh
 	sh -n scripts/test-release-workflow.sh
 	sh -n scripts/test-ci-workflows.sh
@@ -40,8 +42,10 @@ deployment-check:
 	./install.sh --help >/dev/null
 	deploy/center/setup.sh --help >/dev/null
 	deploy/center/upgrade.sh --help >/dev/null
+	deploy/center/uninstall.sh --help >/dev/null
 	scripts/package-center-install.sh --help >/dev/null
 	scripts/test-center-install.sh
+	scripts/test-center-uninstall.sh
 	scripts/test-release-metadata.sh
 	scripts/test-release-workflow.sh
 	scripts/test-ci-workflows.sh
