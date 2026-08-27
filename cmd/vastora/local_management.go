@@ -53,7 +53,7 @@ func runLocalManagement(arguments []string) error {
 			return runLocalCenterScript(localCenterInstallDir, "uninstall.sh", "--install-dir", localCenterInstallDir)
 		}
 		if !localAgentInstalled(localAgentDataDir) {
-			return errors.New("Vastora Center or Agent is not installed on this host")
+			return errors.New("no Vastora Center or Agent is installed on this host")
 		}
 		deleteData, cancelled, err := chooseLocalAgentUninstall(os.Stdin, os.Stdout)
 		if err != nil {
@@ -125,7 +125,7 @@ func runLocalCenterScript(installDir, name string, arguments ...string) error {
 	path := filepath.Join(installDir, name)
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return fmt.Errorf("Center management script is unavailable: %s", path)
+		return fmt.Errorf("center management script is unavailable: %s", path)
 	}
 	command := exec.Command(path, arguments...)
 	command.Stdin = os.Stdin
@@ -185,7 +185,7 @@ func reportLocalStatus(installDir, agentDataDir string, writer io.Writer, client
 		fmt.Fprintln(writer, "Agent: unavailable")
 	}
 	if !found {
-		return errors.New("Vastora Center or Agent is not installed on this host")
+		return errors.New("no Vastora Center or Agent is installed on this host")
 	}
 	if !healthy {
 		return errors.New("one or more local Vastora services are unavailable")
