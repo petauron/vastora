@@ -97,11 +97,17 @@ disconnected from Vastora but its package and repository are preserved.
 ## Release packaging
 
 The public command becomes usable when a release publishes the immutable Center
-image and these three fixed-name assets:
+image and stages these three assets under a versioned prefix in the private
+installer R2 bucket:
 
 - `install.sh`
 - `vastora-center-install.tar.gz`
 - `vastora-center-install.tar.gz.sha256`
+
+After their digests are verified, the release workflow replaces the small
+`vastora/current.json` manifest in one operation. The Installer Worker reads
+that pointer and serves the selected version through `vastora.petauron.com`;
+GitHub Release attachments are not part of the installation path.
 
 Create them locally without uploading anything:
 

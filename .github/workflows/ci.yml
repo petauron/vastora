@@ -2,8 +2,6 @@ name: CI
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
   pull_request:
   schedule:
     - cron: "41 3 * * 1"
@@ -40,25 +38,6 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
-
-  warm-dependency-caches:
-    name: Warm dependency caches
-    if: github.event_name == 'push'
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.26.6"
-      - run: go mod download
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24.19.0"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: cd web && npm ci --ignore-scripts
 
   go:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))

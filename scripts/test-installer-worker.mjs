@@ -84,46 +84,92 @@ function oauthEnvironment() {
   };
 }
 
-{
-  const storage = cacheStorage();
-  globalThis.caches = { default: storage.cache };
-  const fetched = [];
-  globalThis.fetch = async (url) => {
-    fetched.push(String(url));
-    if (new URL(url).hostname === "raw.githubusercontent.com") {
-      return new Response("0.1.0-alpha.4\n");
-    }
-    return new Response(null, { status: 302 });
+const installerManifest = {
+  schema: 1,
+  version: "0.1.0-alpha.4",
+  assets: {
+    "install.sh": {
+      key: "vastora/releases/v0.1.0-alpha.4/install.sh",
+      sha256: "a".repeat(64),
+    },
+    "vastora-center-install.tar.gz": {
+      key: "vastora/releases/v0.1.0-alpha.4/vastora-center-install.tar.gz",
+      sha256: "b".repeat(64),
+    },
+    "vastora-center-install.tar.gz.sha256": {
+      key: "vastora/releases/v0.1.0-alpha.4/vastora-center-install.tar.gz.sha256",
+      sha256: "c".repeat(64),
+    },
+  },
+};
+
+function installerEnvironment({ mismatchAsset = "", manifest = installerManifest } = {}) {
+  const objects = new Map([
+    ["vastora/current.json", { body: JSON.stringify(manifest), sha256: "d".repeat(64), contentType: "application/json" }],
+    [installerManifest.assets["install.sh"].key, { body: "#!/bin/sh\n", sha256: installerManifest.assets["install.sh"].sha256, contentType: "text/x-shellscript" }],
+    [installerManifest.assets["vastora-center-install.tar.gz"].key, { body: "archive", sha256: installerManifest.assets["vastora-center-install.tar.gz"].sha256, contentType: "application/gzip" }],
+    [installerManifest.assets["vastora-center-install.tar.gz.sha256"].key, { body: "checksum", sha256: installerManifest.assets["vastora-center-install.tar.gz.sha256"].sha256, contentType: "text/plain" }],
+  ]);
+  const reads = [];
+  function object(key, includeBody) {
+    const stored = objects.get(key);
+    if (!stored) return null;
+    const bytes = new TextEncoder().encode(stored.body);
+    const sha256 = key.endsWith(`/${mismatchAsset}`) ? "f".repeat(64) : stored.sha256;
+    return {
+      ...(includeBody ? { body: bytes } : {}),
+      customMetadata: { sha256 },
+      httpEtag: `"${sha256.slice(0, 16)}"`,
+      size: bytes.byteLength,
+      async json() { return JSON.parse(stored.body); },
+      writeHttpMetadata(headers) { headers.set("Content-Type", stored.contentType); },
+    };
+  }
+  return {
+    INSTALLER_ASSETS: {
+      async get(key) { reads.push(["get", key]); return object(key, true); },
+      async head(key) { reads.push(["head", key]); return object(key, false); },
+    },
+    reads,
   };
-
-  const execution = executionContext();
-  const response = await worker.fetch(request(), {}, execution.context);
-  await execution.flush();
-  assert.equal(response.status, 302);
-  assert.equal(
-    response.headers.get("location"),
-    "https://github.com/petauron/vastora/releases/download/v0.1.0-alpha.4/install.sh",
-  );
-  assert.equal(fetched.length, 4);
-
-  const cachedResponse = await worker.fetch(request("/vastora-center-install.tar.gz"), {}, executionContext().context);
-  assert.equal(cachedResponse.status, 302);
-  assert.equal(fetched.length, 4);
-
-  storage.entries.delete("https://vastora-installer.internal/current-release");
-  globalThis.fetch = async () => new Response(null, { status: 503 });
-  const fallback = await worker.fetch(request(), {}, executionContext().context);
-  assert.equal(fallback.status, 302);
 }
 
 {
   const storage = cacheStorage();
   globalThis.caches = { default: storage.cache };
-  globalThis.fetch = async () => new Response(null, { status: 503 });
+  const env = installerEnvironment();
+  const execution = executionContext();
+  const response = await worker.fetch(request(), env, execution.context);
+  await execution.flush();
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "#!/bin/sh\n");
+  assert.equal(response.headers.get("x-vastora-version"), "0.1.0-alpha.4");
+  assert.equal(response.headers.get("x-vastora-sha256"), "a".repeat(64));
+
+  const cachedResponse = await worker.fetch(request("/vastora-center-install.tar.gz"), env, executionContext().context);
+  assert.equal(cachedResponse.status, 200);
+  assert.equal(env.reads.filter(([, key]) => key === "vastora/current.json").length, 1);
+
+  const head = await worker.fetch(request("/install.sh", "HEAD"), env, executionContext().context);
+  assert.equal(head.status, 200);
+  assert.equal(await head.text(), "");
+  assert.ok(env.reads.some(([method, key]) => method === "head" && key.endsWith("/install.sh")));
+}
+
+{
+  const storage = cacheStorage();
+  globalThis.caches = { default: storage.cache };
   const response = await worker.fetch(request(), {}, executionContext().context);
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("cloudflare-cdn-cache-control"), "no-store");
+}
+
+{
+  const storage = cacheStorage();
+  globalThis.caches = { default: storage.cache };
+  const response = await worker.fetch(request(), installerEnvironment({ mismatchAsset: "install.sh" }), executionContext().context);
+  assert.equal(response.status, 503);
 }
 
 {
@@ -265,7 +311,7 @@ function oauthEnvironment() {
   assert.equal(response.headers.get("cache-control"), "no-store");
 }
 
-assert.deepEqual(workerLogs.map(([level]) => level), ["warn", "error"]);
+assert.deepEqual(workerLogs.map(([level]) => level), ["error", "error"]);
 console.warn = originalWarn;
 console.error = originalError;
 console.log("installer worker tests: OK");
