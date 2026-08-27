@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.54](https://github.com/petauron/vastora/compare/v0.1.0-alpha.53...v0.1.0-alpha.54) (2026-08-27)
+
+
+### Features
+
+* harden network and host lifecycle ([#161](https://github.com/petauron/vastora/issues/161)) ([93f0f84](https://github.com/petauron/vastora/commit/93f0f849116f86b340fc0167c0218a9bdea75a89)), closes [#159](https://github.com/petauron/vastora/issues/159) [#160](https://github.com/petauron/vastora/issues/160)
+
 ## [0.1.0-alpha.53](https://github.com/petauron/vastora/compare/v0.1.0-alpha.52...v0.1.0-alpha.53) (2026-08-26)
 
 
