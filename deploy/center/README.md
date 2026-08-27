@@ -154,10 +154,12 @@ commit. Merging that pull request creates a draft release, builds and pushes one
 `linux/amd64` + `linux/arm64` Center image index to GHCR, verifies both
 platforms, packages the installer against the immutable index digest, uploads
 all three assets, and publishes the release only after every step succeeds.
-Failed builds leave the release as a draft. The Cloudflare
-Worker behind `vastora.petauron.com` selects the newest
-non-draft release containing all three assets, including prereleases, so it does
-not depend on GitHub's stable-only `releases/latest` endpoint.
+Failed builds leave the release as a draft. After GitHub publishes the release
+metadata, the workflow atomically activates the already-staged R2 manifest. The
+Cloudflare Worker behind `vastora.petauron.com` serves only the three objects
+named by that manifest and returns `X-Vastora-Version` on every installer
+response. Center update checks use that trusted header, including for
+prereleases, rather than GitHub's stable-only `releases/latest` endpoint.
 
 The GHCR package must allow unauthenticated pulls. The release job checks that
 before publishing and then downloads the public short URLs and verifies the
@@ -167,7 +169,8 @@ Repository owners must enable **Settings → Actions → General → Allow GitHu
 Actions to create and approve pull requests** once. The first image publication
 may also require changing the new `vastora-center` package visibility to
 **Public** and rerunning only the failed `publish` job. Until that succeeds, the
-draft release is not exposed by the installer Worker.
+R2 current-release manifest is not changed and the installer Worker continues
+serving the previously verified release.
 
 Built-in Headscale configuration is generated and validated by the restricted
 deployment helper. It is not edited as a file in the installation directory.
