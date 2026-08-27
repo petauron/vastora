@@ -2,6 +2,7 @@
 set -eu
 
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-r2-test.XXXXXX")"
 cleanup() { rm -rf "$temporary_dir"; }
 trap cleanup EXIT HUP INT TERM
@@ -72,7 +73,7 @@ endpoint="https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com"
 bucket="petauron-downloads"
 version="0.1.0-test"
 
-"$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" >/dev/null
+"$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null
 manifest="$fake_r2/objects/vastora/releases/v$version/manifest.json"
 test -f "$manifest"
 jq -e --arg version "$version" '.schema == 1 and .version == $version and (.assets | length) == 3' "$manifest" >/dev/null
@@ -81,7 +82,7 @@ jq -e --arg version "$version" '.schema == 1 and .version == $version and (.asse
 cmp -s "$manifest" "$fake_r2/objects/vastora/current.json"
 
 printf 'changed bundle\n' > "$source_dir/vastora-center-install.tar.gz"
-if "$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" >/dev/null 2>&1; then
+if "$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null 2>&1; then
   echo "Immutable R2 release assets accepted changed content." >&2
   exit 1
 fi

@@ -7,10 +7,11 @@ version=""
 bucket=""
 endpoint=""
 source_dir="dist"
+installer=""
 
 usage() {
   cat <<'EOF'
-Usage: publish-installer-r2.sh stage --version VERSION --bucket BUCKET --endpoint HTTPS_URL [--source-dir DIR]
+Usage: publish-installer-r2.sh stage --version VERSION --bucket BUCKET --endpoint HTTPS_URL [--source-dir DIR] [--installer FILE]
        publish-installer-r2.sh activate --version VERSION --bucket BUCKET --endpoint HTTPS_URL
 
 Stages immutable Center installer assets in R2, or atomically activates an
@@ -29,6 +30,7 @@ while [ "$#" -gt 0 ]; do
     --bucket) bucket="${2:-}"; shift 2 ;;
     --endpoint) endpoint="${2:-}"; shift 2 ;;
     --source-dir) source_dir="${2:-}"; shift 2 ;;
+    --installer) installer="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -143,7 +145,7 @@ verify_remote_assets() {
 if [ "$command_name" = "stage" ]; then
   script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
   project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
-  installer="$project_dir/install.sh"
+  if [ -z "$installer" ]; then installer="$project_dir/install.sh"; fi
   bundle="$source_dir/vastora-center-install.tar.gz"
   checksum="$source_dir/vastora-center-install.tar.gz.sha256"
   for required_file in "$installer" "$bundle" "$checksum"; do

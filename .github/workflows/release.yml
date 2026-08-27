@@ -90,6 +90,14 @@ jobs:
         with:
           ref: ${{ needs.prepare.outputs.release_sha }}
 
+      - name: Check out current release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: scripts/publish-installer-r2.sh
+          sparse-checkout-cone-mode: false
+
       - name: Validate R2 release destination
         run: |
           test -n "$AWS_ACCESS_KEY_ID"
@@ -189,7 +197,7 @@ jobs:
       - name: Stage immutable installer assets in R2
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
-        run: scripts/publish-installer-r2.sh stage --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
+        run: .release-tools/scripts/publish-installer-r2.sh stage --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT" --installer install.sh
 
       - name: Publish GitHub release metadata
         env:
@@ -200,7 +208,7 @@ jobs:
       - name: Atomically activate installer release in R2
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
-        run: scripts/publish-installer-r2.sh activate --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
+        run: .release-tools/scripts/publish-installer-r2.sh activate --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
 
       - name: Verify public installer endpoint
         env:
