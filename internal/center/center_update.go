@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -71,10 +70,10 @@ func (checker *OfficialReleaseChecker) LatestVersion(ctx context.Context) (strin
 		return "", time.Time{}, fmt.Errorf("center: check official release: %w", err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 300 || response.StatusCode > 399 {
+	if response.StatusCode < 200 || response.StatusCode > 299 {
 		return "", time.Time{}, fmt.Errorf("center: official installer returned HTTP %d", response.StatusCode)
 	}
-	version, err := releaseVersionFromLocation(response.Header.Get("Location"))
+	version, err := releaseVersionFromHeader(response.Header.Get("X-Vastora-Version"))
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -84,18 +83,10 @@ func (checker *OfficialReleaseChecker) LatestVersion(ctx context.Context) (strin
 	return version, now, nil
 }
 
-func releaseVersionFromLocation(location string) (string, error) {
-	target, err := url.Parse(location)
-	if err != nil || target.Scheme != "https" || !strings.EqualFold(target.Hostname(), "github.com") {
-		return "", errors.New("center: official installer selected an invalid release URL")
-	}
-	const prefix = "/petauron/vastora/releases/download/v"
-	if !strings.HasPrefix(target.Path, prefix) || !strings.HasSuffix(target.Path, "/install.sh") {
-		return "", errors.New("center: official installer selected an unexpected release asset")
-	}
-	version := strings.TrimSuffix(strings.TrimPrefix(target.Path, prefix), "/install.sh")
-	if strings.Contains(version, "/") || !semver.IsValid("v"+version) {
-		return "", errors.New("center: official installer selected an invalid release version")
+func releaseVersionFromHeader(value string) (string, error) {
+	version := strings.TrimSpace(value)
+	if version == "" || strings.HasPrefix(version, "v") || !semver.IsValid("v"+version) {
+		return "", errors.New("center: official installer returned an invalid release version")
 	}
 	return version, nil
 }

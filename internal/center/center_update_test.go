@@ -33,13 +33,13 @@ func (updater *fakeCenterUpdater) StartCenterUpdate(_ context.Context, version s
 	return deployapi.CenterUpdateExecution{Available: true, State: "queued", TargetVersion: version}, nil
 }
 
-func TestOfficialReleaseCheckerReadsTheInstallerSelectedRelease(t *testing.T) {
+func TestOfficialReleaseCheckerReadsTheR2ReleaseVersion(t *testing.T) {
 	installer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodHead {
 			t.Fatalf("method = %s", request.Method)
 		}
-		writer.Header().Set("Location", "https://github.com/petauron/vastora/releases/download/v0.1.0-alpha.48/install.sh")
-		writer.WriteHeader(http.StatusFound)
+		writer.Header().Set("X-Vastora-Version", "0.1.0-alpha.48")
+		writer.WriteHeader(http.StatusOK)
 	}))
 	defer installer.Close()
 	checker := NewOfficialReleaseChecker(installer.URL)
@@ -47,8 +47,30 @@ func TestOfficialReleaseCheckerReadsTheInstallerSelectedRelease(t *testing.T) {
 	if err != nil || version != "0.1.0-alpha.48" || checkedAt.IsZero() {
 		t.Fatalf("unexpected release: version=%q checked=%s err=%v", version, checkedAt, err)
 	}
-	if _, err := releaseVersionFromLocation("https://example.com/v0.1.0/install.sh"); err == nil {
-		t.Fatal("untrusted release location was accepted")
+	for _, value := range []string{"", "v0.1.0", "latest", "0.1.0/other"} {
+		if _, err := releaseVersionFromHeader(value); err == nil {
+			t.Fatalf("invalid release version %q was accepted", value)
+		}
+	}
+}
+
+func TestOfficialReleaseCheckerRejectsRedirectsAndMissingVersionHeaders(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{name: "redirect", status: http.StatusFound},
+		{name: "missing version", status: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			installer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(test.status)
+			}))
+			defer installer.Close()
+			if _, _, err := NewOfficialReleaseChecker(installer.URL).LatestVersion(context.Background()); err == nil {
+				t.Fatal("invalid installer response was accepted")
+			}
+		})
 	}
 }
 
