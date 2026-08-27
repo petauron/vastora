@@ -49,7 +49,7 @@ func NewPublicEntryProbeService() *PublicEntryProbeService {
 
 func (service *PublicEntryProbeService) StartPublicEntryProbe(_ context.Context, input deployapi.PublicEntryProbeRequest) (deployapi.PublicEntryProbe, error) {
 	bindIP := net.ParseIP(strings.TrimSpace(input.BindAddress))
-	if bindIP == nil || bindIP.IsUnspecified() || bindIP.IsMulticast() {
+	if bindIP == nil || bindIP.To4() == nil || bindIP.IsUnspecified() || bindIP.IsMulticast() {
 		return deployapi.PublicEntryProbe{}, errors.New("deployer: a valid local probe address is required")
 	}
 	service.mu.Lock()

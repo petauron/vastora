@@ -38,7 +38,6 @@ func TestCreateDeploymentRequiresConfirmedServiceAddress(t *testing.T) {
 		NetworkCandidates: []networking.Candidate{{
 			Address:   "10.0.0.91",
 			Interface: "eth0",
-			Family:    "ipv4",
 			Kind:      networking.KindLAN,
 		}},
 	}); err != nil {
@@ -70,15 +69,15 @@ func TestHeartbeatFiltersVirtualInterfacesAndInvalidatesTheirOldProfile(t *testi
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "network-filter", NodeCapabilities{Docker: true}, []networking.Candidate{{
-		Address: "10.0.0.93", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN,
+		Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN,
 	}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
 
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
 		Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
 		NetworkCandidates: []networking.Candidate{
-			{Address: "10.0.0.93", Interface: "docker0", Family: "ipv4", Kind: networking.KindLAN},
-			{Address: "10.77.0.6", Interface: "wg0", Family: "ipv4", Kind: networking.KindLAN},
-			{Address: "100.64.0.93", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindLAN},
+			{Address: "10.0.0.93", Interface: "docker0", Kind: networking.KindLAN},
+			{Address: "10.77.0.6", Interface: "wg0", Kind: networking.KindLAN},
+			{Address: "100.64.0.93", Interface: "tailscale0", Kind: networking.KindLAN},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -104,7 +103,7 @@ func TestListDeploymentsRetainsOldActiveAndReconciliationTasksBeyondRecentLimit(
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "deployment-history", NodeCapabilities{Docker: true}, []networking.Candidate{{
-		Address: "10.0.0.92", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN,
+		Address: "10.0.0.92", Interface: "eth0", Kind: networking.KindLAN,
 	}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
 	siteID := testSiteID(t, store)
 
@@ -180,7 +179,7 @@ func TestReplacingApplicationSecretDeletesTheSupersededSecretRow(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "secret-replacement", NodeCapabilities{Docker: true}, []networking.Candidate{{
-		Address: "10.0.0.93", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN,
+		Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN,
 	}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
 
 	created, err := store.CreateDeployment(ctx, DeploymentRequest{
@@ -249,12 +248,12 @@ func TestNetworkEntryAddressChangesAreBlockedByActivePublications(t *testing.T) 
 		DirectPublic:     true,
 	}
 	node := enrollOrchestrationNode(t, store, "address-publications", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
-		{Address: "10.0.0.94", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN},
-		{Address: "10.0.0.95", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN},
-		{Address: "100.64.0.94", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale},
-		{Address: "100.64.0.95", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale},
-		{Address: "203.0.113.94", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic},
-		{Address: "203.0.113.95", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic},
+		{Address: "10.0.0.94", Interface: "eth0", Kind: networking.KindLAN},
+		{Address: "10.0.0.95", Interface: "eth0", Kind: networking.KindLAN},
+		{Address: "100.64.0.94", Interface: "tailscale0", Kind: networking.KindHeadscale},
+		{Address: "100.64.0.95", Interface: "tailscale0", Kind: networking.KindHeadscale},
+		{Address: "203.0.113.94", Interface: "eth0", Kind: networking.KindPublic},
+		{Address: "203.0.113.95", Interface: "eth0", Kind: networking.KindPublic},
 	}, oldProfile)
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, oldProfile.ServiceAddress)
@@ -320,7 +319,7 @@ func TestPublicationChangesAreBlockedDuringApplicationReconciliation(t *testing.
 			defer store.Close()
 			ctx := context.Background()
 			node := enrollOrchestrationNode(t, store, "publication-guard-"+blocker, NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{
-				Address: "10.0.0.96", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN,
+				Address: "10.0.0.96", Interface: "eth0", Kind: networking.KindLAN,
 			}}, networking.Profile{ServiceAddress: "10.0.0.96", LANAddress: "10.0.0.96", EnabledKinds: []string{networking.KindLAN}})
 			completeNextTask(t, store, node, "gateway.component.apply", nil)
 			applicationID := installCPA(t, store, node, "10.0.0.96")
@@ -427,8 +426,8 @@ func TestSucceededRealityPublicationRecoveryCreatesOnlyMissingAccessAndPreserves
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "reality-publication-recovery", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
-		{Address: "10.0.0.97", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN},
-		{Address: "203.0.113.97", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic},
+		{Address: "10.0.0.97", Interface: "eth0", Kind: networking.KindLAN},
+		{Address: "203.0.113.97", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{
 		ServiceAddress: "10.0.0.97",
 		LANAddress:     "10.0.0.97",

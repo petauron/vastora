@@ -12,7 +12,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	node := enrollOrchestrationNode(t, store, "private-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.64", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.64", LANAddress: "10.0.0.64", EnabledKinds: []string{networking.KindLAN}})
+	node := enrollOrchestrationNode(t, store, "private-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.64", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.64", LANAddress: "10.0.0.64", EnabledKinds: []string{networking.KindLAN}})
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Private", Code: "private", Timezone: "UTC", DomainSuffix: "example.test", GatewayNodes: []string{node.ID}}); err != nil {
 		t.Fatal(err)
 	}

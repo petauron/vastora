@@ -29,7 +29,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	for _, candidate := range localCandidates {
 		localAddresses[candidate.Address] = candidate
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT address, interface_name, family, kind, observed_at FROM agent_network_candidates WHERE agent_id = ? ORDER BY kind, address`, gatewayID)
+	rows, err := tx.QueryContext(ctx, `SELECT address, interface_name, kind, observed_at FROM agent_network_candidates WHERE agent_id = ? ORDER BY kind, address`, gatewayID)
 	if err != nil {
 		return fmt.Errorf("center: read gateway addresses: %w", err)
 	}
@@ -40,7 +40,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	for rows.Next() {
 		var candidate networking.Candidate
 		var observed string
-		if err := rows.Scan(&candidate.Address, &candidate.Interface, &candidate.Family, &candidate.Kind, &observed); err != nil {
+		if err := rows.Scan(&candidate.Address, &candidate.Interface, &candidate.Kind, &observed); err != nil {
 			rows.Close()
 			return err
 		}

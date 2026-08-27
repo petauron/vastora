@@ -134,7 +134,6 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			address TEXT NOT NULL,
 			interface_name TEXT NOT NULL,
-			family TEXT NOT NULL CHECK(family IN ('ipv4', 'ipv6')),
 			kind TEXT NOT NULL CHECK(kind IN ('lan', 'headscale', 'public')),
 			observed_at TEXT NOT NULL,
 			PRIMARY KEY(agent_id, address)

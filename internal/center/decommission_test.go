@@ -14,7 +14,7 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 		t.Run(map[bool]string{false: "keep-data", true: "delete-data"}[deleteData], func(t *testing.T) {
 			store := openOrchestrationStore(t)
 			defer store.Close()
-			node := enrollOrchestrationNode(t, store, "decommission-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
+			node := enrollOrchestrationNode(t, store, "decommission-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 			installCPA(t, store, node, "10.0.0.90")
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -79,7 +79,7 @@ func TestDecommissionPriorityPreservesApplicationDependencies(t *testing.T) {
 func TestDecommissionApplicationsFailsBeforeMutationWhenNodeIsOffline(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
-	node := enrollOrchestrationNode(t, store, "offline-decommission-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", EnabledKinds: []string{networking.KindLAN}})
+	node := enrollOrchestrationNode(t, store, "offline-decommission-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", EnabledKinds: []string{networking.KindLAN}})
 	installCPA(t, store, node, "10.0.0.91")
 	if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), node.ID); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestDecommissionApplicationsFailsBeforeMutationWhenNodeIsOffline(t *testing
 func TestForcedDecommissionReportsOfflineAgentWithoutClaimingCleanup(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
-	node := enrollOrchestrationNode(t, store, "offline-force-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
+	node := enrollOrchestrationNode(t, store, "offline-force-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
 	installCPA(t, store, node, "10.0.0.92")
 	if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), node.ID); err != nil {
 		t.Fatal(err)

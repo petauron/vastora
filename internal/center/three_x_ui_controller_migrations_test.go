@@ -16,8 +16,8 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	master := enrollOrchestrationNode(t, store, "old-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.10", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.10", HeadscaleAddress: "100.64.0.10", EnabledKinds: []string{networking.KindHeadscale}})
-	worker := enrollOrchestrationNode(t, store, "new-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.20", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.20", HeadscaleAddress: "100.64.0.20", EnabledKinds: []string{networking.KindHeadscale}})
+	master := enrollOrchestrationNode(t, store, "old-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.10", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.10", HeadscaleAddress: "100.64.0.10", EnabledKinds: []string{networking.KindHeadscale}})
+	worker := enrollOrchestrationNode(t, store, "new-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.20", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.20", HeadscaleAddress: "100.64.0.20", EnabledKinds: []string{networking.KindHeadscale}})
 	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
 
 	masterDeployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
@@ -40,7 +40,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	remainingWorkerApplications := []string{}
 	for index := range 2 {
 		address := fmt.Sprintf("100.64.0.%d", 30+index)
-		other := enrollOrchestrationNode(t, store, fmt.Sprintf("remaining-worker-%d", index+1), NodeCapabilities{Docker: true}, []networking.Candidate{{Address: address, Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: address, HeadscaleAddress: address, EnabledKinds: []string{networking.KindHeadscale}})
+		other := enrollOrchestrationNode(t, store, fmt.Sprintf("remaining-worker-%d", index+1), NodeCapabilities{Docker: true}, []networking.Candidate{{Address: address, Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: address, HeadscaleAddress: address, EnabledKinds: []string{networking.KindHeadscale}})
 		deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: other.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleWorker, Config: config})
 		if err != nil {
 			t.Fatal(err)

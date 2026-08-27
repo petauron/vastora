@@ -75,10 +75,13 @@ func TestInitialSetupValidatesAgentReachabilityAndHeadscale(t *testing.T) {
 			t.Fatalf("unsafe Agent connection URL was accepted: %q", value)
 		}
 	}
-	for _, value := range []string{"https://center.example.com", "http://127.0.0.1:8080", "http://[::1]:8080"} {
+	for _, value := range []string{"https://center.example.com", "http://127.0.0.1:8080"} {
 		if _, err := NormalizeAgentConnectURL(value); err != nil {
 			t.Fatalf("valid Agent connection URL %q was rejected: %v", value, err)
 		}
+	}
+	if _, err := NormalizeAgentConnectURL("http://[::1]:8080"); err == nil {
+		t.Fatal("IPv6 loopback Agent connection URL was accepted")
 	}
 	store, err := Open(t.TempDir())
 	if err != nil {

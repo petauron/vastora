@@ -202,8 +202,8 @@ func TestSetupStatusSuggestsTheKernelRouteForACloudPublicAddress(t *testing.T) {
 	}
 	store.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{
-			{Address: "10.0.0.157", Interface: "enp0s6", Family: "ipv4", Kind: networking.KindLAN, ObservedAt: now},
-			{Address: "10.77.0.6", Interface: "wg0", Family: "ipv4", Kind: networking.KindLAN, ObservedAt: now},
+			{Address: "10.0.0.157", Interface: "enp0s6", Kind: networking.KindLAN, ObservedAt: now},
+			{Address: "10.77.0.6", Interface: "wg0", Kind: networking.KindLAN, ObservedAt: now},
 		}, nil
 	}
 	store.lookupPublicAddress = func(context.Context) (string, error) { return "192.9.143.79", nil }

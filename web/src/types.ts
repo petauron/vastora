@@ -128,7 +128,7 @@ export type AgentView = {
 export type AgentEnrollment = { token: string; siteId: string; installerUrl: string; expiresAt: string };
 
 export type NetworkKind = "lan" | "headscale" | "public";
-export type NetworkCandidate = { address: string; interface: string; family: "ipv4" | "ipv6"; kind: NetworkKind; observedAt: string };
+export type NetworkCandidate = { address: string; interface: string; kind: NetworkKind; observedAt: string };
 export type NetworkProfile = {
   serviceAddress: string;
   lanAddress?: string;
@@ -174,7 +174,7 @@ export type Service = { id: string; applicationId: string; siteId: string; name:
 export type Region = { code: string; nameZh: string; prefix: string };
 export type RegionSuggestion = { agentId: string; publicAddress: string; regionCode: string; prefix: string; source: string };
 export type PublicationKind = "lan_gateway" | "headscale_gateway" | "public_direct" | "public_shared_443" | "cloudflare_tunnel";
-export type DNSRecordInstruction = { type: "A" | "AAAA" | "CNAME"; name: string; value: string; proxy: boolean };
+export type DNSRecordInstruction = { type: "A" | "CNAME"; name: string; value: string; proxy: boolean };
 export type Publication = { id: string; serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; dnsRecordId?: string; dnsRecord?: DNSRecordInstruction; tlsEnabled: boolean; certificateExpiresAt?: string; desiredRevision: number; appliedRevision: number; status: "pending" | "applying" | "ready" | "degraded" | "failed" | "stopped"; lastError?: string; accessUrl?: string; createdAt: string; updatedAt: string };
 export type Route = { id: string; publicationId: string; siteId: string; serviceId: string; gatewayNodeId: string; hostname: string; protocol: string; upstreams: string[]; tlsEnabled: boolean; status: string; desiredRevision: number; appliedRevision: number; lastError?: string; createdAt: string; updatedAt: string };
 export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string };

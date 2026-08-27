@@ -65,7 +65,7 @@ func loopbackHost(host string) bool {
 		return true
 	}
 	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
+	return address != nil && address.To4() != nil && address.IsLoopback()
 }
 
 func normalizeCenterNetwork(input CenterNetworkInput) (CenterNetworkConfig, error) {

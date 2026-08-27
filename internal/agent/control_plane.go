@@ -482,7 +482,7 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 		return nil, errors.New("agent: 3x-ui API token is unavailable")
 	}
 	address := installation.ServiceAddress
-	if net.ParseIP(address) == nil {
+	if ip := net.ParseIP(address); ip == nil || ip.To4() == nil {
 		address = "127.0.0.1"
 	}
 	endpoint := "http://" + net.JoinHostPort(address, strconv.Itoa(config.PanelPort)) + "/panel/api/inbounds/list"
@@ -896,5 +896,5 @@ func isLoopbackHost(host string) bool {
 		return true
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return ip != nil && ip.To4() != nil && ip.IsLoopback()
 }

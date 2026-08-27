@@ -309,11 +309,8 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	filteredCandidates := make([]networking.Candidate, 0, len(heartbeat.NetworkCandidates))
 	for _, candidate := range heartbeat.NetworkCandidates {
 		ip := net.ParseIP(candidate.Address)
-		if ip == nil || candidate.Interface == "" || (candidate.Family != "ipv4" && candidate.Family != "ipv6") || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
+		if ip == nil || ip.To4() == nil || candidate.Interface == "" || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
 			return errors.New("center: Agent reported an invalid network candidate")
-		}
-		if candidate.Family == "ipv4" && ip.To4() == nil || candidate.Family == "ipv6" && ip.To4() != nil {
-			return errors.New("center: Agent reported a network address with the wrong family")
 		}
 		kind := networking.Classify(candidate.Interface, ip)
 		if kind == "" {
@@ -344,7 +341,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		return fmt.Errorf("center: replace Agent network candidates: %w", err)
 	}
 	for _, candidate := range heartbeat.NetworkCandidates {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_candidates(agent_id, address, interface_name, family, kind, observed_at) VALUES(?, ?, ?, ?, ?, ?)`, id, net.ParseIP(candidate.Address).String(), candidate.Interface, candidate.Family, candidate.Kind, now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_candidates(agent_id, address, interface_name, kind, observed_at) VALUES(?, ?, ?, ?, ?)`, id, net.ParseIP(candidate.Address).String(), candidate.Interface, candidate.Kind, now.Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("center: record Agent network candidate: %w", err)
 		}
 	}
@@ -445,14 +442,14 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		byID[agents[index].ID] = index
 		agents[index].NetworkCandidates = []networking.Candidate{}
 	}
-	candidateRows, err := s.db.QueryContext(ctx, `SELECT agent_id, address, interface_name, family, kind, observed_at FROM agent_network_candidates ORDER BY agent_id, kind, interface_name, address`)
+	candidateRows, err := s.db.QueryContext(ctx, `SELECT agent_id, address, interface_name, kind, observed_at FROM agent_network_candidates ORDER BY agent_id, kind, interface_name, address`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list network candidates: %w", err)
 	}
 	for candidateRows.Next() {
 		var agentID, observed string
 		var candidate networking.Candidate
-		if err := candidateRows.Scan(&agentID, &candidate.Address, &candidate.Interface, &candidate.Family, &candidate.Kind, &observed); err != nil {
+		if err := candidateRows.Scan(&agentID, &candidate.Address, &candidate.Interface, &candidate.Kind, &observed); err != nil {
 			candidateRows.Close()
 			return nil, err
 		}

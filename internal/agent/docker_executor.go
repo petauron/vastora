@@ -42,7 +42,7 @@ func (e DockerExecutor) Deploy(ctx context.Context, task DeploymentTask) (Applic
 	}
 	bindAddress := "127.0.0.1"
 	if task.ServiceAddress != "" {
-		if net.ParseIP(task.ServiceAddress) == nil {
+		if ip := net.ParseIP(task.ServiceAddress); ip == nil || ip.To4() == nil {
 			return ApplicationTaskResult{}, errors.New("agent: application requires a valid private service address")
 		}
 		bindAddress = task.ServiceAddress

@@ -92,12 +92,9 @@ func (s *Store) publicationDNSRecord(ctx context.Context, publication Publicatio
 		return nil, errors.New("center: stored publication kind is invalid")
 	}
 	ip := net.ParseIP(address)
-	if ip == nil {
-		return nil, errors.New("center: publication entry address is invalid")
+	if ip == nil || ip.To4() == nil {
+		return nil, errors.New("center: publication entry address must be IPv4")
 	}
-	record.Type, record.Value = "AAAA", ip.String()
-	if ip.To4() != nil {
-		record.Type = "A"
-	}
+	record.Type, record.Value = "A", ip.String()
 	return record, nil
 }

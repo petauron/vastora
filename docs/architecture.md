@@ -211,13 +211,17 @@ Tailscale client run on the host, while bundled Headscale stays container-networ
 isolated and is reached only through the loopback-bound control port and the
 shared HTTPS gateway. Vastora does not require a dedicated Center-only machine.
 
+Vastora-managed networking is IPv4-only. Agents report only IPv4 candidates,
+built-in Headscale allocates only `100.64.0.0/10` addresses, and managed DNS,
+gateway listeners, publications, and application upstreams use IPv4 addresses.
+
 Bundled setup starts Headscale's Caddy HTTPS entry on public ports `80` and
 `443`. Center uses the same Caddy process but only its loopback and Headscale
 listeners; it has no public DNS record or public application route. Loopback
 `8443` is only an internal Caddy backend when an Agent enables the optional
 shared-443 HAProxy frontend; it is never an administrator-facing service URL.
 
-Built-in Headscale reads stable sorted A/AAAA records from a Center-generated
+Built-in Headscale reads stable sorted A records from a Center-generated
 `dns.extra_records_path` file. External Headscale installations use manual DNS
 unless that file is managed by the operator.
 

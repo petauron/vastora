@@ -21,6 +21,7 @@ func TestClassifyUsesOnlyLocallyAssignedAddressProperties(t *testing.T) {
 		{name: "WireGuard overlay ignored", interfaceName: "wg0", address: "10.77.0.6", want: ""},
 		{name: "ordinary LAN bridge retained", interfaceName: "br0", address: "10.0.0.1", want: KindLAN},
 		{name: "public IPv4", interfaceName: "eth0", address: "203.0.113.20", want: KindPublic},
+		{name: "IPv6 ignored", interfaceName: "tailscale0", address: "fd7a:115c:a1e0::1", want: ""},
 		{name: "loopback ignored", interfaceName: "lo0", address: "127.0.0.1", want: ""},
 	}
 	for _, test := range tests {
@@ -34,8 +35,8 @@ func TestClassifyUsesOnlyLocallyAssignedAddressProperties(t *testing.T) {
 
 func TestValidateProfileRequiresConfirmedLocalPublicAddress(t *testing.T) {
 	candidates := []Candidate{
-		{Address: "10.0.0.2", Interface: "eth0", Family: "ipv4", Kind: KindLAN},
-		{Address: "203.0.113.2", Interface: "eth1", Family: "ipv4", Kind: KindPublic},
+		{Address: "10.0.0.2", Interface: "eth0", Kind: KindLAN},
+		{Address: "203.0.113.2", Interface: "eth1", Kind: KindPublic},
 	}
 	valid := Profile{ServiceAddress: "10.0.0.2", LANAddress: "10.0.0.2", PublicAddress: "203.0.113.2", EnabledKinds: []string{KindLAN, KindPublic}, DirectPublic: true}
 	if err := ValidateProfile(candidates, valid); err != nil {

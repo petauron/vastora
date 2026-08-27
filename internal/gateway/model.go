@@ -172,7 +172,7 @@ func (state DesiredState) Validate() error {
 		if _, exists := listeners[listener.Kind]; exists {
 			return fmt.Errorf("gateway: duplicate listener kind %q", listener.Kind)
 		}
-		if net.ParseIP(listener.Address) == nil || listener.HTTPPort < 1 || listener.HTTPPort > 65535 || listener.HTTPSPort < 1 || listener.HTTPSPort > 65535 {
+		if ip := net.ParseIP(listener.Address); ip == nil || ip.To4() == nil || listener.HTTPPort < 1 || listener.HTTPPort > 65535 || listener.HTTPSPort < 1 || listener.HTTPSPort > 65535 {
 			return fmt.Errorf("gateway: invalid %s listener", listener.Kind)
 		}
 		listeners[listener.Kind] = listener
@@ -206,14 +206,15 @@ func (state DesiredState) Validate() error {
 			return fmt.Errorf("gateway: route %q requires an upstream", route.ID)
 		}
 		for _, upstream := range route.Upstreams {
-			if net.ParseIP(upstream.Address) == nil || upstream.Port < 1 || upstream.Port > 65535 {
+			if ip := net.ParseIP(upstream.Address); ip == nil || ip.To4() == nil || upstream.Port < 1 || upstream.Port > 65535 {
 				return fmt.Errorf("gateway: route %q has an invalid upstream", route.ID)
 			}
 		}
 	}
 	if state.SharedHTTPS != nil {
 		shared := state.SharedHTTPS
-		if net.ParseIP(shared.Address) == nil || shared.Port < 1 || shared.Port > 65535 || !net.ParseIP(shared.CaddyAddress).IsLoopback() || shared.CaddyPort < 1 || shared.CaddyPort > 65535 {
+		sharedIP, caddyIP := net.ParseIP(shared.Address), net.ParseIP(shared.CaddyAddress)
+		if sharedIP == nil || sharedIP.To4() == nil || shared.Port < 1 || shared.Port > 65535 || caddyIP == nil || caddyIP.To4() == nil || !caddyIP.IsLoopback() || shared.CaddyPort < 1 || shared.CaddyPort > 65535 {
 			return errors.New("gateway: invalid shared HTTPS frontend")
 		}
 		if shared.Address == shared.CaddyAddress && shared.Port == shared.CaddyPort {
@@ -239,7 +240,7 @@ func (state DesiredState) Validate() error {
 			}
 			seenLayer4[route.Hostname] = true
 			for _, upstream := range route.Upstreams {
-				if net.ParseIP(upstream.Address) == nil || upstream.Port < 1 || upstream.Port > 65535 {
+				if ip := net.ParseIP(upstream.Address); ip == nil || ip.To4() == nil || upstream.Port < 1 || upstream.Port > 65535 {
 					return fmt.Errorf("gateway: shared HTTPS route %q has an invalid upstream", route.ID)
 				}
 			}

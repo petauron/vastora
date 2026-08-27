@@ -249,13 +249,10 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			return errors.New("center: public entry node has no confirmed public address")
 		}
 		ip := net.ParseIP(publicAddress)
-		if ip == nil {
-			return errors.New("center: public entry address is invalid")
+		if ip == nil || ip.To4() == nil {
+			return errors.New("center: public entry address must be IPv4")
 		}
-		recordType := "AAAA"
-		if ip.To4() != nil {
-			recordType = "A"
-		}
+		recordType := "A"
 		if dnsRecordID == "" {
 			createdRecordID, createErr := client.createDNSRecord(ctx, recordType, hostname, ip.String(), false)
 			if createErr != nil {

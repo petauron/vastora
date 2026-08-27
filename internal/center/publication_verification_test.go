@@ -485,7 +485,7 @@ func TestStoppedPublicationCompensatesInFlightCloudflareDNSCreation(t *testing.T
 func seedVerificationPublication(t *testing.T, store *Store, kind, dnsProvider string, desiredRevision, appliedRevision int64, status string) AgentCredential {
 	t.Helper()
 	ctx := context.Background()
-	node := enrollOrchestrationNode(t, store, "verification-node", NodeCapabilities{Docker: true, Tunnel: true}, []networking.Candidate{{Address: "10.0.0.40", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}, {Address: "203.0.113.40", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.40", LANAddress: "10.0.0.40", PublicAddress: "203.0.113.40", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	node := enrollOrchestrationNode(t, store, "verification-node", NodeCapabilities{Docker: true, Tunnel: true}, []networking.Candidate{{Address: "10.0.0.40", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.40", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.40", LANAddress: "10.0.0.40", PublicAddress: "203.0.113.40", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, status, created_at, updated_at)
 		VALUES('verification-app', 'Verification', ?, ?, 'test/verification', 'running', ?, ?)`, node.ID, testSiteID(t, store), now, now); err != nil {

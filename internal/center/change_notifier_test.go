@@ -26,7 +26,7 @@ func TestTaskEventNotificationsAreEmittedOnlyAfterCommit(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	node := enrollOrchestrationNode(t, store, "commit-test-agent", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.61", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.61", LANAddress: "10.0.0.61", EnabledKinds: []string{networking.KindLAN}})
+	node := enrollOrchestrationNode(t, store, "commit-test-agent", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.61", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.61", LANAddress: "10.0.0.61", EnabledKinds: []string{networking.KindLAN}})
 	agentWaiter := store.taskChanges.subscribe("agent:" + node.ID)
 	taskWaiter := store.taskChanges.subscribe("task:commit-test-task")
 
@@ -63,7 +63,7 @@ func TestRolledBackTaskEventDoesNotNotifyWaiters(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	node := enrollOrchestrationNode(t, store, "rollback-test-agent", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.62", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.62", LANAddress: "10.0.0.62", EnabledKinds: []string{networking.KindLAN}})
+	node := enrollOrchestrationNode(t, store, "rollback-test-agent", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.62", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.62", LANAddress: "10.0.0.62", EnabledKinds: []string{networking.KindLAN}})
 	waiter := store.taskChanges.subscribe("task:rollback-test-task")
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

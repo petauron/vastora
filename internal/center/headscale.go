@@ -24,7 +24,7 @@ import (
 const (
 	headscaleDNSFile               = "headscale-extra-records.json"
 	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
-	builtinHeadscaleRuntimeVersion = "self-hosted-derp-v6"
+	builtinHeadscaleRuntimeVersion = "ipv4-only-v1"
 )
 
 type HeadscaleInput struct {
@@ -355,9 +355,8 @@ func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCente
 		if centerAddress, err := s.coLocatedHeadscaleAddress(ctx); err != nil {
 			return err
 		} else if centerAddress != "" {
-			recordType := "A"
-			if strings.Contains(centerAddress, ":") {
-				recordType = "AAAA"
+			if ip := net.ParseIP(centerAddress); ip == nil || ip.To4() == nil {
+				return errors.New("center: Headscale DNS address must be IPv4")
 			}
 			endpoints := []string{centerEndpoint}
 			aliases, err := readSystemEndpointAliases(ctx, s.db, "center")
@@ -373,7 +372,7 @@ func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCente
 				if err != nil {
 					return err
 				}
-				records = append(records, record{Name: hostname, Type: recordType, Value: centerAddress})
+				records = append(records, record{Name: hostname, Type: "A", Value: centerAddress})
 			}
 		}
 	} else if (modeErr != nil && !errors.Is(modeErr, sql.ErrNoRows)) || (endpointErr != nil && !errors.Is(endpointErr, sql.ErrNoRows)) {
@@ -392,11 +391,11 @@ func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCente
 			rows.Close()
 			return err
 		}
-		if strings.Contains(value.Value, ":") {
-			value.Type = "AAAA"
-		} else {
-			value.Type = "A"
+		if ip := net.ParseIP(value.Value); ip == nil || ip.To4() == nil {
+			rows.Close()
+			return errors.New("center: Headscale publication address must be IPv4")
 		}
+		value.Type = "A"
 		records = append(records, value)
 	}
 	if err := rows.Close(); err != nil {

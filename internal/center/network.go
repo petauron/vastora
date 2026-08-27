@@ -19,7 +19,7 @@ type networkQueryer interface {
 }
 
 func networkCandidates(ctx context.Context, queryer networkQueryer, agentID string) ([]networking.Candidate, error) {
-	rows, err := queryer.QueryContext(ctx, `SELECT address, interface_name, family, kind, observed_at FROM agent_network_candidates WHERE agent_id = ? ORDER BY kind, interface_name, address`, agentID)
+	rows, err := queryer.QueryContext(ctx, `SELECT address, interface_name, kind, observed_at FROM agent_network_candidates WHERE agent_id = ? ORDER BY kind, interface_name, address`, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("center: list network candidates: %w", err)
 	}
@@ -28,7 +28,7 @@ func networkCandidates(ctx context.Context, queryer networkQueryer, agentID stri
 	for rows.Next() {
 		var value networking.Candidate
 		var observed string
-		if err := rows.Scan(&value.Address, &value.Interface, &value.Family, &value.Kind, &observed); err != nil {
+		if err := rows.Scan(&value.Address, &value.Interface, &value.Kind, &observed); err != nil {
 			return nil, err
 		}
 		value.ObservedAt, err = time.Parse(time.RFC3339Nano, observed)

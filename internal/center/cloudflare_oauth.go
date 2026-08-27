@@ -343,10 +343,10 @@ func (s *Store) ConfigureSetupDNS(ctx context.Context, input SetupDNSInput, cand
 	if err := s.db.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&zoneName); err != nil {
 		return nil, err
 	}
-	recordType := "AAAA"
-	if publicIP.To4() != nil {
-		recordType = "A"
+	if publicIP.To4() == nil {
+		return nil, errors.New("center: automatic DNS requires an IPv4 public address")
 	}
+	recordType := "A"
 	publicHostnames := hostnames
 	if headscaleHostname != "" {
 		publicHostnames = []string{headscaleHostname}
@@ -443,7 +443,7 @@ func validateSetupGatewayBinding(input SetupDNSInput, candidates []networking.Ca
 		bindValue = publicIP.String()
 	}
 	bindIP := net.ParseIP(bindValue)
-	if bindIP == nil {
+	if bindIP == nil || bindIP.To4() == nil {
 		return setupGatewayBinding{}, errors.New("center: select the local address that receives public traffic")
 	}
 	bindCandidate, bindFound := byAddress[bindIP.String()]
@@ -454,9 +454,6 @@ func validateSetupGatewayBinding(input SetupDNSInput, candidates []networking.Ca
 	if !direct {
 		if !automaticallyDetected && !input.NATConfirmed {
 			return setupGatewayBinding{}, errors.New("center: confirm that the cloud public IP forwards ports 80 and 443 to this server")
-		}
-		if (publicIP.To4() == nil) != (bindIP.To4() == nil) {
-			return setupGatewayBinding{}, errors.New("center: public and local gateway addresses must use the same IP family")
 		}
 	} else if bindIP.String() != publicIP.String() && !automaticallyDetected && !input.NATConfirmed {
 		return setupGatewayBinding{}, errors.New("center: confirm the NAT mapping before using a different local gateway address")

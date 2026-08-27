@@ -57,7 +57,7 @@ func TestSetupStopsPublicProbeWhenExternalVerificationFails(t *testing.T) {
 	}
 	defer store.Close()
 	store.discoverNetworkCandidates = func(time.Time) ([]networking.Candidate, error) {
-		return []networking.Candidate{{Address: "203.0.113.10", Interface: "eth0", Family: "ipv4", Kind: networking.KindPublic}}, nil
+		return []networking.Candidate{{Address: "203.0.113.10", Interface: "eth0", Kind: networking.KindPublic}}, nil
 	}
 	store.verifyPublicEntry = func(context.Context, string, deployapi.PublicEntryProbe) error {
 		return errors.New("probe failed")
@@ -83,7 +83,7 @@ func TestSetupVerifiesPublicPortsBeforeInstallingInfrastructure(t *testing.T) {
 	}
 	defer store.Close()
 	store.discoverNetworkCandidates = func(time.Time) ([]networking.Candidate, error) {
-		return []networking.Candidate{{Address: "10.0.0.157", Interface: "enp0s6", Family: "ipv4", Kind: networking.KindLAN}}, nil
+		return []networking.Candidate{{Address: "10.0.0.157", Interface: "enp0s6", Kind: networking.KindLAN}}, nil
 	}
 	store.lookupPublicAddress = func(context.Context) (string, error) { return "192.9.143.79", nil }
 	store.lookupGatewayAddress = func(string) (string, error) { return "10.0.0.157", nil }

@@ -520,7 +520,7 @@ func resolveThreeXUIInboundTarget(ctx context.Context, centralURL, centralToken 
 	if command.TargetNodeID == 0 {
 		return centralURL, centralToken, command.InboundID, command.InboundTag, nil
 	}
-	if net.ParseIP(strings.TrimSpace(command.TargetAddress)) == nil || command.TargetPanelPort < 1024 || command.TargetPanelPort > 65535 || strings.TrimSpace(command.TargetAPIToken) == "" {
+	if ip := net.ParseIP(strings.TrimSpace(command.TargetAddress)); ip == nil || ip.To4() == nil || command.TargetPanelPort < 1024 || command.TargetPanelPort > 65535 || strings.TrimSpace(command.TargetAPIToken) == "" {
 		return "", "", 0, "", errors.New("agent: target REALITY worker API connection is unavailable")
 	}
 	targetURL := "http://" + net.JoinHostPort(command.TargetAddress, strconv.Itoa(command.TargetPanelPort))
