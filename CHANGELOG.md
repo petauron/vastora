@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.56](https://github.com/petauron/vastora/compare/v0.1.0-alpha.55...v0.1.0-alpha.56) (2026-08-27)
+
+
+### Bug Fixes
+
+* read release version from R2 installer ([#171](https://github.com/petauron/vastora/issues/171)) ([c4dda9a](https://github.com/petauron/vastora/commit/c4dda9afa5e3ea1c95e198b4ce6dfa8971c89062))
+* use current tooling for release retries ([#167](https://github.com/petauron/vastora/issues/167)) ([4266443](https://github.com/petauron/vastora/commit/42664435b81866d5c1a6ee211b3392ffc668b586))
+
 ## [0.1.0-alpha.55](https://github.com/petauron/vastora/compare/v0.1.0-alpha.54...v0.1.0-alpha.55) (2026-08-27)
 
 
