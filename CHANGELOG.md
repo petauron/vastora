@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.55](https://github.com/petauron/vastora/compare/v0.1.0-alpha.54...v0.1.0-alpha.55) (2026-08-27)
+
+
+### Bug Fixes
+
+* isolate Headscale clients from Tailscale services ([#163](https://github.com/petauron/vastora/issues/163)) ([5b7d104](https://github.com/petauron/vastora/commit/5b7d104aa9b34482f85a2f895757386fccdc683c))
+
 ## [0.1.0-alpha.54](https://github.com/petauron/vastora/compare/v0.1.0-alpha.53...v0.1.0-alpha.54) (2026-08-27)
 
 
