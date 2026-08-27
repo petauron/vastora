@@ -1,14 +1,13 @@
 import { connect } from "cloudflare:sockets";
 
 const repository = "petauron/vastora";
-const releaseAssets = new Set([
-  "install.sh",
-  "vastora-center-install.tar.gz",
-  "vastora-center-install.tar.gz.sha256",
+const releaseAssets = new Map([
+  ["install.sh", "text/x-shellscript; charset=utf-8"],
+  ["vastora-center-install.tar.gz", "application/gzip"],
+  ["vastora-center-install.tar.gz.sha256", "text/plain; charset=utf-8"],
 ]);
 const currentCacheKey = new Request("https://vastora-installer.internal/current-release");
-const lastKnownCacheKey = new Request("https://vastora-installer.internal/last-known-release");
-const versionURL = `https://raw.githubusercontent.com/${repository}/main/version.txt`;
+const currentManifestKey = "vastora/current.json";
 const oauthCallbackPath = "/oauth/cloudflare/callback";
 const oauthSessionPrefix = "/oauth/cloudflare/sessions/";
 const publicAddressPath = "/network/public-address";
@@ -16,70 +15,54 @@ const verifyPublicEntryPath = "/network/verify-public-entry";
 const oauthSessionLifetimeMs = 10 * 60 * 1000;
 const oauthStatePattern = /^v1\.([A-Za-z0-9_-]{24,64})\.([A-Za-z0-9_-]{43})$/;
 
-function releaseAssetURL(tag, asset) {
-  return `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${asset}`;
+function validManifest(manifest) {
+  if (!manifest || manifest.schema !== 1 || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version || "")) {
+    return false;
+  }
+  if (!manifest.assets || Object.keys(manifest.assets).length !== releaseAssets.size) return false;
+  const prefix = `vastora/releases/v${manifest.version}/`;
+  for (const asset of releaseAssets.keys()) {
+    const descriptor = manifest.assets[asset];
+    if (!descriptor || descriptor.key !== `${prefix}${asset}` || !/^[0-9a-f]{64}$/.test(descriptor.sha256 || "")) {
+      return false;
+    }
+  }
+  return true;
 }
 
-function cachedSelection(result, maxAge) {
-  return Response.json(result, {
-    headers: { "Cache-Control": `public, max-age=${maxAge}` },
-  });
-}
-
-async function requestedRelease() {
-  const versionResponse = await fetch(versionURL, {
-    headers: { "User-Agent": "vastora-installer-worker" },
-  });
-  if (!versionResponse.ok) {
-    throw new Error(`Version pointer returned ${versionResponse.status}`);
-  }
-
-  const version = (await versionResponse.text()).trim();
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    throw new Error("Version pointer is invalid");
-  }
-
-  const tag = `v${version}`;
-  const assetResponses = await Promise.all(
-    [...releaseAssets].map((asset) =>
-      fetch(releaseAssetURL(tag, asset), {
-        method: "HEAD",
-        redirect: "manual",
-        headers: { "User-Agent": "vastora-installer-worker" },
-      }),
-    ),
-  );
-  if (!assetResponses.every((response) => response.ok || response.status === 302)) {
-    throw new Error("Requested release assets are incomplete");
-  }
-
-  return { tag };
-}
-
-async function selectedRelease(ctx) {
+async function selectedRelease(env, ctx) {
+  if (!env.INSTALLER_ASSETS) throw new Error("Installer R2 binding is unavailable");
   const cache = caches.default;
   const cached = await cache.match(currentCacheKey);
   if (cached) return cached.json();
+  const object = await env.INSTALLER_ASSETS.get(currentManifestKey);
+  if (!object) throw new Error("Installer release manifest is unavailable");
+  const manifest = await object.json();
+  if (!validManifest(manifest)) throw new Error("Installer release manifest is invalid");
+  ctx.waitUntil(cache.put(currentCacheKey, Response.json(manifest, {
+    headers: { "Cache-Control": "public, max-age=60" },
+  })));
+  return manifest;
+}
 
-  try {
-    const result = await requestedRelease();
-    ctx.waitUntil(
-      Promise.all([
-        cache.put(currentCacheKey, cachedSelection(result, 60)),
-        cache.put(lastKnownCacheKey, cachedSelection(result, 604800)),
-      ]),
-    );
-    return result;
-  } catch (error) {
-    const lastKnown = await cache.match(lastKnownCacheKey);
-    if (lastKnown) {
-      console.warn("Using the last known installer release", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-      return lastKnown.json();
-    }
-    throw error;
+async function installerAssetResponse(request, env, ctx, asset) {
+  const manifest = await selectedRelease(env, ctx);
+  const descriptor = manifest.assets[asset];
+  const object = request.method === "HEAD"
+    ? await env.INSTALLER_ASSETS.head(descriptor.key)
+    : await env.INSTALLER_ASSETS.get(descriptor.key);
+  if (!object || object.customMetadata?.sha256 !== descriptor.sha256) {
+    throw new Error(`Installer release object is unavailable or mismatched: ${asset}`);
   }
+  const headers = new Headers(responseHeaders());
+  object.writeHttpMetadata(headers);
+  headers.set("Cache-Control", "public, max-age=60");
+  headers.set("Content-Length", String(object.size));
+  headers.set("Content-Type", releaseAssets.get(asset));
+  headers.set("ETag", object.httpEtag);
+  headers.set("X-Vastora-SHA256", descriptor.sha256);
+  headers.set("X-Vastora-Version", manifest.version);
+  return new Response(request.method === "HEAD" ? null : object.body, { headers });
 }
 
 function responseHeaders() {
@@ -281,14 +264,9 @@ export default {
     }
 
     try {
-      const release = await selectedRelease(ctx);
-      const location = releaseAssetURL(release.tag, asset);
-      return new Response(null, {
-        status: 302,
-        headers: { ...responseHeaders(), Location: location },
-      });
+      return await installerAssetResponse(request, env, ctx, asset);
     } catch (error) {
-      console.error("Unable to select installer release", error);
+      console.error("Unable to serve installer release", error);
       return new Response("No complete Vastora release is currently available.\n", {
         status: 503,
         headers: {

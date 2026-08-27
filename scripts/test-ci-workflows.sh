@@ -5,6 +5,7 @@ script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
 ci_workflow="$project_dir/.github/workflows/ci.yml"
 codeql_workflow="$project_dir/.github/workflows/codeql.yml"
+cache_workflow="$project_dir/.github/workflows/dependency-cache.yml"
 classifier="$project_dir/scripts/classify-ci-changes.sh"
 
 require_line() {
@@ -21,7 +22,10 @@ require_line "$ci_workflow" '    name: Release metadata'
 require_line "$ci_workflow" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
 require_line "$ci_workflow" '        run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"'
 require_line "$codeql_workflow" '        run: scripts/classify-ci-changes.sh --git codeql "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"'
-require_line "$ci_workflow" '    name: Warm dependency caches'
+require_line "$cache_workflow" '    name: Warm dependency caches'
+require_line "$cache_workflow" '      - go.mod'
+require_line "$cache_workflow" '      - go.sum'
+require_line "$cache_workflow" '      - web/package-lock.json'
 require_line "$ci_workflow" '      DOCKER_BUILD_RECORD_UPLOAD: "false"'
 require_line "$ci_workflow" '        run: scripts/check-runtime-image-platforms.sh'
 require_line "$ci_workflow" '        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .'
@@ -56,7 +60,11 @@ if grep -Fq 'runtime-image-platforms:' "$ci_workflow"; then
   echo 'Runtime image validation should share the deployment runner.' >&2
   exit 1
 fi
-for workflow in "$ci_workflow" "$codeql_workflow"; do
+if grep -Eq '^  push:' "$ci_workflow"; then
+  echo 'Main-branch dependency cache warming must use the path-filtered cache workflow.' >&2
+  exit 1
+fi
+for workflow in "$ci_workflow" "$codeql_workflow" "$cache_workflow"; do
   if ! grep -Fq 'timeout-minutes:' "$workflow"; then
     echo "$workflow has no job timeouts." >&2
     exit 1

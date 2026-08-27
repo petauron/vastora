@@ -14,6 +14,13 @@ updates:
         update-types:
           - version-update:semver-patch
           - version-update:semver-minor
+    groups:
+      modernc:
+        patterns:
+          - "modernc.org/*"
+        update-types:
+          - patch
+          - minor
   - package-ecosystem: npm
     directory: "/web"
     schedule:
@@ -30,32 +37,9 @@ updates:
     ignore:
       - dependency-name: "@typescript/native"
     groups:
-      react:
+      web-dependencies:
         patterns:
-          - react
-          - react-dom
-          - "@types/react"
-          - "@types/react-dom"
-        update-types:
-          - patch
-          - minor
-      lint-toolchain:
-        patterns:
-          - eslint
-          - "@eslint/*"
-          - typescript
-          - typescript-eslint
-          - "@typescript/*"
-          - globals
-        update-types:
-          - patch
-          - minor
-      vite-toolchain:
-        patterns:
-          - vite
-          - vitest
-          - "@vitejs/*"
-          - "@rolldown/*"
+          - "*"
         update-types:
           - patch
           - minor
@@ -69,6 +53,13 @@ updates:
         update-types:
           - version-update:semver-patch
           - version-update:semver-minor
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - patch
+          - minor
   - package-ecosystem: docker
     directory: "/"
     schedule:

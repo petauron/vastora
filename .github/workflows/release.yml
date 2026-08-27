@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing draft release tag to retry (for example, v0.1.0-alpha.4)
+        description: Existing release tag to retry or stage in R2 (for example, v0.1.0-alpha.55)
         required: false
         type: string
   push:
@@ -37,7 +37,7 @@ jobs:
           target-branch: main
           skip-github-pull-request: true
 
-      - name: Resolve draft release retry
+      - name: Resolve release retry
         id: retry
         if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         env:
@@ -53,15 +53,10 @@ jobs:
               jq -c --arg tag "$RELEASE_TAG" '[.[][] | select(.tag_name == $tag)] | first'
           )"
           if [ "$release_json" = 'null' ]; then
-            echo "draft release $RELEASE_TAG was not found" >&2
+            echo "release $RELEASE_TAG was not found" >&2
             exit 1
           fi
-          if [ "$(printf '%s' "$release_json" | jq -r '.draft')" != 'true' ]; then
-            echo "release $RELEASE_TAG is not an existing draft" >&2
-            exit 1
-          fi
-          release_target="$(printf '%s' "$release_json" | jq -er '.target_commitish')"
-          release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$release_target" --jq '.sha')"
+          release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
           {
             echo 'release_created=true'
             echo "release_sha=$release_sha"
@@ -81,12 +76,30 @@ jobs:
       id-token: write
       packages: write
     env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      CENTER_IMAGE: ghcr.io/petauron/vastora-center
       DOCKER_BUILD_RECORD_UPLOAD: "false"
+      R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+      R2_ENDPOINT: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
     steps:
       - name: Check out release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.release_sha }}
+
+      - name: Validate R2 release destination
+        run: |
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          test -n "$R2_BUCKET_NAME"
+          test -n "${{ vars.CLOUDFLARE_ACCOUNT_ID }}"
+          aws --cli-connect-timeout 10 --cli-read-timeout 30 s3api head-bucket \
+            --bucket "$R2_BUCKET_NAME" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --no-cli-pager
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.0.0
@@ -105,12 +118,9 @@ jobs:
           context: .
           file: Dockerfile.center
           platforms: linux/amd64,linux/arm64
-          push: true
+          outputs: type=image,name=${{ env.CENTER_IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VASTORA_VERSION=${{ needs.prepare.outputs.release_version }}
-          tags: |
-            ghcr.io/petauron/vastora-center:${{ needs.prepare.outputs.release_tag }}
-            ghcr.io/petauron/vastora-center:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.prepare.outputs.release_sha }}
@@ -119,6 +129,41 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: mode=max
           sbom: true
+
+      - name: Scan released Center image for x64 vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          scan-type: image
+          image-ref: ${{ env.CENTER_IMAGE }}@${{ steps.image.outputs.digest }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Scan released Center image for ARM64 vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          scan-type: image
+          image-ref: ${{ env.CENTER_IMAGE }}@${{ steps.image.outputs.digest }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+      - name: Publish verified Center image tags
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          docker buildx imagetools create \
+            --tag "$CENTER_IMAGE:$RELEASE_TAG" \
+            --tag "$CENTER_IMAGE:latest" \
+            "$CENTER_IMAGE@$IMAGE_DIGEST"
 
       - name: Attest Center image
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -141,37 +186,46 @@ jobs:
           anonymous_config="$(mktemp -d)"
           DOCKER_CONFIG="$anonymous_config" scripts/assert-image-platforms.sh "$VASTORA_CENTER_IMAGE"
 
-      - name: Upload assets and publish release
+      - name: Stage immutable installer assets in R2
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: scripts/publish-installer-r2.sh stage --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
+
+      - name: Publish GitHub release metadata
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            install.sh \
-            dist/vastora-center-install.tar.gz \
-            dist/vastora-center-install.tar.gz.sha256 \
-            --clobber
-          gh release edit "$RELEASE_TAG" --draft=false
+        run: gh release edit "$RELEASE_TAG" --draft=false
+
+      - name: Atomically activate installer release in R2
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: scripts/publish-installer-r2.sh activate --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
 
       - name: Verify public installer endpoint
         env:
           EXPECTED_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: |
           temporary_dir="$(mktemp -d)"
-          curl --connect-timeout 10 --max-time 30 --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 -fsSL \
-            https://vastora.petauron.com/install.sh \
-            -o "$temporary_dir/install.sh"
-          curl --connect-timeout 10 --max-time 30 --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 -fsSL \
-            https://vastora.petauron.com/vastora-center-install.tar.gz \
-            -o "$temporary_dir/vastora-center-install.tar.gz"
-          curl --connect-timeout 10 --max-time 30 --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 -fsSL \
-            https://vastora.petauron.com/vastora-center-install.tar.gz.sha256 \
-            -o "$temporary_dir/vastora-center-install.tar.gz.sha256"
-          sh -n "$temporary_dir/install.sh"
-          cd "$temporary_dir"
-          sha256sum --check vastora-center-install.tar.gz.sha256
-          actual_version="$(tar -xOzf vastora-center-install.tar.gz ./release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')"
-          test "$actual_version" = "$EXPECTED_VERSION"
+          verify_installer() {
+            rm -f "$temporary_dir/install.sh" "$temporary_dir/vastora-center-install.tar.gz" "$temporary_dir/vastora-center-install.tar.gz.sha256"
+            curl --connect-timeout 10 --max-time 30 -fsSL https://vastora.petauron.com/install.sh -o "$temporary_dir/install.sh" &&
+              curl --connect-timeout 10 --max-time 30 -fsSL https://vastora.petauron.com/vastora-center-install.tar.gz -o "$temporary_dir/vastora-center-install.tar.gz" &&
+              curl --connect-timeout 10 --max-time 30 -fsSL https://vastora.petauron.com/vastora-center-install.tar.gz.sha256 -o "$temporary_dir/vastora-center-install.tar.gz.sha256" &&
+              sh -n "$temporary_dir/install.sh" &&
+              (cd "$temporary_dir" && sha256sum --check vastora-center-install.tar.gz.sha256) &&
+              actual_version="$(tar -xOzf "$temporary_dir/vastora-center-install.tar.gz" ./release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')" &&
+              test "$actual_version" = "$EXPECTED_VERSION"
+          }
+          attempt=1
+          while [ "$attempt" -le 18 ]; do
+            if verify_installer; then exit 0; fi
+            echo "Installer edge cache has not selected $EXPECTED_VERSION yet (attempt $attempt/18)."
+            attempt=$((attempt + 1))
+            sleep 5
+          done
+          echo "Public installer did not converge to $EXPECTED_VERSION." >&2
+          exit 1
 
   release-pr:
     name: Prepare next release pull request
