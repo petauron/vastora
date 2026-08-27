@@ -22,7 +22,7 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 			finished := make(chan error, 1)
 			messages := make(chan string, 10)
 			go func() {
-				finished <- store.DecommissionApplications(ctx, deleteData, func(message string) { messages <- message })
+				finished <- store.DecommissionApplications(ctx, deleteData, false, "", func(message string) { messages <- message })
 			}()
 
 			task := waitForDecommissionTask(t, store, node)
@@ -30,6 +30,13 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 				t.Fatalf("unexpected decommission task: %#v", task)
 			}
 			if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+				t.Fatal(err)
+			}
+			hostTask := waitForDecommissionTask(t, store, node)
+			if hostTask.Kind != "agent.decommission" || hostTask.DeleteData != deleteData {
+				t.Fatalf("unexpected Agent host cleanup task: %#v", hostTask)
+			}
+			if err := store.CompleteTask(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt, true, "", nil); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-finished; err != nil {
@@ -77,8 +84,8 @@ func TestDecommissionApplicationsFailsBeforeMutationWhenNodeIsOffline(t *testing
 	if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), node.ID); err != nil {
 		t.Fatal(err)
 	}
-	err := store.DecommissionApplications(context.Background(), false, nil)
-	if err == nil || !strings.Contains(err.Error(), "is offline") {
+	err := store.DecommissionApplications(context.Background(), false, false, "", nil)
+	if err == nil || !strings.Contains(err.Error(), "offline") {
 		t.Fatalf("offline node did not block decommission: %v", err)
 	}
 	var uninstallTasks int
@@ -87,6 +94,34 @@ func TestDecommissionApplicationsFailsBeforeMutationWhenNodeIsOffline(t *testing
 	}
 	if uninstallTasks != 0 {
 		t.Fatalf("offline preflight queued %d uninstall tasks", uninstallTasks)
+	}
+}
+
+func TestForcedDecommissionReportsOfflineAgentWithoutClaimingCleanup(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	node := enrollOrchestrationNode(t, store, "offline-force-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
+	installCPA(t, store, node, "10.0.0.92")
+	if _, err := store.db.ExecContext(context.Background(), `UPDATE agents SET last_seen_at = ? WHERE id = ?`, time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano), node.ID); err != nil {
+		t.Fatal(err)
+	}
+	cleanups, err := store.OfflineAgentCleanups(context.Background(), "")
+	if err != nil || len(cleanups) != 1 || cleanups[0].Command != "sudo vastora agent uninstall --purge" || strings.Contains(cleanups[0].Command, node.Credential) {
+		t.Fatalf("unsafe offline cleanup report: %#v err=%v", cleanups, err)
+	}
+	var output strings.Builder
+	if err := store.DecommissionApplications(context.Background(), true, true, "", func(message string) {
+		output.WriteString(message)
+		output.WriteByte('\n')
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := store.db.QueryRowContext(context.Background(), `SELECT state FROM agent_decommissions WHERE agent_id = ?`, node.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "abandoned" || !strings.Contains(output.String(), "Manual cleanup still required") {
+		t.Fatalf("offline cleanup was not marked incomplete: state=%s output=%q", state, output.String())
 	}
 }
 

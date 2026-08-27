@@ -94,6 +94,7 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		{`SELECT 'gateway-component-' || gateway_node_id || '-g' || generation, generation FROM gateway_components WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "gateway.component.apply"},
 		{`SELECT 'gateway-route-' || gateway_node_id || '-r' || desired_revision, desired_revision FROM gateway_states WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "gateway.routes.apply"},
 		{`SELECT 'tunnel-' || agent_id || '-r' || desired_revision, desired_revision FROM cloudflare_tunnels WHERE agent_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "tunnel.state.apply"},
+		{`SELECT 'agent-decommission-' || agent_id, 1 FROM agent_decommissions WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "agent.decommission"},
 	}
 	for _, candidate := range queries {
 		rows, err := tx.QueryContext(ctx, candidate.query, agentID, now.Format(time.RFC3339Nano))
@@ -134,6 +135,9 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'pending', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	for _, task := range expired {

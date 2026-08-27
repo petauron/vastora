@@ -115,10 +115,34 @@ func Classify(interfaceName string, ip net.IP) string {
 	if strings.Contains(name, "tailscale") {
 		return KindHeadscale
 	}
+	if IsVirtualInterface(name) {
+		return ""
+	}
 	if ip.IsPrivate() || inCGNAT(ip) {
 		return KindLAN
 	}
 	return KindPublic
+}
+
+// IsVirtualInterface reports interfaces that represent a container, VM, or
+// separate overlay network rather than a LAN that Vastora should offer as a
+// service address. Tailscale is handled before this check because it is a
+// first-class network kind in Vastora.
+func IsVirtualInterface(interfaceName string) bool {
+	name := strings.ToLower(strings.TrimSpace(interfaceName))
+	if name == "" {
+		return true
+	}
+	prefixes := []string{
+		"docker", "br-", "veth", "cni", "flannel", "cali", "kube-ipvs",
+		"podman", "lxcbr", "virbr", "wg", "tun", "tap", "utun", "zt", "nebula",
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateProfile(candidates []Candidate, profile Profile) error {

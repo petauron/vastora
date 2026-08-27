@@ -192,9 +192,19 @@ func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T)
 		"apt-get install -y \"tailscale=$tailscale_version\"",
 		"installed_tailscale_version=",
 		"Vastora requires Tailscale $tailscale_version",
-		"systemctl enable --now tailscaled",
+		"Environment=TS_NO_LOGS_NO_SUPPORT=true",
+		"/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf",
+		"privacy_override_marker=\"$privacy_override.applied\"",
+		"cmp -s \"$privacy_override_temporary\" \"$privacy_override\"",
+		"systemctl is-active --quiet tailscaled.service",
+		"systemctl daemon-reload",
+		"systemctl enable --now tailscaled.service",
+		"systemctl restart tailscaled.service",
+		"printf '%s\\n' v1 >\"$privacy_marker_temporary\"",
 		"Joining the private network...",
 		"tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
+		"TAILSCALE_OWNERSHIP=$tailscale_ownership",
+		"TAILSCALE_ENROLLED=1",
 	} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("private-network installer is missing %q:\n%s", expected, script)

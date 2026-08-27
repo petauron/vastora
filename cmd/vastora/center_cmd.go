@@ -19,11 +19,44 @@ func runCenter(arguments []string) error {
 		return errors.New("center command is required")
 	}
 	switch arguments[0] {
+	case "capabilities":
+		if len(arguments) != 1 {
+			return errors.New("center capabilities does not accept arguments")
+		}
+		fmt.Println("decommission-applications")
+		fmt.Println("agent-host-decommission")
+		return nil
+	case "offline-agent-cleanups":
+		flags := flag.NewFlagSet("center offline-agent-cleanups", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "", "Center state directory")
+		deferredAgentID := flags.String("deferred-agent-id", "", "Agent on the Center host, cleaned locally last")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if *dataDir == "" || flags.NArg() != 0 {
+			return errors.New("--data-dir is required")
+		}
+		store, err := center.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		cleanups, err := store.OfflineAgentCleanups(context.Background(), strings.TrimSpace(*deferredAgentID))
+		if err != nil {
+			return err
+		}
+		for _, cleanup := range cleanups {
+			fmt.Printf("%s (%s)\n  %s\n", cleanup.Name, cleanup.ID, cleanup.Command)
+		}
+		return nil
 	case "decommission-applications":
 		flags := flag.NewFlagSet("center decommission-applications", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "", "Center state directory")
 		deleteData := flags.Bool("delete-data", false, "permanently delete application data")
+		forceOffline := flags.Bool("force-offline", false, "continue after explicitly acknowledging unreachable Agents")
+		deferredAgentID := flags.String("deferred-agent-id", "", "Agent on the Center host, cleaned locally last")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -40,7 +73,7 @@ func runCenter(arguments []string) error {
 		defer store.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		if err := store.DecommissionApplications(ctx, *deleteData, func(message string) {
+		if err := store.DecommissionApplications(ctx, *deleteData, *forceOffline, strings.TrimSpace(*deferredAgentID), func(message string) {
 			fmt.Println(message)
 		}); err != nil {
 			return err

@@ -108,7 +108,10 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 	_, _ = io.Copy(io.Discard, pull)
 	_ = pull.Close()
 	for _, name := range []string{settings.DataVolume, settings.ConfigVolume} {
-		if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name}); err != nil {
+		if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Labels: map[string]string{
+			gatewayruntime.ManagedLabel:   "true",
+			gatewayruntime.ComponentLabel: "gateway-storage",
+		}}); err != nil {
 			return fmt.Errorf("agent: create Caddy volume %s: %w", name, err)
 		}
 	}

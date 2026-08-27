@@ -9,10 +9,32 @@ import (
 	"time"
 )
 
-// DecommissionApplications uninstalls every application currently managed by
-// Center. It preserves the control plane until every Agent has acknowledged
-// removal, so an offline node cannot silently become an orphaned workload.
-func (s *Store) DecommissionApplications(ctx context.Context, deleteData bool, progress func(string)) error {
+type OfflineAgentCleanup struct {
+	ID      string
+	Name    string
+	Command string
+}
+
+func (s *Store) OfflineAgentCleanups(ctx context.Context, deferredAgentID string) ([]OfflineAgentCleanup, error) {
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("center: list nodes before decommission: %w", err)
+	}
+	cleanups := []OfflineAgentCleanup{}
+	for _, agent := range agents {
+		if agent.ID == deferredAgentID || agent.Connected {
+			continue
+		}
+		cleanups = append(cleanups, OfflineAgentCleanup{ID: agent.ID, Name: agent.Name, Command: "sudo vastora agent uninstall --purge"})
+	}
+	return cleanups, nil
+}
+
+// DecommissionApplications uninstalls every reachable application and then
+// asks each reachable Agent to remove its host-local Vastora state. The
+// deferred Agent is the Center host and is removed locally after Center and
+// bundled infrastructure have stopped.
+func (s *Store) DecommissionApplications(ctx context.Context, deleteData, forceOffline bool, deferredAgentID string, progress func(string)) error {
 	applications, err := s.ListApplications(ctx)
 	if err != nil {
 		return fmt.Errorf("center: list applications before decommission: %w", err)
@@ -24,6 +46,13 @@ func (s *Store) DecommissionApplications(ctx context.Context, deleteData bool, p
 	connectedAgents := make(map[string]bool, len(agents))
 	for _, agent := range agents {
 		connectedAgents[agent.ID] = agent.Connected
+	}
+	offline, err := s.OfflineAgentCleanups(ctx, deferredAgentID)
+	if err != nil {
+		return err
+	}
+	if len(offline) != 0 && !forceOffline {
+		return fmt.Errorf("center: %d Agent(s) are offline; run their displayed manual cleanup commands or explicitly force teardown", len(offline))
 	}
 	groups := make([][]ApplicationView, 3)
 	for _, application := range applications {
@@ -44,7 +73,7 @@ func (s *Store) DecommissionApplications(ctx context.Context, deleteData bool, p
 			}
 		}
 		if !connectedAgents[application.NodeID] {
-			return fmt.Errorf("center: node %s is offline; reconnect it before uninstalling managed applications", application.NodeID)
+			continue
 		}
 		priority := decommissionPriority(application)
 		groups[priority] = append(groups[priority], application)
@@ -95,7 +124,34 @@ func (s *Store) DecommissionApplications(ctx context.Context, deleteData bool, p
 	if progress != nil && total != 0 {
 		progress("Waiting for gateway, tunnel, and DNS cleanup...")
 	}
-	return s.waitForDecommissionInfrastructure(ctx)
+	if err := s.waitForDecommissionInfrastructure(ctx); err != nil {
+		return err
+	}
+	decommissionAgents := []AgentView{}
+	for _, agent := range agents {
+		switch {
+		case agent.ID == deferredAgentID:
+			if progress != nil {
+				progress(fmt.Sprintf("Center host cleanup deferred until local teardown: %s (%s)", agent.Name, agent.ID))
+			}
+		case !agent.Connected:
+			now := s.now().UTC().Format(time.RFC3339Nano)
+			if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_decommissions(agent_id, delete_data, state, last_error, created_at, updated_at)
+				VALUES(?, ?, 'abandoned', 'manual cleanup required because Agent was offline', ?, ?)
+				ON CONFLICT(agent_id) DO UPDATE SET delete_data = excluded.delete_data, state = 'abandoned', lease_expires_at = '', last_error = excluded.last_error, updated_at = excluded.updated_at`, agent.ID, deleteData, now, now); err != nil {
+				return fmt.Errorf("center: record incomplete cleanup for offline Agent %s: %w", agent.ID, err)
+			}
+			if progress != nil {
+				progress(fmt.Sprintf("Manual cleanup still required: %s (%s): sudo vastora agent uninstall --purge", agent.Name, agent.ID))
+			}
+		default:
+			if err := s.queueAgentDecommission(ctx, agent.ID, deleteData); err != nil {
+				return err
+			}
+			decommissionAgents = append(decommissionAgents, agent)
+		}
+	}
+	return s.waitForAgentDecommissions(ctx, decommissionAgents, progress)
 }
 
 // Workers and plugins are removed before their controllers. This preserves the

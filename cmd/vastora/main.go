@@ -26,6 +26,8 @@ func run(arguments []string) error {
 	case "version":
 		fmt.Println(center.Version)
 		return nil
+	case "status", "update", "uninstall":
+		return runLocalManagement(arguments)
 	case "catalog":
 		return runCatalog(arguments[1:])
 	case "center":
@@ -64,6 +66,9 @@ func printUsage(writer *os.File) {
 
 Usage:
   vastora version
+  vastora status
+  vastora update
+  vastora uninstall
   vastora center serve --data-dir DIR [--agent-connect-url URL] [--headscale-allowed-url URL] [--listen 127.0.0.1:8080] [--tls-cert CERT --tls-key KEY]
   vastora center agent-token create --data-dir DIR --site-id SITE --name NAME --center-url URL [--gateway] [--tunnel] [--headscale]
   vastora center backup --data-dir DIR --output FILE --password-file FILE
@@ -75,6 +80,7 @@ Usage:
   vastora agent status [--data-dir /var/lib/vastora/agent]
   vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
   vastora agent update [--data-dir /var/lib/vastora/agent] [--center-url URL]
+  vastora agent uninstall --purge
   vastora agent serve --data-dir DIR [--listen 127.0.0.1:8090]
   vastora catalog keygen --out-dir DIR
   vastora catalog validate --catalog FILE

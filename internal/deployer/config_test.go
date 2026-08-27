@@ -47,7 +47,24 @@ func TestPortPreflightReportsAConflict(t *testing.T) {
 
 func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T) {
 	headscale := string(renderHeadscaleConfig("https://headscale.example.com"))
-	if !strings.Contains(headscale, "listen_addr: 0.0.0.0:8081") || !strings.Contains(headscale, "override_local_dns: true") || !strings.Contains(headscale, "      - 1.1.1.1") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
+	for _, expected := range []string{
+		"listen_addr: 0.0.0.0:8081",
+		"override_local_dns: true",
+		"      - 1.1.1.1",
+		"    enabled: true",
+		"    verify_clients: true",
+		"    automatically_add_embedded_derp_region: true",
+		"  urls: []",
+		"  auto_update_enabled: false",
+		"disable_check_updates: true",
+		"logtail:\n  enabled: false",
+		"auto_update:\n  enabled: false",
+	} {
+		if !strings.Contains(headscale, expected) {
+			t.Fatalf("Headscale configuration is missing %q:\n%s", expected, headscale)
+		}
+	}
+	if strings.Contains(headscale, "controlplane.tailscale.com") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
 	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"100.64.0.1"}, []string{"203.0.113.10"}, []deployapi.CenterEndpointAlias{{URL: "https://old-center.example.com"}}, nil))
@@ -102,5 +119,13 @@ func TestHeadscaleContainerIsolatedFromHostTailscale(t *testing.T) {
 	}
 	if _, exposed := config.ExposedPorts[port]; !exposed {
 		t.Fatalf("Headscale HTTP port is not exposed: %#v", config.ExposedPorts)
+	}
+	stunPort := dockernetwork.MustParsePort("3478/udp")
+	stunBindings := hostConfig.PortBindings[stunPort]
+	if len(stunBindings) != 1 || stunBindings[0].HostIP != netip.MustParseAddr("0.0.0.0") || stunBindings[0].HostPort != "3478" {
+		t.Fatalf("Headscale STUN bindings = %#v", stunBindings)
+	}
+	if _, exposed := config.ExposedPorts[stunPort]; !exposed {
+		t.Fatalf("Headscale STUN port is not exposed: %#v", config.ExposedPorts)
 	}
 }

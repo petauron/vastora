@@ -191,6 +191,21 @@ existing HTTPS Headscale API. Center creates Vastora users/tags and one-hour,
 single-use pre-auth keys, but it does not embed Headscale logic into the Center
 process.
 
+Bundled Headscale runs an authenticated embedded DERP relay and advertises no
+Tailscale-operated DERP regions. Direct peer-to-peer WireGuard paths remain the
+preferred data path; nodes fall back only to the bundled relay. Headscale
+update checks, remote DERP-map updates, Logtail, and client auto-update
+instructions are disabled. Vastora-managed Linux Tailscale services also opt
+out of Tailscale log upload through a systemd override that Agent install and
+upgrade reconcile idempotently. The embedded STUN listener uses UDP 3478, which
+operators must allow through both host and provider firewalls for effective NAT
+discovery.
+
+The strict no-external-telemetry boundary applies to Vastora-managed Linux
+`tailscaled`. Tailscale's macOS GUI clients do not support the equivalent opt-out;
+operators requiring the same assurance on macOS must use the open-source CLI
+daemon or enforce an outbound allowlist.
+
 The Center host may also be an application node. In that topology its Agent and
 Tailscale client run on the host, while bundled Headscale stays container-network
 isolated and is reached only through the loopback-bound control port and the

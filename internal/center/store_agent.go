@@ -293,17 +293,30 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if !heartbeat.ApplicationEndpointsObserved && len(heartbeat.ApplicationEndpoints) != 0 {
 		return errors.New("center: Agent reported application endpoints without a complete observation")
 	}
+	reportedNetworkCandidates := len(heartbeat.NetworkCandidates)
 	seenAddresses := map[string]bool{}
+	filteredCandidates := make([]networking.Candidate, 0, len(heartbeat.NetworkCandidates))
 	for _, candidate := range heartbeat.NetworkCandidates {
 		ip := net.ParseIP(candidate.Address)
 		if ip == nil || candidate.Interface == "" || (candidate.Family != "ipv4" && candidate.Family != "ipv6") || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
 			return errors.New("center: Agent reported an invalid network candidate")
 		}
+		if candidate.Family == "ipv4" && ip.To4() == nil || candidate.Family == "ipv6" && ip.To4() != nil {
+			return errors.New("center: Agent reported a network address with the wrong family")
+		}
+		kind := networking.Classify(candidate.Interface, ip)
+		if kind == "" {
+			continue
+		}
+		candidate.Address = ip.String()
+		candidate.Kind = kind
 		if seenAddresses[ip.String()] {
 			return errors.New("center: Agent reported a duplicate network candidate")
 		}
 		seenAddresses[ip.String()] = true
+		filteredCandidates = append(filteredCandidates, candidate)
 	}
+	heartbeat.NetworkCandidates = filteredCandidates
 	rolesJSON, _ := json.Marshal(heartbeat.Roles)
 	capabilitiesJSON, _ := json.Marshal(heartbeat.Capabilities)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -322,6 +335,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	for _, candidate := range heartbeat.NetworkCandidates {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_candidates(agent_id, address, interface_name, family, kind, observed_at) VALUES(?, ?, ?, ?, ?, ?)`, id, net.ParseIP(candidate.Address).String(), candidate.Interface, candidate.Family, candidate.Kind, now.Format(time.RFC3339Nano)); err != nil {
 			return fmt.Errorf("center: record Agent network candidate: %w", err)
+		}
+	}
+	if reportedNetworkCandidates != 0 {
+		if err := invalidateUnusableNetworkProfile(ctx, tx, id); err != nil {
+			return err
 		}
 	}
 	if heartbeat.ApplicationEndpointsObserved {
@@ -353,6 +371,24 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
+	return nil
+}
+
+func invalidateUnusableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID string) error {
+	profile, err := networkProfile(ctx, tx, agentID)
+	if err != nil || profile == nil {
+		return err
+	}
+	candidates, err := networkCandidates(ctx, tx, agentID)
+	if err != nil {
+		return err
+	}
+	if err := networking.ValidateProfile(candidates, *profile); err == nil {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_network_profiles WHERE agent_id = ?`, agentID); err != nil {
+		return fmt.Errorf("center: invalidate stale Agent network profile: %w", err)
 	}
 	return nil
 }

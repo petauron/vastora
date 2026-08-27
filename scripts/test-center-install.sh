@@ -4,6 +4,7 @@ set -eu
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-center-install-test.XXXXXX")"
+temporary_dir="$(CDPATH='' cd -- "$temporary_dir" && pwd -P)"
 cleanup() { rm -rf "$temporary_dir"; }
 trap cleanup EXIT HUP INT TERM
 
@@ -30,8 +31,10 @@ tar -xzf "$archive" -C "$temporary_dir"
 grep -Fqx 'VASTORA_VERSION=0.1.0-test' "$temporary_dir/release.env"
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$temporary_dir/release.env"
 test -x "$temporary_dir/setup.sh"
+test -x "$temporary_dir/install.sh"
 test -x "$temporary_dir/upgrade.sh"
 test -x "$temporary_dir/uninstall.sh"
+test -x "$temporary_dir/install-host-cli.sh"
 test -x "$temporary_dir/install-update-service.sh"
 test -x "$temporary_dir/update-center.sh"
 test -f "$temporary_dir/compose.yaml"
@@ -74,6 +77,10 @@ printf '%s\n' 'VASTORA_VERSION=old' 'VASTORA_CENTER_IMAGE=old-image' > "$existin
 printf '%s\n' 'VASTORA_CENTER_IMAGE=old-image' 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' 'VASTORA_CUSTOM_VALUE=preserved' > "$existing/.env"
 cat > "$fake_bin/docker" <<'EOF'
 #!/bin/sh
+case "${1:-}" in
+  create) printf '%s\n' 'vastora-test-container'; exit 0 ;;
+  cp) cp "$FAKE_VASTORA_BINARY" "$3"; exit 0 ;;
+esac
 exit 0
 EOF
 cat > "$fake_bin/curl" <<'EOF'
@@ -84,15 +91,35 @@ cat > "$fake_bin/systemctl" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
-chmod 0755 "$fake_bin/docker" "$fake_bin/curl" "$fake_bin/systemctl"
-VASTORA_SYSTEMD_UNIT_DIR="$temporary_dir/systemd" PATH="$fake_bin:$PATH" "$temporary_dir/upgrade.sh" --install-dir "$existing" >/dev/null
+cat > "$fake_bin/id" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = "-u" ]; then printf '%s\n' 0; else exec /usr/bin/id "$@"; fi
+EOF
+chmod 0755 "$fake_bin/docker" "$fake_bin/curl" "$fake_bin/systemctl" "$fake_bin/id"
+cat > "$temporary_dir/fake-vastora" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  version) printf '%s\n' '0.1.0-test' ;;
+  help) printf '%s\n' 'Vastora control-plane tools' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 0755 "$temporary_dir/fake-vastora"
+VASTORA_SYSTEMD_UNIT_DIR="$temporary_dir/systemd" \
+VASTORA_HOST_CLI_PATH="$temporary_dir/host-bin/vastora" \
+FAKE_VASTORA_BINARY="$temporary_dir/fake-vastora" \
+PATH="$fake_bin:$PATH" \
+  "$temporary_dir/upgrade.sh" --install-dir "$existing" >/dev/null
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$existing/.env"
 grep -Fqx 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' "$existing/.env"
 grep -Fqx 'VASTORA_CUSTOM_VALUE=preserved' "$existing/.env"
 grep -Fqx 'VASTORA_VERSION=0.1.0-test' "$existing/release.env"
 test -x "$existing/upgrade.sh"
 test -x "$existing/uninstall.sh"
+test -x "$existing/install-host-cli.sh"
 test -x "$existing/update-center.sh"
+test -x "$temporary_dir/host-bin/vastora"
+test -f "$existing/.host-cli-installed"
 test -f "$temporary_dir/systemd/vastora-center-update.service"
 test -f "$temporary_dir/systemd/vastora-center-update.path"
 grep -Fq "PathExists=$existing/.update-request" "$temporary_dir/systemd/vastora-center-update.path"

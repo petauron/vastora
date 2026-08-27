@@ -67,8 +67,22 @@ printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 case "${1:-}" in
   info) exit 0 ;;
   compose)
-    case "${FAKE_DOCKER_MODE:-}:$*" in
-      cleanup-fail:*exec*) exit 1 ;;
+    case "$*" in
+      *'center capabilities')
+        if [ "${FAKE_DOCKER_CAPABILITIES:-current}" = old ]; then exit 1; fi
+        printf '%s\n' 'decommission-applications' 'agent-host-decommission'
+        exit 0
+        ;;
+      *'center offline-agent-cleanups'*)
+        if [ -n "${FAKE_OFFLINE_AGENT_REPORT:-}" ]; then
+          printf '%s\n' "$FAKE_OFFLINE_AGENT_REPORT"
+        fi
+        exit 0
+        ;;
+      *'center decommission-applications'*)
+        if [ "${FAKE_DOCKER_MODE:-}" = cleanup-fail ]; then exit 1; fi
+        exit 0
+        ;;
     esac
     exit 0
     ;;
@@ -83,6 +97,7 @@ case "${1:-}" in
       rm) exit 0 ;;
     esac
     ;;
+  container) exit 1 ;;
   ps|inspect) exit 0 ;;
   rm) exit 0 ;;
 esac
@@ -218,6 +233,72 @@ PATH="$fake_bin:$PATH" \
   "$project_dir/deploy/center/uninstall.sh" --install-dir "$delete_data_install" >/dev/null
 test ! -e "$delete_data_install"
 grep -Fqx 'compose exec -T center /usr/local/bin/vastora center decommission-applications --data-dir /var/lib/vastora --delete-data' "$docker_log"
+
+offline_install="$temporary_dir/offline-center"
+create_install "$offline_install"
+printf '2\ny\nFORCE\n' > "$temporary_dir/offline.input"
+: > "$docker_log"
+: > "$systemctl_log"
+VASTORA_SYSTEMD_UNIT_DIR="$systemd_dir" \
+VASTORA_UNINSTALL_INPUT="$temporary_dir/offline.input" \
+VASTORA_UNINSTALL_OUTPUT="$temporary_dir/offline.output" \
+FAKE_OFFLINE_AGENT_REPORT='Wuhan node (node-offline)\n  sudo vastora agent uninstall --purge' \
+FAKE_DOCKER_LOG="$docker_log" \
+FAKE_SYSTEMCTL_LOG="$systemctl_log" \
+PATH="$fake_bin:$PATH" \
+  "$project_dir/deploy/center/uninstall.sh" --install-dir "$offline_install" >/dev/null
+test ! -e "$offline_install"
+grep -Fq 'sudo vastora agent uninstall --purge' "$temporary_dir/offline.output"
+grep -Fqx 'compose exec -T center /usr/local/bin/vastora center decommission-applications --data-dir /var/lib/vastora --force-offline' "$docker_log"
+
+legacy_bundle="$temporary_dir/legacy-bundle"
+install -d "$legacy_bundle"
+install -m 0755 "$project_dir/deploy/center/uninstall.sh" "$legacy_bundle/uninstall.sh"
+cat > "$legacy_bundle/upgrade.sh" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_UPGRADE_LOG"
+EOF
+chmod 0755 "$legacy_bundle/upgrade.sh"
+legacy_install="$temporary_dir/legacy-center"
+create_install "$legacy_install"
+printf '2\ny\n' > "$temporary_dir/legacy.input"
+: > "$docker_log"
+: > "$systemctl_log"
+: > "$temporary_dir/upgrade.log"
+VASTORA_SYSTEMD_UNIT_DIR="$systemd_dir" \
+VASTORA_UNINSTALL_INPUT="$temporary_dir/legacy.input" \
+VASTORA_UNINSTALL_OUTPUT="$temporary_dir/legacy.output" \
+FAKE_DOCKER_CAPABILITIES=old \
+FAKE_UPGRADE_LOG="$temporary_dir/upgrade.log" \
+FAKE_DOCKER_LOG="$docker_log" \
+FAKE_SYSTEMCTL_LOG="$systemctl_log" \
+PATH="$fake_bin:$PATH" \
+  "$legacy_bundle/uninstall.sh" --install-dir "$legacy_install" >/dev/null
+test ! -e "$legacy_install"
+grep -Fqx -- "--install-dir $legacy_install" "$temporary_dir/upgrade.log"
+grep -Fqx 'compose exec -T center /usr/local/bin/vastora center decommission-applications --data-dir /var/lib/vastora' "$docker_log"
+
+cli_install="$temporary_dir/cli-center"
+create_install "$cli_install"
+install -m 0644 /dev/null "$cli_install/.host-cli-installed"
+install -d "$temporary_dir/host-bin"
+cat > "$temporary_dir/host-bin/vastora" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = help ]; then printf '%s\n' 'Vastora control-plane tools'; fi
+EOF
+chmod 0755 "$temporary_dir/host-bin/vastora"
+printf '1\ny\n' > "$temporary_dir/cli.input"
+: > "$docker_log"
+: > "$systemctl_log"
+VASTORA_SYSTEMD_UNIT_DIR="$systemd_dir" \
+VASTORA_HOST_CLI_PATH="$temporary_dir/host-bin/vastora" \
+VASTORA_UNINSTALL_INPUT="$temporary_dir/cli.input" \
+VASTORA_UNINSTALL_OUTPUT="$temporary_dir/cli.output" \
+FAKE_DOCKER_LOG="$docker_log" \
+FAKE_SYSTEMCTL_LOG="$systemctl_log" \
+PATH="$fake_bin:$PATH" \
+  "$project_dir/deploy/center/uninstall.sh" --install-dir "$cli_install" >/dev/null
+test ! -e "$temporary_dir/host-bin/vastora"
 
 unsafe_install="$temporary_dir/unsafe-center"
 install -d "$unsafe_install"

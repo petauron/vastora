@@ -62,9 +62,37 @@ curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center uninst
 
 The same menu is available from an already updated installation as
 `sudo /opt/vastora/center/uninstall.sh`. Application cleanup is sent through
-the normal Center-to-Agent task lifecycle. Center is not removed if any node is
-offline or fails to confirm application removal. The Center database, Agents,
-Headscale, Caddy, and HAProxy are always preserved for safe recovery.
+the normal Center-to-Agent task lifecycle. Reachable Agents remove their apps,
+host state, service, and Vastora-owned dependencies before Center is removed.
+If an Agent is offline, the menu prints its exact local cleanup command and
+requires an explicit `FORCE` confirmation; the result remains marked as
+incomplete. The migration option preserves the existing runtime and data,
+while the two full-removal options also remove bundled Headscale, the shared
+gateway, and the Center database. Application data is deleted only by the
+destructive option.
+
+Every Center installation also installs the release binary at
+`/usr/local/bin/vastora` as a local management command:
+
+```sh
+vastora status
+sudo vastora update
+sudo vastora uninstall
+```
+
+The same executable manages a co-located Agent, so installing an Agent never
+adds a competing command or wrapper.
+
+On an Agent-only host, `sudo vastora uninstall` uses a small dependency-free
+terminal menu. Emergency cleanup remains available without Center:
+
+```sh
+sudo vastora agent uninstall --purge
+```
+
+Tailscale is removed only when the Agent installer recorded it as
+Vastora-managed. A Tailscale installation that already existed on the host is
+disconnected from Vastora but its package and repository are preserved.
 
 ## Release packaging
 
