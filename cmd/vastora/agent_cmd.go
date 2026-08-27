@@ -203,6 +203,28 @@ func runAgent(arguments []string) error {
 		}
 		fmt.Printf("Agent updated to %s and restarted\n", version)
 		return nil
+	case "uninstall":
+		flags := flag.NewFlagSet("agent uninstall", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		purge := flags.Bool("purge", false, "remove the local Agent and Vastora-owned host dependencies")
+		deleteData := flags.Bool("delete-data", false, "permanently delete managed application data")
+		runtimeCleaned := flags.Bool("runtime-cleaned", false, "internal: managed runtime was already removed")
+		keepBinary := flags.Bool("keep-binary", false, "internal: keep the shared host command")
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 || !*purge {
+			return errors.New("usage: vastora agent uninstall --purge")
+		}
+		if err := requireLinuxRoot("agent uninstall"); err != nil {
+			return err
+		}
+		if err := uninstallAgentHost(context.Background(), *dataDir, *deleteData, *runtimeCleaned, *keepBinary); err != nil {
+			return err
+		}
+		fmt.Println("Vastora Agent and its managed host state were removed")
+		return nil
 	case "enroll":
 		flags := flag.NewFlagSet("agent enroll", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -284,6 +306,15 @@ func runAgent(arguments []string) error {
 		if capabilities.Tunnel && !containsValue(roles, "worker") {
 			return errors.New("tunnel capability requires the worker role")
 		}
+		if runtime.GOOS == "linux" {
+			if _, lookupErr := exec.LookPath("tailscale"); lookupErr == nil {
+				if err := reconcileTailscalePrivacy("/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf", runHostCommand); err != nil {
+					return err
+				}
+			} else if !errors.Is(lookupErr, exec.ErrNotFound) {
+				return fmt.Errorf("locate Tailscale: %w", lookupErr)
+			}
+		}
 		store, err := agent.Open(*dataDir)
 		if err != nil {
 			return err
@@ -293,6 +324,11 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		client := agent.Client{Roles: roles, Capabilities: capabilities}
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("locate vastora executable: %w", err)
+		}
+		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
 		if capabilities.Docker {
 			client.Executor = agent.DockerExecutor{}
 		}

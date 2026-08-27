@@ -16,6 +16,26 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 )
 
+type fakeHostDecommissioner struct {
+	prepared   bool
+	scheduled  bool
+	deleteData bool
+}
+
+func (d *fakeHostDecommissioner) Prepare(_ context.Context, deleteData bool) error {
+	d.prepared = true
+	d.deleteData = deleteData
+	return nil
+}
+
+func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, deleteData bool) error {
+	d.scheduled = true
+	if deleteData != d.deleteData {
+		return errors.New("delete-data changed between cleanup phases")
+	}
+	return nil
+}
+
 func TestEnrollmentReportsNativePlatform(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		var input struct {
@@ -356,5 +376,32 @@ func TestTunnelDesiredStateRequiresFixedImageAndTokenWhileRunning(t *testing.T) 
 	}
 	if err := (TunnelDesiredState{Revision: 3, Status: "stopped"}).Validate(); err != nil {
 		t.Fatalf("stopped Tunnel unexpectedly required a token: %v", err)
+	}
+}
+
+func TestAgentDecommissionSchedulesFinalRemovalBeforeAcknowledgement(t *testing.T) {
+	acknowledged := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/agents/agent-1/tasks/agent-decommission-agent-1/result" || request.Header.Get("Authorization") != "Bearer credential" {
+			t.Fatalf("unexpected task acknowledgement: %s %s", request.Method, request.URL.Path)
+		}
+		acknowledged = true
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "node", CenterURL: server.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	decommissioner := &fakeHostDecommissioner{}
+	(Client{HTTPClient: server.Client(), Decommissioner: decommissioner}).processTask(context.Background(), store, DeploymentTask{
+		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 1, DeleteData: true,
+	}, func(err error) { t.Errorf("task error: %v", err) })
+	if !decommissioner.prepared || !decommissioner.scheduled || !acknowledged {
+		t.Fatalf("decommission lifecycle incomplete: %#v acknowledged=%v", decommissioner, acknowledged)
 	}
 }

@@ -102,7 +102,10 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 		_ = pull.Close()
 	}
 	for _, name := range []string{settings.HeadscaleDataVolume, settings.HeadscaleConfigVolume, settings.CaddyDataVolume, settings.CaddyConfigVolume} {
-		if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name}); err != nil {
+		if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: name, Labels: map[string]string{
+			gatewayruntime.ManagedLabel:   "true",
+			gatewayruntime.ComponentLabel: "center-headscale-storage",
+		}}); err != nil {
 			return "", "", fmt.Errorf("deployer: create volume %s: %w", name, err)
 		}
 	}
@@ -272,19 +275,21 @@ func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, 
 }
 
 func (installer DockerHeadscaleInstaller) headscaleContainerConfig() (*container.Config, *container.HostConfig) {
-	port := dockernetwork.MustParsePort("8081/tcp")
+	httpPort := dockernetwork.MustParsePort("8081/tcp")
+	stunPort := dockernetwork.MustParsePort("3478/udp")
 	return &container.Config{
 			Image:        installer.HeadscaleImage,
 			Cmd:          []string{"serve"},
 			Labels:       map[string]string{"io.vastora.managed": "true", "io.vastora.component": "center-headscale"},
-			ExposedPorts: dockernetwork.PortSet{port: struct{}{}},
+			ExposedPorts: dockernetwork.PortSet{httpPort: struct{}{}, stunPort: struct{}{}},
 		}, &container.HostConfig{
 			NetworkMode:    container.NetworkMode("bridge"),
 			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 			ReadonlyRootfs: true,
 			Tmpfs:          map[string]string{"/var/run/headscale": "rw,noexec,nosuid,size=16m,mode=1777"},
 			PortBindings: dockernetwork.PortMap{
-				port: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "8081"}},
+				httpPort: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "8081"}},
+				stunPort: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: "3478"}},
 			},
 			Mounts: []mount.Mount{
 				{Type: mount.TypeVolume, Source: installer.HeadscaleDataVolume, Target: "/var/lib/headscale"},

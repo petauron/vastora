@@ -50,6 +50,19 @@
   reachable coordination server. Center has no public DNS record or public
   Caddy route. The Headscale hostname forwards only the exact Agent installer
   path to Center; enrollment tokens remain ten-minute, single-use credentials.
+- Bundled Headscale advertises only its authenticated embedded DERP relay. It
+  never downloads Tailscale's public DERP map, performs no Headscale update
+  check, and keeps Headscale Logtail and client auto-update instructions
+  disabled. Vastora-managed Linux clients run `tailscaled` with
+  `TS_NO_LOGS_NO_SUPPORT=true`, so private-network operational logs are not
+  uploaded to Tailscale. Public application traffic and explicitly configured
+  public integrations remain outside this private-network isolation boundary.
+- An external Headscale deployment is operator-controlled and must enforce an
+  equivalent DERP and logging policy before it can satisfy the bundled
+  deployment's private-network security boundary.
+- Tailscale's macOS GUI clients remain outside the strict zero-external-telemetry
+  boundary because they do not support the daemon logging opt-out. Such clients
+  require the open-source CLI daemon or an operator-enforced outbound allowlist.
 - The unauthenticated setup endpoint creates an administrator only while the
   administrator table is empty; all later setup requests are rejected. Until
   setup finishes, the released deployment publishes Center only on server

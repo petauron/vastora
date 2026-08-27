@@ -41,6 +41,7 @@ type Store struct {
 	publicationVerificationMu      sync.Mutex
 	publicationVerificationJobs    map[string]*publicationVerificationJob
 	publicationVerificationBackoff func(int) time.Duration
+	agentDecommissionGrace         time.Duration
 	verifyPublication              func(context.Context, string, int64) (PublicationView, error)
 	taskChanges                    changeNotifier
 	now                            func() time.Time
@@ -96,6 +97,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		cloudflareOAuthSessions:        make(map[string]*cloudflareOAuthSession),
 		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),
 		publicationVerificationBackoff: defaultPublicationVerificationBackoff,
+		agentDecommissionGrace:         45 * time.Second,
 		now:                            time.Now,
 		discoverNetworkCandidates:      networking.Discover,
 		lookupPublicRegion: countryISLookup(&http.Client{

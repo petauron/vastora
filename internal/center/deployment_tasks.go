@@ -126,7 +126,17 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string) (
 				return nil, fmt.Errorf("center: read Tunnel desired state: %w", tunnelErr)
 			}
 			if tunnelTask == nil {
-				return nil, nil
+				decommissionTask, decommissionErr := s.claimAgentDecommission(ctx, tx, agentID)
+				if decommissionErr != nil {
+					return nil, decommissionErr
+				}
+				if decommissionTask == nil {
+					return nil, nil
+				}
+				if err := tx.Commit(); err != nil {
+					return nil, err
+				}
+				return decommissionTask, nil
 			}
 			if err := tx.Commit(); err != nil {
 				return nil, err
@@ -253,6 +263,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 	}
 	if strings.HasPrefix(taskID, "application-command-") {
 		return s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
+	}
+	if taskID == agentDecommissionTaskID(agentID) {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeAgentDecommission(ctx, agentID, expectedAttempt, succeeded, taskError)
 	}
 	if revision, gatewayTask := gatewayTaskRevision(taskID); gatewayTask {
 		if reconciliationRequired {

@@ -84,18 +84,20 @@ prefixes:
 
 derp:
   server:
-    enabled: false
+    enabled: true
     region_id: 999
     region_code: vastora
     region_name: Vastora Embedded DERP
+    verify_clients: true
     stun_listen_addr: "0.0.0.0:3478"
     private_key_path: /var/lib/headscale/derp_server_private.key
-    automatically_add_embedded_derp_region: false
-  urls:
-    - https://controlplane.tailscale.com/derpmap/default
+    automatically_add_embedded_derp_region: true
+  urls: []
   paths: []
-  auto_update_enabled: true
+  auto_update_enabled: false
   update_frequency: 24h
+
+disable_check_updates: true
 
 database:
   type: sqlite
@@ -126,6 +128,12 @@ unix_socket_permission: "0770"
 log:
   format: text
   level: info
+
+logtail:
+  enabled: false
+
+auto_update:
+  enabled: false
 
 node:
   expiry: 0

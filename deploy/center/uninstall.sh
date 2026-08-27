@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+source_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 install_dir="/opt/vastora/center"
 systemd_unit_dir="${VASTORA_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
 center_data_volume="vastora_center-data"
@@ -9,7 +10,11 @@ input_device="${VASTORA_UNINSTALL_INPUT:-/dev/tty}"
 output_device="${VASTORA_UNINSTALL_OUTPUT:-/dev/tty}"
 application_cleanup="keep"
 delete_application_data=no
+force_offline=no
+local_agent_id=""
 update_path_paused=no
+host_cli="${VASTORA_HOST_CLI_PATH:-/usr/local/bin/vastora}"
+agent_unit="$systemd_unit_dir/vastora-agent.service"
 
 resume_center_updates() {
   if [ "$update_path_paused" = yes ]; then
@@ -61,11 +66,15 @@ case "$systemd_unit_dir" in
   /*) ;;
   *) echo "The systemd unit directory must be absolute." >&2; exit 2 ;;
 esac
+case "$host_cli" in
+  /*/vastora) ;;
+  *) echo "The Vastora host command path must be an absolute path ending in /vastora." >&2; exit 2 ;;
+esac
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run the Center uninstaller with sudo." >&2
   exit 1
 fi
-for required in cat docker grep id rm systemctl; do
+for required in awk cat docker grep id rm systemctl; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
@@ -113,11 +122,56 @@ verify_managed_volume() {
   fi
 }
 
+verify_managed_runtime_volume() {
+  volume_name="$1"
+  compose_volume="$2"
+  container_name="$3"
+  component="$4"
+  if ! volume_exists "$volume_name"; then
+    return 0
+  fi
+  project_label="$(docker volume inspect --format '{{ index .Labels "com.docker.compose.project" }}' "$volume_name")"
+  volume_label="$(docker volume inspect --format '{{ index .Labels "com.docker.compose.volume" }}' "$volume_name")"
+  managed_label="$(docker volume inspect --format '{{ index .Labels "io.vastora.managed" }}' "$volume_name")"
+  component_label="$(docker volume inspect --format '{{ index .Labels "io.vastora.component" }}' "$volume_name")"
+  if { [ "$project_label" = "vastora" ] && [ "$volume_label" = "$compose_volume" ]; } || \
+     { [ "$managed_label" = "true" ] && [ "$component_label" = "center-headscale-storage" ]; }; then
+    return 0
+  fi
+  if ! docker container inspect "$container_name" >/dev/null 2>&1; then
+    echo "Refusing to delete legacy volume $volume_name because its owning Vastora container is unavailable." >&2
+    exit 1
+  fi
+  container_managed="$(docker container inspect --format '{{ index .Config.Labels "io.vastora.managed" }}' "$container_name")"
+  container_component="$(docker container inspect --format '{{ index .Config.Labels "io.vastora.component" }}' "$container_name")"
+  mounted_volumes="$(docker container inspect --format '{{ range .Mounts }}{{ println .Name }}{{ end }}' "$container_name")"
+  if [ "$container_managed" != "true" ] || [ "$container_component" != "$component" ] || \
+     ! printf '%s\n' "$mounted_volumes" | grep -Fqx "$volume_name"; then
+    echo "Refusing to delete legacy volume $volume_name because its runtime ownership could not be proven." >&2
+    exit 1
+  fi
+}
+
 if [ "$managed_install" = yes ] && ! docker compose version >/dev/null 2>&1; then
   echo "Docker Compose v2 is required to remove Center safely." >&2
   exit 1
 fi
 verify_managed_volume "$deployer_socket_volume" "deployer-socket"
+
+managed_container_remove() {
+  container_name="$1"
+  component="$2"
+  if ! docker container inspect "$container_name" >/dev/null 2>&1; then
+    return 0
+  fi
+  managed_label="$(docker container inspect --format '{{ index .Config.Labels "io.vastora.managed" }}' "$container_name")"
+  component_label="$(docker container inspect --format '{{ index .Config.Labels "io.vastora.component" }}' "$container_name")"
+  if [ "$managed_label" != "true" ] || [ "$component_label" != "$component" ]; then
+    echo "Refusing to remove container $container_name because its Vastora ownership labels do not match." >&2
+    exit 1
+  fi
+  docker rm -f "$container_name" >/dev/null
+}
 
 service_unit="$systemd_unit_dir/vastora-center-update.service"
 path_unit="$systemd_unit_dir/vastora-center-update.path"
@@ -197,11 +251,43 @@ EOF
       *) echo "已取消，没有修改任何内容。" >&4; exit 0 ;;
     esac
   fi
-  exec 3<&-
-  exec 4>&-
 fi
 
 if [ "$managed_install" = yes ] && [ "$application_cleanup" = "remove" ]; then
+  if [ -x "$host_cli" ] && [ -s /var/lib/vastora/agent/agent.db ]; then
+    local_agent_id="$($host_cli agent status --data-dir /var/lib/vastora/agent 2>/dev/null | awk -F ': ' '$1 == "Agent ID" {print $2; exit}')"
+  fi
+  if ! (
+    cd "$install_dir"
+    capabilities="$(docker compose exec -T center /usr/local/bin/vastora center capabilities 2>/dev/null)"
+    printf '%s\n' "$capabilities" | grep -Fqx 'decommission-applications' &&
+      printf '%s\n' "$capabilities" | grep -Fqx 'agent-host-decommission'
+  ); then
+    echo "Updating this older Center before managed application cleanup..."
+    "$source_dir/upgrade.sh" --install-dir "$install_dir"
+  fi
+  offline_report="$({
+    cd "$install_dir"
+    set -- --data-dir /var/lib/vastora
+    if [ -n "$local_agent_id" ]; then
+      set -- "$@" --deferred-agent-id "$local_agent_id"
+    fi
+    docker compose exec -T center /usr/local/bin/vastora center offline-agent-cleanups "$@"
+  })"
+  if [ -n "$offline_report" ]; then
+    echo >&4
+    echo "以下离线节点无法自动清理。请稍后在每台主机运行所列命令：" >&4
+    printf '%s\n' "$offline_report" >&4
+    echo "继续会把这些节点标记为未完成清理，不会声称清理成功。" >&4
+    printf '请输入 FORCE 继续卸载 Center: ' >&4
+    if ! IFS= read -r offline_confirmation <&3 || [ "$offline_confirmation" != "FORCE" ]; then
+      echo "卸载已取消；没有删除任何服务或数据。" >&4
+      exit 0
+    fi
+    force_offline=yes
+  fi
+  exec 3<&-
+  exec 4>&-
   if [ -e "$path_unit" ]; then
     echo "Pausing Center updates during application cleanup..."
     systemctl stop vastora-center-update.path >/dev/null
@@ -210,14 +296,23 @@ if [ "$managed_install" = yes ] && [ "$application_cleanup" = "remove" ]; then
   echo "Requesting application removal from every Agent..."
   (
     cd "$install_dir"
+    set -- --data-dir /var/lib/vastora
     if [ "$delete_application_data" = yes ]; then
-      docker compose exec -T center /usr/local/bin/vastora center decommission-applications \
-        --data-dir /var/lib/vastora --delete-data
-    else
-      docker compose exec -T center /usr/local/bin/vastora center decommission-applications \
-        --data-dir /var/lib/vastora
+      set -- "$@" --delete-data
     fi
+    if [ "$force_offline" = yes ]; then
+      set -- "$@" --force-offline
+    fi
+    if [ -n "$local_agent_id" ]; then
+      set -- "$@" --deferred-agent-id "$local_agent_id"
+    fi
+    docker compose exec -T center /usr/local/bin/vastora center decommission-applications "$@"
   )
+fi
+
+if [ "$managed_install" = yes ]; then
+  exec 3<&- 2>/dev/null || true
+  exec 4>&- 2>/dev/null || true
 fi
 
 if [ -e "$service_unit" ] || [ -e "$path_unit" ]; then
@@ -251,9 +346,57 @@ else
   done
 fi
 
+if [ "$managed_install" = yes ] && [ "$application_cleanup" = "remove" ]; then
+  echo "Removing bundled Headscale and the shared gateway..."
+  verify_managed_runtime_volume vastora_headscale-data headscale-data vastora-center-headscale center-headscale
+  verify_managed_runtime_volume vastora_headscale-config headscale-config vastora-center-headscale center-headscale
+  verify_managed_runtime_volume vastora_headscale-caddy-data headscale-caddy-data vastora-gateway-caddy gateway
+  verify_managed_runtime_volume vastora_headscale-caddy-config headscale-caddy-config vastora-gateway-caddy gateway
+  managed_container_remove vastora-center-headscale center-headscale
+  managed_container_remove vastora-gateway-haproxy layer4-gateway
+  managed_container_remove vastora-gateway-caddy gateway
+  if [ -n "$local_agent_id" ] && [ -x "$host_cli" ]; then
+    echo "Removing the Agent on the Center host..."
+    set -- agent uninstall --purge --runtime-cleaned --keep-binary
+    if [ "$delete_application_data" = yes ]; then
+      set -- "$@" --delete-data
+    fi
+    "$host_cli" "$@"
+  fi
+fi
+
 if volume_exists "$deployer_socket_volume"; then
   verify_managed_volume "$deployer_socket_volume" "deployer-socket"
   docker volume rm "$deployer_socket_volume" >/dev/null
+fi
+if [ "$managed_install" = yes ] && [ "$application_cleanup" = "remove" ]; then
+  for volume_spec in \
+    "vastora_headscale-data:headscale-data" \
+    "vastora_headscale-config:headscale-config" \
+    "vastora_headscale-caddy-data:headscale-caddy-data" \
+    "vastora_headscale-caddy-config:headscale-caddy-config"; do
+    volume_name="${volume_spec%%:*}"
+    compose_name="${volume_spec#*:}"
+    if volume_exists "$volume_name"; then
+      docker volume rm "$volume_name" >/dev/null
+    fi
+  done
+  if volume_exists "$center_data_volume"; then
+    verify_managed_volume "$center_data_volume" "center-data"
+    docker volume rm "$center_data_volume" >/dev/null
+  fi
+fi
+if [ "$managed_install" = yes ] && [ -f "$install_dir/.host-cli-installed" ]; then
+  if [ -f "$agent_unit" ] && grep -Fq 'Description=Vastora Agent' "$agent_unit"; then
+    echo "Keeping the Vastora command because this host still runs an Agent."
+  elif [ -f "$host_cli" ] && [ ! -L "$host_cli" ] && "$host_cli" help 2>&1 | grep -Fq 'Vastora control-plane tools'; then
+    rm -f "$host_cli"
+    if [ -f "$host_cli.previous" ] && "$host_cli.previous" help 2>&1 | grep -Fq 'Vastora control-plane tools'; then
+      rm -f "$host_cli.previous"
+    fi
+  else
+    echo "Keeping the unrecognized command at $host_cli." >&2
+  fi
 fi
 if [ "$managed_install" = yes ]; then
   rm -rf "$install_dir"
@@ -261,11 +404,16 @@ fi
 
 echo
 echo "Vastora Center has been uninstalled."
-echo "Preserved: Agent, Headscale, Caddy, HAProxy, and Center database volume $center_data_volume."
 if [ "$application_cleanup" = "keep" ]; then
+  echo "Preserved: Agent, Headscale, Caddy, HAProxy, Center database, applications, and application data."
   echo "Applications and application data: preserved"
 elif [ "$delete_application_data" = yes ]; then
+  echo "Center, bundled Headscale, gateway, reachable Agents, applications, and application data: removed"
   echo "Applications and application data: deleted"
 else
+  echo "Center, bundled Headscale, gateway, reachable Agents, and applications: removed"
   echo "Applications: removed; application data: preserved"
+fi
+if [ "$force_offline" = yes ]; then
+  echo "Offline Agents: cleanup incomplete; run the manual commands shown above on those hosts."
 fi

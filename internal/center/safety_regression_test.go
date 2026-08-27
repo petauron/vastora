@@ -65,6 +65,40 @@ func TestCreateDeploymentRequiresConfirmedServiceAddress(t *testing.T) {
 	}
 }
 
+func TestHeartbeatFiltersVirtualInterfacesAndInvalidatesTheirOldProfile(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "network-filter", NodeCapabilities{Docker: true}, []networking.Candidate{{
+		Address: "10.0.0.93", Interface: "eth0", Family: "ipv4", Kind: networking.KindLAN,
+	}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
+
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
+		Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		NetworkCandidates: []networking.Candidate{
+			{Address: "10.0.0.93", Interface: "docker0", Family: "ipv4", Kind: networking.KindLAN},
+			{Address: "10.77.0.6", Interface: "wg0", Family: "ipv4", Kind: networking.KindLAN},
+			{Address: "100.64.0.93", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindLAN},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := networkCandidates(ctx, store.db, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].Interface != "tailscale0" || candidates[0].Kind != networking.KindHeadscale {
+		t.Fatalf("Center retained virtual interfaces or trusted the reported kind: %#v", candidates)
+	}
+	profile, err := networkProfile(ctx, store.db, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile != nil {
+		t.Fatalf("profile that selected a filtered interface remained confirmed: %#v", profile)
+	}
+}
+
 func TestListDeploymentsRetainsOldActiveAndReconciliationTasksBeyondRecentLimit(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

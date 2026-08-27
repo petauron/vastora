@@ -114,6 +114,9 @@ until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
   sleep 2
 done
 
+"$script_dir/install-host-cli.sh" \
+  --image "$image" --version "$release_version" --install-dir "$script_dir"
+
 echo "Enabling verified Center updates..."
 "$script_dir/install-update-service.sh" --install-dir "$script_dir"
 

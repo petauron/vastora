@@ -32,6 +32,12 @@ type Client struct {
 	GatewayDriver      GatewayDriver
 	GatewayProvisioner GatewayProvisioner
 	TunnelProvisioner  TunnelProvisioner
+	Decommissioner     HostDecommissioner
+}
+
+type HostDecommissioner interface {
+	Prepare(context.Context, bool) error
+	ScheduleFinalRemoval(context.Context, bool) error
 }
 
 // deferredTaskCompletionError leaves the Center task lease active so the same
@@ -679,6 +685,12 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			err = errors.New("agent: tunnel task received without tunnel capability")
 		} else {
 			err = c.TunnelProvisioner.Apply(ctx, *task.TunnelState)
+		}
+	case "agent.decommission":
+		if c.Decommissioner == nil {
+			err = errors.New("agent: host decommission capability is not configured")
+		} else if err = c.Decommissioner.Prepare(ctx, task.DeleteData); err == nil {
+			err = c.Decommissioner.ScheduleFinalRemoval(ctx, task.DeleteData)
 		}
 	default:
 		err = errors.New("agent: unsupported task kind")

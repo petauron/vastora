@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,128 @@ import (
 
 	"github.com/petauron/vastora/internal/agent"
 )
+
+func TestLocalCenterStatusReportsVersionAndHealth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/healthz" {
+			t.Fatalf("unexpected health path %q", request.URL.Path)
+		}
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	installDir := t.TempDir()
+	port := strings.TrimPrefix(server.URL, "http://127.0.0.1:")
+	for name, content := range map[string]string{
+		".env":         "VASTORA_CENTER_BOOTSTRAP_PORT=" + port + "\n",
+		"compose.yaml": "name: vastora\n",
+		"release.env":  "VASTORA_VERSION=0.1.0-test\n",
+	} {
+		if err := os.WriteFile(filepath.Join(installDir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var output bytes.Buffer
+	if err := reportLocalStatus(installDir, filepath.Join(t.TempDir(), "agent"), &output, server.Client()); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Center: running", "Version: 0.1.0-test", "Local address: " + server.URL} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("status is missing %q:\n%s", expected, output.String())
+		}
+	}
+}
+
+func TestLocalAgentUninstallUsesSimpleMenuAndDestructiveConfirmation(t *testing.T) {
+	var output bytes.Buffer
+	deleteData, cancelled, err := chooseLocalAgentUninstall(strings.NewReader("2\nDELETE\n"), &output)
+	if err != nil || !deleteData || cancelled {
+		t.Fatalf("delete-data selection = delete=%v cancelled=%v err=%v", deleteData, cancelled, err)
+	}
+	if !strings.Contains(output.String(), "keep application data") || !strings.Contains(output.String(), "Type DELETE") {
+		t.Fatalf("uninstall menu was not explicit: %q", output.String())
+	}
+	deleteData, cancelled, err = chooseLocalAgentUninstall(strings.NewReader("2\nno\n"), &output)
+	if err != nil || deleteData || !cancelled {
+		t.Fatalf("mismatched destructive confirmation was accepted: delete=%v cancelled=%v err=%v", deleteData, cancelled, err)
+	}
+}
+
+func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
+	for _, ownership := range []string{"external", "managed"} {
+		t.Run(ownership, func(t *testing.T) {
+			root := t.TempDir()
+			dataDir := filepath.Join(root, "agent")
+			if err := os.MkdirAll(dataDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			state := "HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP=" + ownership + "\nTAILSCALE_ENROLLED=1\n"
+			if err := os.WriteFile(filepath.Join(dataDir, agent.HostInstallStateName), []byte(state), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			unitPath := filepath.Join(root, "vastora-agent.service")
+			if err := os.WriteFile(unitPath, []byte("Description=Vastora Agent\nExecStart=/usr/local/bin/vastora agent serve --data-dir /var/lib/vastora/agent\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			binaryPath := filepath.Join(root, "vastora")
+			if err := os.WriteFile(binaryPath, []byte("managed"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			tailscalePaths := []string{filepath.Join(root, "tailscale.list"), filepath.Join(root, "tailscale.key"), filepath.Join(root, "tailscale-state")}
+			for _, path := range tailscalePaths {
+				if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tailscalePrivacyPath := filepath.Join(root, "tailscaled.service.d", "90-vastora-privacy.conf")
+			if err := os.MkdirAll(filepath.Dir(tailscalePrivacyPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(tailscalePrivacyPath, []byte("[Service]\nEnvironment=TS_NO_LOGS_NO_SUPPORT=true\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(tailscalePrivacyAppliedPath(tailscalePrivacyPath), []byte(tailscalePrivacyAppliedMarker), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			commands := []string{}
+			environment := agentUninstallEnvironment{
+				dataDir: dataDir, unitPath: unitPath, binaryPaths: []string{binaryPath}, tailscalePaths: tailscalePaths, tailscalePrivacyPath: tailscalePrivacyPath,
+				purgeRuntime: func(context.Context, bool) error { return nil },
+				run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+					commands = append(commands, name+" "+strings.Join(arguments, " "))
+					return nil, nil
+				},
+			}
+			if err := uninstallAgentHostWithEnvironment(context.Background(), true, true, false, environment); err != nil {
+				t.Fatal(err)
+			}
+			if err := uninstallAgentHostWithEnvironment(context.Background(), true, true, false, environment); err != nil {
+				t.Fatalf("repeated uninstall was not idempotent: %v", err)
+			}
+			joined := strings.Join(commands, "\n")
+			if !strings.Contains(joined, "tailscale logout") {
+				t.Fatalf("Headscale identity was not disconnected: %s", joined)
+			}
+			for _, path := range tailscalePaths {
+				_, err := os.Stat(path)
+				if ownership == "managed" && !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("managed Tailscale state remained at %s", path)
+				}
+				if ownership == "external" && err != nil {
+					t.Fatalf("external Tailscale state was removed at %s: %v", path, err)
+				}
+			}
+			if got := strings.Contains(joined, "apt-get purge"); got != (ownership == "managed") {
+				t.Fatalf("Tailscale package cleanup for %s = %v; commands:\n%s", ownership, got, joined)
+			}
+			for _, path := range []string{tailscalePrivacyPath, tailscalePrivacyAppliedPath(tailscalePrivacyPath)} {
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("Vastora Tailscale privacy state remained at %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
 
 func TestNodeRolesAndCapabilitiesAreIndependent(t *testing.T) {
 	roles, err := parseNodeRoles("worker,gateway")
@@ -56,6 +180,59 @@ func TestSystemdAgentUnitUsesPersistentServiceConfiguration(t *testing.T) {
 		if !strings.Contains(unit, expected) {
 			t.Fatalf("systemd unit is missing %q:\n%s", expected, unit)
 		}
+	}
+}
+
+func TestTailscalePrivacyOverrideIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tailscaled.service.d", "90-vastora-privacy.conf")
+	commands := []string{}
+	run := func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+		commands = append(commands, name+" "+strings.Join(arguments, " "))
+		return nil, nil
+	}
+	if err := reconcileTailscalePrivacy(path, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileTailscalePrivacy(path, run); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || string(raw) != tailscalePrivacyOverride {
+		t.Fatalf("Tailscale privacy override = %q, err=%v", raw, err)
+	}
+	applied, err := os.ReadFile(tailscalePrivacyAppliedPath(path))
+	if err != nil || string(applied) != tailscalePrivacyAppliedMarker {
+		t.Fatalf("Tailscale privacy marker = %q, err=%v", applied, err)
+	}
+	joined := strings.Join(commands, "\n")
+	if strings.Count(joined, "systemctl daemon-reload") != 1 || strings.Count(joined, "systemctl restart tailscaled.service") != 1 {
+		t.Fatalf("privacy reconciliation was not idempotent:\n%s", joined)
+	}
+}
+
+func TestTailscalePrivacyReconciliationRetriesAfterRestartFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tailscaled.service.d", "90-vastora-privacy.conf")
+	restarts := 0
+	run := func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+		if name == "systemctl" && strings.Join(arguments, " ") == "restart tailscaled.service" {
+			restarts++
+			if restarts == 1 {
+				return []byte("temporary restart failure"), errors.New("restart failed")
+			}
+		}
+		return nil, nil
+	}
+	if err := reconcileTailscalePrivacy(path, run); err == nil {
+		t.Fatal("failed Tailscale restart was accepted")
+	}
+	if _, err := os.Stat(tailscalePrivacyAppliedPath(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed reconciliation was marked applied: %v", err)
+	}
+	if err := reconcileTailscalePrivacy(path, run); err != nil {
+		t.Fatal(err)
+	}
+	if restarts != 2 {
+		t.Fatalf("Tailscale restart attempts = %d, want 2", restarts)
 	}
 }
 
