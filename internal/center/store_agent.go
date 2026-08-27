@@ -32,11 +32,13 @@ type AgentEnrollmentSpec struct {
 }
 
 type AgentEnrollmentInstallProfile struct {
-	Name             string
-	CenterURL        string
-	Roles            []string
-	Capabilities     NodeCapabilities
-	HeadscaleCommand string
+	Name               string
+	CenterURL          string
+	Roles              []string
+	Capabilities       NodeCapabilities
+	HeadscaleCommand   string
+	HeadscaleURL       string
+	HeadscaleAddresses []string
 }
 
 type AgentCredential struct {
@@ -173,6 +175,15 @@ func (s *Store) AgentEnrollmentInstallProfile(ctx context.Context, token string)
 			return AgentEnrollmentInstallProfile{}, err
 		}
 		profile.HeadscaleCommand = string(command)
+		isolation, err := s.tailscaleIsolationDesiredState(ctx, "")
+		if err != nil {
+			return AgentEnrollmentInstallProfile{}, err
+		}
+		if isolation == nil {
+			return AgentEnrollmentInstallProfile{}, errors.New("center: Headscale isolation state is unavailable")
+		}
+		profile.HeadscaleURL = isolation.ControlURL
+		profile.HeadscaleAddresses = append([]string(nil), isolation.ControlAddresses...)
 	}
 	return profile, nil
 }

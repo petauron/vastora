@@ -55,8 +55,12 @@
   check, and keeps Headscale Logtail and client auto-update instructions
   disabled. Vastora-managed Linux clients run `tailscaled` with
   `TS_NO_LOGS_NO_SUPPORT=true`, so private-network operational logs are not
-  uploaded to Tailscale. Public application traffic and explicitly configured
-  public integrations remain outside this private-network isolation boundary.
+  uploaded to Tailscale. Before starting or restarting the daemon, Agent pins
+  the verified bundled Headscale address (including active domain aliases) in
+  a Vastora-owned resolver section and removes malformed or Tailscale-hosted
+  DERP cache data without touching `tailscaled.state` or node keys. Public
+  application traffic and explicitly configured public integrations remain
+  outside this private-network isolation boundary.
 - An external Headscale deployment is operator-controlled and must enforce an
   equivalent DERP and logging policy before it can satisfy the bundled
   deployment's private-network security boundary.

@@ -365,6 +365,36 @@ func TestHeartbeatKeepsCurrentCenterWhenDesiredURLIsNotReady(t *testing.T) {
 	}
 }
 
+func TestHeartbeatAppliesCenterTailscaleIsolationState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
+			t.Fatalf("unexpected request path: %s", request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"tailscaleIsolation":{"controlUrl":"https://headscale.example.com","controlAddresses":["203.0.113.10"]}}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	var applied TailscaleIsolationDesiredState
+	client := Client{TailscaleIsolation: func(_ context.Context, state TailscaleIsolationDesiredState) error {
+		applied = state
+		return nil
+	}}
+	if _, err := client.heartbeat(context.Background(), store); err != nil {
+		t.Fatal(err)
+	}
+	if applied.ControlURL != "https://headscale.example.com" || len(applied.ControlAddresses) != 1 || applied.ControlAddresses[0] != "203.0.113.10" {
+		t.Fatalf("Tailscale isolation state was not applied: %#v", applied)
+	}
+}
+
 func TestTunnelDesiredStateRequiresFixedImageAndTokenWhileRunning(t *testing.T) {
 	valid := TunnelDesiredState{Revision: 2, Status: "running", Image: "docker.io/cloudflare/cloudflared:2026.7.2", Token: "token"}
 	if err := valid.Validate(); err != nil {

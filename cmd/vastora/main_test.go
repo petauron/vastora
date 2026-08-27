@@ -90,6 +90,7 @@ func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
 				}
 			}
 			tailscalePrivacyPath := filepath.Join(root, "tailscaled.service.d", "90-vastora-privacy.conf")
+			tailscaleHostsPath := filepath.Join(root, "hosts")
 			if err := os.MkdirAll(filepath.Dir(tailscalePrivacyPath), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -99,9 +100,12 @@ func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
 			if err := os.WriteFile(tailscalePrivacyAppliedPath(tailscalePrivacyPath), []byte(tailscalePrivacyAppliedMarker), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.WriteFile(tailscaleHostsPath, []byte("127.0.0.1 localhost\n"+tailscaleHostsBeginMarker+"\n203.0.113.10 headscale.example.com\n"+tailscaleHostsEndMarker+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			commands := []string{}
 			environment := agentUninstallEnvironment{
-				dataDir: dataDir, unitPath: unitPath, binaryPaths: []string{binaryPath}, tailscalePaths: tailscalePaths, tailscalePrivacyPath: tailscalePrivacyPath,
+				dataDir: dataDir, unitPath: unitPath, binaryPaths: []string{binaryPath}, tailscalePaths: tailscalePaths, tailscalePrivacyPath: tailscalePrivacyPath, tailscaleHostsPath: tailscaleHostsPath,
 				purgeRuntime: func(context.Context, bool) error { return nil },
 				run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 					commands = append(commands, name+" "+strings.Join(arguments, " "))
@@ -134,6 +138,10 @@ func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
 				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("Vastora Tailscale privacy state remained at %s: %v", path, err)
 				}
+			}
+			hosts, err := os.ReadFile(tailscaleHostsPath)
+			if err != nil || string(hosts) != "127.0.0.1 localhost\n" {
+				t.Fatalf("Vastora resolver pin was not removed cleanly: %q err=%v", hosts, err)
 			}
 		})
 	}
@@ -183,35 +191,69 @@ func TestSystemdAgentUnitUsesPersistentServiceConfiguration(t *testing.T) {
 	}
 }
 
-func TestTailscalePrivacyOverrideIsIdempotent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tailscaled.service.d", "90-vastora-privacy.conf")
+func TestTailscaleIsolationIsIdempotentAndPreservesIdentity(t *testing.T) {
+	root := t.TempDir()
+	overridePath := filepath.Join(root, "tailscaled.service.d", "90-vastora-privacy.conf")
+	hostsPath := filepath.Join(root, "hosts")
+	cachePath := filepath.Join(root, "tailscale", "derpmap.cached.json")
+	statePath := filepath.Join(root, "tailscale", "tailscaled.state")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hostsPath, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, []byte(`{"Regions":{"2":{"Nodes":[{"HostName":"derp2.tailscale.com"}]}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte("node-identity"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	commands := []string{}
 	run := func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 		commands = append(commands, name+" "+strings.Join(arguments, " "))
 		return nil, nil
 	}
-	if err := reconcileTailscalePrivacy(path, run); err != nil {
+	desired := agent.TailscaleIsolationDesiredState{ControlURL: "https://headscale.example.com", ControlAddresses: []string{"203.0.113.10"}, ControlAliases: []string{"https://headscale.old.example.com"}}
+	environment := tailscaleIsolationEnvironment{overridePath: overridePath, hostsPath: hostsPath, derpCache: cachePath, run: run}
+	if err := reconcileTailscaleIsolation(context.Background(), desired, false, environment); err != nil {
 		t.Fatal(err)
 	}
-	if err := reconcileTailscalePrivacy(path, run); err != nil {
+	if err := reconcileTailscaleIsolation(context.Background(), desired, false, environment); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(overridePath)
 	if err != nil || string(raw) != tailscalePrivacyOverride {
 		t.Fatalf("Tailscale privacy override = %q, err=%v", raw, err)
 	}
-	applied, err := os.ReadFile(tailscalePrivacyAppliedPath(path))
+	applied, err := os.ReadFile(tailscalePrivacyAppliedPath(overridePath))
 	if err != nil || string(applied) != tailscalePrivacyAppliedMarker {
 		t.Fatalf("Tailscale privacy marker = %q, err=%v", applied, err)
 	}
+	if _, err := os.Stat(cachePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("official DERP cache was not removed: %v", err)
+	}
+	identity, err := os.ReadFile(statePath)
+	if err != nil || string(identity) != "node-identity" {
+		t.Fatalf("Tailscale identity was changed: %q err=%v", identity, err)
+	}
+	hosts, err := os.ReadFile(hostsPath)
+	if err != nil || !strings.Contains(string(hosts), "203.0.113.10 headscale.example.com headscale.old.example.com") {
+		t.Fatalf("Headscale resolver pin = %q, err=%v", hosts, err)
+	}
 	joined := strings.Join(commands, "\n")
 	if strings.Count(joined, "systemctl daemon-reload") != 1 || strings.Count(joined, "systemctl restart tailscaled.service") != 1 {
-		t.Fatalf("privacy reconciliation was not idempotent:\n%s", joined)
+		t.Fatalf("isolation reconciliation was not idempotent:\n%s", joined)
 	}
 }
 
-func TestTailscalePrivacyReconciliationRetriesAfterRestartFailure(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tailscaled.service.d", "90-vastora-privacy.conf")
+func TestTailscaleIsolationRetriesAfterRestartFailure(t *testing.T) {
+	root := t.TempDir()
+	overridePath := filepath.Join(root, "tailscaled.service.d", "90-vastora-privacy.conf")
+	hostsPath := filepath.Join(root, "hosts")
+	if err := os.WriteFile(hostsPath, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	restarts := 0
 	run := func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 		if name == "systemctl" && strings.Join(arguments, " ") == "restart tailscaled.service" {
@@ -222,17 +264,48 @@ func TestTailscalePrivacyReconciliationRetriesAfterRestartFailure(t *testing.T) 
 		}
 		return nil, nil
 	}
-	if err := reconcileTailscalePrivacy(path, run); err == nil {
+	desired := agent.TailscaleIsolationDesiredState{ControlURL: "https://headscale.example.com", ControlAddresses: []string{"203.0.113.10"}}
+	environment := tailscaleIsolationEnvironment{overridePath: overridePath, hostsPath: hostsPath, derpCache: filepath.Join(root, "missing-cache"), run: run}
+	if err := reconcileTailscaleIsolation(context.Background(), desired, false, environment); err == nil {
 		t.Fatal("failed Tailscale restart was accepted")
 	}
-	if _, err := os.Stat(tailscalePrivacyAppliedPath(path)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(tailscalePrivacyAppliedPath(overridePath)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("failed reconciliation was marked applied: %v", err)
 	}
-	if err := reconcileTailscalePrivacy(path, run); err != nil {
+	if err := reconcileTailscaleIsolation(context.Background(), desired, false, environment); err != nil {
 		t.Fatal(err)
 	}
 	if restarts != 2 {
 		t.Fatalf("Tailscale restart attempts = %d, want 2", restarts)
+	}
+}
+
+func TestTailscaleIsolationFailsBeforeChangingHostStateWhenTLSVerificationFails(t *testing.T) {
+	root := t.TempDir()
+	hostsPath := filepath.Join(root, "hosts")
+	cachePath := filepath.Join(root, "derpmap.cached.json")
+	if err := os.WriteFile(hostsPath, []byte("127.0.0.1 localhost\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := []byte(`{"Regions":{"2":{"Nodes":[{"HostName":"derp2.tailscale.com"}]}}}`)
+	if err := os.WriteFile(cachePath, cache, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name == "curl" {
+			return []byte("certificate mismatch"), errors.New("verification failed")
+		}
+		return nil, nil
+	}
+	environment := tailscaleIsolationEnvironment{overridePath: filepath.Join(root, "override.conf"), hostsPath: hostsPath, derpCache: cachePath, run: run}
+	err := reconcileTailscaleIsolation(context.Background(), agent.TailscaleIsolationDesiredState{ControlURL: "https://headscale.example.com", ControlAddresses: []string{"203.0.113.10"}}, false, environment)
+	if err == nil {
+		t.Fatal("unverified Headscale endpoint was accepted")
+	}
+	hosts, _ := os.ReadFile(hostsPath)
+	remainingCache, _ := os.ReadFile(cachePath)
+	if string(hosts) != "127.0.0.1 localhost\n" || !bytes.Equal(remainingCache, cache) {
+		t.Fatalf("host state changed before verification: hosts=%q cache=%q", hosts, remainingCache)
 	}
 }
 

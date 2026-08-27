@@ -39,6 +39,12 @@ type HeadscaleJoin struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+type TailscaleIsolationDesiredState struct {
+	ControlURL       string   `json:"controlUrl"`
+	ControlAddresses []string `json:"controlAddresses"`
+	ControlAliases   []string `json:"controlAliases,omitempty"`
+}
+
 type headscaleClient struct {
 	baseURL string
 	apiKey  string
@@ -219,6 +225,51 @@ func (s *Store) headscale(ctx context.Context) (headscaleClient, error) {
 		}
 	}
 	return headscaleClient{baseURL: allowedEndpoint, apiKey: string(key), http: httpClient}, nil
+}
+
+func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID string) (*TailscaleIsolationDesiredState, error) {
+	var mode, endpoint string
+	if err := s.db.QueryRowContext(ctx, `SELECT mode, endpoint FROM network_integrations WHERE kind = 'headscale' AND status = 'configured'`).Scan(&mode, &endpoint); errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("center: read Tailscale isolation state: %w", err)
+	}
+	normalized, err := normalizeHeadscaleEndpoint(endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("center: stored Headscale endpoint is invalid: %w", err)
+	}
+	state := &TailscaleIsolationDesiredState{ControlURL: normalized}
+	if mode != "builtin" {
+		return state, nil
+	}
+	aliases, err := readSystemEndpointAliases(ctx, s.db, "headscale")
+	if err != nil {
+		return nil, fmt.Errorf("center: read Headscale endpoint aliases: %w", err)
+	}
+	for _, alias := range aliases {
+		if alias.Endpoint != normalized {
+			state.ControlAliases = append(state.ControlAliases, alias.Endpoint)
+		}
+	}
+	binding, configured, err := s.setupGatewayBinding(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("center: read Headscale public binding: %w", err)
+	}
+	if !configured || net.ParseIP(binding.PublicAddress) == nil {
+		return nil, errors.New("center: built-in Headscale has no verified public address")
+	}
+	controlAddress := net.ParseIP(binding.PublicAddress).String()
+	if strings.TrimSpace(agentID) != "" && binding.BindAddress != binding.PublicAddress {
+		var local int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_network_candidates WHERE agent_id = ? AND address = ?`, agentID, binding.BindAddress).Scan(&local); err != nil {
+			return nil, fmt.Errorf("center: inspect co-located Headscale Agent: %w", err)
+		}
+		if local > 0 {
+			controlAddress = net.ParseIP(binding.BindAddress).String()
+		}
+	}
+	state.ControlAddresses = []string{controlAddress}
+	return state, nil
 }
 
 func builtinHeadscaleHTTPClient(endpoint string, base *http.Client) (*http.Client, error) {

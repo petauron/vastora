@@ -172,10 +172,15 @@ func renderAgentInstallLoader(centerURL string) string {
 func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, bootstrapURL string) string {
 	headscaleBootstrap := ":"
 	if profile.HeadscaleCommand != "" {
+		prepareArguments := "--control-url " + shellQuote(profile.HeadscaleURL)
+		for _, address := range profile.HeadscaleAddresses {
+			prepareArguments += " --control-address " + shellQuote(address)
+		}
 		headscaleBootstrap = `tailscale_version=@@TAILSCALE_VERSION@@
 tailscale_ownership=external
 if ! command -v tailscale >/dev/null 2>&1; then
-	 tailscale_ownership=managed
+  tailscale_ownership=managed
+  "$temporary" agent prepare-tailscale @@TAILSCALE_PREPARE_ARGUMENTS@@ --configure-only
   if ! command -v apt-get >/dev/null 2>&1; then
     echo "Vastora can install Tailscale automatically only on Ubuntu 24.04." >&2
     exit 1
@@ -196,47 +201,24 @@ if [ "$installed_tailscale_version" != "$tailscale_version" ]; then
   echo "Vastora requires Tailscale $tailscale_version; found $installed_tailscale_version." >&2
   exit 1
 fi
-privacy_override=/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf
-privacy_override_marker="$privacy_override.applied"
-privacy_override_changed=0
-install -d -m 0755 "$(dirname "$privacy_override")"
-privacy_override_temporary="$(mktemp "$(dirname "$privacy_override")/.90-vastora-privacy.XXXXXX")"
-printf '%s\n' '[Service]' 'Environment=TS_NO_LOGS_NO_SUPPORT=true' >"$privacy_override_temporary"
-chmod 0644 "$privacy_override_temporary"
-if ! cmp -s "$privacy_override_temporary" "$privacy_override" || [ ! -f "$privacy_override_marker" ] || [ "$(cat "$privacy_override_marker")" != v1 ]; then
-  mv "$privacy_override_temporary" "$privacy_override"
-  privacy_override_changed=1
-else
-  rm -f "$privacy_override_temporary"
-fi
-tailscaled_was_active=0
-if systemctl is-active --quiet tailscaled.service; then
-  tailscaled_was_active=1
-fi
-if [ "$privacy_override_changed" -eq 1 ]; then
-  systemctl daemon-reload
-fi
-systemctl enable --now tailscaled.service
-if [ "$privacy_override_changed" -eq 1 ] && [ "$tailscaled_was_active" -eq 1 ]; then
-  systemctl restart tailscaled.service
-fi
-if [ "$privacy_override_changed" -eq 1 ]; then
-  privacy_marker_temporary="$(mktemp "$(dirname "$privacy_override_marker")/.90-vastora-privacy-applied.XXXXXX")"
-  printf '%s\n' v1 >"$privacy_marker_temporary"
-  chmod 0644 "$privacy_marker_temporary"
-  mv "$privacy_marker_temporary" "$privacy_override_marker"
-fi
+"$temporary" agent prepare-tailscale @@TAILSCALE_PREPARE_ARGUMENTS@@
 echo "Joining the private network..."
 ` + strings.TrimPrefix(profile.HeadscaleCommand, "sudo ") + `
 install -d -m 0700 /var/lib/vastora/agent
-if [ ! -f /var/lib/vastora/agent/host-install.env ]; then
-  host_state_temporary="$(mktemp /var/lib/vastora/agent/.host-install.XXXXXX)"
-  printf '%s\n' 'HOST_STATE_VERSION=1' "TAILSCALE_OWNERSHIP=$tailscale_ownership" 'TAILSCALE_ENROLLED=1' >"$host_state_temporary"
-  chmod 0600 "$host_state_temporary"
-  mv "$host_state_temporary" /var/lib/vastora/agent/host-install.env
+if [ -f /var/lib/vastora/agent/host-install.env ]; then
+  while IFS='=' read -r host_state_key host_state_value; do
+    case "$host_state_key=$host_state_value" in
+      TAILSCALE_OWNERSHIP=managed) tailscale_ownership=managed ;;
+    esac
+  done </var/lib/vastora/agent/host-install.env
 fi
+host_state_temporary="$(mktemp /var/lib/vastora/agent/.host-install.XXXXXX)"
+printf '%s\n' 'HOST_STATE_VERSION=1' "TAILSCALE_OWNERSHIP=$tailscale_ownership" 'TAILSCALE_ENROLLED=1' >"$host_state_temporary"
+chmod 0600 "$host_state_temporary"
+mv "$host_state_temporary" /var/lib/vastora/agent/host-install.env
 `
 		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_VERSION@@", shellQuote(agentTailscaleVersion))
+		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_PREPARE_ARGUMENTS@@", prepareArguments)
 	} else {
 		headscaleBootstrap = `install -d -m 0700 /var/lib/vastora/agent
 if [ ! -f /var/lib/vastora/agent/host-install.env ]; then

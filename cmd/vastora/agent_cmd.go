@@ -269,6 +269,23 @@ func runAgent(arguments []string) error {
 		defer store.Close()
 		fmt.Printf("Agent state initialized at %s\n", *dataDir)
 		return nil
+	case "prepare-tailscale":
+		flags := flag.NewFlagSet("agent prepare-tailscale", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		controlURL := flags.String("control-url", "", "Headscale HTTPS control-plane URL")
+		configureOnly := flags.Bool("configure-only", false, "write isolation controls without starting Tailscale")
+		var controlAddresses stringListFlag
+		flags.Var(&controlAddresses, "control-address", "verified Headscale control-plane IP address")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent prepare-tailscale"); err != nil {
+			return err
+		}
+		if *controlURL == "" {
+			return errors.New("--control-url is required")
+		}
+		return reconcileTailscaleIsolation(context.Background(), agent.TailscaleIsolationDesiredState{ControlURL: *controlURL, ControlAddresses: controlAddresses}, *configureOnly, defaultTailscaleIsolationEnvironment())
 	case "serve":
 		flags := flag.NewFlagSet("agent serve", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -306,15 +323,6 @@ func runAgent(arguments []string) error {
 		if capabilities.Tunnel && !containsValue(roles, "worker") {
 			return errors.New("tunnel capability requires the worker role")
 		}
-		if runtime.GOOS == "linux" {
-			if _, lookupErr := exec.LookPath("tailscale"); lookupErr == nil {
-				if err := reconcileTailscalePrivacy("/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf", runHostCommand); err != nil {
-					return err
-				}
-			} else if !errors.Is(lookupErr, exec.ErrNotFound) {
-				return fmt.Errorf("locate Tailscale: %w", lookupErr)
-			}
-		}
 		store, err := agent.Open(*dataDir)
 		if err != nil {
 			return err
@@ -323,7 +331,20 @@ func runAgent(arguments []string) error {
 		if _, err := store.Connection(context.Background()); err != nil {
 			return err
 		}
-		client := agent.Client{Roles: roles, Capabilities: capabilities}
+		hostState, err := agent.ReadHostInstallState(*dataDir)
+		if err != nil {
+			return err
+		}
+		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled}
+		if runtime.GOOS == "linux" {
+			if _, lookupErr := exec.LookPath("tailscale"); lookupErr == nil {
+				client.TailscaleIsolation = func(ctx context.Context, desired agent.TailscaleIsolationDesiredState) error {
+					return reconcileTailscaleIsolation(ctx, desired, false, defaultTailscaleIsolationEnvironment())
+				}
+			} else if !errors.Is(lookupErr, exec.ErrNotFound) {
+				return fmt.Errorf("locate Tailscale: %w", lookupErr)
+			}
+		}
 		executable, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("locate vastora executable: %w", err)
