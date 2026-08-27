@@ -50,6 +50,7 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 		binaryPaths:          []string{"/usr/local/bin/vastora", "/usr/local/bin/vastora.previous"},
 		tailscalePaths:       []string{"/etc/apt/sources.list.d/tailscale.list", "/usr/share/keyrings/tailscale-archive-keyring.gpg", "/var/lib/tailscale"},
 		tailscalePrivacyPath: "/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf",
+		tailscaleHostsPath:   "/etc/hosts",
 		purgeRuntime:         agent.PurgeManagedRuntime,
 		run:                  runHostCommand,
 	})
@@ -80,6 +81,7 @@ type agentUninstallEnvironment struct {
 	binaryPaths          []string
 	tailscalePaths       []string
 	tailscalePrivacyPath string
+	tailscaleHostsPath   string
 	purgeRuntime         func(context.Context, bool) error
 	run                  func(context.Context, string, ...string) ([]byte, error)
 }
@@ -135,6 +137,11 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 			if output, err := environment.run(ctx, "systemctl", "daemon-reload"); err != nil {
 				return fmt.Errorf("reload systemd after removing the Tailscale privacy override: %s: %w", strings.TrimSpace(string(output)), err)
 			}
+		}
+	}
+	if environment.tailscaleHostsPath != "" {
+		if _, err := removeTailscaleControlHosts(environment.tailscaleHostsPath); err != nil {
+			return fmt.Errorf("remove Vastora Headscale resolver pin: %w", err)
 		}
 	}
 	unitOwned, err := stopAndRemoveAgentUnit(ctx, environment)

@@ -149,6 +149,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
 		ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
 		GatewayHealthy               bool                             `json:"gatewayHealthy"`
+		TailscaleEnrolled            bool                             `json:"tailscaleEnrolled"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -168,7 +169,15 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"connected": true, "centerUrl": network.AgentConnectURL})
+	var isolation *TailscaleIsolationDesiredState
+	if input.TailscaleEnrolled {
+		isolation, err = s.store.tailscaleIsolationDesiredState(request.Context(), request.PathValue("id"))
+		if err != nil {
+			writeError(writer, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"connected": true, "centerUrl": network.AgentConnectURL, "tailscaleIsolation": isolation})
 }
 
 func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Request) {

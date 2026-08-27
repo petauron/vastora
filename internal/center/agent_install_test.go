@@ -181,8 +181,10 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 
 func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T) {
 	script := renderAgentInstallScript(AgentEnrollmentInstallProfile{
-		CenterURL:        "https://center.example.com",
-		HeadscaleCommand: "sudo tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
+		CenterURL:          "https://center.example.com",
+		HeadscaleCommand:   "sudo tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
+		HeadscaleURL:       "https://headscale.example.com",
+		HeadscaleAddresses: []string{"203.0.113.10"},
 	}, "https://headscale.example.com")
 	for _, expected := range []string{
 		"tailscale_version='1.102.3'",
@@ -192,15 +194,8 @@ func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T)
 		"apt-get install -y \"tailscale=$tailscale_version\"",
 		"installed_tailscale_version=",
 		"Vastora requires Tailscale $tailscale_version",
-		"Environment=TS_NO_LOGS_NO_SUPPORT=true",
-		"/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf",
-		"privacy_override_marker=\"$privacy_override.applied\"",
-		"cmp -s \"$privacy_override_temporary\" \"$privacy_override\"",
-		"systemctl is-active --quiet tailscaled.service",
-		"systemctl daemon-reload",
-		"systemctl enable --now tailscaled.service",
-		"systemctl restart tailscaled.service",
-		"printf '%s\\n' v1 >\"$privacy_marker_temporary\"",
+		"agent prepare-tailscale --control-url 'https://headscale.example.com' --control-address '203.0.113.10' --configure-only",
+		"agent prepare-tailscale --control-url 'https://headscale.example.com' --control-address '203.0.113.10'",
 		"Joining the private network...",
 		"tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
 		"TAILSCALE_OWNERSHIP=$tailscale_ownership",

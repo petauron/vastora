@@ -163,8 +163,8 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 		t.Fatal("Headscale bootstrap key was stored in plaintext")
 	}
 	profile, err := store.AgentEnrollmentInstallProfile(context.Background(), enrollment.Token)
-	if err != nil || !strings.Contains(profile.HeadscaleCommand, "bootstrap-one-time-key") {
-		t.Fatalf("installer profile bootstrap = %q, err = %v", profile.HeadscaleCommand, err)
+	if err != nil || !strings.Contains(profile.HeadscaleCommand, "bootstrap-one-time-key") || profile.HeadscaleURL != server.URL || len(profile.HeadscaleAddresses) != 0 {
+		t.Fatalf("installer profile bootstrap = %#v, err = %v", profile, err)
 	}
 	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64"); err != nil {
 		t.Fatal(err)
@@ -172,6 +172,28 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 	var remaining int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM secrets WHERE id = ?`, bootstrapSecretID).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("consumed bootstrap secret count = %d, err = %v", remaining, err)
+	}
+}
+
+func TestBuiltinHeadscaleIsolationUsesVerifiedPublicBinding(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at) VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.10","bindAddress":"10.0.0.10"}`); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.tailscaleIsolationDesiredState(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state == nil || state.ControlURL != "https://headscale.example.com" || len(state.ControlAddresses) != 1 || state.ControlAddresses[0] != "203.0.113.10" {
+		t.Fatalf("built-in Tailscale isolation state = %#v", state)
 	}
 }
 

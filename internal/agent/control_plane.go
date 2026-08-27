@@ -33,6 +33,14 @@ type Client struct {
 	GatewayProvisioner GatewayProvisioner
 	TunnelProvisioner  TunnelProvisioner
 	Decommissioner     HostDecommissioner
+	TailscaleIsolation func(context.Context, TailscaleIsolationDesiredState) error
+	TailscaleEnrolled  bool
+}
+
+type TailscaleIsolationDesiredState struct {
+	ControlURL       string   `json:"controlUrl"`
+	ControlAddresses []string `json:"controlAddresses"`
+	ControlAliases   []string `json:"controlAliases,omitempty"`
 }
 
 type HostDecommissioner interface {
@@ -397,17 +405,24 @@ func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 		observeErr = fmt.Errorf("agent: observe 3x-ui: %w", observeErr)
 	}
 	var response struct {
-		CenterURL string `json:"centerUrl"`
+		CenterURL          string                          `json:"centerUrl"`
+		TailscaleIsolation *TailscaleIsolationDesiredState `json:"tailscaleIsolation,omitempty"`
 	}
 	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/heartbeat", map[string]any{
 		"version": Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
+		"tailscaleEnrolled": c.TailscaleEnrolled,
 	}, connection.Credential, &response)
 	if err != nil {
 		return observeErr, err
 	}
 	if err := c.applyDesiredCenterURL(ctx, store, connection, response.CenterURL); err != nil {
 		return observeErr, err
+	}
+	if response.TailscaleIsolation != nil && c.TailscaleIsolation != nil {
+		if err := c.TailscaleIsolation(ctx, *response.TailscaleIsolation); err != nil {
+			return observeErr, fmt.Errorf("agent: apply Tailscale isolation: %w", err)
+		}
 	}
 	return observeErr, nil
 }
