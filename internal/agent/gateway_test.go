@@ -393,12 +393,12 @@ func TestCaddyDriverAcceptsOnlyPrivateAdminEndpoints(t *testing.T) {
 	if !ok || !transport.DisableKeepAlives {
 		t.Fatal("Unix Admin API must reconnect after the managed Caddy container is replaced")
 	}
-	for _, endpoint := range []string{"http://127.0.0.1:2019", "http://[::1]:2019"} {
+	for _, endpoint := range []string{"http://127.0.0.1:2019"} {
 		if _, err := NewCaddyGatewayDriver(endpoint); err != nil {
 			t.Fatalf("private endpoint %q was rejected: %v", endpoint, err)
 		}
 	}
-	for _, endpoint := range []string{"http://0.0.0.0:2019", "http://example.com:2019", "unix://relative.sock"} {
+	for _, endpoint := range []string{"http://0.0.0.0:2019", "http://[::1]:2019", "http://example.com:2019", "unix://relative.sock"} {
 		if _, err := NewCaddyGatewayDriver(endpoint); err == nil {
 			t.Fatalf("unsafe endpoint %q was accepted", endpoint)
 		}

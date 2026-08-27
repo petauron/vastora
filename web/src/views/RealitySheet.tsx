@@ -111,7 +111,6 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
   const setField = <K extends keyof RealityDraft>(field: K, value: RealityDraft[K]) => setDraft((current) => ({ ...current, [field]: value }));
   const gateway = data.agents.find((agent) => agent.id === draft.gatewayID);
   const displayName = regionDisplayName(draft.regionCode, draft.name);
-  const manualRecordType = gateway?.networkProfile?.publicAddress?.includes(":") ? "AAAA" : "A";
 
   const requestClose = () => {
     if (dirty && !window.confirm(copy(language, "放弃尚未保存的修改？", "Discard unsaved changes?"))) return;
@@ -191,7 +190,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
         <SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle>
         <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、共享 443 网关和 DNS。", "Vastora is configuring 3x-ui, the shared 443 gateway, and DNS on the node.") : copy(language, "选择公网入口后，Vastora 会自动识别地区并生成标准节点名。", "After choosing a public entry, Vastora detects its region and creates a standard node name.")}</SheetDescription>
       </SheetHeader>
-		{command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} manualRecordType={manualRecordType} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} />}
+		{command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} />}
       {command ? <SheetFooter><Button onClick={requestClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
@@ -249,7 +248,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
         </Field>
         <Field>
           <FieldLabel htmlFor="reality-dns">DNS</FieldLabel>
-          <SelectControl id="reality-dns" onValueChange={(value) => onField("dnsProvider", value as RealityDraft["dnsProvider"])} options={[{ value: "manual", label: copy(language, "手动添加 A/AAAA", "Add A/AAAA manually") }, ...(cloudflareReady ? [{ value: "cloudflare", label: copy(language, "Cloudflare 自动管理", "Manage with Cloudflare") }] : [])]} value={draft.dnsProvider} />
+          <SelectControl id="reality-dns" onValueChange={(value) => onField("dnsProvider", value as RealityDraft["dnsProvider"])} options={[{ value: "manual", label: copy(language, "手动添加 A 记录", "Add an A record manually") }, ...(cloudflareReady ? [{ value: "cloudflare", label: copy(language, "Cloudflare 自动管理", "Manage with Cloudflare") }] : [])]} value={draft.dnsProvider} />
         </Field>
         <details className="rounded-xl border p-3">
           <summary className="cursor-pointer text-sm font-medium">{copy(language, "高级：自定义伪装目标", "Advanced: custom camouflage target")}</summary>
@@ -266,7 +265,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
   </form>;
 }
 
-function RealityResult({ busy, command, displayName, dnsProvider, error, gateway, language, manualRecordType, onReveal, onRetry, shareURI }: { busy: boolean; command: ApplicationCommand; displayName: string; dnsProvider: "manual" | "cloudflare"; error: string; gateway?: AgentView; language: Language; manualRecordType: "A" | "AAAA"; onReveal: () => void; onRetry: () => void; shareURI: string }) {
+function RealityResult({ busy, command, displayName, dnsProvider, error, gateway, language, onReveal, onRetry, shareURI }: { busy: boolean; command: ApplicationCommand; displayName: string; dnsProvider: "manual" | "cloudflare"; error: string; gateway?: AgentView; language: Language; onReveal: () => void; onRetry: () => void; shareURI: string }) {
 	const publicationWarning = command.state === "succeeded" && Boolean(command.error);
 	const recoveryRequired = command.state === "failed" && Boolean(command.reconciliationRequired);
   return <div aria-live="polite" className="flex flex-1 flex-col gap-4 px-4">
@@ -281,7 +280,7 @@ function RealityResult({ busy, command, displayName, dnsProvider, error, gateway
     {command.state === "failed" && command.error ? <FieldError>{userError(language, new Error(command.error))}</FieldError> : null}
 		{command.state === "failed" ? <Button className="w-fit" disabled={busy} onClick={onRetry} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{recoveryRequired ? copy(language, "继续恢复", "Continue recovery") : copy(language, "修改后重试", "Edit and retry")}</Button> : null}
     {error ? <FieldError role="alert">{error}</FieldError> : null}
-    {dnsProvider === "manual" && gateway?.networkProfile?.publicAddress ? <Alert><Globe2Icon /><AlertTitle>{copy(language, "还需添加一条 DNS 记录", "One DNS record is still needed")}</AlertTitle><AlertDescription><code className="break-all">{manualRecordType} {command.hostname} → {gateway.networkProfile.publicAddress}</code></AlertDescription></Alert> : null}
+    {dnsProvider === "manual" && gateway?.networkProfile?.publicAddress ? <Alert><Globe2Icon /><AlertTitle>{copy(language, "还需添加一条 DNS 记录", "One DNS record is still needed")}</AlertTitle><AlertDescription><code className="break-all">A {command.hostname} → {gateway.networkProfile.publicAddress}</code></AlertDescription></Alert> : null}
   </div>;
 }
 

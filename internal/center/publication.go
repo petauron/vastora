@@ -530,18 +530,14 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		}
 		if value.Kind != publicationCloudflare {
 			ip := net.ParseIP(address)
-			if ip == nil {
+			if ip == nil || ip.To4() == nil {
 				if value.Status == "stopped" {
 					values = append(values, value)
 					continue
 				}
-				return nil, errors.New("center: publication entry address is invalid")
+				return nil, errors.New("center: publication entry address must be IPv4")
 			}
-			recordType := "AAAA"
-			if ip.To4() != nil {
-				recordType = "A"
-			}
-			value.DNSRecord = &DNSRecordInstruction{Type: recordType, Name: value.Hostname, Value: ip.String()}
+			value.DNSRecord = &DNSRecordInstruction{Type: "A", Name: value.Hostname, Value: ip.String()}
 		}
 		values = append(values, value)
 	}

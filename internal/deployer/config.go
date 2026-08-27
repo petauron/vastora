@@ -73,14 +73,12 @@ grpc_listen_addr: 127.0.0.1:50443
 grpc_allow_insecure: false
 trusted_proxies:
   - 127.0.0.1/32
-  - ::1/128
 
 noise:
   private_key_path: /var/lib/headscale/noise_private.key
 
 prefixes:
   v4: 100.64.0.0/10
-  v6: fd7a:115c:a1e0::/48
 
 derp:
   server:
@@ -202,6 +200,9 @@ func selectMappedGatewayBindAddress(resolutions []gatewayResolution, candidates 
 		return nil, errors.New("deployer: a valid local gateway bind address is required")
 	}
 	bindAddress = bindAddress.Unmap()
+	if !bindAddress.Is4() {
+		return nil, errors.New("deployer: gateway bind address must be IPv4")
+	}
 	bindFound := false
 	for _, candidate := range candidates {
 		candidateAddress, parseErr := netip.ParseAddr(candidate.Address)
@@ -232,7 +233,7 @@ func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []ne
 	public := make(map[netip.Addr]struct{})
 	for _, candidate := range candidates {
 		if candidate.Kind == networking.KindPublic {
-			if address, err := netip.ParseAddr(candidate.Address); err == nil {
+			if address, err := netip.ParseAddr(candidate.Address); err == nil && address.Unmap().Is4() {
 				public[address.Unmap()] = struct{}{}
 			}
 		}
@@ -262,9 +263,7 @@ func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []ne
 func formatGatewayBindAddresses(addresses []netip.Addr) []string {
 	result := make([]string, 0, len(addresses))
 	for _, address := range addresses {
-		if address.Is6() {
-			result = append(result, "["+address.String()+"]")
-		} else {
+		if address.Unmap().Is4() {
 			result = append(result, address.String())
 		}
 	}
@@ -281,6 +280,9 @@ func centerPrivateBindAddresses(value string) ([]string, error) {
 		return nil, errors.New("deployer: Center private bind address is invalid")
 	}
 	requested = requested.Unmap()
+	if !requested.Is4() {
+		return nil, errors.New("deployer: Center private bind address must be IPv4")
+	}
 	candidates, err := networking.Discover(time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("deployer: discover Center private address: %w", err)

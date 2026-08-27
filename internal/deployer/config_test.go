@@ -59,12 +59,13 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 		"disable_check_updates: true",
 		"logtail:\n  enabled: false",
 		"auto_update:\n  enabled: false",
+		"prefixes:\n  v4: 100.64.0.0/10",
 	} {
 		if !strings.Contains(headscale, expected) {
 			t.Fatalf("Headscale configuration is missing %q:\n%s", expected, headscale)
 		}
 	}
-	if strings.Contains(headscale, "controlplane.tailscale.com") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") {
+	if strings.Contains(headscale, "controlplane.tailscale.com") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") || strings.Contains(headscale, "v6:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
 	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"100.64.0.1"}, []string{"203.0.113.10"}, []deployapi.CenterEndpointAlias{{URL: "https://old-center.example.com"}}, nil))
@@ -84,7 +85,6 @@ func TestGatewayBindsOnlyResolvedLocalPublicAddresses(t *testing.T) {
 	}
 	candidates := []networking.Candidate{
 		{Address: "203.0.113.20", Kind: networking.KindPublic},
-		{Address: "2001:db8::20", Kind: networking.KindPublic},
 		{Address: "100.64.0.1", Kind: networking.KindHeadscale},
 		{Address: "192.168.1.10", Kind: networking.KindLAN},
 	}
@@ -92,7 +92,7 @@ func TestGatewayBindsOnlyResolvedLocalPublicAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"203.0.113.20", "[2001:db8::20]"}
+	want := []string{"203.0.113.20"}
 	if strings.Join(addresses, ",") != strings.Join(want, ",") {
 		t.Fatalf("gateway bind addresses = %#v, want %#v", addresses, want)
 	}

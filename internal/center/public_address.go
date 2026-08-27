@@ -43,7 +43,7 @@ func vastoraPublicAddressLookup(client *http.Client) func(context.Context) (stri
 			return "", errors.New("center: public address service returned invalid JSON")
 		}
 		address := net.ParseIP(strings.TrimSpace(result.Address))
-		if address == nil || !address.IsGlobalUnicast() || address.IsPrivate() {
+		if address == nil || address.To4() == nil || !address.IsGlobalUnicast() || address.IsPrivate() {
 			return "", errors.New("center: public address service returned an invalid address")
 		}
 		return address.String(), nil
@@ -53,7 +53,7 @@ func vastoraPublicAddressLookup(client *http.Client) func(context.Context) (stri
 func vastoraPublicEntryVerifier(client *http.Client) func(context.Context, string, deployapi.PublicEntryProbe) error {
 	return func(ctx context.Context, publicAddress string, probe deployapi.PublicEntryProbe) error {
 		publicIP := net.ParseIP(strings.TrimSpace(publicAddress))
-		if publicIP == nil || publicIP.IsPrivate() || !publicIP.IsGlobalUnicast() {
+		if publicIP == nil || publicIP.To4() == nil || publicIP.IsPrivate() || !publicIP.IsGlobalUnicast() {
 			return errors.New("center: public entry verification requires a valid public address")
 		}
 		payload, err := json.Marshal(map[string]any{"ports": probe.Ports, "challenge": probe.Challenge})
@@ -94,7 +94,7 @@ func vastoraPublicEntryVerifier(client *http.Client) func(context.Context, strin
 			return fmt.Errorf("center: public entry verification returned HTTP %d", response.StatusCode)
 		}
 		observedIP := net.ParseIP(strings.TrimSpace(result.Address))
-		if result.Status != "ready" || observedIP == nil || !observedIP.Equal(publicIP) || len(result.Ports) != len(probe.Ports) {
+		if result.Status != "ready" || observedIP == nil || observedIP.To4() == nil || !observedIP.Equal(publicIP) || len(result.Ports) != len(probe.Ports) {
 			return errors.New("center: public entry verification returned an unexpected result")
 		}
 		for index, port := range result.Ports {

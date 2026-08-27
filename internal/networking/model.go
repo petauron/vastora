@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -22,7 +21,6 @@ const (
 type Candidate struct {
 	Address    string    `json:"address"`
 	Interface  string    `json:"interface"`
-	Family     string    `json:"family"`
 	Kind       string    `json:"kind"`
 	ObservedAt time.Time `json:"observedAt"`
 }
@@ -57,18 +55,14 @@ func Discover(now time.Time) ([]Candidate, error) {
 		}
 		for _, address := range addresses {
 			ip, _, err := net.ParseCIDR(address.String())
-			if err != nil || ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
+			if err != nil || ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
 				continue
 			}
 			kind := Classify(iface.Name, ip)
 			if kind == "" {
 				continue
 			}
-			family := "ipv6"
-			if ip.To4() != nil {
-				family = "ipv4"
-			}
-			result = append(result, Candidate{Address: ip.String(), Interface: iface.Name, Family: family, Kind: kind, ObservedAt: now.UTC()})
+			result = append(result, Candidate{Address: ip.String(), Interface: iface.Name, Kind: kind, ObservedAt: now.UTC()})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -83,32 +77,28 @@ func Discover(now time.Time) ([]Candidate, error) {
 	return result, nil
 }
 
-// DefaultRouteAddress returns the local address selected by the kernel for
-// ordinary outbound traffic in the same address family as remoteAddress. A UDP
-// connect performs route selection without sending a packet.
+// DefaultRouteAddress returns the IPv4 address selected by the kernel for
+// ordinary outbound traffic. A UDP connect performs route selection without
+// sending a packet.
 func DefaultRouteAddress(remoteAddress string) (string, error) {
-	remote, err := netip.ParseAddr(strings.TrimSpace(remoteAddress))
-	if err != nil {
-		return "", errors.New("network: invalid remote address")
+	remote := net.ParseIP(strings.TrimSpace(remoteAddress))
+	if remote == nil || remote.To4() == nil {
+		return "", errors.New("network: remote address must be IPv4")
 	}
-	network, target := "udp6", "[2606:4700:4700::1111]:53"
-	if remote.Unmap().Is4() {
-		network, target = "udp4", "1.1.1.1:53"
-	}
-	connection, err := net.Dial(network, target)
+	connection, err := net.Dial("udp4", "1.1.1.1:53")
 	if err != nil {
-		return "", fmt.Errorf("network: select default route: %w", err)
+		return "", fmt.Errorf("network: select default IPv4 route: %w", err)
 	}
 	defer connection.Close()
 	address, ok := connection.LocalAddr().(*net.UDPAddr)
-	if !ok || address.IP == nil {
-		return "", errors.New("network: default route did not provide a local address")
+	if !ok || address.IP == nil || address.IP.To4() == nil {
+		return "", errors.New("network: default route did not provide an IPv4 address")
 	}
 	return address.IP.String(), nil
 }
 
 func Classify(interfaceName string, ip net.IP) string {
-	if ip == nil || !ip.IsGlobalUnicast() {
+	if ip == nil || ip.To4() == nil || !ip.IsGlobalUnicast() {
 		return ""
 	}
 	name := strings.ToLower(strings.TrimSpace(interfaceName))

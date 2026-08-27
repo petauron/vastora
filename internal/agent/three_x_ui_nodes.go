@@ -30,7 +30,7 @@ func applyThreeXUINodeCommand(ctx context.Context, store *Store, command ThreeXU
 	if command.Action == "remove" {
 		return removeThreeXUINode(ctx, baseURL, masterToken, command.RemoteNodeID)
 	}
-	if command.Action != "reconcile" || net.ParseIP(command.Address) == nil || command.Port < 1024 || command.Port > 65535 || strings.TrimSpace(command.APIToken) == "" {
+	if ip := net.ParseIP(command.Address); command.Action != "reconcile" || ip == nil || ip.To4() == nil || command.Port < 1024 || command.Port > 65535 || strings.TrimSpace(command.APIToken) == "" {
 		return ThreeXUINodeCommandResult{}, errors.New("agent: invalid 3x-ui VLESS node configuration")
 	}
 	desiredName := threeXUINodeAPIName(command.WorkerApplicationID)

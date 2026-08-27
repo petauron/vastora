@@ -38,7 +38,7 @@ const dashboard = (): AppData => ({
   sources: [], organizations: [], routes: [], actions: [], integrations: [], threeXUIControllerMigrations: [],
   systemDomain: { namespace: "vastora.example.com", centerUrl: "https://center.vastora.example.com", headscaleUrl: "https://headscale.vastora.example.com", cloudflareZone: "example.com", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: true, cloudflareOAuthAvailable: true },
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
-  agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", family: "ipv4", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
+  agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
   applications: [
     { id: "running", name: "Komari Agent", nodeId: "agent", siteId: "site", appKey: "vastora-official/komari-agent", image: "image", status: "running", runtime: "docker", installedVersion: "1.2.60", availableVersion: "1.2.60", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" },
@@ -140,7 +140,7 @@ describe("network and app views", () => {
   it("recognizes a reported Headscale address before the network profile is confirmed", () => {
     const data = dashboard();
     data.agents[0].networkProfile = undefined;
-    data.agents[0].networkCandidates = [{ address: "100.64.0.1", interface: "tailscale0", family: "ipv4", kind: "headscale", observedAt: "2026-08-18T00:00:00Z" }];
+    data.agents[0].networkCandidates = [{ address: "100.64.0.1", interface: "tailscale0", kind: "headscale", observedAt: "2026-08-18T00:00:00Z" }];
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("私网已连接，待确认");
     expect(container.textContent).toContain("确认推荐配置");
@@ -203,7 +203,7 @@ describe("network and app views", () => {
 
   it("offers an automatic shared 443 gateway for raw TLS services", () => {
 	const data = dashboard();
-	data.agents[0].networkCandidates = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4", kind: "public", observedAt: "2026-08-18T00:00:00Z" }];
+	data.agents[0].networkCandidates = [{ address: "203.0.113.10", interface: "eth0", kind: "public", observedAt: "2026-08-18T00:00:00Z" }];
 	data.agents[0].networkProfile = { serviceAddress: "203.0.113.10", publicAddress: "203.0.113.10", enabledKinds: ["public"], directPublic: true };
 	data.services = [{ id: "vless", applicationId: "running", siteId: "site", name: "VLESS", protocol: "tcp", containerPort: 2443, hostPort: 2443, endpoint: "203.0.113.10:2443", source: "observed", appProtocol: "vless/tcp", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
 	const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -844,7 +844,7 @@ describe("network and app views", () => {
   });
 
 		it("starts first-run onboarding with a real location and the browser timezone", () => {
-    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
     expect(container.textContent).toContain("创建第一个位置");
     expect(container.textContent).toContain("位置通常是一处家庭、办公室或数据中心");
@@ -872,7 +872,7 @@ describe("network and app views", () => {
   });
 
   it("allows the detected setup timezone to be searched and changed", async () => {
-    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured={false} cloudflareOAuthAvailable gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
     const timezone = container.querySelector<HTMLInputElement>("#setup-timezone")!;
     await act(async () => {
@@ -891,7 +891,7 @@ describe("network and app views", () => {
   });
 
   it("shows a cloud public mapping as unverified before the pre-install probe", () => {
-    const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", family: "ipv4" as const, kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
+    const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="192.9.143.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
@@ -916,7 +916,7 @@ describe("network and app views", () => {
       completeVerification = () => resolve({ status: "ready", publicAddress: "192.9.143.79", gatewayAddress: "10.0.0.157", ports: [80, 443] });
     });
     const verify = vi.spyOn(api, "verifySetupPublicEntry").mockReturnValue(verification);
-    const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", family: "ipv4" as const, kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
+    const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="192.9.143.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
@@ -944,7 +944,7 @@ describe("network and app views", () => {
 
   it("keeps setup on the network step when the public probe fails", async () => {
     vi.spyOn(api, "verifySetupPublicEntry").mockRejectedValue(new APIError("center: public ports 80 and 443 are not reachable", 400, "invalid_request"));
-    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
@@ -963,7 +963,7 @@ describe("network and app views", () => {
   });
 
   it("keeps a non-sensitive setup draft after a reload", () => {
-    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, gatewayAddressCandidates: addresses, language: "zh-CN" as const, observedPublicAddress: "203.0.113.10", onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: addresses, publicAddressDetection: "direct" as const, suggestedAgentConnectUrl: "", suggestedGatewayAddress: "203.0.113.10" };
     let container = render(<SetupWizard {...props} />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
@@ -995,7 +995,7 @@ describe("network and app views", () => {
       headscaleUrl: "https://headscale.kuddyx.com",
       publicAddress: "203.0.113.10"
     }));
-    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, gatewayAddressCandidates: addresses, language: "zh-CN" as const, observedPublicAddress: "203.0.113.10", onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: addresses, publicAddressDetection: "direct" as const, suggestedAgentConnectUrl: "", suggestedGatewayAddress: "203.0.113.10" };
     const container = render(<SetupWizard {...props} />);
 
@@ -1018,7 +1018,7 @@ describe("network and app views", () => {
       headscaleUrl: "https://mesh.ops.example.net",
       publicAddress: "203.0.113.10"
     }));
-    const addresses = [{ address: "203.0.113.10", interface: "eth0", family: "ipv4" as const, kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
+    const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="kuddyx.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
 
     expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://control.ops.example.net");

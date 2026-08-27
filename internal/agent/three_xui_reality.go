@@ -130,7 +130,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
 	}
 	listen := strings.TrimSpace(command.TargetAddress)
-	if net.ParseIP(listen) == nil {
+	if ip := net.ParseIP(listen); ip == nil || ip.To4() == nil {
 		return RealityCommandResult{}, errors.New("agent: target VLESS node private service address is invalid")
 	}
 	scanURL, scanToken := baseURL, masterToken

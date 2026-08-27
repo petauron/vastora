@@ -46,7 +46,7 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 	store.cloudflareOAuth = cloudflareOAuthConfig{APIURL: cloudflare.URL, HTTPClient: cloudflare.Client()}
 	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "saved-access-token", RefreshToken: "saved-refresh-token", ExpiresAt: time.Now().Add(time.Hour)})
 	store.discoverNetworkCandidates = func(time.Time) ([]networking.Candidate, error) {
-		return []networking.Candidate{{Address: "100.64.0.1", Interface: "tailscale0", Family: "ipv4", Kind: networking.KindHeadscale}}, nil
+		return []networking.Candidate{{Address: "100.64.0.1", Interface: "tailscale0", Kind: networking.KindHeadscale}}, nil
 	}
 	store.issueDomainCertificate = func(_ context.Context, _ cloudflareClient, zone string, names ...string) (managedCertificate, error) {
 		if zone != "new.example.com" || len(names) != 1 || names[0] != "center.vastora.new.example.com" {
@@ -68,7 +68,7 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 		{`INSERT INTO settings(key, value) VALUES(?, ?), (?, ?), (?, ?)`, []any{agentConnectionModeSetting, "headscale", agentConnectURLSetting, "https://center." + oldNamespace, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.10","bindAddress":"203.0.113.10"}`}},
 		{`INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at) VALUES('headscale', 'builtin', ?, 'configured', ?, ?)`, []any{"https://headscale." + oldNamespace, now, now}},
 		{`INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id) VALUES('center-node', 'Center', X'01', 'test', 'active', ?, ?, ?)`, []any{now, now, site.ID}},
-		{`INSERT INTO agent_network_candidates(agent_id, address, interface_name, family, kind, observed_at) VALUES('center-node', '100.64.0.1', 'tailscale0', 'ipv4', 'headscale', ?)`, []any{now}},
+		{`INSERT INTO agent_network_candidates(agent_id, address, interface_name, kind, observed_at) VALUES('center-node', '100.64.0.1', 'tailscale0', 'headscale', ?)`, []any{now}},
 		{`INSERT INTO agent_network_profiles(agent_id, service_address, headscale_address, enabled_kinds_json, confirmed_at, candidate_observed_at) VALUES('center-node', '100.64.0.1', '100.64.0.1', '["headscale"]', ?, ?)`, []any{now, now}},
 	}
 	for _, statement := range statements {

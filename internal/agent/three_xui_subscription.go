@@ -53,7 +53,7 @@ func applySubscriptionCommand(ctx context.Context, store *Store, command Subscri
 	if json.Unmarshal(installation.Secrets, &secrets) != nil || strings.TrimSpace(secrets["api_token"]) == "" {
 		return SubscriptionCommandResult{}, errors.New("agent: 3x-ui API token is unavailable")
 	}
-	if net.ParseIP(installation.ServiceAddress) == nil {
+	if ip := net.ParseIP(installation.ServiceAddress); ip == nil || ip.To4() == nil {
 		return SubscriptionCommandResult{}, errors.New("agent: 3x-ui private service address is invalid")
 	}
 	endpoint := "http://" + net.JoinHostPort(installation.ServiceAddress, strconv.Itoa(config.PanelPort))

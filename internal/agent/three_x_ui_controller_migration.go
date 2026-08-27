@@ -250,7 +250,7 @@ func mustPort(baseURL string) int {
 }
 
 func transformThreeXUIControllerDatabase(content []byte, command ThreeXUIControllerCommandTask, target threeXUIControllerTargetSettings) ([]byte, error) {
-	if net.ParseIP(target.Address) == nil || target.PanelPort < 1024 || target.PanelPort > 65535 || strings.TrimSpace(target.PanelGUID) == "" {
+	if ip := net.ParseIP(target.Address); ip == nil || ip.To4() == nil || target.PanelPort < 1024 || target.PanelPort > 65535 || strings.TrimSpace(target.PanelGUID) == "" {
 		return nil, errors.New("agent: invalid target 3x-ui controller settings")
 	}
 	file, err := os.CreateTemp("", "vastora-3x-ui-migration-*.db")

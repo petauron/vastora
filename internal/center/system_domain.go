@@ -230,13 +230,10 @@ func ensureSystemDNSRecord(ctx context.Context, client cloudflareClient, endpoin
 		return SetupDNSRecord{}, false, err
 	}
 	ip := net.ParseIP(address)
-	if ip == nil {
-		return SetupDNSRecord{}, false, errors.New("center: public gateway address is invalid")
+	if ip == nil || ip.To4() == nil {
+		return SetupDNSRecord{}, false, errors.New("center: public gateway address must be IPv4")
 	}
-	recordType := "AAAA"
-	if ip.To4() != nil {
-		recordType = "A"
-	}
+	recordType := "A"
 	existing, err := client.listDNSRecords(ctx, hostname)
 	if err != nil {
 		return SetupDNSRecord{}, false, err

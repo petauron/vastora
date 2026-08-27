@@ -211,7 +211,7 @@ func threeXUIClientAPIConnection(ctx context.Context, store *Store) (string, str
 		return "", "", errors.New("agent: 3x-ui API token is unavailable")
 	}
 	address := installation.ServiceAddress
-	if net.ParseIP(address) == nil {
+	if ip := net.ParseIP(address); ip == nil || ip.To4() == nil {
 		return "", "", errors.New("agent: 3x-ui private service address is invalid")
 	}
 	return "http://" + net.JoinHostPort(address, strconv.Itoa(config.PanelPort)), strings.TrimSpace(secrets["api_token"]), nil
