@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.57](https://github.com/petauron/vastora/compare/v0.1.0-alpha.56...v0.1.0-alpha.57) (2026-08-27)
+
+
+### Features
+
+* use IPv4-only managed networking ([#172](https://github.com/petauron/vastora/issues/172)) ([d20e76b](https://github.com/petauron/vastora/commit/d20e76b8c688bd8c11ac405901ce9c20140100c2))
+
 ## [0.1.0-alpha.56](https://github.com/petauron/vastora/compare/v0.1.0-alpha.55...v0.1.0-alpha.56) (2026-08-27)
 
 
