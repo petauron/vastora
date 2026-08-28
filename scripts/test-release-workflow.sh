@@ -20,6 +20,8 @@ require_in() {
 require_in "$prepare_job" '          skip-github-pull-request: true'
 require_in "$prepare_job" '      pull-requests: write'
 require_in "$prepare_job" '          release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG"'
+require_in "$prepare_job" "      release_retry: \${{ steps.retry.outputs.release_retry || 'false' }}"
+require_in "$prepare_job" "            echo 'release_retry=true'"
 require_in "$publish_job" '      artifact-metadata: write'
 require_in "$publish_job" '      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}'
 require_in "$publish_job" '      R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}'
@@ -47,6 +49,24 @@ require_in "$release_pr_job" '          skip-github-release: true'
 require_in "$release_pr_job" "            echo \"ci_id=\$(start_check 'CI / gate')\""
 require_in "$release_pr_job" "            echo \"codeql_id=\$(start_check 'CodeQL / gate')\""
 require_in "$release_pr_job" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
+
+require_fresh_release_step() {
+  step_name="$1"
+  step_block="$(printf '%s\n' "$publish_job" | sed -n "/^      - name: $step_name$/,/^      - name:/p")"
+  require_in "$step_block" "        if: needs.prepare.outputs.release_retry != 'true'"
+}
+
+require_fresh_release_step 'Check out release commit'
+require_fresh_release_step 'Set up Docker Buildx'
+require_fresh_release_step 'Log in to GitHub Container Registry'
+require_fresh_release_step 'Build and push Center image'
+require_fresh_release_step 'Scan released Center image for x64 vulnerabilities'
+require_fresh_release_step 'Scan released Center image for ARM64 vulnerabilities'
+require_fresh_release_step 'Publish verified Center image tags'
+require_fresh_release_step 'Attest Center image'
+require_fresh_release_step 'Package release installer'
+require_fresh_release_step 'Verify release assets and public image access'
+require_fresh_release_step 'Stage immutable installer assets in R2'
 
 if printf '%s\n' "$prepare_job" | grep -Fq 'skip-github-release: true'; then
   echo 'Release creation must not update the next release pull request.' >&2
