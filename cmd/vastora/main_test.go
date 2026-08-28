@@ -90,6 +90,10 @@ func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
 				}
 			}
 			tailscalePrivacyPath := filepath.Join(root, "tailscaled.service.d", "90-vastora-privacy.conf")
+			tailscaleEndpointPaths := []string{
+				filepath.Join(root, "etc", "vastora", "tailscaled.json"),
+				filepath.Join(root, "tailscaled.service.d", "91-vastora-endpoint.conf"),
+			}
 			tailscaleHostsPath := filepath.Join(root, "hosts")
 			if err := os.MkdirAll(filepath.Dir(tailscalePrivacyPath), 0o755); err != nil {
 				t.Fatal(err)
@@ -100,12 +104,20 @@ func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
 			if err := os.WriteFile(tailscalePrivacyAppliedPath(tailscalePrivacyPath), []byte(tailscalePrivacyAppliedMarker), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			for _, path := range tailscaleEndpointPaths {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("managed endpoint"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if err := os.WriteFile(tailscaleHostsPath, []byte("127.0.0.1 localhost\n"+tailscaleHostsBeginMarker+"\n203.0.113.10 headscale.example.com\n"+tailscaleHostsEndMarker+"\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			commands := []string{}
 			environment := agentUninstallEnvironment{
-				dataDir: dataDir, unitPath: unitPath, binaryPaths: []string{binaryPath}, tailscalePaths: tailscalePaths, tailscalePrivacyPath: tailscalePrivacyPath, tailscaleHostsPath: tailscaleHostsPath,
+				dataDir: dataDir, unitPath: unitPath, binaryPaths: []string{binaryPath}, tailscalePaths: tailscalePaths, tailscalePrivacyPath: tailscalePrivacyPath, tailscaleEndpointPaths: tailscaleEndpointPaths, tailscaleHostsPath: tailscaleHostsPath,
 				purgeRuntime: func(context.Context, bool) error { return nil },
 				run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 					commands = append(commands, name+" "+strings.Join(arguments, " "))
@@ -129,6 +141,15 @@ func TestAgentUninstallRemovesOnlyVastoraManagedTailscale(t *testing.T) {
 				}
 				if ownership == "external" && err != nil {
 					t.Fatalf("external Tailscale state was removed at %s: %v", path, err)
+				}
+			}
+			for _, path := range tailscaleEndpointPaths {
+				_, err := os.Stat(path)
+				if ownership == "managed" && !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("managed Tailscale endpoint state remained at %s", path)
+				}
+				if ownership == "external" && err != nil {
+					t.Fatalf("external Tailscale endpoint state was removed at %s: %v", path, err)
 				}
 			}
 			if got := strings.Contains(joined, "apt-get purge"); got != (ownership == "managed") {

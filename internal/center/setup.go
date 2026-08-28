@@ -32,9 +32,10 @@ type CenterNetworkConfig struct {
 }
 
 type InitialSetupInput struct {
-	Site      SiteInput          `json:"site"`
-	Network   CenterNetworkInput `json:"network"`
-	Headscale *HeadscaleInput    `json:"headscale,omitempty"`
+	Site                   SiteInput                    `json:"site"`
+	Network                CenterNetworkInput           `json:"network"`
+	Headscale              *HeadscaleInput              `json:"headscale,omitempty"`
+	TailscaleFixedEndpoint *TailscaleFixedEndpointInput `json:"tailscaleFixedEndpoint,omitempty"`
 }
 
 type InitialSetupResult struct {

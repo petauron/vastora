@@ -711,6 +711,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE agents DROP COLUMN operating_system`,
 		`ALTER TABLE agents DROP COLUMN architecture`,
 		`ALTER TABLE agents DROP COLUMN runtime_generation`,
+		`ALTER TABLE agents DROP COLUMN tailscale_ownership`,
 		`ALTER TABLE applications DROP COLUMN role`,
 		`ALTER TABLE applications DROP COLUMN runtime_generation`,
 		`ALTER TABLE deployments DROP COLUMN runtime_generation`,

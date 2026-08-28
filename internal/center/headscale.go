@@ -43,6 +43,7 @@ type TailscaleIsolationDesiredState struct {
 	ControlURL       string   `json:"controlUrl"`
 	ControlAddresses []string `json:"controlAddresses"`
 	ControlAliases   []string `json:"controlAliases,omitempty"`
+	StaticEndpoints  []string `json:"staticEndpoints"`
 }
 
 type headscaleClient struct {
@@ -153,6 +154,8 @@ func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, tr
 		if err := s.reconcileHeadscaleDNS(ctx); err != nil {
 			return IntegrationView{}, err
 		}
+	} else if _, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, tailscaleFixedEndpointSetting); err != nil {
+		return IntegrationView{}, fmt.Errorf("center: disable managed Tailscale fixed endpoint: %w", err)
 	}
 	return s.Integration(ctx, "headscale")
 }
@@ -238,7 +241,7 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 	if err != nil {
 		return nil, fmt.Errorf("center: stored Headscale endpoint is invalid: %w", err)
 	}
-	state := &TailscaleIsolationDesiredState{ControlURL: normalized}
+	state := &TailscaleIsolationDesiredState{ControlURL: normalized, StaticEndpoints: []string{}}
 	if mode != "builtin" {
 		return state, nil
 	}
@@ -255,10 +258,14 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 	if err != nil {
 		return nil, fmt.Errorf("center: read Headscale public binding: %w", err)
 	}
-	if !configured || net.ParseIP(binding.PublicAddress) == nil {
-		return nil, errors.New("center: built-in Headscale has no verified public address")
+	if !configured {
+		return state, nil
 	}
-	controlAddress := net.ParseIP(binding.PublicAddress).String()
+	publicIP := net.ParseIP(binding.PublicAddress)
+	if publicIP == nil {
+		return nil, errors.New("center: built-in Headscale public address is invalid")
+	}
+	controlAddress := publicIP.String()
 	if strings.TrimSpace(agentID) != "" && binding.BindAddress != binding.PublicAddress {
 		var local int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_network_candidates WHERE agent_id = ? AND address = ?`, agentID, binding.BindAddress).Scan(&local); err != nil {
@@ -269,7 +276,52 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 		}
 	}
 	state.ControlAddresses = []string{controlAddress}
+	fixedEndpoint, err := s.readTailscaleFixedEndpoint(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("center: read Tailscale fixed endpoint: %w", err)
+	}
+	if !fixedEndpoint.Enabled {
+		return state, nil
+	}
+	owner, err := s.coLocatedTailscaleEndpointOwner(ctx, fixedEndpoint.LocalAddress)
+	if err != nil {
+		return nil, err
+	}
+	if owner != nil && owner.ID == strings.TrimSpace(agentID) && owner.Ownership == "managed" {
+		state.StaticEndpoints = []string{fixedEndpoint.Endpoint}
+	}
 	return state, nil
+}
+
+type tailscaleEndpointOwner struct {
+	ID        string
+	Ownership string
+}
+
+func (s *Store) coLocatedTailscaleEndpointOwner(ctx context.Context, bindAddress string) (*tailscaleEndpointOwner, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT a.id, a.tailscale_ownership
+		FROM agents a JOIN agent_network_candidates c ON c.agent_id = a.id
+		WHERE a.status = 'active' AND a.last_seen_at >= ? AND c.address = ?
+		ORDER BY a.id`, s.now().UTC().Add(-45*time.Second).Format(time.RFC3339Nano), bindAddress)
+	if err != nil {
+		return nil, fmt.Errorf("center: inspect co-located Tailscale endpoint owner: %w", err)
+	}
+	defer rows.Close()
+	owners := make([]tailscaleEndpointOwner, 0, 2)
+	for rows.Next() {
+		var owner tailscaleEndpointOwner
+		if err := rows.Scan(&owner.ID, &owner.Ownership); err != nil {
+			return nil, fmt.Errorf("center: inspect co-located Tailscale endpoint owner: %w", err)
+		}
+		owners = append(owners, owner)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("center: inspect co-located Tailscale endpoint owner: %w", err)
+	}
+	if len(owners) != 1 {
+		return nil, nil
+	}
+	return &owners[0], nil
 }
 
 func builtinHeadscaleHTTPClient(endpoint, dialAddress string, base *http.Client) (*http.Client, error) {

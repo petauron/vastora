@@ -51,6 +51,45 @@ added to Center's repeated `--headscale-allowed-url` startup option before they
 can be selected in the browser. Agent enrollment tokens expire after ten
 minutes and work only once.
 
+## Optional fixed Tailscale direct endpoint
+
+Built-in Headscale includes the self-hosted DERP relay and a Cloudflare
+STUN-only discovery entry by default. Most installations should keep **Publish
+a fixed public Tailscale endpoint** off. Cloudflare may observe the STUN probe's
+source IP, source port, and timing, but does not carry DERP, TURN, or application
+traffic.
+
+Enable the fixed endpoint in first-run **Advanced settings** or later on the
+**Network** page only when all of these are true:
+
+- the Center host has a reserved or otherwise stable public IPv4;
+- the provider firewall and host firewall allow UDP `41641`;
+- a NAT router, if present, forwards public UDP `41641` to the selected local
+  IPv4 on the Center host; and
+- the co-located Agent uses the Tailscale installation managed by Vastora.
+
+The existing public-entry check proves only TCP 80/443. It does not validate UDP
+`41641`, and Vastora never enables the fixed endpoint from that result. Check the
+host listener after the Agent applies the setting:
+
+```sh
+sudo ss -lunp 'sport = :41641'
+tailscale debug derp-map
+```
+
+Then validate from a different tailnet machine. Inspect its received netmap and
+run an actual peer ping; `tailscale netcheck` by itself is not sufficient:
+
+```sh
+tailscale debug netmap
+tailscale ping <center-tailnet-name-or-ip>
+```
+
+The ping must report a direct path for runtime proof. If it cannot, disable the
+fixed endpoint on the Network page. Agent removes only Vastora's endpoint files
+and returns to ordinary STUN discovery; it does not delete node identity or
+`tailscaled.state`.
+
 ## Uninstall Center
 
 Use the same verified public entry point. It opens an interactive terminal menu

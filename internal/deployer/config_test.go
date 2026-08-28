@@ -43,6 +43,7 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 		"    verify_clients: true",
 		"    automatically_add_embedded_derp_region: true",
 		"  urls: []",
+		"    - /etc/headscale/derp.yaml",
 		"  auto_update_enabled: false",
 		"disable_check_updates: true",
 		"logtail:\n  enabled: false",
@@ -52,6 +53,15 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 		if !strings.Contains(headscale, expected) {
 			t.Fatalf("Headscale configuration is missing %q:\n%s", expected, headscale)
 		}
+	}
+	derpMap := string(renderHeadscaleDERPMap())
+	for _, expected := range []string{"hostname: stun.cloudflare.com", "stunport: 3478", "stunonly: true", "derpport: 0"} {
+		if !strings.Contains(derpMap, expected) {
+			t.Fatalf("Cloudflare STUN map is missing %q:\n%s", expected, derpMap)
+		}
+	}
+	if strings.Contains(derpMap, "turn.cloudflare.com") || strings.Contains(derpMap, "stunonly: false") {
+		t.Fatalf("Cloudflare was configured as a relay:\n%s", derpMap)
 	}
 	if strings.Contains(headscale, "controlplane.tailscale.com") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") || strings.Contains(headscale, "v6:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)

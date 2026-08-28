@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { CableIcon, CloudIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
-import type { AgentView, HeadscaleJoin, Integration, NetworkKind, NetworkProfile } from "../types";
+import type { AgentView, HeadscaleJoin, Integration, NetworkKind, NetworkProfile, TailscaleFixedEndpoint, TailscaleFixedEndpointInput } from "../types";
 import type { Language } from "../translations";
 import { CopyButton, PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 
-type IntegrationEditor = "headscale" | "cloudflare" | null;
+type IntegrationEditor = "headscale" | "cloudflare" | "tailscale-endpoint" | null;
 
 export function NetworkView({ data, language, mutate }: { data: AppData; language: Language; mutate: Mutate }) {
   const [editor, setEditor] = useState<IntegrationEditor>(null);
@@ -28,6 +28,7 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
   const [joinError, setJoinError] = useState("");
   const headscale = integration(data.integrations, "headscale");
   const cloudflare = integration(data.integrations, "cloudflare");
+  const tailscaleFixedEndpoint = data.tailscaleFixedEndpoint;
   const activeAgents = data.agents.filter((agent) => agent.status === "active");
   const enabledCount = (kind: NetworkKind) => activeAgents.filter((agent) => agent.networkProfile?.enabledKinds.includes(kind)).length;
   const joinedAgentHasHeadscale = joinAgentID !== "" && data.agents.some((agent) => agent.id === joinAgentID && agent.networkCandidates.some((candidate) => candidate.kind === "headscale"));
@@ -57,6 +58,12 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
         <CapabilityCard icon={<Globe2Icon />} title={copy(language, "公网地址", "Public address")} description={copy(language, "仅用于确实拥有公网入站地址的服务器。", "Only for servers that truly have an inbound public address.")} count={enabledCount("public")} language={language} technical={copy(language, "NAT 出口地址不算公网入站能力；Vastora 不会自动修改防火墙。", "A NAT egress address is not public ingress. Vastora does not change the firewall automatically.")} />
       </div>
 
+      {tailscaleFixedEndpoint?.available ? <Card>
+        <CardHeader><CardTitle className="flex items-center gap-2"><RouterIcon />{copy(language, "固定 Tailscale 直连端点", "Fixed Tailscale direct endpoint")}</CardTitle><CardDescription>{copy(language, "仅在公网 IPv4 和 UDP 41641 映射稳定时使用；默认的 STUN 自动发现仍然保留。", "Use only with a stable public IPv4 and UDP 41641 mapping. Default STUN discovery remains available.")}</CardDescription><CardAction><StateBadge value={tailscaleFixedEndpoint.status} /></CardAction></CardHeader>
+        <CardContent className="flex flex-col gap-3"><p className="text-sm text-muted-foreground">{tailscaleFixedEndpoint.enabled ? `${tailscaleFixedEndpoint.endpoint} → ${tailscaleFixedEndpoint.localAddress}:41641/UDP` : copy(language, "当前关闭，Tailscale 会通过 STUN 自动发现可用直连路径。", "Currently off. Tailscale uses STUN to discover a direct path automatically.")}</p>{tailscaleFixedEndpoint.status === "action_required" ? <Alert variant="destructive"><AlertTitle>{copy(language, "需要重新确认", "Confirmation required")}</AlertTitle><AlertDescription>{copy(language, "原本确认的本机地址已经不存在，Vastora 已停止下发旧端点。", "The confirmed local address is no longer present, so Vastora stopped advertising the stale endpoint.")}</AlertDescription></Alert> : null}<details className="text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy(language, "隐私与回退", "Privacy and fallback")}</summary><p className="mt-2 leading-5">{copy(language, "Cloudflare 仅提供 stun.cloudflare.com:3478/UDP 的 STUN 探测，可能看到源 IP、源端口和探测时间；应用流量不会经过 Cloudflare。关闭固定端点会删除 Vastora 自己的配置并恢复 STUN 自动发现。", "Cloudflare provides STUN discovery only at stun.cloudflare.com:3478/UDP and may observe source IP, source port, and probe timing. Application traffic never passes through Cloudflare. Disabling the fixed endpoint removes only Vastora-owned configuration and restores STUN discovery.")}</p></details></CardContent>
+        <CardFooter className="justify-end"><Button onClick={() => setEditor("tailscale-endpoint")} size="sm" variant="outline">{copy(language, "配置", "Configure")}</Button></CardFooter>
+      </Card> : null}
+
       <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "外部服务", "Connections")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "可选连接只在需要自动管理域名或公网网页时使用。", "Optional connections are used only for automatic domain management or public websites.")}</p></div>
         <Card>
@@ -78,6 +85,7 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
 
       <NetworkProfileSheet agent={profileAgent} language={language} onClose={() => setProfileAgent(null)} onSave={async (agent, profile) => { await mutate(() => api.confirmNetworkProfile(agent.id, profile), copy(language, "节点网络已确认。", "Node network confirmed.")); setProfileAgent(null); }} />
       <HeadscaleSheet integration={headscale} language={language} open={editor === "headscale"} onClose={() => setEditor(null)} onSave={async (input) => { await mutate(() => api.configureHeadscale(input), copy(language, "Headscale 已连接。", "Headscale connected.")); setEditor(null); }} />
+      {tailscaleFixedEndpoint ? <TailscaleFixedEndpointSheet endpoint={tailscaleFixedEndpoint} language={language} open={editor === "tailscale-endpoint"} onClose={() => setEditor(null)} onSave={async (input) => { await mutate(() => api.configureTailscaleFixedEndpoint(input), copy(language, "固定直连端点配置已保存。", "Fixed direct endpoint settings saved.")); setEditor(null); }} /> : null}
       <CloudflareSheet integration={cloudflare} language={language} open={editor === "cloudflare"} onClose={() => setEditor(null)} onConnected={async () => { await mutate(async () => undefined, copy(language, "Cloudflare 已连接。", "Cloudflare connected.")); setEditor(null); }} />
     </section>
   );
@@ -166,6 +174,50 @@ function NetworkProfileSheet({ agent, language, onClose, onSave }: { agent: Agen
 function NetworkKindField({ candidates, checked, kind, language, selected, onSelected, onToggle }: { candidates: AgentView["networkCandidates"]; checked: boolean; kind: "lan" | "headscale"; language: Language; selected: string; onSelected: (value: string) => void; onToggle: (value: boolean) => void }) {
   const title = kind === "lan" ? copy(language, "局域网", "Local network") : copy(language, "安全私网", "Secure private network");
   return <FieldSet data-disabled={candidates.length === 0}><FieldLegend>{title}</FieldLegend><Field orientation="horizontal"><FieldLabel htmlFor={`network-${kind}`}>{copy(language, "启用此网络", "Enable this network")}</FieldLabel><Switch checked={checked} disabled={candidates.length === 0} id={`network-${kind}`} onCheckedChange={(value) => { onToggle(value); if (value && !selected) onSelected(candidates[0]?.address ?? ""); }} /></Field>{checked ? <Field><FieldLabel htmlFor={`address-${kind}`}>{copy(language, "使用地址", "Use address")}</FieldLabel><SelectControl id={`address-${kind}`} onValueChange={onSelected} options={candidates.map((candidate) => ({ value: candidate.address, label: `${candidate.address} — ${candidate.interface}` }))} value={selected} /></Field> : null}</FieldSet>;
+}
+
+function TailscaleFixedEndpointSheet({ endpoint, language, open, onClose, onSave }: { endpoint: TailscaleFixedEndpoint; language: Language; open: boolean; onClose: () => void; onSave: (input: TailscaleFixedEndpointInput) => Promise<void> }) {
+  const [enabled, setEnabled] = useState(endpoint.enabled);
+  const [publicEndpoint, setPublicEndpoint] = useState(endpoint.endpoint || endpoint.detectedEndpoint);
+  const [localAddress, setLocalAddress] = useState(endpoint.localAddress || endpoint.detectedLocalAddress);
+  const [confirmed, setConfirmed] = useState(false);
+  const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    setEnabled(endpoint.enabled);
+    setPublicEndpoint(endpoint.status === "action_required" ? endpoint.detectedEndpoint : endpoint.endpoint || endpoint.detectedEndpoint);
+    setLocalAddress(endpoint.status === "action_required" ? endpoint.detectedLocalAddress : endpoint.localAddress || endpoint.detectedLocalAddress);
+    setConfirmed(false);
+    setTouched(false);
+    setError("");
+  }, [open, endpoint]);
+  const endpointValid = validFixedTailscaleEndpoint(publicEndpoint);
+  const localValid = endpoint.localAddressCandidates.some((candidate) => candidate.address === localAddress);
+  const endpointInvalid = enabled && touched && !endpointValid;
+  const localInvalid = enabled && touched && !localValid;
+  const confirmationInvalid = enabled && touched && !confirmed;
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setTouched(true);
+    setError("");
+    if (enabled && (!endpointValid || !localValid || !confirmed)) return;
+    setBusy(true);
+    try {
+      await onSave({ enabled, endpoint: enabled ? publicEndpoint : "", localAddress: enabled ? localAddress : "", confirmMapping: enabled && confirmed });
+    } catch (submitError) {
+      setError(userError(language, submitError));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={open}><SheetContent className="sm:max-w-lg"><SheetHeader><SheetTitle>{copy(language, "配置固定 Tailscale 直连端点", "Configure fixed Tailscale direct endpoint")}</SheetTitle><SheetDescription>{copy(language, "此功能只修改 Vastora 管理的 Tailscale。已有或外部 Tailscale 不会被接管。", "This affects only Vastora-managed Tailscale. Existing or externally managed installations are never taken over.")}</SheetDescription></SheetHeader><form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Alert><NetworkIcon /><AlertTitle>{copy(language, "默认无需开启", "Usually leave this off")}</AlertTitle><AlertDescription>{copy(language, "内置 Headscale 会同时使用自建 DERP 和 Cloudflare STUN 自动发现。固定端点只适合已保留公网 IPv4、且 UDP 41641 映射长期不变的主机。", "Bundled Headscale already uses the self-hosted DERP and Cloudflare STUN discovery. A fixed endpoint is only for a reserved public IPv4 with a stable UDP 41641 mapping.")}</AlertDescription></Alert>{endpoint.status === "action_required" ? <Alert variant="destructive"><AlertTitle>{copy(language, "旧地址已停止下发", "The stale endpoint is no longer advertised")}</AlertTitle><AlertDescription>{copy(language, "请选择当前本机地址并重新确认，或关闭此功能。", "Select a current local address and confirm it again, or disable this feature.")}</AlertDescription></Alert> : null}<Field orientation="horizontal"><FieldLabel htmlFor="tailscale-fixed-endpoint-enabled"><span>{copy(language, "发布固定公网端点", "Publish a fixed public endpoint")}</span><span className="text-xs font-normal text-muted-foreground">{copy(language, "关闭后删除 Vastora 自己的配置并恢复 STUN 自动发现", "Turning this off removes Vastora-owned configuration and restores STUN discovery")}</span></FieldLabel><Switch checked={enabled} id="tailscale-fixed-endpoint-enabled" onCheckedChange={(checked) => { setEnabled(checked); setConfirmed(false); }} /></Field>{enabled ? <><Field data-invalid={endpointInvalid}><FieldLabel htmlFor="tailscale-fixed-endpoint-public">{copy(language, "固定公网 IPv4 端点", "Fixed public IPv4 endpoint")}</FieldLabel><Input aria-invalid={endpointInvalid} autoCapitalize="none" autoCorrect="off" id="tailscale-fixed-endpoint-public" onBlur={() => setTouched(true)} onChange={(event) => { setPublicEndpoint(event.target.value.trim()); setConfirmed(false); }} placeholder="203.0.113.10:41641" spellCheck={false} value={publicEndpoint} />{endpointInvalid ? <FieldError>{copy(language, "请输入公网 IPv4，并固定使用端口 41641。", "Enter a public IPv4 address using fixed port 41641.")}</FieldError> : <FieldDescription>{copy(language, "Vastora 不会把检测到的出口 IP 自动当成固定地址。", "Vastora never treats a detected egress IP as a fixed address automatically.")}</FieldDescription>}</Field><Field data-invalid={localInvalid}><FieldLabel htmlFor="tailscale-fixed-endpoint-local">{copy(language, "本机接收地址", "Local receiving address")}</FieldLabel><SelectControl id="tailscale-fixed-endpoint-local" onValueChange={(value) => { setLocalAddress(value); setConfirmed(false); }} options={[{ value: "", label: copy(language, "选择本机地址", "Select a local address"), disabled: true }, ...endpoint.localAddressCandidates.map((candidate) => ({ value: candidate.address, label: `${candidate.address} — ${candidate.interface}` }))]} required value={localAddress} />{localInvalid ? <FieldError>{copy(language, "请选择当前仍存在的本机 IPv4 地址。", "Select a local IPv4 address that is still present.")}</FieldError> : <FieldDescription>{copy(language, "云平台或路由器必须把公网 UDP 41641 转发到这个地址。", "The cloud platform or router must forward public UDP 41641 to this address.")}</FieldDescription>}</Field><Alert><RouterIcon /><AlertTitle>{copy(language, "将应用的映射", "Mapping to apply")}</AlertTitle><AlertDescription>{publicEndpoint || "—"} → {localAddress || "—"}:41641/UDP</AlertDescription></Alert><Field data-invalid={confirmationInvalid} orientation="horizontal"><FieldLabel htmlFor="tailscale-fixed-endpoint-confirm"><span>{copy(language, "我已确认公网 IP 已保留且 UDP 映射有效", "I confirmed the public IP is reserved and the UDP mapping works")}</span><span className="text-xs font-normal text-muted-foreground">{copy(language, "HTTP/HTTPS 检测和 tailscale netcheck 都不能单独证明该映射有效", "HTTP/HTTPS checks and tailscale netcheck alone do not prove this mapping works")}</span></FieldLabel><Switch aria-invalid={confirmationInvalid} checked={confirmed} id="tailscale-fixed-endpoint-confirm" onCheckedChange={setConfirmed} /></Field>{confirmationInvalid ? <FieldError>{copy(language, "启用前必须明确确认这项 UDP 映射。", "Explicitly confirm the UDP mapping before enabling it.")}</FieldError> : null}</> : null}<details className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground"><summary className="cursor-pointer font-medium text-foreground">{copy(language, "Cloudflare STUN 隐私说明", "Cloudflare STUN privacy note")}</summary><p className="mt-2 leading-5">{copy(language, "STUN 请求仅用于发现 NAT 映射。Cloudflare 可能看到源 IP、源端口和探测时间，但不会承载 Tailscale DERP、TURN 或应用流量。", "STUN requests are used only to discover NAT mappings. Cloudflare may observe source IP, source port, and probe timing, but it does not carry Tailscale DERP, TURN, or application traffic.")}</p></details>{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || enabled && (!endpointValid || !localValid || !confirmed)} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存配置", "Save settings")}</Button></SheetFooter></form></SheetContent></Sheet>;
+}
+
+function validFixedTailscaleEndpoint(value: string) {
+  const match = value.match(/^(\d{1,3}(?:\.\d{1,3}){3}):41641$/);
+  return Boolean(match && match[1].split(".").every((part) => Number(part) <= 255));
 }
 
 function HeadscaleSheet({ integration, language, open, onClose, onSave }: { integration: Integration; language: Language; open: boolean; onClose: () => void; onSave: (input: { mode: "builtin" | "external"; url: string; apiKey?: string }) => Promise<void> }) {

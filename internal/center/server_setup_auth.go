@@ -112,6 +112,12 @@ func (s *Server) handleSetupComplete(writer http.ResponseWriter, request *http.R
 			writeError(writer, http.StatusBadRequest, err)
 			return
 		}
+		if input.TailscaleFixedEndpoint != nil {
+			if _, err := s.store.ConfigureTailscaleFixedEndpoint(request.Context(), *input.TailscaleFixedEndpoint); err != nil {
+				writeError(writer, http.StatusBadRequest, err)
+				return
+			}
+		}
 	}
 	result, err := s.store.CompleteInitialSetup(request.Context(), input)
 	if err != nil {

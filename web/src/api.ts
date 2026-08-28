@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -122,6 +122,8 @@ export const api = {
 	configureSetupDNS: (input: { centerUrl: string; headscaleUrl?: string; publicAddress: string; gatewayAddress: string; natConfirmed: boolean }) => request<{ records: Array<{ id: string; type: "A"; name: string; content: string }> }>("/api/v1/setup/cloudflare/dns", { method: "POST", body: JSON.stringify(input) }),
   verifySetupPublicEntry: (input: { publicAddress: string; gatewayAddress: string; natConfirmed: boolean }) => request<{ status: "ready"; publicAddress: string; gatewayAddress: string; ports: number[] }>("/api/v1/setup/public-entry/verify", { method: "POST", body: JSON.stringify(input) }),
   configureHeadscale: (input: { mode: "builtin" | "external"; url: string; apiKey?: string }) => request<Integration>("/api/v1/integrations/headscale", { method: "PUT", body: JSON.stringify(input) }),
+  tailscaleFixedEndpoint: () => request<TailscaleFixedEndpoint>("/api/v1/network/tailscale-fixed-endpoint"),
+  configureTailscaleFixedEndpoint: (input: TailscaleFixedEndpointInput) => request<TailscaleFixedEndpoint>("/api/v1/network/tailscale-fixed-endpoint", { method: "PUT", body: JSON.stringify(input) }),
   createHeadscaleJoin: (agentId: string) => request<HeadscaleJoin>(`/api/v1/agents/${encodeURIComponent(agentId)}/headscale-join`, { method: "POST", body: "{}" }),
   createSource: (source: {
     id: string;

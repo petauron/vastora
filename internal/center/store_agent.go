@@ -66,6 +66,7 @@ type AgentView struct {
 	NetworkCandidates    []networking.Candidate `json:"networkCandidates"`
 	NetworkProfile       *networking.Profile    `json:"networkProfile,omitempty"`
 	GatewayHealthy       bool                   `json:"gatewayHealthy"`
+	TailscaleOwnership   string                 `json:"tailscaleOwnership"`
 }
 
 func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
@@ -280,6 +281,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if heartbeat.ApplicationRuntimeGeneration < 0 || heartbeat.ApplicationRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 		return errors.New("center: unsupported Agent application runtime generation")
 	}
+	if heartbeat.TailscaleOwnership != "managed" && heartbeat.TailscaleOwnership != "external" && heartbeat.TailscaleOwnership != "" {
+		return errors.New("center: Agent reported an unsupported Tailscale ownership")
+	}
 	if err := s.authenticateAgent(ctx, id, credential); err != nil {
 		return err
 	}
@@ -341,7 +345,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation FROM agents WHERE id = ?`, id).Scan(&previousRuntimeGeneration); err != nil {
 		return fmt.Errorf("center: read Agent runtime generation: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = CASE WHEN runtime_generation < ? THEN ? ELSE runtime_generation END, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.ApplicationRuntimeGeneration, now.Format(time.RFC3339Nano), id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = CASE WHEN runtime_generation < ? THEN ? ELSE runtime_generation END, tailscale_ownership = ?, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_network_candidates WHERE agent_id = ?`, id); err != nil {
@@ -414,7 +418,7 @@ func invalidateUnusableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID s
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, tailscale_ownership FROM agents ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
@@ -424,7 +428,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		var enrolledAt, lastSeenAt string
 		var rolesJSON, capabilitiesJSON []byte
 		var gatewayHealthy int
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy); err != nil {
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.TailscaleOwnership); err != nil {
 			return nil, fmt.Errorf("center: scan agent: %w", err)
 		}
 		var err error

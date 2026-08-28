@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 23
+const centerSchemaVersion = 24
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -123,7 +123,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			roles_json BLOB NOT NULL DEFAULT '[]',
 			capabilities_json BLOB NOT NULL DEFAULT '{}',
 			gateway_healthy INTEGER NOT NULL DEFAULT 0,
-			runtime_generation INTEGER NOT NULL DEFAULT 0
+			runtime_generation INTEGER NOT NULL DEFAULT 0,
+			tailscale_ownership TEXT NOT NULL DEFAULT '' CHECK(tailscale_ownership IN ('', 'managed', 'external'))
 		)`,
 		`CREATE TABLE site_gateways (
 			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,

@@ -203,14 +203,28 @@ single-use pre-auth keys, but it does not embed Headscale logic into the Center
 process.
 
 Bundled Headscale runs an authenticated embedded DERP relay and advertises no
-Tailscale-operated DERP regions. Direct peer-to-peer WireGuard paths remain the
-preferred data path; nodes fall back only to the bundled relay. Headscale
-update checks, remote DERP-map updates, Logtail, and client auto-update
-instructions are disabled. Vastora-managed Linux Tailscale services also opt
-out of Tailscale log upload through a systemd override that Agent install and
-upgrade reconcile idempotently. The embedded STUN listener uses UDP 3478, which
-operators must allow through both host and provider firewalls for effective NAT
-discovery.
+Tailscale-operated DERP regions. Its static custom DERP map also contains
+`stun.cloudflare.com:3478/udp` as a `STUNOnly` node. Cloudflare therefore helps
+clients discover NAT mappings, but it never carries Vastora DERP, TURN, or
+application traffic. Direct peer-to-peer WireGuard paths remain the preferred
+data path; nodes fall back only to the bundled relay. Headscale update checks,
+remote DERP-map updates, Logtail, and client auto-update instructions are
+disabled. Vastora-managed Linux Tailscale services also opt out of Tailscale
+log upload through a systemd override that Agent install and upgrade reconcile
+idempotently. Operators should allow UDP 3478 for effective NAT discovery.
+Cloudflare may observe the STUN probe's source IP, source port, and timing.
+
+An optional fixed public endpoint can improve direct connectivity on a Center
+host with a reserved public IPv4 and a stable UDP `41641` mapping. It is off by
+default and can be enabled only through the first-run advanced settings or the
+Network page with an explicit mapping confirmation. Center stores the choice
+and sends it only to the single active, co-located Vastora-managed Agent. Agent
+uses the pinned Tailscale version, writes a dedicated configuration and systemd
+drop-in atomically, restarts and checks the daemon and UDP listener, and rolls
+back both files on failure. Disabling the option removes only Vastora-owned
+files. External Headscale and user-managed Tailscale installations never
+receive or display this setting. Public HTTP/HTTPS reachability is not treated
+as proof that UDP `41641` works.
 
 The strict no-external-telemetry boundary applies to Vastora-managed Linux
 `tailscaled`. Tailscale's macOS GUI clients do not support the equivalent opt-out;

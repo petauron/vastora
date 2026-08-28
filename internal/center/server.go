@@ -124,6 +124,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/setup/cloudflare/dns", s.requireAuth(true, s.handleConfigureSetupDNS))
 	mux.HandleFunc("POST /api/v1/setup/public-entry/verify", s.requireAuth(true, s.handleVerifySetupPublicEntry))
 	mux.HandleFunc("PUT /api/v1/integrations/headscale", s.requireAuth(true, s.handleConfigureHeadscale))
+	mux.HandleFunc("GET /api/v1/network/tailscale-fixed-endpoint", s.requireAuth(false, s.handleTailscaleFixedEndpoint))
+	mux.HandleFunc("PUT /api/v1/network/tailscale-fixed-endpoint", s.requireAuth(true, s.handleTailscaleFixedEndpoint))
 	mux.HandleFunc("POST /api/v1/agents/{id}/headscale-join", s.requireAuth(true, s.handleCreateHeadscaleJoin))
 	mux.HandleFunc("GET /api/v1/actions", s.requireAuth(false, s.handleListActions))
 	mux.HandleFunc("GET /api/v1/agents", s.requireAuth(false, s.handleListAgents))

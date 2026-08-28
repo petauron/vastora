@@ -42,6 +42,7 @@ type NodeHeartbeat struct {
 	ApplicationEndpointsObserved bool
 	GatewayHealthy               bool
 	ApplicationRuntimeGeneration int
+	TailscaleOwnership           string
 }
 
 type ApplicationEndpointObservation struct {

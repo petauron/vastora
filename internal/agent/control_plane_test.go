@@ -370,6 +370,16 @@ func TestHeartbeatAppliesCenterTailscaleIsolationState(t *testing.T) {
 		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
 			t.Fatalf("unexpected request path: %s", request.URL.Path)
 		}
+		var heartbeat struct {
+			TailscaleEnrolled  bool   `json:"tailscaleEnrolled"`
+			TailscaleOwnership string `json:"tailscaleOwnership"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&heartbeat); err != nil {
+			t.Fatal(err)
+		}
+		if !heartbeat.TailscaleEnrolled || heartbeat.TailscaleOwnership != "managed" {
+			t.Fatalf("Tailscale host state was not reported: %#v", heartbeat)
+		}
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = response.Write([]byte(`{"tailscaleIsolation":{"controlUrl":"https://headscale.example.com","controlAddresses":["203.0.113.10"]}}`))
 	}))
@@ -383,7 +393,7 @@ func TestHeartbeatAppliesCenterTailscaleIsolationState(t *testing.T) {
 		t.Fatal(err)
 	}
 	var applied TailscaleIsolationDesiredState
-	client := Client{TailscaleIsolation: func(_ context.Context, state TailscaleIsolationDesiredState) error {
+	client := Client{TailscaleEnrolled: true, TailscaleOwnership: "managed", TailscaleIsolation: func(_ context.Context, state TailscaleIsolationDesiredState) error {
 		applied = state
 		return nil
 	}}

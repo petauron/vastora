@@ -91,12 +91,13 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
       };
     }
     case "network": {
-      const [status, agents, integrations] = await Promise.all([
+      const [status, agents, integrations, tailscaleFixedEndpoint] = await Promise.all([
         statusPromise,
         api.agents(),
-        api.integrations()
+        api.integrations(),
+        api.tailscaleFixedEndpoint()
       ]);
-      return { status, agents: agents.agents, integrations: integrations.integrations };
+      return { status, agents: agents.agents, integrations: integrations.integrations, tailscaleFixedEndpoint };
     }
     case "activity": {
       const [status, actions, agents] = await Promise.all([

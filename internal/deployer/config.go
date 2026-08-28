@@ -92,8 +92,9 @@ derp:
     stun_listen_addr: "0.0.0.0:3478"
     private_key_path: /var/lib/headscale/derp_server_private.key
     automatically_add_embedded_derp_region: true
-  urls: []
-  paths: []
+	  urls: []
+	  paths:
+	    - /etc/headscale/derp.yaml
   auto_update_enabled: false
   update_frequency: 24h
 
@@ -138,6 +139,22 @@ auto_update:
 node:
   expiry: 0
 `, endpoint))
+}
+
+func renderHeadscaleDERPMap() []byte {
+	return []byte(`regions:
+  998:
+    regionid: 998
+    regioncode: cloudflare-stun
+    regionname: Cloudflare STUN
+    nodes:
+      - name: cloudflare-stun
+        regionid: 998
+        hostname: stun.cloudflare.com
+        stunport: 3478
+        stunonly: true
+        derpport: 0
+`)
 }
 
 func renderHeadscalePolicy() []byte {

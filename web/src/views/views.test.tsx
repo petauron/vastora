@@ -147,6 +147,38 @@ describe("network and app views", () => {
     expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("加入安全私网"))).toBe(false);
   });
 
+  it("keeps the fixed Tailscale endpoint off by default and requires explicit UDP confirmation", async () => {
+    const data = dashboard();
+    data.integrations = [{ kind: "headscale", mode: "builtin", endpoint: "https://headscale.example.com", secretSet: true, status: "configured" }];
+    data.tailscaleFixedEndpoint = {
+      available: true,
+      enabled: false,
+      endpoint: "",
+      localAddress: "",
+      detectedEndpoint: "203.0.113.10:41641",
+      detectedLocalAddress: "192.168.1.2",
+      localAddressCandidates: [{ address: "192.168.1.2", interface: "eth0", kind: "lan", observedAt: "2026-08-28T00:00:00Z" }],
+      status: "disabled"
+    };
+    const configure = vi.spyOn(api, "configureTailscaleFixedEndpoint").mockResolvedValue({ ...data.tailscaleFixedEndpoint, enabled: true, endpoint: "203.0.113.10:41641", localAddress: "192.168.1.2", status: "configured" });
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    expect(container.textContent).toContain("当前关闭，Tailscale 会通过 STUN 自动发现");
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("配置"))?.click());
+    const enabled = document.querySelector<HTMLButtonElement>("#tailscale-fixed-endpoint-enabled")!;
+    expect(document.body.textContent).not.toContain("HTTP/HTTPS 检测和 tailscale netcheck 都不能单独证明");
+    act(() => enabled.click());
+    expect(document.body.textContent).toContain("HTTP/HTTPS 检测和 tailscale netcheck 都不能单独证明");
+    const save = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存配置"))!;
+    expect(save.disabled).toBe(true);
+    act(() => document.querySelector<HTMLButtonElement>("#tailscale-fixed-endpoint-confirm")?.click());
+    expect(save.disabled).toBe(false);
+    await act(async () => {
+      save.click();
+      await Promise.resolve();
+    });
+    expect(configure).toHaveBeenCalledWith({ enabled: true, endpoint: "203.0.113.10:41641", localAddress: "192.168.1.2", confirmMapping: true });
+  });
+
   it("shows only successful applications and marks host-privileged packages", () => {
     const container = render(<AppsView data={dashboard()} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("Komari 探针");
@@ -940,6 +972,48 @@ describe("network and app views", () => {
     });
     expect(container.textContent).toContain("公网入口已验证");
     expect(container.textContent).toContain("80、443 已验证");
+  });
+
+  it("persists and submits an explicitly confirmed fixed endpoint during first setup", async () => {
+    window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
+      step: 2,
+      name: "Oracle ARM",
+      timezone: "Asia/Singapore",
+      domainSuffix: "vastora.example.com",
+      mode: "headscale",
+      agentConnectUrl: "https://center.vastora.example.com",
+      headscaleMode: "builtin",
+      headscaleUrl: "https://headscale.vastora.example.com",
+      publicAddress: "203.0.113.10",
+      gatewayAddress: "10.0.0.157",
+      natConfirmed: false
+    }));
+    const verify = vi.spyOn(api, "verifySetupPublicEntry").mockResolvedValue({ status: "ready", publicAddress: "203.0.113.10", gatewayAddress: "10.0.0.157", ports: [80, 443] });
+    vi.spyOn(api, "configureSetupDNS").mockResolvedValue({ records: [] });
+    const onComplete = vi.fn().mockResolvedValue(undefined);
+    const publicAddresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-28T00:00:00Z" }];
+    const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", kind: "lan" as const, observedAt: "2026-08-28T00:00:00Z" }];
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={onComplete} onLanguage={() => undefined} publicAddressCandidates={publicAddresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
+    const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("高级设置"))!;
+    act(() => { advanced.open = true; advanced.dispatchEvent(new Event("toggle", { bubbles: true })); });
+    const fixedEndpoint = container.querySelector<HTMLButtonElement>("#setup-fixed-endpoint")!;
+    expect(container.querySelector("#setup-fixed-endpoint-confirmed")).toBeNull();
+    act(() => fixedEndpoint.click());
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
+    expect(container.textContent).toContain("请确认公网 IPv4 已固定");
+    expect(verify).not.toHaveBeenCalled();
+    act(() => container.querySelector<HTMLButtonElement>("#setup-fixed-endpoint-confirmed")?.click());
+    expect(window.sessionStorage.getItem("vastora.initial-setup.v1")).toContain('"publishFixedEndpoint":true');
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("203.0.113.10:41641/UDP");
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("完成并添加节点"))?.click();
+      await Promise.resolve();
+    });
+    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ tailscaleFixedEndpoint: { enabled: true, endpoint: "203.0.113.10:41641", localAddress: "10.0.0.157", confirmMapping: true } }));
   });
 
   it("keeps setup on the network step when the public probe fails", async () => {
