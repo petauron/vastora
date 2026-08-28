@@ -335,11 +335,17 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled}
+		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled, TailscaleOwnership: hostState.TailscaleOwnership}
 		if runtime.GOOS == "linux" {
 			if _, lookupErr := exec.LookPath("tailscale"); lookupErr == nil {
 				client.TailscaleIsolation = func(ctx context.Context, desired agent.TailscaleIsolationDesiredState) error {
-					return reconcileTailscaleIsolation(ctx, desired, false, defaultTailscaleIsolationEnvironment())
+					if err := reconcileTailscaleIsolation(ctx, desired, false, defaultTailscaleIsolationEnvironment()); err != nil {
+						return err
+					}
+					if hostState.TailscaleOwnership != "managed" {
+						return nil
+					}
+					return reconcileTailscaleEndpoint(ctx, desired.StaticEndpoints, defaultTailscaleEndpointEnvironment())
 				}
 			} else if !errors.Is(lookupErr, exec.ErrNotFound) {
 				return fmt.Errorf("locate Tailscale: %w", lookupErr)

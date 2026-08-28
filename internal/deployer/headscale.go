@@ -95,6 +95,9 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	if err := writeAtomic(filepath.Join(settings.ConfigDir, "config.yaml"), renderHeadscaleConfig(headscaleURL), 0o644); err != nil {
 		return "", "", err
 	}
+	if err := writeAtomic(filepath.Join(settings.ConfigDir, "derp.yaml"), renderHeadscaleDERPMap(), 0o644); err != nil {
+		return "", "", err
+	}
 	if err := writeAtomic(filepath.Join(settings.ConfigDir, "policy.hujson"), renderHeadscalePolicy(), 0o644); err != nil {
 		return "", "", err
 	}

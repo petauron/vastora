@@ -14,9 +14,8 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/tailscalehost"
 )
-
-const agentTailscaleVersion = "1.102.3"
 
 const agentInstallLoaderScript = `#!/bin/sh
 set -eu
@@ -217,7 +216,7 @@ printf '%s\n' 'HOST_STATE_VERSION=1' "TAILSCALE_OWNERSHIP=$tailscale_ownership" 
 chmod 0600 "$host_state_temporary"
 mv "$host_state_temporary" /var/lib/vastora/agent/host-install.env
 `
-		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_VERSION@@", shellQuote(agentTailscaleVersion))
+		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_VERSION@@", shellQuote(tailscalehost.SupportedVersion))
 		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_PREPARE_ARGUMENTS@@", prepareArguments)
 	} else {
 		headscaleBootstrap = `install -d -m 0700 /var/lib/vastora/agent

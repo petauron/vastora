@@ -50,9 +50,12 @@
   reachable coordination server. Center has no public DNS record or public
   Caddy route. The Headscale hostname forwards only the exact Agent installer
   path to Center; enrollment tokens remain ten-minute, single-use credentials.
-- Bundled Headscale advertises only its authenticated embedded DERP relay. It
-  never downloads Tailscale's public DERP map, performs no Headscale update
-  check, and keeps Headscale Logtail and client auto-update instructions
+- Bundled Headscale advertises its authenticated embedded DERP relay plus a
+  static `STUNOnly` entry for `stun.cloudflare.com:3478/udp`. It never downloads
+  Tailscale's public DERP map and never uses Cloudflare TURN or DERP. Cloudflare
+  may observe a STUN probe's source IP, source port, and timing, but no
+  application traffic crosses Cloudflare through this integration. Headscale
+  performs no update check and keeps Logtail and client auto-update instructions
   disabled. Vastora-managed Linux clients run `tailscaled` with
   `TS_NO_LOGS_NO_SUPPORT=true`, so private-network operational logs are not
   uploaded to Tailscale. Before starting or restarting the daemon, Agent pins
@@ -61,6 +64,14 @@
   DERP cache data without touching `tailscaled.state` or node keys. Public
   application traffic and explicitly configured public integrations remain
   outside this private-network isolation boundary.
+- A fixed `public-ipv4:41641` Tailscale endpoint is never inferred from HTTP,
+  request headers, an external egress-IP service, or the Center's public 80/443
+  probe. The administrator must enable it explicitly and confirm a reserved
+  IPv4 plus UDP mapping. Stale local addresses stop desired-state publication.
+  Only the single active, co-located Agent that reports Vastora-managed
+  Tailscale can receive it; user-managed clients are excluded. Agent writes only
+  dedicated Vastora-owned files, verifies the pinned daemon version and health,
+  and restores the previous files if the restart fails.
 - An external Headscale deployment is operator-controlled and must enforce an
   equivalent DERP and logging policy before it can satisfy the bundled
   deployment's private-network security boundary.

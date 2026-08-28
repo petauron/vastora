@@ -50,9 +50,13 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 		binaryPaths:          []string{"/usr/local/bin/vastora", "/usr/local/bin/vastora.previous"},
 		tailscalePaths:       []string{"/etc/apt/sources.list.d/tailscale.list", "/usr/share/keyrings/tailscale-archive-keyring.gpg", "/var/lib/tailscale"},
 		tailscalePrivacyPath: "/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf",
-		tailscaleHostsPath:   "/etc/hosts",
-		purgeRuntime:         agent.PurgeManagedRuntime,
-		run:                  runHostCommand,
+		tailscaleEndpointPaths: []string{
+			"/etc/vastora/tailscaled.json",
+			"/etc/systemd/system/tailscaled.service.d/91-vastora-endpoint.conf",
+		},
+		tailscaleHostsPath: "/etc/hosts",
+		purgeRuntime:       agent.PurgeManagedRuntime,
+		run:                runHostCommand,
 	})
 }
 
@@ -76,14 +80,15 @@ func safeAgentDataDir(value string) (string, error) {
 }
 
 type agentUninstallEnvironment struct {
-	dataDir              string
-	unitPath             string
-	binaryPaths          []string
-	tailscalePaths       []string
-	tailscalePrivacyPath string
-	tailscaleHostsPath   string
-	purgeRuntime         func(context.Context, bool) error
-	run                  func(context.Context, string, ...string) ([]byte, error)
+	dataDir                string
+	unitPath               string
+	binaryPaths            []string
+	tailscalePaths         []string
+	tailscalePrivacyPath   string
+	tailscaleEndpointPaths []string
+	tailscaleHostsPath     string
+	purgeRuntime           func(context.Context, bool) error
+	run                    func(context.Context, string, ...string) ([]byte, error)
 }
 
 func runHostCommand(ctx context.Context, name string, arguments ...string) ([]byte, error) {
@@ -120,6 +125,11 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 		for _, path := range environment.tailscalePaths {
 			if err := os.RemoveAll(path); err != nil {
 				return fmt.Errorf("remove Vastora-managed Tailscale state %s: %w", path, err)
+			}
+		}
+		for _, path := range environment.tailscaleEndpointPaths {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove Vastora-managed Tailscale endpoint state %s: %w", path, err)
 			}
 		}
 	}

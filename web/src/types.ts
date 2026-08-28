@@ -39,6 +39,7 @@ export type AppData = {
   actions: Action[];
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
   systemDomain: SystemDomain;
+  tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
 };
 
 export type SystemEndpointAlias = { kind: "center" | "headscale"; endpoint: string; certificateNotAfter?: string };
@@ -92,6 +93,26 @@ export type InitialSetupInput = {
   site: SiteInput;
   network: { agentConnectionMode: AgentConnectionMode; agentConnectUrl: string };
   headscale?: { mode: "builtin" | "external"; url: string; apiKey?: string };
+  tailscaleFixedEndpoint?: TailscaleFixedEndpointInput;
+};
+
+export type TailscaleFixedEndpointInput = {
+  enabled: boolean;
+  endpoint: string;
+  localAddress: string;
+  confirmMapping: boolean;
+};
+
+export type TailscaleFixedEndpoint = {
+  available: boolean;
+  enabled: boolean;
+  endpoint: string;
+  localAddress: string;
+  detectedEndpoint: string;
+  detectedLocalAddress: string;
+  localAddressCandidates: NetworkCandidate[];
+  status: "unavailable" | "disabled" | "configured" | "action_required";
+  lastError?: string;
 };
 
 export type DiagnosticCount = { total: number; healthy: number; warning: number; failed: number; disabled?: number };
@@ -123,6 +144,7 @@ export type AgentView = {
   networkCandidates: NetworkCandidate[];
   networkProfile?: NetworkProfile;
   gatewayHealthy: boolean;
+  tailscaleOwnership?: "managed" | "external" | "";
 };
 
 export type AgentEnrollment = { token: string; siteId: string; installerUrl: string; expiresAt: string };

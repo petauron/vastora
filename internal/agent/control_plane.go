@@ -36,12 +36,14 @@ type Client struct {
 	Decommissioner     HostDecommissioner
 	TailscaleIsolation func(context.Context, TailscaleIsolationDesiredState) error
 	TailscaleEnrolled  bool
+	TailscaleOwnership string
 }
 
 type TailscaleIsolationDesiredState struct {
 	ControlURL       string   `json:"controlUrl"`
 	ControlAddresses []string `json:"controlAddresses"`
 	ControlAliases   []string `json:"controlAliases,omitempty"`
+	StaticEndpoints  []string `json:"staticEndpoints"`
 }
 
 type HostDecommissioner interface {
@@ -414,6 +416,7 @@ func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
+		"tailscaleOwnership":           c.TailscaleOwnership,
 	}, connection.Credential, &response)
 	if err != nil {
 		return observeErr, err
