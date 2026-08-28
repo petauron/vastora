@@ -8,11 +8,10 @@ import (
 	"net/netip"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
-	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -73,6 +72,9 @@ grpc_listen_addr: 127.0.0.1:50443
 grpc_allow_insecure: false
 trusted_proxies:
   - 127.0.0.1/32
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
 
 noise:
   private_key_path: /var/lib/headscale/noise_private.key
@@ -167,10 +169,6 @@ func renderHeadscalePolicy() []byte {
 }
 
 func gatewayBindAddresses(ctx context.Context, publicAddress, bindAddress string, endpoints ...string) ([]string, error) {
-	candidates, err := networking.Discover(time.Now())
-	if err != nil {
-		return nil, fmt.Errorf("deployer: discover public gateway addresses: %w", err)
-	}
 	resolutions := make([]gatewayResolution, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		parsed, err := url.Parse(endpoint)
@@ -183,9 +181,11 @@ func gatewayBindAddresses(ctx context.Context, publicAddress, bindAddress string
 		}
 		resolutions = append(resolutions, gatewayResolution{hostname: parsed.Hostname(), addresses: resolved})
 	}
-	if strings.TrimSpace(publicAddress) == "" && strings.TrimSpace(bindAddress) == "" {
-		return selectGatewayBindAddresses(resolutions, candidates)
+	if strings.TrimSpace(publicAddress) == "" || strings.TrimSpace(bindAddress) == "" {
+		return nil, errors.New("deployer: confirmed public and local gateway addresses are required")
 	}
+	parsedBind := net.ParseIP(strings.TrimSpace(bindAddress))
+	candidates := []networking.Candidate{{Address: strings.TrimSpace(bindAddress), Kind: networking.Classify("configured", parsedBind)}}
 	return selectMappedGatewayBindAddress(resolutions, candidates, publicAddress, bindAddress)
 }
 
@@ -229,37 +229,6 @@ func selectMappedGatewayBindAddress(resolutions []gatewayResolution, candidates 
 	return formatGatewayBindAddresses([]netip.Addr{bindAddress}), nil
 }
 
-func selectGatewayBindAddresses(resolutions []gatewayResolution, candidates []networking.Candidate) ([]string, error) {
-	public := make(map[netip.Addr]struct{})
-	for _, candidate := range candidates {
-		if candidate.Kind == networking.KindPublic {
-			if address, err := netip.ParseAddr(candidate.Address); err == nil && address.Unmap().Is4() {
-				public[address.Unmap()] = struct{}{}
-			}
-		}
-	}
-	matched := make(map[netip.Addr]struct{})
-	for _, resolution := range resolutions {
-		hostMatched := false
-		for _, address := range resolution.addresses {
-			address = address.Unmap()
-			if _, exists := public[address]; exists {
-				matched[address] = struct{}{}
-				hostMatched = true
-			}
-		}
-		if !hostMatched {
-			return nil, fmt.Errorf("deployer: gateway hostname %s must resolve directly to a public address assigned to this server", resolution.hostname)
-		}
-	}
-	addresses := make([]netip.Addr, 0, len(matched))
-	for address := range matched {
-		addresses = append(addresses, address)
-	}
-	sort.Slice(addresses, func(left, right int) bool { return addresses[left].Compare(addresses[right]) < 0 })
-	return formatGatewayBindAddresses(addresses), nil
-}
-
 func formatGatewayBindAddresses(addresses []netip.Addr) []string {
 	result := make([]string, 0, len(addresses))
 	for _, address := range addresses {
@@ -283,15 +252,8 @@ func centerPrivateBindAddresses(value string) ([]string, error) {
 	if !requested.Is4() {
 		return nil, errors.New("deployer: Center private bind address must be IPv4")
 	}
-	candidates, err := networking.Discover(time.Now())
-	if err != nil {
-		return nil, fmt.Errorf("deployer: discover Center private address: %w", err)
-	}
-	for _, candidate := range candidates {
-		address, parseErr := netip.ParseAddr(candidate.Address)
-		if parseErr == nil && address.Unmap() == requested && candidate.Kind == networking.KindHeadscale {
-			return formatGatewayBindAddresses([]netip.Addr{requested}), nil
-		}
+	if networking.Classify("tailscale0", net.IP(requested.AsSlice())) == networking.KindHeadscale {
+		return formatGatewayBindAddresses([]netip.Addr{requested}), nil
 	}
 	return nil, errors.New("deployer: Center private bind address must be assigned to this server by Tailscale")
 }
@@ -316,32 +278,46 @@ func renderCaddyfile(centerURL, centerOrigin, headscaleURL string, centerBindAdd
 }
 
 func writeCenterGatewaySite(result *strings.Builder, endpoint, centerOrigin, certificatePath, privateKeyPath string, privateBindAddresses []string) {
-	httpEndpoint := "http://" + strings.TrimPrefix(endpoint, "https://")
-	addresses := strings.Join(append([]string{"127.0.0.1"}, privateBindAddresses...), " ")
-	result.WriteString(fmt.Sprintf(`%s {
-	bind %s
+	hostname := strings.TrimPrefix(endpoint, "https://")
+	writeExplicitTLSSite(result, hostname, "system", centerOrigin, certificatePath, privateKeyPath)
+	if len(privateBindAddresses) != 0 {
+		writeExplicitTLSSite(result, hostname, "headscale", centerOrigin, certificatePath, privateKeyPath)
+	}
+}
+
+func writeExplicitTLSSite(result *strings.Builder, hostname, listenerKind, upstream, certificatePath, privateKeyPath string) {
+	httpPort, httpsPort, _ := gatewayruntime.CaddyListenerPorts(listenerKind)
+	result.WriteString(fmt.Sprintf(`http://%s:%d {
+	bind 0.0.0.0
 	redir https://{host}{uri} 308
 }
 
-%s {
-	bind %s
+https://%s:%d {
+	bind 0.0.0.0
 	tls %s %s
 	reverse_proxy %s
 }
 
-`, httpEndpoint, addresses, endpoint, addresses, certificatePath, privateKeyPath, centerOrigin))
+`, hostname, httpPort, hostname, httpsPort, certificatePath, privateKeyPath, upstream))
 }
 
 func writeHeadscaleGatewaySite(result *strings.Builder, endpoint, centerOrigin string, bindAddresses []string) {
-	httpEndpoint := "http://" + strings.TrimPrefix(endpoint, "https://")
-	addresses := strings.Join(bindAddresses, " ")
-	result.WriteString(fmt.Sprintf(`%s {
-	bind 127.0.0.1 %s
+	hostname := strings.TrimPrefix(endpoint, "https://")
+	writeHeadscaleSite(result, hostname, "system", centerOrigin)
+	if len(bindAddresses) != 0 {
+		writeHeadscaleSite(result, hostname, "public", centerOrigin)
+	}
+}
+
+func writeHeadscaleSite(result *strings.Builder, hostname, listenerKind, centerOrigin string) {
+	httpPort, httpsPort, _ := gatewayruntime.CaddyListenerPorts(listenerKind)
+	result.WriteString(fmt.Sprintf(`http://%s:%d {
+	bind 0.0.0.0
 	redir https://{host}{uri} 308
 }
 
-%s {
-	bind 127.0.0.1 %s
+https://%s:%d {
+	bind 0.0.0.0
 	handle /install/agent.sh {
 		reverse_proxy %s
 	}
@@ -349,8 +325,8 @@ func writeHeadscaleGatewaySite(result *strings.Builder, endpoint, centerOrigin s
 		reverse_proxy %s
 	}
 	handle {
-		reverse_proxy 127.0.0.1:8081
+		reverse_proxy %s:8081
 	}
 }
-`, httpEndpoint, addresses, endpoint, addresses, centerOrigin, centerOrigin))
+`, hostname, httpPort, hostname, httpsPort, centerOrigin, centerOrigin, dockerruntime.HeadscaleAlias))
 }

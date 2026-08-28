@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
@@ -87,6 +89,9 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 		return "", "", fmt.Errorf("deployer: connect Docker: %w", err)
 	}
 	defer docker.Close()
+	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
+		return "", "", err
+	}
 	if err := writeAtomic(filepath.Join(settings.ConfigDir, "config.yaml"), renderHeadscaleConfig(headscaleURL), 0o644); err != nil {
 		return "", "", err
 	}
@@ -109,23 +114,10 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			return "", "", fmt.Errorf("deployer: create volume %s: %w", name, err)
 		}
 	}
-	gatewayExists, err := managedContainerExists(ctx, docker, DefaultGatewayContainer, gatewayruntime.CaddyComponentLabel)
-	if err != nil {
-		return "", "", err
-	}
-	legacyGatewayExists, err := managedContainerExists(ctx, docker, gatewayruntime.LegacyCenterCaddyContainer, "center-headscale-gateway")
-	if err != nil {
-		return "", "", err
-	}
-	if !gatewayExists && !legacyGatewayExists {
-		if err := ensurePortsAvailable(80, 443); err != nil {
-			return "", "", err
-		}
-	}
 	if err := settings.replaceHeadscale(ctx, docker); err != nil {
 		return "", "", err
 	}
-	if err := waitForURL(ctx, settings.HTTPClient, "http://127.0.0.1:8081/health", 90*time.Second); err != nil {
+	if err := waitForURL(ctx, settings.HTTPClient, "http://"+DefaultHeadscaleContainer+":8081/health", 90*time.Second); err != nil {
 		return "", "", fmt.Errorf("deployer: Headscale did not become healthy: %w", err)
 	}
 	apiKey := ""
@@ -135,15 +127,16 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			return "", "", err
 		}
 	}
-	replacement, err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, centerBindAddresses, bindAddresses, settings.CenterAliases, settings.HeadscaleAliases))
+	replacement, err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, centerBindAddresses, bindAddresses, settings.CenterAliases, settings.HeadscaleAliases), centerBindAddresses, bindAddresses)
 	if err != nil {
 		return "", "", err
 	}
 	for _, health := range []struct {
 		endpoint string
 		path     string
-	}{{centerURL, "/healthz"}, {headscaleURL, "/health"}} {
-		if err := waitForLocalGateway(ctx, health.endpoint, health.path, 3*time.Minute); err != nil {
+		port     int
+	}{{centerURL, "/healthz", 12443}, {headscaleURL, "/health", 443}} {
+		if err := waitForLocalGateway(ctx, health.endpoint, health.path, health.port, 3*time.Minute); err != nil {
 			rollbackErr := replacement.rollback(ctx, docker)
 			if rollbackErr != nil {
 				return "", "", errors.Join(fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err), rollbackErr)
@@ -213,7 +206,7 @@ func (installer DockerHeadscaleInstaller) settings(input deployapi.HeadscaleInst
 		return DockerHeadscaleInstaller{}, "", "", errors.New("deployer: absolute Headscale config directory is required")
 	}
 	if installer.CenterOrigin == "" {
-		installer.CenterOrigin = "127.0.0.1:8080"
+		installer.CenterOrigin = dockerruntime.CenterAlias + ":8080"
 	}
 	if installer.CenterDataVolume == "" {
 		installer.CenterDataVolume = "vastora_center-data"
@@ -263,7 +256,7 @@ func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, 
 	}
 	config, hostConfig := installer.headscaleContainerConfig()
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: config, HostConfig: hostConfig, Name: DefaultHeadscaleContainer,
+		Config: config, HostConfig: hostConfig, NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.HeadscaleAlias), Name: DefaultHeadscaleContainer,
 	})
 	if err != nil {
 		return fmt.Errorf("deployer: create Headscale container: %w", err)
@@ -275,20 +268,18 @@ func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, 
 }
 
 func (installer DockerHeadscaleInstaller) headscaleContainerConfig() (*container.Config, *container.HostConfig) {
-	httpPort := dockernetwork.MustParsePort("8081/tcp")
 	stunPort := dockernetwork.MustParsePort("3478/udp")
 	return &container.Config{
 			Image:        installer.HeadscaleImage,
 			Cmd:          []string{"serve"},
 			Labels:       map[string]string{"io.vastora.managed": "true", "io.vastora.component": "center-headscale"},
-			ExposedPorts: dockernetwork.PortSet{httpPort: struct{}{}, stunPort: struct{}{}},
+			ExposedPorts: dockernetwork.PortSet{dockernetwork.MustParsePort("8081/tcp"): struct{}{}, stunPort: struct{}{}},
 		}, &container.HostConfig{
-			NetworkMode:    container.NetworkMode("bridge"),
+			NetworkMode:    container.NetworkMode(dockerruntime.NetworkName),
 			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 			ReadonlyRootfs: true,
 			Tmpfs:          map[string]string{"/var/run/headscale": "rw,noexec,nosuid,size=16m,mode=1777"},
 			PortBindings: dockernetwork.PortMap{
-				httpPort: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "8081"}},
 				stunPort: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("0.0.0.0"), HostPort: "3478"}},
 			},
 			Mounts: []mount.Mount{
@@ -329,23 +320,6 @@ func removeManagedContainer(ctx context.Context, docker *client.Client, name, co
 	}
 	if _, err := docker.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true}); err != nil {
 		return fmt.Errorf("deployer: replace managed container %s: %w", name, err)
-	}
-	return nil
-}
-
-func ensurePortsAvailable(ports ...int) error {
-	listeners := make([]net.Listener, 0, len(ports))
-	defer func() {
-		for _, listener := range listeners {
-			_ = listener.Close()
-		}
-	}()
-	for _, port := range ports {
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-		if err != nil {
-			return fmt.Errorf("deployer: TCP port %d is unavailable; stop the conflicting service before installing built-in Headscale", port)
-		}
-		listeners = append(listeners, listener)
 	}
 	return nil
 }
@@ -467,7 +441,7 @@ func waitForURL(ctx context.Context, httpClient *http.Client, target string, tim
 	return lastErr
 }
 
-func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, timeout time.Duration) error {
+func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, internalPort int, timeout time.Duration) error {
 	parsed, err := url.Parse(endpoint)
 	if err != nil {
 		return err
@@ -475,7 +449,7 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, timeo
 	transport := &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:443")
+			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(dockerruntime.CaddyAlias, strconv.Itoa(internalPort)))
 		},
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: parsed.Hostname()},
 	}
@@ -484,7 +458,7 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, timeo
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://127.0.0.1"+healthPath, nil)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+healthPath, nil)
 		if err != nil {
 			return err
 		}

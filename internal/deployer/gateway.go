@@ -11,6 +11,8 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
@@ -24,7 +26,7 @@ type gatewayReplacement struct {
 	socket           string
 }
 
-func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, docker *client.Client, caddyfile []byte) (gatewayReplacement, error) {
+func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, docker *client.Client, caddyfile []byte, centerBindAddresses, publicBindAddresses []string) (gatewayReplacement, error) {
 	if err := recoverGatewayBackup(ctx, docker); err != nil {
 		return gatewayReplacement{}, err
 	}
@@ -71,10 +73,23 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 		_ = replacement.rollback(ctx, docker)
 		return gatewayReplacement{}, fmt.Errorf("deployer: remove stale Caddy Admin socket: %w", err)
 	}
+	initialState := gateway.DesiredState{Revision: 1, Listeners: []gateway.Listener{{Kind: "system", Address: "127.0.0.1", HTTPPort: 80, HTTPSPort: 443}}}
+	for _, address := range centerBindAddresses {
+		initialState.Listeners = append(initialState.Listeners, gateway.Listener{Kind: "headscale", Address: address, HTTPPort: 80, HTTPSPort: 443})
+	}
+	for _, address := range publicBindAddresses {
+		initialState.Listeners = append(initialState.Listeners, gateway.Listener{Kind: "public", Address: address, HTTPPort: 80, HTTPSPort: 443})
+	}
+	exposedPorts, portBindings, err := gatewayruntime.DockerPorts(initialState)
+	if err != nil {
+		_ = replacement.rollback(ctx, docker)
+		return gatewayReplacement{}, err
+	}
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image: installer.CaddyImage,
-			Cmd:   []string{"caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
+			Image:        installer.CaddyImage,
+			Cmd:          []string{"caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
+			ExposedPorts: exposedPorts,
 			Labels: map[string]string{
 				gatewayruntime.ManagedLabel:        "true",
 				gatewayruntime.ComponentLabel:      gatewayruntime.CaddyComponentLabel,
@@ -82,15 +97,17 @@ func (installer DockerHeadscaleInstaller) replaceGateway(ctx context.Context, do
 			},
 		},
 		HostConfig: &container.HostConfig{
-			NetworkMode:   container.NetworkMode("host"),
+			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
+			PortBindings:  portBindings,
 			Mounts: []mount.Mount{
 				{Type: mount.TypeVolume, Source: installer.CaddyDataVolume, Target: "/data"},
 				{Type: mount.TypeVolume, Source: installer.CaddyConfigVolume, Target: "/config"},
 				{Type: mount.TypeBind, Source: filepath.Dir(installer.CaddyAdminSocket), Target: filepath.Dir(installer.CaddyAdminSocket)},
 			},
 		},
-		Name: DefaultGatewayContainer,
+		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.CaddyAlias),
+		Name:             DefaultGatewayContainer,
 	})
 	if err != nil {
 		_ = replacement.rollback(ctx, docker)

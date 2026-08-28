@@ -10,6 +10,7 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
 const (
@@ -65,6 +66,9 @@ func (provisioner DockerTunnelProvisioner) Apply(ctx context.Context, state Tunn
 		return fmt.Errorf("agent: connect Docker for tunnel: %w", err)
 	}
 	defer docker.Close()
+	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
+		return err
+	}
 	if state.Status == "stopped" {
 		if _, err := docker.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			return fmt.Errorf("agent: remove cloudflared: %w", err)
@@ -90,10 +94,11 @@ func (provisioner DockerTunnelProvisioner) Apply(ctx context.Context, state Tunn
 			},
 		},
 		HostConfig: &container.HostConfig{
-			NetworkMode:   container.NetworkMode("host"),
+			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 		},
-		Name: name,
+		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.CloudflaredAlias),
+		Name:             name,
 	})
 	if err != nil {
 		return fmt.Errorf("agent: create cloudflared: %w", err)

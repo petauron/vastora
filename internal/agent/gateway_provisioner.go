@@ -9,13 +9,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
@@ -75,6 +79,18 @@ func (provisioner DockerGatewayProvisioner) ProtectedSystemServices(ctx context.
 }
 
 func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
+	return provisioner.reconcile(ctx, nil)
+}
+
+// Reconcile publishes exactly the sockets declared by the current desired
+// state. Docker port bindings are immutable, so a changed listener set causes
+// the managed Caddy container to be replaced before its configuration is
+// applied through the shared Admin socket.
+func (provisioner DockerGatewayProvisioner) Reconcile(ctx context.Context, desired gateway.DesiredState) error {
+	return provisioner.reconcile(ctx, &desired)
+}
+
+func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desired *gateway.DesiredState) error {
 	settings, err := provisioner.settings()
 	if err != nil {
 		return err
@@ -84,6 +100,9 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 		return err
 	}
 	defer docker.Close()
+	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
+		return err
+	}
 	existing, err := inspectManagedCaddy(ctx, docker, settings.Container)
 	if err != nil {
 		return err
@@ -92,7 +111,17 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 	if protectedSystemGateway && !caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) {
 		return errors.New("agent: the protected system gateway must be reconciled by the Center deployment helper before Agent can adopt it")
 	}
-	if existing != nil && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
+	var exposedPorts dockernetwork.PortSet
+	var portBindings dockernetwork.PortMap
+	if desired != nil {
+		exposedPorts, portBindings, err = gatewayruntime.DockerPorts(*desired)
+		if err != nil {
+			return err
+		}
+	}
+	matchesRuntime := existing != nil && existing.Container.HostConfig != nil && existing.Container.HostConfig.NetworkMode == container.NetworkMode(dockerruntime.NetworkName)
+	matchesPorts := desired == nil || existing != nil && reflect.DeepEqual(existing.Container.Config.ExposedPorts, exposedPorts) && reflect.DeepEqual(existing.Container.HostConfig.PortBindings, portBindings)
+	if existing != nil && matchesRuntime && matchesPorts && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
 		if existing.Container.State != nil && existing.Container.State.Running {
 			return nil
 		}
@@ -139,18 +168,28 @@ func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
 			return fmt.Errorf("agent: remove stale Caddy Admin socket: %w", err)
 		}
 	}
+	labels := map[string]string{
+		gatewayruntime.ManagedLabel:   "true",
+		gatewayruntime.ComponentLabel: gatewayruntime.CaddyComponentLabel,
+	}
+	if protectedSystemGateway {
+		labels[gatewayruntime.SystemServicesLabel] = existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel]
+	}
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image:  settings.Image,
-			Cmd:    []string{"caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
-			Labels: map[string]string{gatewayruntime.ManagedLabel: "true", gatewayruntime.ComponentLabel: gatewayruntime.CaddyComponentLabel},
+			Image:        settings.Image,
+			Cmd:          []string{"caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"},
+			ExposedPorts: exposedPorts,
+			Labels:       labels,
 		},
 		HostConfig: &container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
-			NetworkMode:   container.NetworkMode("host"),
+			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
+			PortBindings:  portBindings,
 			Mounts:        mounts,
 		},
-		Name: settings.Container,
+		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.CaddyAlias),
+		Name:             settings.Container,
 	})
 	if err != nil {
 		return fmt.Errorf("agent: create Caddy container: %w", err)

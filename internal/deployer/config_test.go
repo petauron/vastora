@@ -1,13 +1,13 @@
 package deployer
 
 import (
-	"net"
 	"net/netip"
 	"strings"
 	"testing"
 
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -30,18 +30,6 @@ func TestBundledServiceURLsUseStandardHTTPS(t *testing.T) {
 		if _, err := normalizePublicURL(value); err == nil {
 			t.Fatalf("unsafe URL was accepted: %s", value)
 		}
-	}
-}
-
-func TestPortPreflightReportsAConflict(t *testing.T) {
-	listener, err := net.Listen("tcp", ":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	port := listener.Addr().(*net.TCPAddr).Port
-	if err := ensurePortsAvailable(port); err == nil || !strings.Contains(err.Error(), "unavailable") {
-		t.Fatalf("occupied port was not rejected: %v", err)
 	}
 }
 
@@ -68,8 +56,8 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	if strings.Contains(headscale, "controlplane.tailscale.com") || strings.Contains(headscale, "tls_key_path") || strings.Contains(headscale, "extra_records:") || strings.Contains(headscale, "v6:") {
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
-	caddy := string(renderCaddyfile("https://center.example.com", "127.0.0.1:8080", "https://headscale.example.com", []string{"100.64.0.1"}, []string{"203.0.113.10"}, []deployapi.CenterEndpointAlias{{URL: "https://old-center.example.com"}}, nil))
-	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || strings.Count(caddy, "bind 127.0.0.1 100.64.0.1") != 4 || !strings.Contains(caddy, "bind 127.0.0.1 203.0.113.10") || !strings.Contains(caddy, "tls /etc/caddy/system/center.crt /etc/caddy/system/center.key") || !strings.Contains(caddy, "handle /install/agent.sh") || !strings.Contains(caddy, "handle /api/v1/agent-binaries/*") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com") || !strings.Contains(caddy, "https://old-center.example.com") || !strings.Contains(caddy, "https://headscale.example.com") || strings.Contains(caddy, ":8443") {
+	caddy := string(renderCaddyfile("https://center.example.com", dockerruntime.CenterAlias+":8080", "https://headscale.example.com", []string{"100.64.0.1"}, []string{"203.0.113.10"}, []deployapi.CenterEndpointAlias{{URL: "https://old-center.example.com"}}, nil))
+	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || strings.Count(caddy, "bind 0.0.0.0") < 6 || !strings.Contains(caddy, "reverse_proxy "+dockerruntime.CenterAlias+":8080") || !strings.Contains(caddy, "reverse_proxy "+dockerruntime.HeadscaleAlias+":8081") || !strings.Contains(caddy, "tls /etc/caddy/system/center.crt /etc/caddy/system/center.key") || !strings.Contains(caddy, "handle /install/agent.sh") || !strings.Contains(caddy, "handle /api/v1/agent-binaries/*") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com:12443") || !strings.Contains(caddy, "https://center.example.com:10443") || !strings.Contains(caddy, "https://headscale.example.com:443") || strings.Contains(caddy, ":8443") {
 		t.Fatalf("unexpected Caddy configuration:\n%s", caddy)
 	}
 	policy := string(renderHeadscalePolicy())
@@ -78,25 +66,21 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	}
 }
 
-func TestGatewayBindsOnlyResolvedLocalPublicAddresses(t *testing.T) {
+func TestGatewayBindsConfirmedNATAddressOnlyWhenDNSMatches(t *testing.T) {
 	resolutions := []gatewayResolution{
-		{hostname: "center.example.com", addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20"), netip.MustParseAddr("198.51.100.5")}},
-		{hostname: "headscale.example.com", addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20"), netip.MustParseAddr("2001:db8::20")}},
+		{hostname: "center.example.com", addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20")}},
+		{hostname: "headscale.example.com", addresses: []netip.Addr{netip.MustParseAddr("203.0.113.20")}},
 	}
-	candidates := []networking.Candidate{
-		{Address: "203.0.113.20", Kind: networking.KindPublic},
-		{Address: "100.64.0.1", Kind: networking.KindHeadscale},
-		{Address: "192.168.1.10", Kind: networking.KindLAN},
-	}
-	addresses, err := selectGatewayBindAddresses(resolutions, candidates)
+	candidates := []networking.Candidate{{Address: "10.0.0.157", Kind: networking.KindLAN}}
+	addresses, err := selectMappedGatewayBindAddress(resolutions, candidates, "203.0.113.20", "10.0.0.157")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"203.0.113.20"}
+	want := []string{"10.0.0.157"}
 	if strings.Join(addresses, ",") != strings.Join(want, ",") {
 		t.Fatalf("gateway bind addresses = %#v, want %#v", addresses, want)
 	}
-	if _, err := selectGatewayBindAddresses([]gatewayResolution{{hostname: "wrong.example.com", addresses: []netip.Addr{netip.MustParseAddr("198.51.100.5")}}}, candidates); err == nil || !strings.Contains(err.Error(), "must resolve directly") {
+	if _, err := selectMappedGatewayBindAddress([]gatewayResolution{{hostname: "wrong.example.com", addresses: []netip.Addr{netip.MustParseAddr("198.51.100.5")}}}, candidates, "203.0.113.20", "10.0.0.157"); err == nil || !strings.Contains(err.Error(), "does not resolve") {
 		t.Fatalf("non-local DNS address was accepted: %v", err)
 	}
 }
@@ -109,13 +93,13 @@ func TestHeadscaleContainerIsolatedFromHostTailscale(t *testing.T) {
 		CenterDataVolume:      "center-data",
 	}
 	config, hostConfig := installer.headscaleContainerConfig()
-	if string(hostConfig.NetworkMode) != "bridge" {
-		t.Fatalf("Headscale network mode = %q, want bridge", hostConfig.NetworkMode)
+	if string(hostConfig.NetworkMode) != dockerruntime.NetworkName {
+		t.Fatalf("Headscale network mode = %q, want %s", hostConfig.NetworkMode, dockerruntime.NetworkName)
 	}
 	port := dockernetwork.MustParsePort("8081/tcp")
 	bindings := hostConfig.PortBindings[port]
-	if len(bindings) != 1 || bindings[0].HostIP != netip.MustParseAddr("127.0.0.1") || bindings[0].HostPort != "8081" {
-		t.Fatalf("Headscale HTTP bindings = %#v", bindings)
+	if len(bindings) != 0 {
+		t.Fatalf("Headscale HTTP must stay private to the runtime network: %#v", bindings)
 	}
 	if _, exposed := config.ExposedPorts[port]; !exposed {
 		t.Fatalf("Headscale HTTP port is not exposed: %#v", config.ExposedPorts)

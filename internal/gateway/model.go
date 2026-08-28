@@ -16,6 +16,7 @@ import (
 )
 
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+var containerHostnamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$`)
 
 type Upstream struct {
 	Address string `json:"address"`
@@ -206,15 +207,15 @@ func (state DesiredState) Validate() error {
 			return fmt.Errorf("gateway: route %q requires an upstream", route.ID)
 		}
 		for _, upstream := range route.Upstreams {
-			if ip := net.ParseIP(upstream.Address); ip == nil || ip.To4() == nil || upstream.Port < 1 || upstream.Port > 65535 {
+			if !validUpstreamAddress(upstream.Address) || upstream.Port < 1 || upstream.Port > 65535 {
 				return fmt.Errorf("gateway: route %q has an invalid upstream", route.ID)
 			}
 		}
 	}
 	if state.SharedHTTPS != nil {
 		shared := state.SharedHTTPS
-		sharedIP, caddyIP := net.ParseIP(shared.Address), net.ParseIP(shared.CaddyAddress)
-		if sharedIP == nil || sharedIP.To4() == nil || shared.Port < 1 || shared.Port > 65535 || caddyIP == nil || caddyIP.To4() == nil || !caddyIP.IsLoopback() || shared.CaddyPort < 1 || shared.CaddyPort > 65535 {
+		sharedIP := net.ParseIP(shared.Address)
+		if sharedIP == nil || sharedIP.To4() == nil || shared.Port < 1 || shared.Port > 65535 || !validUpstreamAddress(shared.CaddyAddress) || shared.CaddyPort < 1 || shared.CaddyPort > 65535 {
 			return errors.New("gateway: invalid shared HTTPS frontend")
 		}
 		if shared.Address == shared.CaddyAddress && shared.Port == shared.CaddyPort {
@@ -240,13 +241,21 @@ func (state DesiredState) Validate() error {
 			}
 			seenLayer4[route.Hostname] = true
 			for _, upstream := range route.Upstreams {
-				if ip := net.ParseIP(upstream.Address); ip == nil || ip.To4() == nil || upstream.Port < 1 || upstream.Port > 65535 {
+				if !validUpstreamAddress(upstream.Address) || upstream.Port < 1 || upstream.Port > 65535 {
 					return fmt.Errorf("gateway: shared HTTPS route %q has an invalid upstream", route.ID)
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func validUpstreamAddress(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if ip := net.ParseIP(value); ip != nil {
+		return ip.To4() != nil
+	}
+	return containerHostnamePattern.MatchString(value)
 }
 
 func (state DesiredState) Sorted() DesiredState {

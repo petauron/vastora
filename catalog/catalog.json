@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "generatedAt": "2026-08-16T00:00:00Z",
   "apps": [
     {
@@ -106,7 +106,10 @@
       "description": {"en": "Komari monitoring agent for an existing Komari panel.", "zh-CN": "连接既有 Komari 面板的监控探针。"},
       "license": "MIT",
       "hostAccess": true,
-      "images": [{"name": "komari-agent", "reference": "ghcr.io/komari-monitor/komari-agent:1.2.60@sha256:48815bdfce540d83c60b92809858d9aea3635d07abf78581486e0433ca97d676"}],
+      "artifacts": [
+        {"name":"komari-agent","operatingSystem":"linux","architecture":"amd64","url":"https://github.com/komari-monitor/komari-agent/releases/download/1.2.60/komari-agent-linux-amd64","sha256":"113af112a914b918f315fa6cd3a98e8c0f932900f776c4c412b2a79477180859"},
+        {"name":"komari-agent","operatingSystem":"linux","architecture":"arm64","url":"https://github.com/komari-monitor/komari-agent/releases/download/1.2.60/komari-agent-linux-arm64","sha256":"8d98966365848435f756d00435b42654d56557f5f783c4b16ba83ed413038007"}
+      ],
       "config": [
         {"key":"endpoint","type":"string","label":{"en":"Komari endpoint","zh-CN":"Komari 面板地址"},"description":{"en":"Base URL of the Komari panel.","zh-CN":"Komari 面板的基础 URL。"},"required":true,"secret":false},
         {"key":"token","type":"string","label":{"en":"Agent token","zh-CN":"探针 Token"},"description":{"en":"Token issued by the Komari panel.","zh-CN":"由 Komari 面板签发的 Token。"},"required":true,"secret":true}

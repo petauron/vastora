@@ -162,17 +162,44 @@ VASTORA_SYSTEMD_UNIT_DIR="$systemd_dir" \
   VASTORA_UNINSTALL_OUTPUT="$temporary_dir/cancelled.output" \
   FAKE_DOCKER_LOG="$docker_log" \
   FAKE_SYSTEMCTL_LOG="$systemctl_log" \
+  LC_ALL=C \
   PATH="$fake_bin:$PATH" \
     "$project_dir/deploy/center/uninstall.sh" --install-dir "$cancelled_install" >/dev/null
 test -d "$cancelled_install"
 test -e "$systemd_dir/vastora-center-update.service"
 test ! -s "$systemctl_log"
+grep -Fq 'Vastora Center Uninstall' "$temporary_dir/cancelled.output"
+grep -Fq 'Cancelled; nothing was changed.' "$temporary_dir/cancelled.output"
 if grep -Fq 'compose down' "$docker_log"; then
   echo "Cancelled uninstall mutated the Center runtime" >&2
   exit 1
 fi
 
 rm -rf "$cancelled_install"
+rm -f "$systemd_dir/vastora-center-update.service" "$systemd_dir/vastora-center-update.path"
+chinese_install="$temporary_dir/chinese-center"
+create_install "$chinese_install"
+printf '4\n' > "$temporary_dir/chinese.input"
+: > "$docker_log"
+: > "$systemctl_log"
+VASTORA_SYSTEMD_UNIT_DIR="$systemd_dir" \
+  VASTORA_UNINSTALL_INPUT="$temporary_dir/chinese.input" \
+  VASTORA_UNINSTALL_OUTPUT="$temporary_dir/chinese.output" \
+  FAKE_DOCKER_LOG="$docker_log" \
+  FAKE_SYSTEMCTL_LOG="$systemctl_log" \
+  LC_ALL=zh_CN.UTF-8 \
+  PATH="$fake_bin:$PATH" \
+    "$project_dir/deploy/center/uninstall.sh" --install-dir "$chinese_install" >/dev/null
+test -d "$chinese_install"
+test ! -s "$systemctl_log"
+grep -Fq 'Vastora Center 卸载' "$temporary_dir/chinese.output"
+grep -Fq '已取消，没有修改任何内容。' "$temporary_dir/chinese.output"
+if grep -Fq 'compose down' "$docker_log"; then
+  echo "Chinese cancellation mutated the Center runtime" >&2
+  exit 1
+fi
+
+rm -rf "$chinese_install"
 rm -f "$systemd_dir/vastora-center-update.service" "$systemd_dir/vastora-center-update.path"
 failed_cleanup_install="$temporary_dir/failed-cleanup-center"
 create_install "$failed_cleanup_install"

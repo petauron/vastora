@@ -4,7 +4,7 @@ One online source serves one signed JSON envelope:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "keyId": "catalog-key-1",
   "payload": "base64url-exact-catalog-bytes",
   "signature": "base64url-ed25519-signature"
@@ -33,7 +33,8 @@ secrets.
 ## App manifest contract
 
 The catalog payload validates against the JSON Schema 2020-12 files in
-[`schemas/`](../schemas/). Every app version declares fixed OCI digests,
+[`schemas/`](../schemas/). Every app version declares fixed OCI digests or
+platform-specific HTTPS artifacts pinned by SHA-256,
 addressable Services, bilingual labels, and typed installation fields. A secret
 field cannot provide a default. Conditions use a single field equality check;
 there is no expression language, arbitrary Compose input, or app-provided shell

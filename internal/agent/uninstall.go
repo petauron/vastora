@@ -33,7 +33,7 @@ func PurgeManagedRuntime(ctx context.Context, deleteApplicationData bool) error 
 			return err
 		}
 	}
-	executor := DockerExecutor{}
+	executor := ApplicationExecutor{Host: SystemdHostApplicationManager{}}
 	for _, appKey := range []string{keeperKey, komariKey, cpaKey, threeXUIKey} {
 		_, err := executor.Deploy(ctx, DeploymentTask{AppKey: appKey, Operation: "uninstall", DeleteData: deleteApplicationData})
 		result = errors.Join(result, err)

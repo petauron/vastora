@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 type CaddyGatewayDriver struct {
@@ -241,6 +242,10 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 	}
 	servers := map[string]any{}
 	for _, listener := range desired.Listeners {
+		internalHTTPPort, internalHTTPSPort, ok := gatewayruntime.CaddyListenerPorts(listener.Kind)
+		if !ok {
+			return nil, fmt.Errorf("agent: unsupported Caddy listener kind %q", listener.Kind)
+		}
 		httpRoutes := make([]caddyRoute, 0)
 		httpsRoutes := make([]caddyRoute, 0)
 		for _, route := range desired.Routes {
@@ -269,14 +274,10 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			}
 		}
 		if len(httpRoutes) != 0 {
-			servers["vastora-"+listener.Kind+"-http"] = map[string]any{"listen": []string{net.JoinHostPort(listener.Address, strconv.Itoa(listener.HTTPPort))}, "routes": httpRoutes}
+			servers["vastora-"+listener.Kind+"-http"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPPort))}, "routes": httpRoutes}
 		}
 		if len(httpsRoutes) != 0 {
-			httpsAddress, httpsPort := listener.Address, listener.HTTPSPort
-			if listener.Kind == "public" && desired.SharedHTTPS != nil {
-				httpsAddress, httpsPort = desired.SharedHTTPS.CaddyAddress, desired.SharedHTTPS.CaddyPort
-			}
-			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort(httpsAddress, strconv.Itoa(httpsPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
+			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
 		}
 	}
 	apps := map[string]any{"http": map[string]any{"servers": servers}}

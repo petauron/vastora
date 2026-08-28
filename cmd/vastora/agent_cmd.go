@@ -350,9 +350,7 @@ func runAgent(arguments []string) error {
 			return fmt.Errorf("locate vastora executable: %w", err)
 		}
 		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
-		if capabilities.Docker {
-			client.Executor = agent.DockerExecutor{}
-		}
+		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
 		if capabilities.Gateway {
 			caddyDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
 			if err != nil {
@@ -361,7 +359,7 @@ func runAgent(arguments []string) error {
 			caddyProvisioner := agent.DockerGatewayProvisioner{Image: *caddyImage, AdminListen: caddyDriver.AdminListen, AdminSocketPath: caddyDriver.AdminSocketPath}
 			caddyDriver.SystemGateway = caddyProvisioner
 			layer4 := agent.DockerLayer4Provisioner{Image: *haproxyImage}
-			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4}
+			managedDriver := &agent.ManagedGatewayDriver{Caddy: caddyDriver, Layer4: layer4, Runtime: caddyProvisioner}
 			client.GatewayDriver = managedDriver
 			client.GatewayProvisioner = agent.ManagedGatewayProvisioner{
 				Caddy:  caddyProvisioner,

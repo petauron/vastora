@@ -9,6 +9,10 @@ const (
 	Linux = "linux"
 	AMD64 = "amd64"
 	ARM64 = "arm64"
+
+	// ApplicationRuntimeGeneration advances only when an Agent upgrade requires
+	// installed applications and network components to be reconciled in place.
+	ApplicationRuntimeGeneration = 1
 )
 
 type Target struct {

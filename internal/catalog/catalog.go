@@ -8,19 +8,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/petauron/vastora/internal/platform"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 var (
 	identifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 	fieldPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	semverPattern     = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 	digestPattern     = regexp.MustCompile(`@sha256:[a-f0-9]{64}$`)
+	sha256Pattern     = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
 
 // LocalizedText deliberately requires both v0.1 interface languages.
@@ -54,6 +58,17 @@ type Image struct {
 	Reference string `json:"reference"`
 }
 
+// Artifact is a signed-catalog native executable. Official typed executors
+// select one exact artifact for the Agent host platform and verify it before
+// installation; the catalog never carries an executable command line.
+type Artifact struct {
+	Name            string `json:"name"`
+	OperatingSystem string `json:"operatingSystem"`
+	Architecture    string `json:"architecture"`
+	URL             string `json:"url"`
+	SHA256          string `json:"sha256"`
+}
+
 // Service declares an addressable application endpoint without coupling the
 // catalog to Docker container identities or a gateway implementation.
 type Service struct {
@@ -81,7 +96,8 @@ type AppManifest struct {
 	Name        LocalizedText `json:"name"`
 	Description LocalizedText `json:"description"`
 	License     string        `json:"license"`
-	Images      []Image       `json:"images"`
+	Images      []Image       `json:"images,omitempty"`
+	Artifacts   []Artifact    `json:"artifacts,omitempty"`
 	Services    []Service     `json:"services,omitempty"`
 	Homepage    *Homepage     `json:"homepage,omitempty"`
 	Config      []ConfigField `json:"config"`
@@ -139,8 +155,8 @@ func ValidateApp(app AppManifest) error {
 	if strings.TrimSpace(app.License) == "" {
 		return fmt.Errorf("catalog: license is required for %q", app.ID)
 	}
-	if len(app.Images) == 0 {
-		return fmt.Errorf("catalog: at least one image is required for %q", app.ID)
+	if len(app.Images) == 0 && len(app.Artifacts) == 0 {
+		return fmt.Errorf("catalog: at least one image or artifact is required for %q", app.ID)
 	}
 	imageNames := make(map[string]struct{}, len(app.Images))
 	for _, image := range app.Images {
@@ -154,6 +170,28 @@ func ValidateApp(app AppManifest) error {
 			return fmt.Errorf("catalog: duplicate image %q in %q", image.Name, app.ID)
 		}
 		imageNames[image.Name] = struct{}{}
+	}
+	artifactTargets := make(map[string]struct{}, len(app.Artifacts))
+	for _, artifact := range app.Artifacts {
+		if !identifierPattern.MatchString(artifact.Name) {
+			return fmt.Errorf("catalog: invalid artifact name %q in %q", artifact.Name, app.ID)
+		}
+		target, err := platform.Parse(artifact.OperatingSystem, artifact.Architecture)
+		if err != nil {
+			return fmt.Errorf("catalog: invalid artifact platform for %q in %q: %w", artifact.Name, app.ID, err)
+		}
+		parsed, err := url.Parse(strings.TrimSpace(artifact.URL))
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("catalog: artifact %q in %q needs an exact credential-free HTTPS URL", artifact.Name, app.ID)
+		}
+		if !sha256Pattern.MatchString(artifact.SHA256) {
+			return fmt.Errorf("catalog: artifact %q in %q must be pinned by sha256 digest", artifact.Name, app.ID)
+		}
+		key := artifact.Name + "\x00" + target.OS + "\x00" + target.Architecture
+		if _, exists := artifactTargets[key]; exists {
+			return fmt.Errorf("catalog: duplicate artifact %q for %s/%s in %q", artifact.Name, target.OS, target.Architecture, app.ID)
+		}
+		artifactTargets[key] = struct{}{}
 	}
 	fields := make(map[string]struct{}, len(app.Config))
 	for _, field := range app.Config {

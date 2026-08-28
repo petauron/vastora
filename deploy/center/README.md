@@ -8,8 +8,9 @@ curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center
 
 The bootstrap downloads the newest complete Center release bundle and its SHA-256 file,
 verifies the archive, installs it under `/opt/vastora/center`, and starts Center
-with host networking on `127.0.0.1:8080`. It publishes no Docker port and does
-not require Git, a domain, a certificate, or an unused public port 443.
+on the private `vastora-runtime` bridge. Docker publishes its bootstrap port
+only on host loopback (`127.0.0.1:8080`), so installation does not require Git,
+a domain, a certificate, or an unused public port 443.
 
 ## Open the first-run wizard
 

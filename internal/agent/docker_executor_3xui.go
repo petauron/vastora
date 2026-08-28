@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,15 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
+)
+
+const (
+	threeXUISubscriptionPort = 2096
+	threeXUIRealityPortFirst = 20000
+	threeXUIRealityPortLast  = 20031
 )
 
 func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentTask, bindAddress string) (string, error) {
@@ -69,10 +78,15 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 	}
 	_, _ = io.Copy(io.Discard, pull)
 	_ = pull.Close()
+	exposedPorts, portBindings, err := threeXUIPorts(bindAddress, settings.PanelPort, task.ApplicationRole)
+	if err != nil {
+		return "", err
+	}
 	createOptions := client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image: imageRef,
-			Tty:   true,
+			Image:        imageRef,
+			Tty:          true,
+			ExposedPorts: exposedPorts,
 			Labels: map[string]string{
 				threeXUIDeploymentIDLabel: task.ID,
 			},
@@ -87,14 +101,16 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 		HostConfig: &container.HostConfig{
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 			CapAdd:        []string{"NET_ADMIN", "NET_RAW"},
-			NetworkMode:   container.NetworkMode("host"),
+			NetworkMode:   container.NetworkMode(dockerruntime.NetworkName),
+			PortBindings:  portBindings,
 			Mounts: []mount.Mount{
 				{Type: mount.TypeVolume, Source: threeXUIDatabaseVolume, Target: "/etc/x-ui"},
 				{Type: mount.TypeVolume, Source: "vastora-3x-ui-cert", Target: "/root/cert"},
 				{Type: mount.TypeVolume, Source: "vastora-3x-ui-acme", Target: "/root/.acme.sh"},
 			},
 		},
-		Name: threeXUICandidateContainer,
+		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias),
+		Name:             threeXUICandidateContainer,
 	}
 	return replaceThreeXUIContainer(ctx, docker, createOptions, func(containerID string) (string, error) {
 		if err := configureThreeXUI(ctx, docker, containerID, bindAddress, settings.PanelPort, credentials); err != nil {
@@ -125,6 +141,31 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 		}
 		return nil
 	})
+}
+
+func threeXUIPorts(bindAddress string, panelPort int, role string) (dockernetwork.PortSet, dockernetwork.PortMap, error) {
+	address, err := netip.ParseAddr(bindAddress)
+	if err != nil || !address.Unmap().Is4() {
+		return nil, nil, errors.New("agent: 3x-ui requires a valid IPv4 service address")
+	}
+	if role != "master" && role != "worker" {
+		return nil, nil, errors.New("agent: invalid 3x-ui topology role")
+	}
+	exposed := dockernetwork.PortSet{}
+	bindings := dockernetwork.PortMap{}
+	add := func(portNumber int) {
+		port := dockernetwork.MustParsePort(strconv.Itoa(portNumber) + "/tcp")
+		exposed[port] = struct{}{}
+		bindings[port] = []dockernetwork.PortBinding{{HostIP: address.Unmap(), HostPort: strconv.Itoa(portNumber)}}
+	}
+	add(panelPort)
+	if role == "master" {
+		add(threeXUISubscriptionPort)
+	}
+	for port := threeXUIRealityPortFirst; port <= threeXUIRealityPortLast; port++ {
+		add(port)
+	}
+	return exposed, bindings, nil
 }
 
 func threeXUIRecoveryErrorIsPostCommitCleanup(ctx context.Context, docker threeXUIContainerEngine, deploymentID string) (bool, error) {
@@ -245,7 +286,7 @@ func decodeThreeXUISecrets(raw json.RawMessage) (threeXUISecrets, error) {
 }
 
 func configureThreeXUI(ctx context.Context, docker *client.Client, containerID, bindAddress string, panelPort int, credentials threeXUISecrets) error {
-	command := []string{"/app/x-ui", "setting", "-webBasePath", "/", "-listenIP", bindAddress, "-port", strconv.Itoa(panelPort), "-username", credentials.Username, "-password", credentials.Password}
+	command := []string{"/app/x-ui", "setting", "-webBasePath", "/", "-listenIP", "0.0.0.0", "-port", strconv.Itoa(panelPort), "-username", credentials.Username, "-password", credentials.Password}
 	_, err := runContainerCommand(ctx, docker, containerID, command)
 	if err != nil {
 		return fmt.Errorf("agent: configure 3x-ui: %w", err)
@@ -279,15 +320,15 @@ func configureThreeXUISubscription(ctx context.Context, address string, panelPor
 	for key, value := range threeXUIManagedSubscriptionSettings() {
 		settings[key] = value
 	}
-	settings["subListen"] = address
-	settings["subPort"] = 2096
+	settings["subListen"] = "0.0.0.0"
+	settings["subPort"] = threeXUISubscriptionPort
 	if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/update", apiToken, settings); err != nil {
 		return fmt.Errorf("agent: update 3x-ui subscription settings: %w", err)
 	}
 	if err := restartThreeXUIPanel(ctx, baseURL, apiToken, threeXUIRestartSettleTime); err != nil {
 		return err
 	}
-	return waitForEndpoint(ctx, address, 2096)
+	return waitForEndpoint(ctx, address, threeXUISubscriptionPort)
 }
 
 func threeXUIRequest(ctx context.Context, method, endpoint, token string, body any) (map[string]any, error) {

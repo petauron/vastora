@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
@@ -33,11 +36,16 @@ type Layer4Provisioner interface {
 	Health(context.Context) error
 }
 
+type GatewayRuntimeProvisioner interface {
+	Reconcile(context.Context, gateway.DesiredState) error
+}
+
 // ManagedGatewayDriver keeps Caddy as the HTTPS endpoint and adds HAProxy only
 // while a shared-443 publication exists in the desired state.
 type ManagedGatewayDriver struct {
-	Caddy  *CaddyGatewayDriver
-	Layer4 Layer4Provisioner
+	Caddy   *CaddyGatewayDriver
+	Layer4  Layer4Provisioner
+	Runtime GatewayRuntimeProvisioner
 
 	mu           sync.RWMutex
 	state        gateway.DesiredState
@@ -45,7 +53,7 @@ type ManagedGatewayDriver struct {
 }
 
 func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
-	if driver.Caddy == nil || driver.Layer4 == nil {
+	if driver.Caddy == nil || driver.Layer4 == nil || driver.Runtime == nil {
 		return errors.New("agent: managed gateway is not configured")
 	}
 	if err := desired.Validate(); err != nil {
@@ -75,15 +83,24 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 		if err := driver.Layer4.Remove(ctx); err != nil {
 			return err
 		}
+		if err := driver.Runtime.Reconcile(ctx, desired); err != nil {
+			return err
+		}
 		return driver.Caddy.ApplyConfiguration(ctx, desired, certificates)
 	}
 	// Move Caddy away from public 443 before HAProxy claims it.
+	if err := driver.Runtime.Reconcile(ctx, desired); err != nil {
+		return err
+	}
 	if err := driver.Caddy.ApplyConfiguration(ctx, desired, certificates); err != nil {
 		return err
 	}
 	if err := driver.Layer4.Apply(ctx, *desired.SharedHTTPS); err != nil {
 		fallback := desired
 		fallback.SharedHTTPS = nil
+		if runtimeErr := driver.Runtime.Reconcile(ctx, fallback); runtimeErr != nil {
+			return errors.Join(fmt.Errorf("agent: apply shared 443 frontend: %w", err), fmt.Errorf("agent: restore Caddy port bindings: %w", runtimeErr))
+		}
 		if restoreErr := driver.Caddy.ApplyConfiguration(ctx, fallback, certificates); restoreErr != nil {
 			return errors.Join(fmt.Errorf("agent: apply shared 443 frontend: %w", err), fmt.Errorf("agent: restore Caddy to public 443: %w", restoreErr))
 		}
@@ -139,7 +156,7 @@ func (driver *ManagedGatewayDriver) RetainSystemRoutes(ctx context.Context) (boo
 			}
 		}
 	}
-	if err := driver.Caddy.ApplyConfiguration(ctx, next.Sorted(), keptCertificates); err != nil {
+	if err := driver.apply(ctx, next.Sorted(), keptCertificates); err != nil {
 		return false, fmt.Errorf("agent: retain system gateway routes: %w", err)
 	}
 	driver.mu.Lock()
@@ -166,7 +183,7 @@ func (driver *ManagedGatewayDriver) GetRouteStatus(ctx context.Context, routeID 
 }
 
 func (driver *ManagedGatewayDriver) Health(ctx context.Context) error {
-	if driver.Caddy == nil || driver.Layer4 == nil {
+	if driver.Caddy == nil || driver.Layer4 == nil || driver.Runtime == nil {
 		return errors.New("agent: managed gateway is not configured")
 	}
 	if err := driver.Caddy.Health(ctx); err != nil {
@@ -193,6 +210,9 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 		return err
 	}
 	defer docker.Close()
+	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
+		return err
+	}
 	settings := provisioner.settings()
 	configuration, err := haproxyConfiguration(desired)
 	if err != nil {
@@ -207,7 +227,7 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 	if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("agent: replace HAProxy container: %w", err)
 	}
-	created, err := docker.ContainerCreate(ctx, haproxyContainerCreateOptions(settings, configuration))
+	created, err := docker.ContainerCreate(ctx, haproxyContainerCreateOptions(settings, desired, configuration))
 	if err != nil {
 		return fmt.Errorf("agent: create HAProxy container: %w", err)
 	}
@@ -218,7 +238,8 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 	return provisioner.waitHealthy(ctx, docker, created.ID)
 }
 
-func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, configuration []byte) client.ContainerCreateOptions {
+func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, desired gateway.SharedHTTPS, configuration []byte) client.ContainerCreateOptions {
+	port := dockernetwork.MustParsePort("443/tcp")
 	return client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:      settings.Image,
@@ -230,10 +251,12 @@ func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, configurati
 				gatewayruntime.ManagedLabel:   "true",
 				gatewayruntime.ComponentLabel: gatewayruntime.Layer4ComponentLabel,
 			},
+			ExposedPorts: dockernetwork.PortSet{port: struct{}{}},
 		},
 		HostConfig: &container.HostConfig{
 			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
-			NetworkMode:    container.NetworkMode("host"),
+			NetworkMode:    container.NetworkMode(dockerruntime.NetworkName),
+			PortBindings:   dockernetwork.PortMap{port: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr(desired.Address), HostPort: strconv.Itoa(desired.Port)}}},
 			ReadonlyRootfs: true,
 			CapDrop:        []string{"ALL"},
 			CapAdd:         []string{"NET_BIND_SERVICE"},
@@ -243,7 +266,8 @@ func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, configurati
 			},
 			SecurityOpt: []string{"no-new-privileges:true"},
 		},
-		Name: settings.Container,
+		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.HAProxyAlias),
+		Name:             settings.Container,
 	}
 }
 
@@ -329,7 +353,7 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 	var configuration strings.Builder
 	configuration.WriteString("global\n  log stdout format raw local0\n  maxconn 4096\n\ndefaults\n  log global\n  mode tcp\n  option tcplog\n  timeout connect 10s\n  timeout client 1m\n  timeout server 1m\n\n")
 	configuration.WriteString("frontend vastora-shared-https\n  bind ")
-	configuration.WriteString(net.JoinHostPort(desired.Address, strconv.Itoa(desired.Port)))
+	configuration.WriteString(net.JoinHostPort("0.0.0.0", strconv.Itoa(desired.Port)))
 	configuration.WriteString("\n  tcp-request inspect-delay 5s\n  tcp-request content accept if { req_ssl_hello_type 1 }\n")
 	for index, route := range desired.Routes {
 		configuration.WriteString(fmt.Sprintf("  use_backend vastora-raw-%d if { req.ssl_sni -i %s }\n", index, route.Hostname))

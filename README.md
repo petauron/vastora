@@ -1,9 +1,9 @@
 # Vastora
 
-Vastora is a self-hosted desired-state control plane for Docker applications
+Vastora is a self-hosted desired-state control plane for applications
 across multiple Sites and Nodes. The Center stores intent and orchestration
-state; one Agent binary is the only node-side executor for Docker and an
-optional local Caddy Gateway. Existing applications and applied routes continue
+state; one Agent binary is the only node-side executor for Docker workloads,
+verified native probes, and an optional local Caddy Gateway. Existing applications and applied routes continue
 when the Center is unavailable.
 
 > **Pre-alpha.** The repository is intentionally published only with working,
@@ -25,8 +25,8 @@ when the Center is unavailable.
   paths; each host uses one Agent-managed Caddy with a private Unix socket,
   while optional HAProxy provides TLS SNI passthrough only when Web HTTPS and
   raw TCP must share `443`.
-- Signed 3x-ui, CPA, Keeper, and Komari Agent application packages with
-  images pinned by digest.
+- Signed 3x-ui, CPA, and Keeper images pinned by digest, plus a native Komari
+  Agent binary pinned by platform and SHA-256.
 - One Ubuntu 24.04 installation path for x86_64 and ARM64 Centers and Agents,
   including mixed-architecture Sites and architecture-aware Agent updates.
 

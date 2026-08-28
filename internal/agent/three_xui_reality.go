@@ -248,7 +248,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		return RealityCommandResult{}, err
 	}
 	payload := map[string]any{
-		"enable": true, "tag": inboundTag, "remark": command.DisplayName, "listen": listen, "port": port, "protocol": "vless", "expiryTime": 0,
+		"enable": true, "tag": inboundTag, "remark": command.DisplayName, "listen": "0.0.0.0", "port": port, "protocol": "vless", "expiryTime": 0,
 		"total": command.InboundTotalBytes, "trafficReset": "never", "trafficResetDay": 1,
 		"settings":       map[string]any{"clients": clients, "decryption": "none", "encryption": "none", "fallbacks": []any{}},
 		"streamSettings": threeXUIRealityStreamSettings(target, sni, keyPair.PrivateKey, keyPair.PublicKey, shortID),
@@ -853,12 +853,15 @@ func threeXUIAPI(ctx context.Context, method, endpoint, token, contentType strin
 }
 
 func availableTCPPort(address string) (int, error) {
-	listener, err := net.Listen("tcp", net.JoinHostPort(address, "0"))
-	if err != nil {
-		return 0, fmt.Errorf("agent: allocate private REALITY port: %w", err)
+	for port := threeXUIRealityPortFirst; port <= threeXUIRealityPortLast; port++ {
+		listener, err := net.Listen("tcp", net.JoinHostPort(address, strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		_ = listener.Close()
+		return port, nil
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
+	return 0, errors.New("agent: no mapped private REALITY port is available")
 }
 
 func availableRealityPort(ctx context.Context, baseURL, token string, nodeID int, address string) (int, error) {
@@ -882,12 +885,7 @@ func availableRealityPort(ctx context.Context, baseURL, token string, nodeID int
 			used[inbound.Port] = true
 		}
 	}
-	for attempt := 0; attempt < 32; attempt++ {
-		value := make([]byte, 2)
-		if _, err := rand.Read(value); err != nil {
-			return 0, fmt.Errorf("agent: generate remote REALITY port: %w", err)
-		}
-		port := 20000 + ((int(value[0])<<8)|int(value[1]))%40000
+	for port := threeXUIRealityPortFirst; port <= threeXUIRealityPortLast; port++ {
 		if !used[port] {
 			return port, nil
 		}

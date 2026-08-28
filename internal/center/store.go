@@ -7,13 +7,17 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
@@ -52,6 +56,55 @@ type Store struct {
 	verifyPublicEntry              func(context.Context, string, deployapi.PublicEntryProbe) error
 	issuePrivateCertificate        func(context.Context, ...string) (managedCertificate, error)
 	issueDomainCertificate         func(context.Context, cloudflareClient, string, ...string) (managedCertificate, error)
+	builtinHeadscaleDialAddress    string
+}
+
+// UseHostNetworkAddresses replaces container-namespace discovery with the
+// host addresses captured by the official installer. An empty value keeps
+// native discovery for non-container development runs.
+func (s *Store) UseHostNetworkAddresses(encoded string) error {
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil
+	}
+	type hostAddress struct{ iface, address, kind string }
+	values := make([]hostAddress, 0)
+	seen := map[string]bool{}
+	for _, raw := range strings.Split(encoded, ",") {
+		parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+			return errors.New("center: invalid host network address")
+		}
+		iface, address := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		ip := net.ParseIP(address)
+		kind := networking.Classify(iface, ip)
+		if ip == nil || ip.To4() == nil || kind == "" {
+			return fmt.Errorf("center: invalid host network address %q", address)
+		}
+		address = ip.String()
+		if seen[address] {
+			continue
+		}
+		seen[address] = true
+		values = append(values, hostAddress{iface: iface, address: address, kind: kind})
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].kind != values[j].kind {
+			return values[i].kind < values[j].kind
+		}
+		if values[i].iface != values[j].iface {
+			return values[i].iface < values[j].iface
+		}
+		return values[i].address < values[j].address
+	})
+	s.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
+		result := make([]networking.Candidate, 0, len(values))
+		for _, value := range values {
+			result = append(result, networking.Candidate{Address: value.address, Interface: value.iface, Kind: value.kind, ObservedAt: now.UTC()})
+		}
+		return result, nil
+	}
+	return nil
 }
 
 func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
@@ -93,6 +146,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		backgroundCancel:               backgroundCancel,
 		headscaleAllowedEndpoints:      headscaleAllowedEndpoints,
 		headscaleHTTPClient:            &http.Client{Timeout: 20 * time.Second},
+		builtinHeadscaleDialAddress:    net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
 		cloudflareOAuth:                defaultCloudflareOAuthConfig(),
 		cloudflareOAuthSessions:        make(map[string]*cloudflareOAuthSession),
 		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),

@@ -3,7 +3,8 @@
 Vastora is a desired-state control plane for Docker applications across multiple
 locations. Center is the only source of network and publication intent. Agent is
 the only component that discovers local addresses and touches host Docker,
-Caddy, optional HAProxy, cloudflared, or application-local APIs.
+systemd-managed native probes, Caddy, optional HAProxy, cloudflared, or
+application-local APIs.
 
 Center database changes use ordered, forward-only SQLite migrations. Before an
 existing database advances, Center creates a transactionally consistent
@@ -114,7 +115,7 @@ still depends on it.
 ## Application and publication lifecycle
 
 1. Center validates the signed catalog manifest and queues an Application task.
-2. Agent starts the allowlisted Docker workload on the confirmed private service address.
+2. Agent starts the allowlisted Docker workload on the confirmed private service address, or installs a platform-pinned native probe through its typed systemd executor.
 3. Agent reports declared Service endpoints. Center validates protocol, ports, and address against the signed manifest and Network Profile.
 4. The administrator independently adds one or more Publications to each Service.
 5. LAN and Headscale Web Publications queue a complete Caddy desired state on the selected Site Gateway. They use HTTP by default, or browser-trusted HTTPS when the user enables Cloudflare DNS-01 certificate management. Direct-public Web Publications use the public listener and force HTTPS. A shared-443 raw TCP Publication additionally places HAProxy in front of Caddy on that Gateway.
@@ -125,6 +126,15 @@ Removing one Publication leaves sibling Publications and the private Service
 running. Uninstall stops all Publications for the Application and removes their
 routes; persistent volumes are retained unless the administrator explicitly
 chooses permanent data deletion.
+
+When an Agent release changes the runtime contract, it reports a monotonic
+runtime generation. Center then queues one forward reconciliation of every
+running application plus that node's Gateway and Tunnel desired state. A
+successful task records the new generation; failed tasks retain their data and
+remain visible in Actions. This is also the one-time migration from the former
+host-network containers to the shared bridge. The Komari migration installs the
+verified native binary and `0600` JSON configuration first, verifies its systemd
+service, and only then removes the obsolete Docker container.
 
 ## Publication types
 
@@ -170,18 +180,19 @@ installer from the public Headscale hostname, join the private network, and only
 then contact Center.
 
 HAProxy is absent by default. When at least one `public_shared_443` Publication
-exists, Agent moves Caddy's public HTTPS listener to loopback `8443`, starts a
-fixed, digest-pinned HAProxy container on the confirmed public address at `443`,
-and routes explicitly configured SNI hostnames to raw TCP origins. All remaining
-Web TLS passes through untouched to Caddy, which continues to obtain certificates
-and terminate HTTPS. Removing the final shared-443 Publication removes HAProxy
-and returns public `443` directly to Caddy. Services without a distinct TLS SNI
-must use another port or public address.
+exists, Docker removes Caddy's public TCP `443` host mapping and starts a fixed,
+digest-pinned HAProxy container with that mapping. HAProxy routes explicitly
+configured SNI hostnames to raw TCP origins and sends all remaining Web TLS to
+Caddy through the private `vastora-runtime` bridge. Caddy continues to obtain
+certificates and terminate HTTPS. Removing the final shared-443 Publication
+removes HAProxy and maps public TCP `443` directly to Caddy again. Services
+without a distinct TLS SNI must use another port or public address.
 
 Each Cloudflare entry node owns one remotely managed Tunnel. One Tunnel can
-carry multiple Web ingress rules. Agent runs a fixed cloudflared image with host
-networking. Removing the final ingress stops the connector but retains the
-remote Tunnel until the administrator explicitly disconnects the integration.
+carry multiple Web ingress rules. Agent runs the fixed cloudflared image on the
+private runtime bridge. Removing the final ingress stops the connector but
+retains the remote Tunnel until the administrator explicitly disconnects the
+integration.
 
 ## Headscale
 
@@ -207,9 +218,9 @@ operators requiring the same assurance on macOS must use the open-source CLI
 daemon or enforce an outbound allowlist.
 
 The Center host may also be an application node. In that topology its Agent and
-Tailscale client run on the host, while bundled Headscale stays container-network
-isolated and is reached only through the loopback-bound control port and the
-shared HTTPS gateway. Vastora does not require a dedicated Center-only machine.
+Tailscale client run natively, while Center, Deployer, Headscale, Caddy and
+HAProxy use the shared private Docker bridge. Only explicitly owned host ports
+are published. Vastora does not require a dedicated Center-only machine.
 
 Vastora-managed networking is IPv4-only. Agents report only IPv4 candidates,
 built-in Headscale allocates only `100.64.0.0/10` addresses, and managed DNS,
@@ -217,9 +228,9 @@ gateway listeners, publications, and application upstreams use IPv4 addresses.
 
 Bundled setup starts Headscale's Caddy HTTPS entry on public ports `80` and
 `443`. Center uses the same Caddy process but only its loopback and Headscale
-listeners; it has no public DNS record or public application route. Loopback
-`8443` is only an internal Caddy backend when an Agent enables the optional
-shared-443 HAProxy frontend; it is never an administrator-facing service URL.
+listeners; it has no public DNS record or public application route. Caddy uses
+separate internal container ports for public, Headscale, LAN and loopback
+listeners, so identical host ports retain their network-specific policy.
 
 Built-in Headscale reads stable sorted A records from a Center-generated
 `dns.extra_records_path` file. External Headscale installations use manual DNS
@@ -232,10 +243,13 @@ forwarded normally.
 
 ## 3x-ui
 
-3x-ui uses host networking. On first install, Center generates a strong
-administrator username/password and displays it once. Agent applies those
-credentials locally, creates a local API token, and stores its copy encrypted.
-Center stores its copy under the Application secret boundary.
+3x-ui uses the private runtime bridge. Docker publishes the panel, the optional
+master subscription service, and the reserved managed REALITY range
+`20000-20031` only on the node address selected during installation. On first
+install, Center generates a strong administrator username/password and displays
+it once. Agent applies those credentials locally, creates a local API token,
+and stores its copy encrypted. Center stores its copy under the Application
+secret boundary.
 
 Panel and subscription are separate Web Services. Agent reads enabled inbounds
 through the local Bearer-token API on heartbeat and reports them as observed raw

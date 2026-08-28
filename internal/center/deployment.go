@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/platform"
 	"golang.org/x/mod/semver"
 )
 
@@ -49,6 +50,7 @@ type OneTimeCredentials struct {
 const applicationTaskRevision int64 = 1
 const cpaAppKey = "vastora-official/cpa"
 const threeXUIAppKey = "vastora-official/3x-ui"
+const komariAppKey = "vastora-official/komari-agent"
 
 func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest) (DeploymentView, error) {
 	request.Role = strings.TrimSpace(request.Role)
@@ -208,8 +210,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, operation, delete_data, state, error, created_at, updated_at, application_id)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, deployment.ID, deployment.AgentID, "application.apply", applicationTaskRevision, "queued", deployment.Operation+" "+deployment.AppKey); err != nil {

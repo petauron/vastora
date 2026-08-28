@@ -19,3 +19,21 @@ const (
 	// It must never be created by current code.
 	LegacyCenterCaddyContainer = "vastora-center-gateway"
 )
+
+// Caddy listens on distinct container ports so Docker can publish the same
+// host ports on different LAN, Headscale, public, and loopback addresses
+// without collapsing their access policies inside the bridge network.
+func CaddyListenerPorts(kind string) (httpPort, httpsPort int, ok bool) {
+	switch kind {
+	case "public":
+		return 80, 443, true
+	case "headscale":
+		return 10080, 10443, true
+	case "lan":
+		return 11080, 11443, true
+	case "system":
+		return 12080, 12443, true
+	default:
+		return 0, 0, false
+	}
+}

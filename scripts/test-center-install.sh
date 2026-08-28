@@ -37,6 +37,7 @@ test -x "$temporary_dir/uninstall.sh"
 test -x "$temporary_dir/install-host-cli.sh"
 test -x "$temporary_dir/install-update-service.sh"
 test -x "$temporary_dir/update-center.sh"
+test -f "$temporary_dir/runtime-network.sh"
 test -f "$temporary_dir/compose.yaml"
 grep -Fq 'docker cp "$agent_container:/usr/local/bin/vastora"' "$temporary_dir/upgrade.sh"
 grep -Fq 'Co-located Agent updated to $new_version before Center reconciliation.' "$temporary_dir/upgrade.sh"
@@ -48,11 +49,14 @@ if grep -Eq 'headscale/(config\.yaml|policy\.hujson)' "$project_dir/install.sh";
   exit 1
 fi
 grep -Fq '127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}' "$temporary_dir/compose.yaml"
-grep -Fq 'network_mode: host' "$temporary_dir/compose.yaml"
-if sed -n '/^  center:/,/^  headscale:/p' "$temporary_dir/compose.yaml" | grep -Fq '    ports:'; then
-  echo "Center install bundle still publishes a Docker port" >&2
+grep -Fq 'name: vastora-runtime' "$temporary_dir/compose.yaml"
+grep -Fq 'external: true' "$temporary_dir/compose.yaml"
+grep -Fq 'ensure_vastora_runtime_network' "$temporary_dir/setup.sh"
+if grep -Fq 'network_mode: host' "$temporary_dir/compose.yaml"; then
+  echo "Center install bundle still uses the host network" >&2
   exit 1
 fi
+grep -Fq '    ports:' "$temporary_dir/compose.yaml"
 if sed -n '/^  center:/,/^  deployer:/p' "$temporary_dir/compose.yaml" | grep -Fq '/var/run/docker.sock'; then
   echo "Center service must not mount the Docker socket" >&2
   exit 1
@@ -95,7 +99,11 @@ cat > "$fake_bin/id" <<'EOF'
 #!/bin/sh
 if [ "${1:-}" = "-u" ]; then printf '%s\n' 0; else exec /usr/bin/id "$@"; fi
 EOF
-chmod 0755 "$fake_bin/docker" "$fake_bin/curl" "$fake_bin/systemctl" "$fake_bin/id"
+cat > "$fake_bin/ip" <<'EOF'
+#!/bin/sh
+printf '%s\n' '2: enp0s6    inet 10.0.0.157/24 brd 10.0.0.255 scope global enp0s6'
+EOF
+chmod 0755 "$fake_bin/docker" "$fake_bin/curl" "$fake_bin/systemctl" "$fake_bin/id" "$fake_bin/ip"
 cat > "$temporary_dir/fake-vastora" <<'EOF'
 #!/bin/sh
 case "${1:-}" in
@@ -113,6 +121,7 @@ PATH="$fake_bin:$PATH" \
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$existing/.env"
 grep -Fqx 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' "$existing/.env"
 grep -Fqx 'VASTORA_CUSTOM_VALUE=preserved' "$existing/.env"
+grep -Fqx 'VASTORA_HOST_NETWORK_ADDRESSES=enp0s6=10.0.0.157' "$existing/.env"
 grep -Fqx 'VASTORA_VERSION=0.1.0-test' "$existing/release.env"
 test -x "$existing/upgrade.sh"
 test -x "$existing/uninstall.sh"

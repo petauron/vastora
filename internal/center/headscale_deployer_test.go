@@ -127,6 +127,7 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	}
 	defer store.Close()
 	store.headscaleHTTPClient = headscale.Client()
+	store.builtinHeadscaleDialAddress = headscale.Listener.Addr().String()
 	if _, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple"); err != nil {
 		t.Fatal(err)
 	}
