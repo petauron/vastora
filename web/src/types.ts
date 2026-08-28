@@ -150,6 +150,7 @@ export type AppView = {
     name: LocalizedText;
     description: LocalizedText;
     hostAccess?: boolean;
+    artifacts?: Array<{ name: string; operatingSystem: "linux"; architecture: "amd64" | "arm64"; url: string; sha256: string }>;
     homepage?: { service: string; path: string };
     services?: Array<{ name: string; protocol: "http" | "https"; containerPort: number; defaultHostPort?: number; hostPortField?: string; healthPath?: string; management?: boolean }>;
     config: Array<{

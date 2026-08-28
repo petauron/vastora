@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
@@ -96,6 +97,96 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "runtime-migration", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.81", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.81", LANAddress: "10.0.0.81", EnabledKinds: []string{networking.KindLAN}})
+	applicationID := installCPA(t, store, node, "10.0.0.81")
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET runtime_generation = 0 WHERE id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0 WHERE id = ?`, applicationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
+		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.Kind != "application.apply" || task.Operation != "configure" || task.AppKey != cpaAppKey || task.ServiceAddress != "10.0.0.81" || len(task.Secrets) == 0 {
+		t.Fatalf("unexpected runtime migration task: %#v", task)
+	}
+	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.81"}]}`)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+		t.Fatal(err)
+	}
+	var generation int
+	if err := store.db.QueryRowContext(ctx, `SELECT runtime_generation FROM applications WHERE id = ?`, applicationID).Scan(&generation); err != nil || generation != platform.ApplicationRuntimeGeneration {
+		t.Fatalf("application runtime generation = %d, err=%v", generation, err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
+		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task != nil {
+		t.Fatalf("runtime migration was queued more than once: task=%#v err=%v", task, err)
+	}
+}
+
+func TestAgentRuntimeGenerationRecreatesGateway(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "runtime-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.82", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.82", LANAddress: "10.0.0.82", EnabledKinds: []string{networking.KindLAN}})
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET runtime_generation = 0 WHERE id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
+		Version: "new-runtime", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, GatewayHealthy: true,
+		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.Kind != "gateway.component.apply" {
+		t.Fatalf("gateway runtime was not recreated first: %#v", task)
+	}
+}
+
+func TestAgentRuntimeGenerationMovesKomariToNativeArtifact(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "runtime-komari", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.83", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.83", LANAddress: "10.0.0.83", EnabledKinds: []string{networking.KindLAN}})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: komariAppKey, Config: json.RawMessage(`{"endpoint":"https://komari.example.test","token":"secret-token"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completeNextTask(t, store, node, "application.apply", json.RawMessage(`{"services":[]}`))
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET runtime_generation = 0 WHERE id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0, runtime = 'docker' WHERE id = ?`, deployment.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
+		Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
+		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.AppKey != komariAppKey || task.Operation != "configure" || len(task.Manifest.Images) != 0 || len(task.Manifest.Artifacts) != 2 {
+		t.Fatalf("Komari was not migrated to its native artifact manifest: %#v", task.Manifest)
+	}
+}
+
 func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -158,7 +249,7 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 		t.Fatalf("shared 443 did not queue a combined gateway state: %#v", task)
 	}
 	sharedState := task.GatewayState.SharedHTTPS
-	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "127.0.0.1" || sharedState.CaddyPort != 8443 || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "www.example.test" {
+	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "vastora-gateway-caddy" || sharedState.CaddyPort != 443 || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "www.example.test" {
 		t.Fatalf("unexpected shared 443 desired state: %#v", sharedState)
 	}
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
@@ -493,6 +584,9 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	storeSystemCenterCertificateForTest(t, store, "center.example.test")
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.70","bindAddress":"10.0.0.70"}`); err != nil {
+		t.Fatal(err)
+	}
 	store.discoverNetworkCandidates = func(now time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{{Address: "203.0.113.70", Interface: "eth0", Kind: networking.KindPublic, ObservedAt: now}, {Address: "100.64.0.70", Interface: "tailscale0", Kind: networking.KindHeadscale, ObservedAt: now}}, nil
 	}

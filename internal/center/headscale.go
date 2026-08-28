@@ -114,7 +114,7 @@ func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, tr
 	}
 	httpClient := s.headscaleHTTPClient
 	if trustedBuiltin {
-		httpClient, err = builtinHeadscaleHTTPClient(endpoint, httpClient)
+		httpClient, err = builtinHeadscaleHTTPClient(endpoint, s.builtinHeadscaleDialAddress, httpClient)
 		if err != nil {
 			return IntegrationView{}, err
 		}
@@ -219,7 +219,7 @@ func (s *Store) headscale(ctx context.Context) (headscaleClient, error) {
 	}
 	httpClient := s.headscaleHTTPClient
 	if mode == "builtin" {
-		httpClient, err = builtinHeadscaleHTTPClient(allowedEndpoint, httpClient)
+		httpClient, err = builtinHeadscaleHTTPClient(allowedEndpoint, s.builtinHeadscaleDialAddress, httpClient)
 		if err != nil {
 			return headscaleClient{}, err
 		}
@@ -272,14 +272,10 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 	return state, nil
 }
 
-func builtinHeadscaleHTTPClient(endpoint string, base *http.Client) (*http.Client, error) {
+func builtinHeadscaleHTTPClient(endpoint, dialAddress string, base *http.Client) (*http.Client, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Hostname() == "" {
 		return nil, errors.New("center: built-in Headscale URL is invalid")
-	}
-	port := parsed.Port()
-	if port == "" {
-		port = "443"
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if configured, ok := base.Transport.(*http.Transport); ok {
@@ -287,7 +283,7 @@ func builtinHeadscaleHTTPClient(endpoint string, base *http.Client) (*http.Clien
 	}
 	transport.Proxy = nil
 	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", port))
+		return (&net.Dialer{}).DialContext(ctx, "tcp", dialAddress)
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
 	if transport.TLSClientConfig != nil {

@@ -77,6 +77,24 @@ func TestAppAndImageIDsMayStartWithDigits(t *testing.T) {
 	}
 }
 
+func TestNativeArtifactsArePlatformPinned(t *testing.T) {
+	t.Parallel()
+	c := validCatalog()
+	c.Apps[0].Images = nil
+	c.Apps[0].Artifacts = []Artifact{{
+		Name: "komari-agent", OperatingSystem: "linux", Architecture: "arm64",
+		URL:    "https://github.com/komari-monitor/komari-agent/releases/download/1.2.60/komari-agent-linux-arm64",
+		SHA256: "8d98966365848435f756d00435b42654d56557f5f783c4b16ba83ed413038007",
+	}}
+	if err := ValidateCatalog(c); err != nil {
+		t.Fatalf("expected a pinned native artifact to be valid: %v", err)
+	}
+	c.Apps[0].Artifacts[0].URL += "?latest=1"
+	if err := ValidateCatalog(c); err == nil {
+		t.Fatal("expected a mutable artifact URL to be rejected")
+	}
+}
+
 func TestHomepageMustReferenceADeclaredService(t *testing.T) {
 	t.Parallel()
 	catalog := validCatalog()

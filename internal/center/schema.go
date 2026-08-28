@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 22
+const centerSchemaVersion = 23
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -122,7 +122,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE RESTRICT,
 			roles_json BLOB NOT NULL DEFAULT '[]',
 			capabilities_json BLOB NOT NULL DEFAULT '{}',
-			gateway_healthy INTEGER NOT NULL DEFAULT 0
+			gateway_healthy INTEGER NOT NULL DEFAULT 0,
+			runtime_generation INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE site_gateways (
 			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
@@ -168,6 +169,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			image TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL CHECK(status IN ('pending', 'deploying', 'running', 'failed', 'stopped')),
 			runtime TEXT NOT NULL DEFAULT 'docker',
+			runtime_generation INTEGER NOT NULL DEFAULT 0,
 			role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'master', 'worker')),
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -378,6 +380,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			delete_data INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'succeeded', 'failed')),
 			reconciliation_required INTEGER NOT NULL DEFAULT 0 CHECK(reconciliation_required IN (0, 1)),
+			runtime_generation INTEGER NOT NULL DEFAULT 0,
 			attempt INTEGER NOT NULL DEFAULT 0,
 			lease_expires_at TEXT NOT NULL DEFAULT '',
 			error TEXT NOT NULL DEFAULT '',

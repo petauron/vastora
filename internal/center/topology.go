@@ -41,6 +41,7 @@ type NodeHeartbeat struct {
 	ApplicationEndpoints         []ApplicationEndpointObservation
 	ApplicationEndpointsObserved bool
 	GatewayHealthy               bool
+	ApplicationRuntimeGeneration int
 }
 
 type ApplicationEndpointObservation struct {

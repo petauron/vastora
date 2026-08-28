@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -21,22 +22,19 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	if err != nil {
 		return fmt.Errorf("center: read bundled Headscale endpoint: %w", err)
 	}
-	localCandidates, err := s.discoverNetworkCandidates(s.now().UTC())
+	binding, bindingConfigured, err := readSetupGatewayBinding(ctx, tx)
 	if err != nil {
-		return fmt.Errorf("center: discover control-plane addresses: %w", err)
+		return err
 	}
-	localAddresses := make(map[string]networking.Candidate, len(localCandidates))
-	for _, candidate := range localCandidates {
-		localAddresses[candidate.Address] = candidate
+	if !bindingConfigured {
+		return nil
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT address, interface_name, kind, observed_at FROM agent_network_candidates WHERE agent_id = ? ORDER BY kind, address`, gatewayID)
 	if err != nil {
 		return fmt.Errorf("center: read gateway addresses: %w", err)
 	}
-	coLocated := false
-	publicAddress := ""
+	bindAddressReported := false
 	headscaleAddress := ""
-	matchedAddresses := make(map[string]networking.Candidate)
 	for rows.Next() {
 		var candidate networking.Candidate
 		var observed string
@@ -44,16 +42,10 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 			rows.Close()
 			return err
 		}
-		local, exists := localAddresses[candidate.Address]
-		if !exists {
-			continue
+		if candidate.Address == binding.BindAddress && (candidate.Kind == networking.KindLAN || candidate.Kind == networking.KindPublic) {
+			bindAddressReported = true
 		}
-		coLocated = true
-		matchedAddresses[candidate.Address] = local
-		if publicAddress == "" && local.Kind == networking.KindPublic && candidate.Kind == networking.KindPublic {
-			publicAddress = candidate.Address
-		}
-		if headscaleAddress == "" && local.Kind == networking.KindHeadscale && candidate.Kind == networking.KindHeadscale {
+		if headscaleAddress == "" && candidate.Kind == networking.KindHeadscale {
 			headscaleAddress = candidate.Address
 		}
 	}
@@ -64,23 +56,8 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	if !coLocated {
+	if !bindAddressReported {
 		return nil
-	}
-	binding, bindingConfigured, err := readSetupGatewayBinding(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if bindingConfigured {
-		local, localExists := localAddresses[binding.BindAddress]
-		_, agentReported := matchedAddresses[binding.BindAddress]
-		if !localExists || !agentReported || local.Kind != networking.KindLAN && local.Kind != networking.KindPublic {
-			return errors.New("center: the co-located Gateway no longer reports the local address used by bundled services")
-		}
-		publicAddress = binding.BindAddress
-	}
-	if publicAddress == "" {
-		return errors.New("center: the co-located Gateway does not report the public address used by bundled services")
 	}
 	if headscaleAddress == "" {
 		return errors.New("center: the co-located Gateway does not report a Headscale address for private Center access")
@@ -97,16 +74,16 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	if err != nil {
 		return fmt.Errorf("center: bundled Headscale endpoint: %w", err)
 	}
-	listeners["public"] = gateway.Listener{Kind: "public", Address: publicAddress, HTTPPort: 80, HTTPSPort: 443}
+	listeners["public"] = gateway.Listener{Kind: "public", Address: binding.BindAddress, HTTPPort: 80, HTTPSPort: 443}
 	listeners["headscale"] = gateway.Listener{Kind: "headscale", Address: headscaleAddress, HTTPPort: 80, HTTPSPort: 443}
 	listeners["system"] = gateway.Listener{Kind: "system", Address: "127.0.0.1", HTTPPort: 80, HTTPSPort: 443}
 	state.Routes = append(state.Routes,
-		gateway.Route{ID: "system-center", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
-		gateway.Route{ID: "system-headscale", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
-		gateway.Route{ID: "system-agent-bootstrap", Hostname: headscaleHostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
-		gateway.Route{ID: "system-agent-binary-bootstrap", Hostname: headscaleHostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
-		gateway.Route{ID: "system-center-local", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
-		gateway.Route{ID: "system-headscale-local", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
+		gateway.Route{ID: "system-center", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
+		gateway.Route{ID: "system-headscale", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.HeadscaleAlias, Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		gateway.Route{ID: "system-agent-bootstrap", Hostname: headscaleHostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		gateway.Route{ID: "system-agent-binary-bootstrap", Hostname: headscaleHostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		gateway.Route{ID: "system-center-local", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
+		gateway.Route{ID: "system-headscale-local", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.HeadscaleAlias, Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
 	)
 	centerAliases, err := readSystemEndpointAliases(ctx, tx, "center")
 	if err != nil {
@@ -122,8 +99,8 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 		}
 		key := strings.ReplaceAll(hostname, ".", "-")
 		state.Routes = append(state.Routes,
-			gateway.Route{ID: "system-center-alias-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
-			gateway.Route{ID: "system-center-alias-local-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
+			gateway.Route{ID: "system-center-alias-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
+			gateway.Route{ID: "system-center-alias-local-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
 		)
 	}
 	headscaleAliases, err := readSystemEndpointAliases(ctx, tx, "headscale")
@@ -140,10 +117,10 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 		}
 		key := strings.ReplaceAll(hostname, ".", "-")
 		state.Routes = append(state.Routes,
-			gateway.Route{ID: "system-headscale-alias-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
-			gateway.Route{ID: "system-agent-bootstrap-alias-" + key, Hostname: hostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
-			gateway.Route{ID: "system-agent-binary-bootstrap-alias-" + key, Hostname: hostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
-			gateway.Route{ID: "system-headscale-alias-local-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
+			gateway.Route{ID: "system-headscale-alias-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.HeadscaleAlias, Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-agent-bootstrap-alias-" + key, Hostname: hostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-agent-binary-bootstrap-alias-" + key, Hostname: hostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-headscale-alias-local-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.HeadscaleAlias, Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
 		)
 	}
 	return nil

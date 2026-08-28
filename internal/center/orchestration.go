@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"golang.org/x/mod/semver"
 )
@@ -41,7 +42,7 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		return "", errors.New("center: target node not found")
 	}
 	var capabilities NodeCapabilities
-	if json.Unmarshal(capabilitiesJSON, &capabilities) != nil || !capabilities.Docker {
+	if json.Unmarshal(capabilitiesJSON, &capabilities) != nil || (request.AppKey != komariAppKey && !capabilities.Docker) {
 		return "", errors.New("center: target node does not report Docker capability")
 	}
 	var applicationID string
@@ -56,13 +57,17 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		if len(manifest.Images) != 0 {
 			image = manifest.Images[0].Reference
 		}
+		runtime := "docker"
+		if request.AppKey == komariAppKey {
+			runtime = "host"
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, 'pending', 'docker', ?, ?, ?)`, applicationID, manifest.Name.English, request.AgentID, siteID, request.AppKey, image, request.Role, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+			VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`, applicationID, manifest.Name.English, request.AgentID, siteID, request.AppKey, image, runtime, request.Role, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return "", fmt.Errorf("center: create application: %w", err)
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("center: read application: %w", err)
-	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, komariAppKey, request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return "", fmt.Errorf("center: update application: %w", err)
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleMaster {
@@ -113,11 +118,12 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if err := tx.QueryRowContext(ctx, `SELECT site_id, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &role); err != nil {
 		return fmt.Errorf("center: read application site: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	var manifestJSON []byte
+	var runtimeGeneration int
+	if err := tx.QueryRowContext(ctx, `SELECT manifest_json, runtime_generation FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON, &runtimeGeneration); err != nil {
 		return err
 	}
-	var manifestJSON []byte
-	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', runtime_generation = ?, runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, runtimeGeneration, komariAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
 	}
 	var manifest catalog.AppManifest
@@ -332,7 +338,7 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 		port, _ := strconv.Atoi(portValue)
 		route.Upstreams = []gateway.Upstream{{Address: host, Port: port}}
 		if shared == nil {
-			shared = &gateway.SharedHTTPS{Address: publicAddress, Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 8443}
+			shared = &gateway.SharedHTTPS{Address: publicAddress, Port: 443, CaddyAddress: dockerruntime.CaddyAlias, CaddyPort: 443}
 			listeners["public"] = gateway.Listener{Kind: "public", Address: publicAddress, HTTPPort: 80, HTTPSPort: 443}
 		} else if shared.Address != publicAddress {
 			sharedRows.Close()

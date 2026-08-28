@@ -149,6 +149,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
 		ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
 		GatewayHealthy               bool                             `json:"gatewayHealthy"`
+		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
 		TailscaleEnrolled            bool                             `json:"tailscaleEnrolled"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
@@ -160,7 +161,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}

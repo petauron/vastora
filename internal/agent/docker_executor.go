@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"strings"
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
 const (
@@ -23,12 +26,33 @@ const (
 	komariContainer        = "vastora-komari-agent"
 )
 
-type DockerExecutor struct {
-	Socket string
+type HostApplicationManager interface {
+	ApplyKomari(context.Context, DeploymentTask) error
+	RemoveKomari(context.Context) error
 }
 
-func (e DockerExecutor) Deploy(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
-	socket := e.Socket
+type ApplicationExecutor struct {
+	DockerSocket string
+	Host         HostApplicationManager
+}
+
+func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
+	if task.AppKey == komariKey {
+		if e.Host == nil {
+			return ApplicationTaskResult{}, errors.New("agent: host application capability is not configured")
+		}
+		if task.Operation == "uninstall" {
+			return ApplicationTaskResult{}, errors.Join(e.Host.RemoveKomari(ctx), e.removeLegacyKomariContainer(ctx))
+		}
+		if err := e.Host.ApplyKomari(ctx, task); err != nil {
+			return ApplicationTaskResult{}, err
+		}
+		if err := e.removeLegacyKomariContainer(ctx); err != nil {
+			return ApplicationTaskResult{}, errors.Join(err, e.Host.RemoveKomari(ctx))
+		}
+		return ApplicationTaskResult{}, nil
+	}
+	socket := e.DockerSocket
 	if socket == "" {
 		socket = "unix:///var/run/docker.sock"
 	}
@@ -38,7 +62,10 @@ func (e DockerExecutor) Deploy(ctx context.Context, task DeploymentTask) (Applic
 	}
 	defer docker.Close()
 	if task.Operation == "uninstall" {
-		return ApplicationTaskResult{}, uninstallApp(ctx, docker, task.AppKey, task.DeleteData)
+		return ApplicationTaskResult{}, uninstallDockerApp(ctx, docker, task.AppKey, task.DeleteData)
+	}
+	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
+		return ApplicationTaskResult{}, err
 	}
 	bindAddress := "127.0.0.1"
 	if task.ServiceAddress != "" {
@@ -60,8 +87,6 @@ func (e DockerExecutor) Deploy(ctx context.Context, task DeploymentTask) (Applic
 		deployErr = deployCPA(ctx, docker, task, bindAddress)
 	case keeperKey:
 		deployErr = deployKeeper(ctx, docker, task, bindAddress)
-	case komariKey:
-		deployErr = deployKomari(ctx, docker, task)
 	default:
 		return ApplicationTaskResult{}, errors.New("agent: unsupported official app package")
 	}
@@ -81,10 +106,15 @@ func (e DockerExecutor) Deploy(ctx context.Context, task DeploymentTask) (Applic
 
 // Maintain cleans committed rollback artifacts and restores an interrupted
 // replacement transaction whose canonical container is absent.
-func (e DockerExecutor) Maintain(ctx context.Context) error {
-	socket := e.Socket
+func (e ApplicationExecutor) Maintain(ctx context.Context) error {
+	socket := e.DockerSocket
 	if socket == "" {
 		socket = "unix:///var/run/docker.sock"
+	}
+	if path, ok := strings.CutPrefix(socket, "unix://"); ok {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 	}
 	docker, err := client.New(client.WithHost(socket))
 	if err != nil {
@@ -99,8 +129,8 @@ type appUninstallEngine interface {
 	VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 }
 
-func uninstallApp(ctx context.Context, docker appUninstallEngine, appKey string, deleteData bool) error {
-	containers := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer, komariKey: komariContainer}
+func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey string, deleteData bool) error {
+	containers := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer}
 	name, ok := containers[appKey]
 	if !ok {
 		return errors.New("agent: unsupported app package")
@@ -136,6 +166,27 @@ func uninstallApp(ctx context.Context, docker appUninstallEngine, appKey string,
 		if _, err := docker.VolumeRemove(ctx, volume, client.VolumeRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 			return fmt.Errorf("agent: remove %s data volume: %w", appKey, err)
 		}
+	}
+	return nil
+}
+
+func (e ApplicationExecutor) removeLegacyKomariContainer(ctx context.Context) error {
+	socket := e.DockerSocket
+	if socket == "" {
+		socket = "unix:///var/run/docker.sock"
+	}
+	if path, ok := strings.CutPrefix(socket, "unix://"); ok {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+	}
+	docker, err := client.New(client.WithHost(socket))
+	if err != nil {
+		return fmt.Errorf("agent: connect Docker to remove legacy Komari container: %w", err)
+	}
+	defer docker.Close()
+	if _, err := docker.ContainerRemove(ctx, komariContainer, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("agent: remove legacy Komari container: %w", err)
 	}
 	return nil
 }

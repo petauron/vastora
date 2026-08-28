@@ -10,14 +10,22 @@ services:
       - --data-dir
       - /var/lib/vastora
       - --listen
-      - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}
+      - 0.0.0.0:8080
+      - --allow-container-http
+      - --host-network-addresses
+      - ${VASTORA_HOST_NETWORK_ADDRESSES:-}
       - --web-dir
       - /app/web/dist
       - --official-catalog
       - /app/catalog/catalog.json
       - --deployer-socket
       - /run/vastora-deployer/deployer.sock
-    network_mode: host
+    ports:
+      - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}:8080
+    networks:
+      default:
+        aliases:
+          - vastora-center
     volumes:
       - center-data:/var/lib/vastora
       - deployer-socket:/run/vastora-deployer
@@ -38,8 +46,11 @@ services:
       - --center-install-dir
       - /var/lib/vastora-center-install
       - --center-origin
-      - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}
-    network_mode: host
+      - vastora-center:8080
+      - --runtime-image
+      - ${VASTORA_CENTER_IMAGE:?set VASTORA_CENTER_IMAGE to a pinned Center image}
+    networks:
+      - default
     read_only: true
     tmpfs:
       - /tmp
@@ -59,3 +70,8 @@ volumes:
   headscale-caddy-data:
   headscale-caddy-config:
   deployer-socket:
+
+networks:
+  default:
+    name: vastora-runtime
+    external: true

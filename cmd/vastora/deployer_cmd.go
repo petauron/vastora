@@ -1,17 +1,36 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/petauron/vastora/internal/deployer"
 )
 
 func runDeployer(arguments []string) error {
-	if len(arguments) == 0 || arguments[0] != "serve" {
-		return errors.New("deployer serve is required")
+	if len(arguments) == 0 {
+		return errors.New("deployer serve or public-entry-probe is required")
+	}
+	if arguments[0] == "public-entry-probe" {
+		flags := flag.NewFlagSet("deployer public-entry-probe", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		challenge := flags.String("challenge", "", "one-time probe challenge")
+		expiresAtValue := flags.String("expires-at", "", "probe expiration time")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		expiresAt, err := time.Parse(time.RFC3339Nano, *expiresAtValue)
+		if err != nil || flags.NArg() != 0 {
+			return errors.New("deployer public-entry-probe requires a valid --challenge and --expires-at")
+		}
+		return deployer.RunPublicEntryProbe(context.Background(), *challenge, expiresAt)
+	}
+	if arguments[0] != "serve" {
+		return errors.New("deployer serve or public-entry-probe is required")
 	}
 	flags := flag.NewFlagSet("deployer serve", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -22,6 +41,7 @@ func runDeployer(arguments []string) error {
 	centerOrigin := flags.String("center-origin", "127.0.0.1:8080", "loopback Center origin used by the HTTPS gateway")
 	centerUID := flags.Int("center-uid", 65532, "Center user ID allowed to connect")
 	centerGID := flags.Int("center-gid", 65532, "Center group ID allowed to connect")
+	runtimeImage := flags.String("runtime-image", "", "immutable Vastora image used for isolated helper containers")
 	if err := flags.Parse(arguments[1:]); err != nil {
 		return err
 	}
@@ -34,6 +54,8 @@ func runDeployer(arguments []string) error {
 		CenterOrigin: *centerOrigin,
 	}
 	fmt.Printf("Deployment helper listening on %s\n", *socket)
-	server := deployer.NewServer(installer).WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir})
+	server := deployer.NewServer(installer).
+		WithPublicEntryProber(deployer.NewPublicEntryProbeService(*dockerSocket, *runtimeImage)).
+		WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir})
 	return deployer.ServeUnix(*socket, *centerUID, *centerGID, server.Handler())
 }

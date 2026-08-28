@@ -18,6 +18,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 var Version = "0.1.0-dev"
@@ -411,7 +412,8 @@ func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/heartbeat", map[string]any{
 		"version": Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
-		"tailscaleEnrolled": c.TailscaleEnrolled,
+		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
+		"tailscaleEnrolled":            c.TailscaleEnrolled,
 	}, connection.Credential, &response)
 	if err != nil {
 		return observeErr, err
@@ -618,7 +620,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	var err error
 	switch task.Kind {
 	case "application.apply":
-		if c.Executor == nil || !c.Capabilities.Docker {
+		if c.Executor == nil {
+			err = errors.New("agent: application capability is not configured")
+		} else if task.AppKey != komariKey && !c.Capabilities.Docker {
 			err = errors.New("agent: Docker capability is not configured")
 		} else {
 			result, err = c.Executor.Deploy(ctx, task)

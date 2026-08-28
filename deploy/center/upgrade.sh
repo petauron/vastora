@@ -30,13 +30,14 @@ if [ ! -f "$install_dir/.env" ] || [ ! -f "$install_dir/compose.yaml" ]; then
   echo "$install_dir is not a complete Center installation." >&2
   exit 1
 fi
-for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compose.yaml release.env; do
+for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh runtime-network.sh compose.yaml release.env; do
   if [ ! -f "$source_dir/$required_file" ]; then
     echo "The upgrade bundle is incomplete: missing $required_file" >&2
     exit 1
   fi
 done
-for required in awk curl docker grep install mktemp mv; do
+. "$source_dir/runtime-network.sh"
+for required in awk curl docker grep install ip mktemp mv; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
@@ -75,7 +76,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' vastora-gateway-haproxy 2>/dev/nu
 fi
 
 restore_files() {
-  for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compose.yaml release.env .env; do
+  for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh runtime-network.sh compose.yaml release.env .env; do
     if [ -f "$backup_dir/$relative" ]; then
       install -d -m 0755 "$(dirname "$install_dir/$relative")"
       install -m 0644 "$backup_dir/$relative" "$install_dir/$relative"
@@ -112,19 +113,34 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-awk -v image="$new_image" '
-  BEGIN { replaced = 0 }
+host_network_addresses="$(ip -o -4 addr show scope global | awk '$2 !~ /^(docker|br-|veth|cni|flannel|cali|podman|lxcbr|virbr|tailscale|wg|tun|tap)/ {split($4, address, "/"); printf "%s%s=%s", separator, $2, address[1]; separator=","}')"
+if [ -z "$host_network_addresses" ]; then
+  echo "No physical host IPv4 address was detected; refusing to start Center with incomplete network discovery." >&2
+  exit 1
+fi
+
+awk -v image="$new_image" -v host_addresses="$host_network_addresses" '
+  BEGIN { image_replaced = 0; addresses_replaced = 0 }
   /^VASTORA_CENTER_IMAGE=/ {
-    if (!replaced) print "VASTORA_CENTER_IMAGE=" image
-    replaced = 1
+    if (!image_replaced) print "VASTORA_CENTER_IMAGE=" image
+    image_replaced = 1
+    next
+  }
+  /^VASTORA_HOST_NETWORK_ADDRESSES=/ {
+    if (!addresses_replaced) print "VASTORA_HOST_NETWORK_ADDRESSES=" host_addresses
+    addresses_replaced = 1
     next
   }
   { print }
-  END { if (!replaced) print "VASTORA_CENTER_IMAGE=" image }
+  END {
+    if (!image_replaced) print "VASTORA_CENTER_IMAGE=" image
+    if (!addresses_replaced) print "VASTORA_HOST_NETWORK_ADDRESSES=" host_addresses
+  }
 ' "$install_dir/.env" > "$candidate_env"
 chmod 0600 "$candidate_env"
 
 echo "Validating the new deployment with the existing configuration..."
+ensure_vastora_runtime_network
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" config --quiet
 echo "Downloading the immutable Center image..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center deployer
@@ -162,7 +178,7 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
   echo "Co-located Agent updated to $new_version before Center reconciliation."
 fi
 
-for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compose.yaml release.env .env; do
+for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh runtime-network.sh compose.yaml release.env .env; do
   if [ -f "$install_dir/$relative" ]; then
     install -d -m 0755 "$(dirname "$backup_dir/$relative")"
     install -m 0644 "$install_dir/$relative" "$backup_dir/$relative"
@@ -176,6 +192,7 @@ install -m 0755 "$source_dir/uninstall.sh" "$install_dir/uninstall.sh"
 install -m 0755 "$source_dir/install-host-cli.sh" "$install_dir/install-host-cli.sh"
 install -m 0755 "$source_dir/install-update-service.sh" "$install_dir/install-update-service.sh"
 install -m 0755 "$source_dir/update-center.sh" "$install_dir/update-center.sh"
+install -m 0644 "$source_dir/runtime-network.sh" "$install_dir/runtime-network.sh"
 install -m 0644 "$source_dir/compose.yaml" "$install_dir/compose.yaml"
 install -m 0644 "$source_dir/release.env" "$install_dir/release.env"
 install -m 0600 "$candidate_env" "$install_dir/.env"

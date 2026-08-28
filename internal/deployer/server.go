@@ -20,7 +20,12 @@ type Server struct {
 }
 
 func NewServer(installer deployapi.HeadscaleInstaller) *Server {
-	return &Server{installer: installer, publicEntryProber: NewPublicEntryProbeService()}
+	return &Server{installer: installer, publicEntryProber: NewPublicEntryProbeService("", "")}
+}
+
+func (server *Server) WithPublicEntryProber(prober deployapi.PublicEntryProber) *Server {
+	server.publicEntryProber = prober
+	return server
 }
 
 func (server *Server) WithCenterUpdater(updater deployapi.CenterUpdater) *Server {

@@ -12,9 +12,26 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 )
+
+func TestThreeXUIPortsPublishOnlySelectedServices(t *testing.T) {
+	exposed, bindings, err := threeXUIPorts("100.64.0.10", 2053, "worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := exposed[dockernetwork.MustParsePort("2096/tcp")]; exists {
+		t.Fatal("worker unexpectedly publishes the master subscription service")
+	}
+	for _, number := range []string{"2053/tcp", "20000/tcp", "20031/tcp"} {
+		port := dockernetwork.MustParsePort(number)
+		if _, exists := exposed[port]; !exists || len(bindings[port]) != 1 {
+			t.Fatalf("3x-ui mapping %s is missing", number)
+		}
+	}
+}
 
 type fakeThreeXUIContainer struct {
 	id      string
@@ -462,7 +479,7 @@ func TestThreeXUIKeepDataUninstallRemovesAllTransactionalContainers(t *testing.T
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.add("candidate-id", threeXUICandidateContainer, false)
 	engine.add("rollback-id", threeXUIBackupContainer, false)
-	if err := uninstallApp(context.Background(), engine, threeXUIKey, false); err != nil {
+	if err := uninstallDockerApp(context.Background(), engine, threeXUIKey, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUIContainer} {
@@ -479,7 +496,7 @@ func TestThreeXUIKeepDataUninstallNeverStartsStoppedCurrent(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.add("current-id", threeXUIContainer, false)
 	engine.volumeExists = true
-	if err := uninstallApp(context.Background(), engine, threeXUIKey, false); err != nil {
+	if err := uninstallDockerApp(context.Background(), engine, threeXUIKey, false); err != nil {
 		t.Fatal(err)
 	}
 	if engine.startCalls != 0 {
@@ -538,7 +555,7 @@ func TestThreeXUIDeleteDataUninstallIgnoresBrokenRollbackState(t *testing.T) {
 	engine.add("rollback-id", threeXUIBackupContainer, false)
 	engine.volumeExists = true
 	engine.failStartName = threeXUIBackupContainer
-	if err := uninstallApp(context.Background(), engine, threeXUIKey, true); err != nil {
+	if err := uninstallDockerApp(context.Background(), engine, threeXUIKey, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUIContainer} {
@@ -560,7 +577,7 @@ func TestThreeXUIKeepDataUninstallRecoversRollbackBeforeRemovingMarkers(t *testi
 	engine.add("rollback-id", threeXUIBackupContainer, false)
 	engine.persisted = []byte("durable-snapshot-marker")
 	engine.volumeExists = true
-	if err := uninstallApp(context.Background(), engine, threeXUIKey, false); err != nil {
+	if err := uninstallDockerApp(context.Background(), engine, threeXUIKey, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(engine.restored) == 0 {
@@ -677,7 +694,7 @@ func TestThreeXUIKeepDataUninstallPreservesStartedFreshCandidateVolume(t *testin
 	engine.add("candidate-id", threeXUICandidateContainer, true)
 	engine.containers["candidate-id"].labels = map[string]string{threeXUIVolumeStateLabel: "fresh"}
 	engine.volumeExists = true
-	if err := uninstallApp(context.Background(), engine, threeXUIKey, false); err != nil {
+	if err := uninstallDockerApp(context.Background(), engine, threeXUIKey, false); err != nil {
 		t.Fatal(err)
 	}
 	if !engine.volumeExists {

@@ -119,7 +119,9 @@ func runCenter(arguments []string) error {
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
 		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
 		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
+		hostNetworkAddresses := flags.String("host-network-addresses", "", "comma-separated host interface=IPv4 values supplied by the container installer")
 		deployerSocket := flags.String("deployer-socket", "", "Unix socket for the restricted infrastructure deployment helper")
+		allowContainerHTTP := flags.Bool("allow-container-http", false, "allow the official bridge-network container listener")
 		var headscaleAllowedURLs stringListFlag
 		flags.Var(&headscaleAllowedURLs, "headscale-allowed-url", "authorized Headscale control-plane URL (repeat for multiple URLs)")
 		tlsCert := flags.String("tls-cert", "", "PEM certificate path")
@@ -141,7 +143,7 @@ func runCenter(arguments []string) error {
 				return err
 			}
 		}
-		if *tlsCert == "" && !loopbackAddress(*listen) {
+		if *tlsCert == "" && !loopbackAddress(*listen) && !*allowContainerHTTP {
 			return errors.New("refusing a non-loopback HTTP listener; provide TLS certificate and key")
 		}
 		catalogPayload, err := os.ReadFile(*officialCatalog)
@@ -153,6 +155,9 @@ func runCenter(arguments []string) error {
 			return err
 		}
 		defer store.Close()
+		if err := store.UseHostNetworkAddresses(*hostNetworkAddresses); err != nil {
+			return err
+		}
 		if err := store.SeedOfficialCatalog(context.Background(), catalogPayload); err != nil {
 			return err
 		}

@@ -7,6 +7,12 @@ release_version=""
 bootstrap_port="8080"
 ssh_host=""
 
+if [ ! -r "$script_dir/runtime-network.sh" ]; then
+  echo "The install bundle is incomplete: missing runtime-network.sh" >&2
+  exit 1
+fi
+. "$script_dir/runtime-network.sh"
+
 usage() {
   cat <<'EOF'
 Usage: ./setup.sh [--image IMAGE@sha256:DIGEST] [--bootstrap-port PORT] \
@@ -58,7 +64,7 @@ if [ "$bootstrap_port" -lt 1 ] || [ "$bootstrap_port" -gt 65535 ]; then
   exit 2
 fi
 
-for required in awk curl docker mktemp mv; do
+for required in awk curl docker ip mktemp mv; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
@@ -82,14 +88,22 @@ fi
 temporary_env="$(mktemp "${TMPDIR:-/tmp}/vastora-center-env.XXXXXX")"
 cleanup() { rm -f "$temporary_env"; }
 trap cleanup EXIT HUP INT TERM
+host_network_addresses="$(ip -o -4 addr show scope global | awk '$2 !~ /^(docker|br-|veth|cni|flannel|cali|podman|lxcbr|virbr|tailscale|wg|tun|tap)/ {split($4, address, "/"); printf "%s%s=%s", separator, $2, address[1]; separator=","}')"
+if [ -z "$host_network_addresses" ]; then
+  echo "No physical host IPv4 address was discovered." >&2
+  exit 1
+fi
 {
   printf 'VASTORA_CENTER_IMAGE=%s\n' "$image"
   printf 'VASTORA_CENTER_BOOTSTRAP_PORT=%s\n' "$bootstrap_port"
+  printf 'VASTORA_HOST_NETWORK_ADDRESSES=%s\n' "$host_network_addresses"
 } > "$temporary_env"
 chmod 0600 "$temporary_env"
 mv "$temporary_env" .env
 trap - EXIT HUP INT TERM
 
+echo "Preparing the shared application network..."
+ensure_vastora_runtime_network
 echo "Validating the loopback-only deployment..."
 docker compose config --quiet
 echo "Downloading the immutable Center image..."

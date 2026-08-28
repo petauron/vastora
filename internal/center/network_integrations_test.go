@@ -121,6 +121,7 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 	}
 	defer store.Close()
 	store.headscaleHTTPClient = server.Client()
+	store.builtinHeadscaleDialAddress = server.Listener.Addr().String()
 	tx, err := store.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)

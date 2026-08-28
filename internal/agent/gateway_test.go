@@ -33,6 +33,15 @@ type fakeLayer4Provisioner struct {
 	removed  int
 }
 
+type fakeGatewayRuntimeProvisioner struct {
+	states []gateway.DesiredState
+}
+
+func (provisioner *fakeGatewayRuntimeProvisioner) Reconcile(_ context.Context, state gateway.DesiredState) error {
+	provisioner.states = append(provisioner.states, state.Sorted())
+	return nil
+}
+
 type staticSystemGatewayInspector []string
 
 func (services staticSystemGatewayInspector) ProtectedSystemServices(context.Context) ([]string, error) {
@@ -205,7 +214,7 @@ func TestCaddyConfigurationUsesOnlyGatewayListenersAndMeshUpstreams(t *testing.T
 		t.Fatalf("Caddy Admin API is not using its Unix socket: %#v", admin)
 	}
 	encoded := string(payload)
-	for _, wanted := range []string{`"listen":["100.64.0.2:80"]`, `"dial":"100.64.0.10:3000"`, `"host":["cpa.apps.example.test"]`} {
+	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"dial":"100.64.0.10:3000"`, `"host":["cpa.apps.example.test"]`} {
 		if !strings.Contains(encoded, wanted) {
 			t.Fatalf("Caddy configuration missing %s: %s", wanted, encoded)
 		}
@@ -221,7 +230,7 @@ func TestCaddyHTTPSRouteEnablesTLSAndRedirectsPlaintext(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := string(payload)
-	for _, wanted := range []string{`"listen":["100.64.0.2:80"]`, `"listen":["100.64.0.2:443"]`, `"tls_connection_policies":[{}]`, `"load_pem"`, `"tags":["vastora-cpa.apps.example.test"]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
+	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"listen":["0.0.0.0:10443"]`, `"tls_connection_policies":[{}]`, `"load_pem"`, `"tags":["vastora-cpa.apps.example.test"]`, `"status_code":308`, `"Location":["https://{http.request.host}{http.request.uri}"]`, `"host":["cpa.apps.example.test"]`} {
 		if !strings.Contains(encoded, wanted) {
 			t.Fatalf("HTTPS Caddy configuration missing %s: %s", wanted, encoded)
 		}
@@ -263,27 +272,27 @@ func TestGatewayRejectsMismatchedOrWrongHostnameCertificates(t *testing.T) {
 	}
 }
 
-func TestShared443MovesCaddyHTTPSToLoopback(t *testing.T) {
+func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 	state := gateway.DesiredState{
 		Revision:    1,
 		Listeners:   []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
 		Routes:      []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
-		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 8443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
+		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
 	}
 	payload, err := caddyConfiguration(state, nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
 		t.Fatal(err)
 	}
 	encoded := string(payload)
-	if !strings.Contains(encoded, `"listen":["127.0.0.1:8443"]`) || strings.Contains(encoded, `"listen":["203.0.113.10:443"]`) {
-		t.Fatalf("shared 443 did not move Caddy HTTPS to loopback: %s", encoded)
+	if !strings.Contains(encoded, `"listen":["0.0.0.0:443"]`) || strings.Contains(encoded, `"listen":["203.0.113.10:443"]`) {
+		t.Fatalf("shared 443 did not keep Caddy on its private container socket: %s", encoded)
 	}
 	configuration, err := haproxyConfiguration(*state.SharedHTTPS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	haproxy := string(configuration)
-	for _, wanted := range []string{"bind 203.0.113.10:443", "req.ssl_sni -i vless.example.test", "server caddy 127.0.0.1:8443 check", "server upstream-0 127.0.0.1:2443 check"} {
+	for _, wanted := range []string{"bind 0.0.0.0:443", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check", "server upstream-0 127.0.0.1:2443 check"} {
 		if !strings.Contains(haproxy, wanted) {
 			t.Fatalf("HAProxy configuration missing %q: %s", wanted, haproxy)
 		}
@@ -308,7 +317,8 @@ func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
 		t.Fatal(err)
 	}
 	layer4 := &fakeLayer4Provisioner{applyErr: errors.New("HAProxy failed")}
-	driver := &ManagedGatewayDriver{Caddy: caddy, Layer4: layer4}
+	runtime := &fakeGatewayRuntimeProvisioner{}
+	driver := &ManagedGatewayDriver{Caddy: caddy, Layer4: layer4, Runtime: runtime}
 	state := gateway.DesiredState{
 		Revision:  1,
 		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
@@ -316,7 +326,7 @@ func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
 			ID: "system-center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", System: true,
 			Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}},
 		}},
-		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 8443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
+		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
 	}
 	if err := driver.ApplyConfiguration(context.Background(), state, nil); err == nil {
 		t.Fatal("failed HAProxy transition was accepted")
@@ -325,8 +335,8 @@ func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
 		t.Fatalf("Caddy was not restored after HAProxy failure: %d loads", len(loaded))
 	}
 	last := string(loaded[len(loaded)-1])
-	if !strings.Contains(last, `"listen":["203.0.113.10:443"]`) || strings.Contains(last, `"listen":["127.0.0.1:8443"]`) {
-		t.Fatalf("Caddy did not return to public 443: %s", last)
+	if !strings.Contains(last, `"listen":["0.0.0.0:443"]`) || len(runtime.states) != 2 || runtime.states[1].SharedHTTPS != nil {
+		t.Fatalf("Caddy runtime did not return ownership of public 443: %s states=%#v", last, runtime.states)
 	}
 }
 
@@ -334,6 +344,7 @@ func TestHAProxyContainerBootstrapsConfigurationInWritableTmpfs(t *testing.T) {
 	configuration := []byte("global\n  maxconn 4096\n")
 	options := haproxyContainerCreateOptions(
 		DockerLayer4Provisioner{Image: defaultHAProxyImage, Container: defaultHAProxyContainer},
+		gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443},
 		configuration,
 	)
 	if !options.HostConfig.ReadonlyRootfs {
@@ -362,7 +373,7 @@ func TestCaddyConfigurationKeepsLANAndHeadscaleListenersSeparate(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := string(payload)
-	for _, wanted := range []string{`"listen":["100.64.0.2:80"]`, `"listen":["192.168.1.2:80"]`, `"host":["cpa.apps.example.test"]`, `"host":["keeper.lan.example.test"]`} {
+	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"listen":["0.0.0.0:11080"]`, `"host":["cpa.apps.example.test"]`, `"host":["keeper.lan.example.test"]`} {
 		if !strings.Contains(encoded, wanted) {
 			t.Fatalf("multi-listener Caddy configuration missing %s: %s", wanted, encoded)
 		}

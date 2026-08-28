@@ -277,6 +277,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if heartbeat.AppliedInstallations < 0 || heartbeat.AppliedInstallations > 1_000_000 {
 		return errors.New("center: invalid applied installation count")
 	}
+	if heartbeat.ApplicationRuntimeGeneration < 0 || heartbeat.ApplicationRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+		return errors.New("center: unsupported Agent application runtime generation")
+	}
 	if err := s.authenticateAgent(ctx, id, credential); err != nil {
 		return err
 	}
@@ -334,7 +337,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	defer tx.Rollback()
 	now := s.now().UTC()
 	publicationCleanups := []publicationCleanup{}
-	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, now.Format(time.RFC3339Nano), id); err != nil {
+	var previousRuntimeGeneration int
+	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation FROM agents WHERE id = ?`, id).Scan(&previousRuntimeGeneration); err != nil {
+		return fmt.Errorf("center: read Agent runtime generation: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = CASE WHEN runtime_generation < ? THEN ? ELSE runtime_generation END, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.ApplicationRuntimeGeneration, now.Format(time.RFC3339Nano), id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_network_candidates WHERE agent_id = ?`, id); err != nil {
@@ -352,6 +359,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if heartbeat.ApplicationEndpointsObserved {
 		if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now, &publicationCleanups); err != nil {
+			return err
+		}
+	}
+	if heartbeat.ApplicationRuntimeGeneration > previousRuntimeGeneration {
+		if err := s.queueApplicationRuntimeMigration(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
 			return err
 		}
 	}
