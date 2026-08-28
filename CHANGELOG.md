@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.59](https://github.com/petauron/vastora/compare/v0.1.0-alpha.58...v0.1.0-alpha.59) (2026-08-28)
+
+
+### Features
+
+* add managed Tailscale direct endpoints ([#179](https://github.com/petauron/vastora/issues/179)) ([e3fb376](https://github.com/petauron/vastora/commit/e3fb3768e9d171f39d45ec577845cc9b6a8f2726)), closes [#178](https://github.com/petauron/vastora/issues/178)
+
+
+### Bug Fixes
+
+* use immutable R2 releases for Center updates ([#176](https://github.com/petauron/vastora/issues/176)) ([56e235a](https://github.com/petauron/vastora/commit/56e235a46e92dc6a6ca9cddee0ba4b00c2d52597))
+
 ## [0.1.0-alpha.58](https://github.com/petauron/vastora/compare/v0.1.0-alpha.57...v0.1.0-alpha.58) (2026-08-28)
 
 
