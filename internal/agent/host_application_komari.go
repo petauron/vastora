@@ -122,7 +122,8 @@ WantedBy=multi-user.target
 	if !snapshots[2].Exists && (snapshots[0].Exists || snapshots[1].Exists) {
 		return errors.New("agent: refusing to replace Komari Agent files not managed by Vastora")
 	}
-	if err := writeHostFileAtomic(paths[0], binary, 0o755); err == nil {
+	err = writeHostFileAtomic(paths[0], binary, 0o755)
+	if err == nil {
 		err = writeHostFileAtomic(paths[1], config, 0o600)
 		if err == nil {
 			err = writeHostFileAtomic(paths[2], unit, 0o644)
@@ -293,7 +294,8 @@ func writeHostFileAtomic(path string, content []byte, mode os.FileMode) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(mode); err == nil {
+	err = temporary.Chmod(mode)
+	if err == nil {
 		_, err = temporary.Write(content)
 	}
 	if err == nil {
