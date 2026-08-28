@@ -22,7 +22,7 @@ type ConfigVAlpha struct {
 func StaticEndpoint(publicAddress string) (string, error) {
 	ip := net.ParseIP(strings.TrimSpace(publicAddress))
 	if ip == nil || ip.To4() == nil {
-		return "", errors.New("Tailscale static endpoint requires a public IPv4 address")
+		return "", errors.New("tailscale static endpoint requires a public IPv4 address")
 	}
 	return net.JoinHostPort(ip.String(), strconv.Itoa(FixedPort)), nil
 }
@@ -33,11 +33,11 @@ func RenderConfig(staticEndpoints []string) ([]byte, error) {
 	for _, endpoint := range staticEndpoints {
 		host, port, err := net.SplitHostPort(strings.TrimSpace(endpoint))
 		if err != nil || port != strconv.Itoa(FixedPort) {
-			return nil, errors.New("Tailscale static endpoint must use UDP port 41641")
+			return nil, errors.New("tailscale static endpoint must use UDP port 41641")
 		}
 		ip := net.ParseIP(host)
 		if ip == nil || ip.To4() == nil {
-			return nil, errors.New("Tailscale static endpoint requires an IPv4 address")
+			return nil, errors.New("tailscale static endpoint requires an IPv4 address")
 		}
 		normalized := net.JoinHostPort(ip.String(), strconv.Itoa(FixedPort))
 		if _, exists := seen[normalized]; exists {
