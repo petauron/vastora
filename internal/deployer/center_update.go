@@ -77,17 +77,31 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, version 
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	queued := deployapi.CenterUpdateExecution{Available: true, State: "queued", TargetVersion: version, Message: "Waiting for the host update service.", UpdatedAt: now}
-	statusPayload, err := json.Marshal(queued)
-	if err != nil {
-		return deployapi.CenterUpdateExecution{}, err
-	}
-	if err := writeCenterUpdateFile(filepath.Join(updater.InstallDir, ".update-status.json"), append(statusPayload, '\n'), 0o600); err != nil {
+	statusPath := filepath.Join(updater.InstallDir, ".update-status.json")
+	if err := writeCenterUpdateStatus(statusPath, queued); err != nil {
 		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: queue Center update status: %w", err)
 	}
 	if err := writeCenterUpdateFile(filepath.Join(updater.InstallDir, ".update-request"), []byte(version+"\n"), 0o600); err != nil {
+		failed := queued
+		failed.State = "failed"
+		failed.Message = "The update request could not be queued."
+		if statusErr := writeCenterUpdateStatus(statusPath, failed); statusErr != nil {
+			return deployapi.CenterUpdateExecution{}, errors.Join(
+				fmt.Errorf("deployer: queue Center update request: %w", err),
+				fmt.Errorf("deployer: record Center update queue failure: %w", statusErr),
+			)
+		}
 		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: queue Center update request: %w", err)
 	}
 	return queued, nil
+}
+
+func writeCenterUpdateStatus(path string, status deployapi.CenterUpdateExecution) error {
+	payload, err := json.Marshal(status)
+	if err != nil {
+		return err
+	}
+	return writeCenterUpdateFile(path, append(payload, '\n'), 0o600)
 }
 
 func installedCenterVersion(path string) (string, error) {

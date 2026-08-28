@@ -106,6 +106,7 @@ const installerManifest = {
 function installerEnvironment({ mismatchAsset = "", manifest = installerManifest } = {}) {
   const objects = new Map([
     ["vastora/current.json", { body: JSON.stringify(manifest), sha256: "d".repeat(64), contentType: "application/json" }],
+    [`vastora/releases/v${installerManifest.version}/activated.json`, { body: JSON.stringify(manifest), sha256: "e".repeat(64), contentType: "application/json" }],
     [installerManifest.assets["install.sh"].key, { body: "#!/bin/sh\n", sha256: installerManifest.assets["install.sh"].sha256, contentType: "text/x-shellscript" }],
     [installerManifest.assets["vastora-center-install.tar.gz"].key, { body: "archive", sha256: installerManifest.assets["vastora-center-install.tar.gz"].sha256, contentType: "application/gzip" }],
     [installerManifest.assets["vastora-center-install.tar.gz.sha256"].key, { body: "checksum", sha256: installerManifest.assets["vastora-center-install.tar.gz.sha256"].sha256, contentType: "text/plain" }],
@@ -145,6 +146,7 @@ function installerEnvironment({ mismatchAsset = "", manifest = installerManifest
   assert.equal(await response.text(), "#!/bin/sh\n");
   assert.equal(response.headers.get("x-vastora-version"), "0.1.0-alpha.4");
   assert.equal(response.headers.get("x-vastora-sha256"), "a".repeat(64));
+  assert.equal(response.headers.get("cache-control"), "public, max-age=60");
 
   const cachedResponse = await worker.fetch(request("/vastora-center-install.tar.gz"), env, executionContext().context);
   assert.equal(cachedResponse.status, 200);
@@ -154,6 +156,31 @@ function installerEnvironment({ mismatchAsset = "", manifest = installerManifest
   assert.equal(head.status, 200);
   assert.equal(await head.text(), "");
   assert.ok(env.reads.some(([method, key]) => method === "head" && key.endsWith("/install.sh")));
+}
+
+{
+  const storage = cacheStorage();
+  globalThis.caches = { default: storage.cache };
+  const env = installerEnvironment();
+  const execution = executionContext();
+  const prefix = "/releases/v0.1.0-alpha.4";
+  const response = await worker.fetch(request(`${prefix}/install.sh`), env, execution.context);
+  await execution.flush();
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "#!/bin/sh\n");
+  assert.equal(response.headers.get("x-vastora-version"), "0.1.0-alpha.4");
+  assert.equal(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
+  assert.ok(env.reads.some(([, key]) => key === "vastora/releases/v0.1.0-alpha.4/activated.json"));
+  assert.equal(env.reads.some(([, key]) => key === "vastora/current.json"), false);
+
+  const archive = await worker.fetch(request(`${prefix}/vastora-center-install.tar.gz`), env, executionContext().context);
+  assert.equal(archive.status, 200);
+  assert.equal(env.reads.filter(([, key]) => key === "vastora/releases/v0.1.0-alpha.4/activated.json").length, 1);
+
+  const missing = await worker.fetch(request("/releases/v0.1.0-alpha.5/install.sh"), env, executionContext().context);
+  assert.equal(missing.status, 404);
+  const invalid = await worker.fetch(request("/releases/vlatest/install.sh"), env, executionContext().context);
+  assert.equal(invalid.status, 404);
 }
 
 {

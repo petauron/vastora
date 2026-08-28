@@ -6,7 +6,9 @@ const releaseAssets = new Map([
   ["vastora-center-install.tar.gz", "application/gzip"],
   ["vastora-center-install.tar.gz.sha256", "text/plain; charset=utf-8"],
 ]);
-const currentCacheKey = new Request("https://vastora-installer.internal/current-release");
+const releaseVersionPattern = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
+const immutableCacheControl = "public, max-age=31536000, immutable";
+const currentCacheControl = "public, max-age=60";
 const currentManifestKey = "vastora/current.json";
 const oauthCallbackPath = "/oauth/cloudflare/callback";
 const oauthSessionPrefix = "/oauth/cloudflare/sessions/";
@@ -16,7 +18,7 @@ const oauthSessionLifetimeMs = 10 * 60 * 1000;
 const oauthStatePattern = /^v1\.([A-Za-z0-9_-]{24,64})\.([A-Za-z0-9_-]{43})$/;
 
 function validManifest(manifest) {
-  if (!manifest || manifest.schema !== 1 || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(manifest.version || "")) {
+  if (!manifest || manifest.schema !== 1 || !releaseVersionPattern.test(manifest.version || "")) {
     return false;
   }
   if (!manifest.assets || Object.keys(manifest.assets).length !== releaseAssets.size) return false;
@@ -30,23 +32,50 @@ function validManifest(manifest) {
   return true;
 }
 
-async function selectedRelease(env, ctx) {
+function manifestCacheKey(key) {
+  return new Request(`https://vastora-installer.internal/${key}`);
+}
+
+async function releaseManifest(env, ctx, key, cacheControl) {
   if (!env.INSTALLER_ASSETS) throw new Error("Installer R2 binding is unavailable");
   const cache = caches.default;
-  const cached = await cache.match(currentCacheKey);
+  const cacheKey = manifestCacheKey(key);
+  const cached = await cache.match(cacheKey);
   if (cached) return cached.json();
-  const object = await env.INSTALLER_ASSETS.get(currentManifestKey);
-  if (!object) throw new Error("Installer release manifest is unavailable");
+  const object = await env.INSTALLER_ASSETS.get(key);
+  if (!object) return null;
   const manifest = await object.json();
   if (!validManifest(manifest)) throw new Error("Installer release manifest is invalid");
-  ctx.waitUntil(cache.put(currentCacheKey, Response.json(manifest, {
-    headers: { "Cache-Control": "public, max-age=60" },
+  ctx.waitUntil(cache.put(cacheKey, Response.json(manifest, {
+    headers: { "Cache-Control": cacheControl },
   })));
   return manifest;
 }
 
-async function installerAssetResponse(request, env, ctx, asset) {
-  const manifest = await selectedRelease(env, ctx);
+async function selectedRelease(env, ctx) {
+  const manifest = await releaseManifest(env, ctx, currentManifestKey, currentCacheControl);
+  if (!manifest) throw new Error("Installer release manifest is unavailable");
+  return manifest;
+}
+
+async function versionedRelease(env, ctx, version) {
+  const manifest = await releaseManifest(
+    env,
+    ctx,
+    `vastora/releases/v${version}/activated.json`,
+    immutableCacheControl,
+  );
+  if (manifest && manifest.version !== version) throw new Error("Installer release manifest version is mismatched");
+  return manifest;
+}
+
+function versionedAsset(pathname) {
+  const match = /^\/releases\/v([^/]+)\/([^/]+)$/.exec(pathname);
+  if (!match || !releaseVersionPattern.test(match[1]) || !releaseAssets.has(match[2])) return null;
+  return { version: match[1], asset: match[2] };
+}
+
+async function installerAssetResponse(request, env, manifest, asset, cacheControl) {
   const descriptor = manifest.assets[asset];
   const object = request.method === "HEAD"
     ? await env.INSTALLER_ASSETS.head(descriptor.key)
@@ -56,7 +85,7 @@ async function installerAssetResponse(request, env, ctx, asset) {
   }
   const headers = new Headers(responseHeaders());
   object.writeHttpMetadata(headers);
-  headers.set("Cache-Control", "public, max-age=60");
+  headers.set("Cache-Control", cacheControl);
   headers.set("Content-Length", String(object.size));
   headers.set("Content-Type", releaseAssets.get(asset));
   headers.set("ETag", object.httpEtag);
@@ -258,13 +287,20 @@ export default {
     if (url.pathname === "/") {
       return Response.redirect(`https://github.com/${repository}`, 302);
     }
-    const asset = url.pathname.slice(1);
-    if (!releaseAssets.has(asset)) {
+    const immutableAsset = versionedAsset(url.pathname);
+    const currentAsset = url.pathname.slice(1);
+    if (!immutableAsset && !releaseAssets.has(currentAsset)) {
       return new Response("Not found\n", { status: 404, headers: responseHeaders() });
     }
 
     try {
-      return await installerAssetResponse(request, env, ctx, asset);
+      if (immutableAsset) {
+        const manifest = await versionedRelease(env, ctx, immutableAsset.version);
+        if (!manifest) return new Response("Not found\n", { status: 404, headers: responseHeaders() });
+        return await installerAssetResponse(request, env, manifest, immutableAsset.asset, immutableCacheControl);
+      }
+      const manifest = await selectedRelease(env, ctx);
+      return await installerAssetResponse(request, env, manifest, currentAsset, currentCacheControl);
     } catch (error) {
       console.error("Unable to serve installer release", error);
       return new Response("No complete Vastora release is currently available.\n", {

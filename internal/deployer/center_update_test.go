@@ -52,3 +52,30 @@ func TestFileCenterUpdaterRequiresInstalledHostService(t *testing.T) {
 		t.Fatal("update was queued without the host service")
 	}
 }
+
+func TestFileCenterUpdaterDoesNotLeaveAStuckQueueWhenRequestWriteFails(t *testing.T) {
+	installDir := t.TempDir()
+	for _, name := range []string{".update-service-enabled", "update-center.sh"} {
+		if err := os.WriteFile(filepath.Join(installDir, name), []byte("ready\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.47\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(installDir, ".update-request"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	updater := FileCenterUpdater{InstallDir: installDir}
+	if _, err := updater.StartCenterUpdate(context.Background(), "0.1.0-alpha.48"); err == nil {
+		t.Fatal("request write failure was accepted")
+	}
+	status, err := updater.CenterUpdateStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "failed" || status.TargetVersion != "0.1.0-alpha.48" {
+		t.Fatalf("queue failure left an invalid status: %#v", status)
+	}
+}

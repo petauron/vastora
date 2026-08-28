@@ -67,6 +67,7 @@ done
 tag="v$version"
 prefix="vastora/releases/$tag"
 manifest_key="$prefix/manifest.json"
+activated_key="$prefix/activated.json"
 current_key="vastora/current.json"
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-r2-release.XXXXXX")"
 cleanup() { rm -rf "$temporary_dir"; }
@@ -143,6 +144,12 @@ verify_remote_assets() {
 }
 
 if [ "$command_name" = "stage" ]; then
+  for required in sh tar; do
+    if ! command -v "$required" >/dev/null 2>&1; then
+      echo "Required command is not installed: $required" >&2
+      exit 1
+    fi
+  done
   script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
   project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
   if [ -z "$installer" ]; then installer="$project_dir/install.sh"; fi
@@ -154,6 +161,21 @@ if [ "$command_name" = "stage" ]; then
       exit 1
     fi
   done
+  if ! sh -n "$installer"; then
+    echo "The Center installer script is invalid." >&2
+    exit 1
+  fi
+  bundle_version="$(tar -xOzf "$bundle" ./release.env 2>/dev/null | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')"
+  if [ "$bundle_version" != "$version" ]; then
+    echo "The Center bundle version does not match the R2 release version." >&2
+    exit 1
+  fi
+  expected_bundle_digest="$(awk 'NR == 1 {print tolower($1)}' "$checksum")"
+  actual_bundle_digest="$(sha256sum "$bundle" | awk 'NR == 1 {print tolower($1)}')"
+  if ! printf '%s\n' "$expected_bundle_digest" | grep -Eq '^[0-9a-f]{64}$' || [ "$actual_bundle_digest" != "$expected_bundle_digest" ]; then
+    echo "The Center bundle checksum is invalid." >&2
+    exit 1
+  fi
 
   installer_digest="$(upload_immutable "$installer" "$prefix/install.sh" 'text/x-shellscript; charset=utf-8')"
   bundle_digest="$(upload_immutable "$bundle" "$prefix/vastora-center-install.tar.gz" 'application/gzip')"
@@ -183,6 +205,7 @@ manifest="$temporary_dir/manifest.json"
 retry aws_r2 get-object --bucket "$bucket" --key "$manifest_key" "$manifest" >/dev/null
 verify_manifest "$manifest"
 verify_remote_assets "$manifest"
+upload_immutable "$manifest" "$activated_key" 'application/json; charset=utf-8' >/dev/null
 manifest_digest="$(sha256sum "$manifest" | awk 'NR == 1 {print tolower($1)}')"
 retry aws_r2 put-object \
   --bucket "$bucket" \
