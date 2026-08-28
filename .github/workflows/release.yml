@@ -27,6 +27,7 @@ jobs:
       release_sha: ${{ steps.retry.outputs.release_sha || steps.release.outputs.sha }}
       release_tag: ${{ steps.retry.outputs.release_tag || steps.release.outputs.tag_name }}
       release_version: ${{ steps.retry.outputs.release_version || steps.release.outputs.version }}
+      release_retry: ${{ steps.retry.outputs.release_retry || 'false' }}
     steps:
       - name: Create a release without updating the next release pull request
         id: release
@@ -62,6 +63,7 @@ jobs:
             echo "release_sha=$release_sha"
             echo "release_tag=$RELEASE_TAG"
             echo "release_version=${RELEASE_TAG#v}"
+            echo 'release_retry=true'
           } >> "$GITHUB_OUTPUT"
 
   publish:
@@ -86,6 +88,7 @@ jobs:
       R2_ENDPOINT: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
     steps:
       - name: Check out release commit
+        if: needs.prepare.outputs.release_retry != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.release_sha }}
@@ -112,9 +115,11 @@ jobs:
             --no-cli-pager
 
       - name: Set up Docker Buildx
+        if: needs.prepare.outputs.release_retry != 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.0.0
 
       - name: Log in to GitHub Container Registry
+        if: needs.prepare.outputs.release_retry != 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.0.0
         with:
           registry: ghcr.io
@@ -122,6 +127,7 @@ jobs:
           password: ${{ github.token }}
 
       - name: Build and push Center image
+        if: needs.prepare.outputs.release_retry != 'true'
         id: image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.0.0
         with:
@@ -141,6 +147,7 @@ jobs:
           sbom: true
 
       - name: Scan released Center image for x64 vulnerabilities
+        if: needs.prepare.outputs.release_retry != 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PLATFORM: linux/amd64
@@ -153,6 +160,7 @@ jobs:
           exit-code: "1"
 
       - name: Scan released Center image for ARM64 vulnerabilities
+        if: needs.prepare.outputs.release_retry != 'true'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PLATFORM: linux/arm64
@@ -166,6 +174,7 @@ jobs:
           skip-setup-trivy: true
 
       - name: Publish verified Center image tags
+        if: needs.prepare.outputs.release_retry != 'true'
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
@@ -176,6 +185,7 @@ jobs:
             "$CENTER_IMAGE@$IMAGE_DIGEST"
 
       - name: Attest Center image
+        if: needs.prepare.outputs.release_retry != 'true'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ghcr.io/petauron/vastora-center
@@ -183,12 +193,14 @@ jobs:
           push-to-registry: true
 
       - name: Package release installer
+        if: needs.prepare.outputs.release_retry != 'true'
         env:
           VASTORA_CENTER_IMAGE: ghcr.io/petauron/vastora-center@${{ steps.image.outputs.digest }}
           VASTORA_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: make center-install-bundle
 
       - name: Verify release assets and public image access
+        if: needs.prepare.outputs.release_retry != 'true'
         env:
           VASTORA_CENTER_IMAGE: ghcr.io/petauron/vastora-center@${{ steps.image.outputs.digest }}
         run: |
@@ -197,6 +209,7 @@ jobs:
           DOCKER_CONFIG="$anonymous_config" scripts/assert-image-platforms.sh "$VASTORA_CENTER_IMAGE"
 
       - name: Stage immutable installer assets in R2
+        if: needs.prepare.outputs.release_retry != 'true'
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: .release-tools/scripts/publish-installer-r2.sh stage --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT" --installer install.sh
