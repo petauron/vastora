@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.60](https://github.com/petauron/vastora/compare/v0.1.0-alpha.59...v0.1.0-alpha.60) (2026-08-28)
+
+
+### Bug Fixes
+
+* make release retries immutable ([#180](https://github.com/petauron/vastora/issues/180)) ([7471d2c](https://github.com/petauron/vastora/commit/7471d2c1d577cea1212aa2fc8cf33b47e8332ba2))
+
 ## [0.1.0-alpha.59](https://github.com/petauron/vastora/compare/v0.1.0-alpha.58...v0.1.0-alpha.59) (2026-08-28)
 
 
