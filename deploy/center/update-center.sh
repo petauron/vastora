@@ -18,6 +18,12 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "Center updates must run as root." >&2
   exit 1
 fi
+for required in awk curl grep mktemp sha256sum; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "Required command is not installed: $required" >&2
+    exit 1
+  fi
+done
 
 request="$install_dir/.update-request"
 status_file="$install_dir/.update-status.json"
@@ -46,27 +52,67 @@ write_status() {
 
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-center-update.XXXXXX")"
 installer="$temporary_dir/install.sh"
+installer_headers="$temporary_dir/install.headers"
 completed=no
+failure_message="Update failed. Review the host service log, then retry."
 cleanup() {
   result=$?
   rm -rf "$temporary_dir"
   if [ "$result" -ne 0 ] && [ "$completed" = no ]; then
-    write_status failed "$target_version" "Update failed. Review the host service log, then retry."
+    write_status failed "$target_version" "$failure_message"
   fi
   exit "$result"
 }
 trap cleanup EXIT HUP INT TERM
 
 write_status applying "$target_version" "Downloading and applying the verified release."
-release_base="https://github.com/petauron/vastora/releases/download/v$target_version"
-curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
-  "$release_base/install.sh" -o "$installer"
+release_base="https://vastora.petauron.com/releases/v$target_version"
+failure_message="The immutable Center installer could not be downloaded."
+if ! curl --proto '=https' --tlsv1.2 -fsS \
+  --dump-header "$installer_headers" \
+  "$release_base/install.sh" -o "$installer"; then
+  exit 1
+fi
+installer_version="$(awk '
+  index($0, ":") > 0 && tolower(substr($0, 1, index($0, ":") - 1)) == "x-vastora-version" {
+    value = substr($0, index($0, ":") + 1)
+    sub(/^[[:space:]]+/, "", value)
+    sub(/\r$/, "", value)
+    result = value
+  }
+  END { print result }
+' "$installer_headers")"
+if [ "$installer_version" != "$target_version" ]; then
+  failure_message="The immutable Center installer version did not match the requested update."
+  exit 1
+fi
+expected_installer_digest="$(awk '
+  index($0, ":") > 0 && tolower(substr($0, 1, index($0, ":") - 1)) == "x-vastora-sha256" {
+    value = substr($0, index($0, ":") + 1)
+    sub(/^[[:space:]]+/, "", value)
+    sub(/\r$/, "", value)
+    result = tolower(value)
+  }
+  END { print result }
+' "$installer_headers")"
+if ! printf '%s\n' "$expected_installer_digest" | grep -Eq '^[0-9a-f]{64}$' || \
+   [ "$(sha256sum "$installer" | awk 'NR == 1 {print tolower($1)}')" != "$expected_installer_digest" ]; then
+  failure_message="The immutable Center installer failed its SHA-256 integrity check."
+  exit 1
+fi
 chmod 0700 "$installer"
-/bin/sh "$installer" center \
+failure_message="The verified Center installer did not complete successfully."
+if ! /bin/sh "$installer" center \
   --release-url "$release_base/vastora-center-install.tar.gz" \
-  --install-dir "$install_dir"
+  --install-dir "$install_dir" \
+  --expected-version "$target_version"; then
+  exit 1
+fi
 
 installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
-if [ -z "$installed_version" ]; then installed_version="$target_version"; fi
+if [ "$installed_version" != "$target_version" ]; then
+  failure_message="The Center update completed with an unexpected installed version."
+  exit 1
+fi
 write_status succeeded "$installed_version" "Center was updated successfully."
 completed=yes

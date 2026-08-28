@@ -10,8 +10,10 @@ trap cleanup EXIT HUP INT TERM
 fake_bin="$temporary_dir/bin"
 fake_r2="$temporary_dir/r2"
 source_dir="$temporary_dir/dist"
-mkdir -p "$fake_bin" "$fake_r2/objects" "$source_dir"
-printf 'bundle\n' > "$source_dir/vastora-center-install.tar.gz"
+bundle_dir="$temporary_dir/bundle"
+mkdir -p "$fake_bin" "$fake_r2/objects" "$source_dir" "$bundle_dir"
+printf 'VASTORA_VERSION=0.1.0-test\n' > "$bundle_dir/release.env"
+tar -czf "$source_dir/vastora-center-install.tar.gz" -C "$bundle_dir" .
 (cd "$source_dir" && sha256sum vastora-center-install.tar.gz > vastora-center-install.tar.gz.sha256)
 
 cat > "$fake_bin/aws" <<'EOF'
@@ -76,14 +78,23 @@ version="0.1.0-test"
 "$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null
 manifest="$fake_r2/objects/vastora/releases/v$version/manifest.json"
 test -f "$manifest"
+test ! -e "$fake_r2/objects/vastora/releases/v$version/activated.json"
 jq -e --arg version "$version" '.schema == 1 and .version == $version and (.assets | length) == 3' "$manifest" >/dev/null
 
 "$script_dir/publish-installer-r2.sh" activate --version "$version" --bucket "$bucket" --endpoint "$endpoint" >/dev/null
+cmp -s "$manifest" "$fake_r2/objects/vastora/releases/v$version/activated.json"
 cmp -s "$manifest" "$fake_r2/objects/vastora/current.json"
 
-printf 'changed bundle\n' > "$source_dir/vastora-center-install.tar.gz"
+printf 'changed\n' > "$bundle_dir/content.txt"
+tar -czf "$source_dir/vastora-center-install.tar.gz" -C "$bundle_dir" .
+(cd "$source_dir" && sha256sum vastora-center-install.tar.gz > vastora-center-install.tar.gz.sha256)
 if "$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null 2>&1; then
   echo "Immutable R2 release assets accepted changed content." >&2
+  exit 1
+fi
+
+if "$script_dir/publish-installer-r2.sh" stage --version "0.1.0-other" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null 2>&1; then
+  echo "R2 publication accepted a bundle for a different version." >&2
   exit 1
 fi
 

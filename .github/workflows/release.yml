@@ -95,7 +95,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: .release-tools
-          sparse-checkout: scripts/publish-installer-r2.sh
+          sparse-checkout: |
+            scripts/publish-installer-r2.sh
+            scripts/verify-installer-release.sh
           sparse-checkout-cone-mode: false
 
       - name: Validate R2 release destination
@@ -210,30 +212,15 @@ jobs:
           RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: .release-tools/scripts/publish-installer-r2.sh activate --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
 
+      - name: Verify immutable installer release
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: .release-tools/scripts/verify-installer-release.sh --base-url "https://vastora.petauron.com/releases/v$RELEASE_VERSION" --expected-version "$RELEASE_VERSION"
+
       - name: Verify public installer endpoint
         env:
           EXPECTED_VERSION: ${{ needs.prepare.outputs.release_version }}
-        run: |
-          temporary_dir="$(mktemp -d)"
-          verify_installer() {
-            rm -f "$temporary_dir/install.sh" "$temporary_dir/vastora-center-install.tar.gz" "$temporary_dir/vastora-center-install.tar.gz.sha256"
-            curl --connect-timeout 10 --max-time 30 -fsSL https://vastora.petauron.com/install.sh -o "$temporary_dir/install.sh" &&
-              curl --connect-timeout 10 --max-time 30 -fsSL https://vastora.petauron.com/vastora-center-install.tar.gz -o "$temporary_dir/vastora-center-install.tar.gz" &&
-              curl --connect-timeout 10 --max-time 30 -fsSL https://vastora.petauron.com/vastora-center-install.tar.gz.sha256 -o "$temporary_dir/vastora-center-install.tar.gz.sha256" &&
-              sh -n "$temporary_dir/install.sh" &&
-              (cd "$temporary_dir" && sha256sum --check vastora-center-install.tar.gz.sha256) &&
-              actual_version="$(tar -xOzf "$temporary_dir/vastora-center-install.tar.gz" ./release.env | awk -F= '$1 == "VASTORA_VERSION" {print $2; exit}')" &&
-              test "$actual_version" = "$EXPECTED_VERSION"
-          }
-          attempt=1
-          while [ "$attempt" -le 18 ]; do
-            if verify_installer; then exit 0; fi
-            echo "Installer edge cache has not selected $EXPECTED_VERSION yet (attempt $attempt/18)."
-            attempt=$((attempt + 1))
-            sleep 5
-          done
-          echo "Public installer did not converge to $EXPECTED_VERSION." >&2
-          exit 1
+        run: .release-tools/scripts/verify-installer-release.sh --base-url https://vastora.petauron.com --expected-version "$EXPECTED_VERSION" --attempts 18 --retry-delay 5
 
   release-pr:
     name: Prepare next release pull request

@@ -4,9 +4,13 @@
 behind `vastora.petauron.com`. Bind the private `petauron-downloads` R2 bucket as
 `INSTALLER_ASSETS`. The release workflow uploads immutable, versioned installer
 objects, publishes the GitHub release metadata, and then atomically replaces
-`vastora/current.json`. The Worker validates that manifest, serves only its
-three fixed installer assets, and caches the selected version for one minute.
-The bucket remains private and GitHub Release is not a runtime download source.
+`vastora/current.json`. The Worker validates that manifest, serves its three
+fixed current-release paths with a one-minute cache, and exposes the same R2
+objects through immutable `/releases/vVERSION/ASSET` paths for automatic Center
+updates. A versioned path becomes visible only after the release workflow writes
+its immutable activation manifest; merely staged objects cannot be downloaded.
+GitHub Release is metadata only and is never a runtime download source.
+The bucket remains private.
 
 The Worker also relays the short-lived Cloudflare OAuth authorization code from
 the fixed public callback to the private Center that started the login. It never

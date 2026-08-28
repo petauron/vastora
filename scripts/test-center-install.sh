@@ -27,6 +27,52 @@ else
   actual_digest="$(shasum -a 256 "$archive" | awk 'NR == 1 {print $1}')"
 fi
 test "$expected_digest" = "$actual_digest"
+
+validation_bin="$temporary_dir/validation-bin"
+mkdir -p "$validation_bin"
+cat > "$validation_bin/id" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = "-u" ]; then printf '%s\n' 0; else exec /usr/bin/id "$@"; fi
+EOF
+cat > "$validation_bin/uname" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  -s) printf '%s\n' Linux ;;
+  -m) printf '%s\n' x86_64 ;;
+  *) printf '%s\n' Linux ;;
+esac
+EOF
+cat > "$validation_bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+output=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --proto|--proto-redir) shift 2 ;;
+    --tlsv1.2|-fsSL) shift ;;
+    -o) output="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+case "$url" in
+  *.sha256) cp "$FAKE_RELEASE_CHECKSUM" "$output" ;;
+  *) cp "$FAKE_RELEASE_ARCHIVE" "$output" ;;
+esac
+EOF
+chmod 0755 "$validation_bin/id" "$validation_bin/uname" "$validation_bin/curl"
+if FAKE_RELEASE_ARCHIVE="$archive" \
+   FAKE_RELEASE_CHECKSUM="$archive.sha256" \
+   PATH="$validation_bin:$PATH" \
+   "$project_dir/install.sh" center \
+     --release-url https://vastora.petauron.com/releases/v0.1.0-test/vastora-center-install.tar.gz \
+     --install-dir "$temporary_dir/version-mismatch" \
+     --expected-version 0.1.0-other >/dev/null 2>&1; then
+  echo "Center installer accepted a bundle for a different requested version." >&2
+  exit 1
+fi
+test ! -e "$temporary_dir/version-mismatch"
+
 tar -xzf "$archive" -C "$temporary_dir"
 grep -Fqx 'VASTORA_VERSION=0.1.0-test' "$temporary_dir/release.env"
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$temporary_dir/release.env"

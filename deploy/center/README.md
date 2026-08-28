@@ -122,14 +122,17 @@ The bundle contains `setup.sh`, `upgrade.sh`, `uninstall.sh`, Compose
 configuration, plus
 `release.env` with the release version and immutable image. `install.sh`
 supports `--release-url` for a trusted mirror and `--install-dir` for a custom
-location. `setup.sh` supports `--bootstrap-port` and `--ssh-host` after the `--`
-separator.
+location. Automatic updates additionally pass `--expected-version`, so a bundle
+for a different release is rejected before any installed file changes.
+`setup.sh` supports `--bootstrap-port` and `--ssh-host` after the `--` separator.
 
-Center checks the same public endpoint for a complete official release. An
+Center checks the fixed public endpoint for a complete official release. An
 administrator can confirm the update in Settings; a narrow deployer operation
-queues a root systemd one-shot service on the host, so Center still never mounts
-the Docker socket. For the first release containing this updater, run the same
-public command once to install the service.
+queues a root systemd one-shot service on the host. That service downloads the
+exact target through `/releases/vVERSION/`, verifies the installer's version and
+SHA-256 metadata, and rejects a mismatched bundle before installation. Center
+still never mounts the Docker socket. For the first release containing this
+updater, run the same public command once to install the service.
 
 Both entry points keep `.env`, replace only managed deployment files, validate
 and pull the new immutable image before changing anything, then start Center and

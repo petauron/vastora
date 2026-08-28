@@ -4,10 +4,11 @@ set -eu
 default_release_url="https://vastora.petauron.com/vastora-center-install.tar.gz"
 release_url="$default_release_url"
 install_dir="/opt/vastora/center"
+expected_version=""
 
 usage() {
   cat <<'EOF'
-Usage: install.sh center [--release-url HTTPS_URL] [--install-dir DIR] [-- SETUP_OPTIONS]
+Usage: install.sh center [--release-url HTTPS_URL] [--install-dir DIR] [--expected-version VERSION] [-- SETUP_OPTIONS]
        install.sh center uninstall [--release-url HTTPS_URL] [--install-dir DIR]
 
 Installs the verified Vastora Center release bundle on loopback, then prints an
@@ -49,6 +50,11 @@ while [ "$#" -gt 0 ]; do
       install_dir="$2"
       shift 2
       ;;
+    --expected-version)
+      [ "$#" -ge 2 ] || { echo "--expected-version requires a value." >&2; exit 2; }
+      expected_version="$2"
+      shift 2
+      ;;
     --) shift; break ;;
     *) break ;;
   esac
@@ -80,12 +86,16 @@ case "$install_dir" in
   /*) ;;
   *) echo "The installation directory must be an absolute path." >&2; exit 2 ;;
 esac
-for required in curl tar mktemp install awk dirname mv; do
+for required in curl tar mktemp install awk dirname grep mv; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
   fi
 done
+if [ -n "$expected_version" ] && ! printf '%s\n' "$expected_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+  echo "The expected Center version is invalid." >&2
+  exit 2
+fi
 if command -v sha256sum >/dev/null 2>&1; then
   digest_command="sha256sum"
 elif command -v shasum >/dev/null 2>&1; then
@@ -146,6 +156,15 @@ for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cl
     exit 1
   fi
 done
+bundle_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$staging/release.env")"
+if ! printf '%s\n' "$bundle_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+  echo "The Center release contains an invalid version; nothing was installed." >&2
+  exit 1
+fi
+if [ -n "$expected_version" ] && [ "$bundle_version" != "$expected_version" ]; then
+  echo "The Center release version does not match the requested update; nothing was installed." >&2
+  exit 1
+fi
 chmod 0755 "$staging/setup.sh"
 chmod 0755 "$staging/upgrade.sh"
 chmod 0755 "$staging/uninstall.sh"

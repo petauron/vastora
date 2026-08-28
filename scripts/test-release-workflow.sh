@@ -26,6 +26,7 @@ require_in "$publish_job" '      R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}'
 require_in "$publish_job" '      - name: Validate R2 release destination'
 require_in "$publish_job" '      - name: Check out current release tooling'
 require_in "$publish_job" '          path: .release-tools'
+require_in "$publish_job" '            scripts/verify-installer-release.sh'
 require_in "$publish_job" '          platforms: linux/amd64,linux/arm64'
 require_in "$publish_job" '          outputs: type=image,name=${{ env.CENTER_IMAGE }},push-by-digest=true,name-canonical=true,push=true'
 require_in "$publish_job" '          DOCKER_CONFIG="$anonymous_config" scripts/assert-image-platforms.sh "$VASTORA_CENTER_IMAGE"'
@@ -35,8 +36,11 @@ require_in "$publish_job" '      - name: Publish verified Center image tags'
 require_in "$publish_job" '            --tag "$CENTER_IMAGE:$RELEASE_TAG"'
 require_in "$publish_job" '            --tag "$CENTER_IMAGE:latest"'
 require_in "$publish_job" '        run: .release-tools/scripts/publish-installer-r2.sh stage --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT" --installer install.sh'
+require_in "$publish_job" '      - name: Verify immutable installer release'
+require_in "$publish_job" '        run: .release-tools/scripts/verify-installer-release.sh --base-url "https://vastora.petauron.com/releases/v$RELEASE_VERSION" --expected-version "$RELEASE_VERSION"'
 require_in "$publish_job" '        run: gh release edit "$RELEASE_TAG" --draft=false'
 require_in "$publish_job" '        run: .release-tools/scripts/publish-installer-r2.sh activate --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"'
+require_in "$publish_job" '        run: .release-tools/scripts/verify-installer-release.sh --base-url https://vastora.petauron.com --expected-version "$EXPECTED_VERSION" --attempts 18 --retry-delay 5'
 require_in "$release_pr_job" '    needs: [prepare, publish]'
 require_in "$release_pr_job" "    if: always() && needs.prepare.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')"
 require_in "$release_pr_job" '          skip-github-release: true'
@@ -64,10 +68,11 @@ fi
 scan_line="$(printf '%s\n' "$publish_job" | grep -nF 'Scan released Center image for ARM64 vulnerabilities' | cut -d: -f1)"
 promote_line="$(printf '%s\n' "$publish_job" | grep -nF 'Publish verified Center image tags' | cut -d: -f1)"
 stage_line="$(printf '%s\n' "$publish_job" | grep -nF 'publish-installer-r2.sh stage' | cut -d: -f1)"
+immutable_verify_line="$(printf '%s\n' "$publish_job" | grep -nF 'Verify immutable installer release' | cut -d: -f1)"
 publish_line="$(printf '%s\n' "$publish_job" | grep -nF 'gh release edit "$RELEASE_TAG" --draft=false' | cut -d: -f1)"
 activate_line="$(printf '%s\n' "$publish_job" | grep -nF 'publish-installer-r2.sh activate' | cut -d: -f1)"
 verify_line="$(printf '%s\n' "$publish_job" | grep -nF 'Verify public installer endpoint' | cut -d: -f1)"
-if [ "$scan_line" -ge "$promote_line" ] || [ "$promote_line" -ge "$stage_line" ] || [ "$stage_line" -ge "$publish_line" ] || [ "$publish_line" -ge "$activate_line" ] || [ "$activate_line" -ge "$verify_line" ]; then
+if [ "$scan_line" -ge "$promote_line" ] || [ "$promote_line" -ge "$stage_line" ] || [ "$stage_line" -ge "$publish_line" ] || [ "$publish_line" -ge "$activate_line" ] || [ "$activate_line" -ge "$immutable_verify_line" ] || [ "$immutable_verify_line" -ge "$verify_line" ]; then
   echo 'Release workflow must stage, publish metadata, activate R2, then verify the public endpoint.' >&2
   exit 1
 fi
