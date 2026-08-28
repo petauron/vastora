@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.58](https://github.com/petauron/vastora/compare/v0.1.0-alpha.57...v0.1.0-alpha.58) (2026-08-28)
+
+
+### Features
+
+* isolate managed application runtimes ([#174](https://github.com/petauron/vastora/issues/174)) ([155991d](https://github.com/petauron/vastora/commit/155991d013b4cfed85034e53caeb3254981d55f1))
+
 ## [0.1.0-alpha.57](https://github.com/petauron/vastora/compare/v0.1.0-alpha.56...v0.1.0-alpha.57) (2026-08-27)
 
 
