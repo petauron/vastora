@@ -40,8 +40,9 @@ After the wizard opens:
    available through Headscale DNS only. Later nodes use the same public,
    token-protected installer path before connecting to private Center.
 
-During first-run, **Center remote fallback** can optionally expose the same
-Center hostname through a dedicated Cloudflare Tunnel. Vastora creates the
+During first-run, **Center remote fallback** can optionally expose Center at the
+dedicated first-level `center-vastora.<zone>` hostname through a Cloudflare
+Tunnel without changing the private address used by Agents. Vastora creates the
 Access application before publishing DNS, restricts it to an exact email or an
 email domain using one-time PIN login, and keeps the Center administrator login
 as a second layer. The dedicated connector runs on the private Docker bridge

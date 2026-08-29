@@ -14,3 +14,8 @@ export function standardHTTPSHostnameInZone(value: string, zone: string) {
     return false;
   }
 }
+
+export function centerRemoteAccessHostname(zone: string) {
+  const normalized = zone.trim().toLowerCase().replace(/\.$/, "");
+  return normalized ? `center-vastora.${normalized}` : "";
+}

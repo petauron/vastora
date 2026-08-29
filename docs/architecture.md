@@ -123,7 +123,10 @@ still depends on it.
 7. Gateway and Tunnel task results advance only the exact desired revision and claim attempt. DNS and reachability checks provide the final ready state where propagation is asynchronous.
 
 The optional Center remote fallback is separate from application publications.
-Center creates a dedicated Cloudflare Access application and policy first,
+It uses the first-level `center-vastora.<zone>` hostname so Cloudflare Universal
+SSL covers the browser entry even when the private Center address lives under a
+multi-level service namespace. Center creates a dedicated Cloudflare Access
+application and policy first,
 configures a dedicated remotely managed Tunnel to
 `http://vastora-center:8080`, asks the restricted local deployer to start the
 fixed cloudflared image on `vastora-runtime`, and publishes the proxied CNAME
