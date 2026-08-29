@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { FieldError } from "@/components/ui/field";
+import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -18,6 +19,9 @@ export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const running = status.state === "queued" || status.state === "applying";
+  const updateStage = status.state === "queued"
+    ? copy(language, "等待主机更新服务", "Waiting for the host update service")
+    : copy(language, "正在下载、校验与安装", "Downloading, verifying, and installing");
 
   useEffect(() => {
     if (!running) return;
@@ -55,7 +59,7 @@ export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }
       <CardHeader><CardTitle className="flex items-center gap-2"><CircleArrowUpIcon />{copy(language, "Center 更新", "Center update")}</CardTitle><CardDescription>{copy(language, "自动检查官方完整版本，并沿用安装时的安全升级流程。", "Checks complete official releases and reuses the verified installation upgrade flow.")}</CardDescription><CardAction>{running ? <Spinner /> : status.updateAvailable ? <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{copy(language, "有新版本", "Update available")}</span> : <CircleCheckIcon className="size-5 text-success" />}</CardAction></CardHeader>
       <CardContent className="flex flex-col gap-4">
         <dl className="grid gap-4 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "当前版本", "Current version")}</dt><dd className="mt-1 font-medium">{status.currentVersion}</dd></div><div><dt className="text-muted-foreground">{copy(language, "官方版本", "Official version")}</dt><dd className="mt-1 font-medium">{status.latestVersion || "—"}</dd></div></dl>
-        {running ? <Alert><Spinner /><AlertTitle>{copy(language, `正在更新到 ${status.targetVersion || status.latestVersion}`, `Updating to ${status.targetVersion || status.latestVersion}`)}</AlertTitle><AlertDescription>{copy(language, "Center 会短暂重启，本页会自动重新连接。请不要关闭服务器或 Docker。", "Center briefly restarts and this page reconnects automatically. Do not stop the server or Docker.")}</AlertDescription></Alert> : null}
+        {running ? <Alert><Spinner /><AlertTitle>{copy(language, `正在更新到 ${status.targetVersion || status.latestVersion}`, `Updating to ${status.targetVersion || status.latestVersion}`)}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{copy(language, "Center 会短暂重启，本页会自动重新连接。请不要关闭服务器或 Docker。", "Center briefly restarts and this page reconnects automatically. Do not stop the server or Docker.")}</span><Progress value={null}><ProgressLabel>{updateStage}</ProgressLabel><span aria-hidden="true" className="ml-auto text-xs text-muted-foreground">{copy(language, "进行中", "In progress")}</span></Progress></AlertDescription></Alert> : null}
         {status.state === "succeeded" && !status.updateAvailable ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "更新完成", "Update complete")}</AlertTitle><AlertDescription>{copy(language, `Center 已安全更新到 ${status.currentVersion}。`, `Center was safely updated to ${status.currentVersion}.`)}</AlertDescription></Alert> : null}
         {status.state === "failed" ? <FieldError role="alert">{copy(language, "更新没有完成。系统保留了可诊断状态，请重试；若仍失败，请下载诊断报告。", "The update did not finish. Diagnostic state was preserved; retry, then download diagnostics if it still fails.")}</FieldError> : null}
         {status.error ? <FieldError role="alert">{copy(language, "暂时无法检查官方版本，请稍后重试。", "The official release cannot be checked right now. Try again shortly.")}</FieldError> : null}

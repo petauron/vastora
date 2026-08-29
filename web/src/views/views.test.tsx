@@ -1452,6 +1452,18 @@ describe("network and app views", () => {
     expect(onStatusChange).not.toHaveBeenCalled();
   });
 
+  it("shows an accessible indeterminate progress bar while Center updates", () => {
+    const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.68", updateAvailable: true, state: "applying" as const, targetVersion: "0.1.0-alpha.68" };
+    vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    const progress = container.querySelector('[role="progressbar"]');
+    expect(progress?.getAttribute("aria-valuenow")).toBeNull();
+    expect(progress?.getAttribute("data-indeterminate")).not.toBeNull();
+    expect(progress?.getAttribute("aria-labelledby")).not.toBeNull();
+    expect(container.textContent).toContain("正在下载、校验与安装");
+    expect(container.textContent).toContain("进行中");
+  });
+
   it("bypasses the official release cache when update checking is requested", async () => {
     const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.59", updateAvailable: true };
     const refreshed = { ...status, latestVersion: "0.1.0-alpha.60" };
