@@ -1,6 +1,7 @@
 package deployer
 
 import (
+	"context"
 	"net/netip"
 	"strings"
 	"testing"
@@ -111,6 +112,40 @@ func TestGatewayBindsConfirmedNATAddressOnlyWhenDNSMatches(t *testing.T) {
 	}
 	if _, err := selectMappedGatewayBindAddress([]gatewayResolution{{hostname: "wrong.example.com", addresses: []netip.Addr{netip.MustParseAddr("198.51.100.5")}}}, candidates, "203.0.113.20", "10.0.0.157"); err == nil || !strings.Contains(err.Error(), "does not resolve") {
 		t.Fatalf("non-local DNS address was accepted: %v", err)
+	}
+}
+
+type gatewayDNSResolverFunc func(context.Context, string, string) ([]netip.Addr, error)
+
+func (resolve gatewayDNSResolverFunc) LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error) {
+	return resolve(ctx, network, host)
+}
+
+func TestGatewayNATMappingUsesIndependentPublicDNS(t *testing.T) {
+	var resolvedHosts []string
+	resolver := gatewayDNSResolverFunc(func(_ context.Context, network, host string) ([]netip.Addr, error) {
+		if network != "ip" {
+			t.Fatalf("lookup network = %q, want ip", network)
+		}
+		resolvedHosts = append(resolvedHosts, host)
+		return []netip.Addr{netip.MustParseAddr("203.0.113.20")}, nil
+	})
+	addresses, err := gatewayBindAddressesWithResolver(
+		context.Background(),
+		resolver,
+		"203.0.113.20",
+		"10.0.0.157",
+		"https://headscale.example.com",
+		"https://old-headscale.example.com",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(addresses, ","), "10.0.0.157"; got != want {
+		t.Fatalf("gateway bind addresses = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(resolvedHosts, ","), "headscale.example.com,old-headscale.example.com"; got != want {
+		t.Fatalf("public DNS lookups = %q, want %q", got, want)
 	}
 }
 
