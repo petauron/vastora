@@ -50,6 +50,10 @@ jobs:
         with:
           go-version: "1.26.6"
       - run: make go-check
+      - name: Validate generated Headscale config with pinned binary
+        env:
+          VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"
+        run: go test ./internal/deployer -run '^TestGeneratedHeadscaleConfigAcceptedByPinnedBinary$' -count=1
       - run: make go-security-check
       - name: Cross-compile Agent binaries
         run: make agent-binaries

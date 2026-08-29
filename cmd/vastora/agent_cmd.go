@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -154,6 +155,25 @@ func runAgent(arguments []string) error {
 		}
 		fmt.Println("Agent purpose updated; Center will refresh it after the next heartbeat")
 		return nil
+	case "configure-center":
+		flags := flag.NewFlagSet("agent configure-center", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent configure-center"); err != nil {
+			return err
+		}
+		if *centerURL == "" || flags.NArg() != 0 {
+			return errors.New("--center-url is required")
+		}
+		if err := configureAgentCenter(context.Background(), *dataDir, *centerURL, &http.Client{Timeout: 30 * time.Second}); err != nil {
+			return err
+		}
+		fmt.Println("Agent Center connection updated")
+		return nil
 	case "update":
 		flags := flag.NewFlagSet("agent update", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -286,6 +306,25 @@ func runAgent(arguments []string) error {
 			return errors.New("--control-url is required")
 		}
 		return reconcileTailscaleIsolation(context.Background(), agent.TailscaleIsolationDesiredState{ControlURL: *controlURL, ControlAddresses: controlAddresses}, *configureOnly, defaultTailscaleIsolationEnvironment())
+	case "adopt-tailscale":
+		flags := flag.NewFlagSet("agent adopt-tailscale", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		confirm := flags.Bool("confirm-vastora-ownership", false, "confirm explicit adoption after provenance checks")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent adopt-tailscale"); err != nil {
+			return err
+		}
+		if !*confirm || flags.NArg() != 0 {
+			return errors.New("usage: vastora agent adopt-tailscale --confirm-vastora-ownership")
+		}
+		if err := adoptLegacyVastoraTailscale(context.Background(), defaultTailscaleAdoptionEnvironment(*dataDir)); err != nil {
+			return err
+		}
+		fmt.Println("Verified the older Vastora installation; Tailscale is now managed by this Agent")
+		return nil
 	case "serve":
 		flags := flag.NewFlagSet("agent serve", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -387,6 +426,53 @@ func runAgent(arguments []string) error {
 	default:
 		return errors.New("unknown agent command")
 	}
+}
+
+func configureAgentCenter(ctx context.Context, dataDir, centerURL string, httpClient *http.Client) error {
+	store, err := agent.Open(dataDir)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	connection, err := store.Connection(ctx)
+	if err != nil {
+		return errors.New("agent must be enrolled before its Center can be changed")
+	}
+	verified, err := (agent.Client{HTTPClient: httpClient}).VerifyCenterURL(ctx, centerURL)
+	if err != nil {
+		return fmt.Errorf("verify requested Center URL: %w", err)
+	}
+	if verified == connection.CenterURL {
+		if agentLoopbackCenterURL(verified) {
+			return store.SetLocalCenterChannel(verified)
+		}
+		return store.SetLocalCenterChannel("")
+	}
+	previous := connection
+	connection.CenterURL = verified
+	if err := store.ReplaceConnection(ctx, connection); err != nil {
+		return fmt.Errorf("save requested Center URL: %w", err)
+	}
+	marker := ""
+	if agentLoopbackCenterURL(verified) {
+		marker = verified
+	}
+	if err := store.SetLocalCenterChannel(marker); err != nil {
+		if restoreErr := store.ReplaceConnection(ctx, previous); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore previous Center connection: %w", restoreErr))
+		}
+		return err
+	}
+	return nil
+}
+
+func agentLoopbackCenterURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "http" {
+		return false
+	}
+	address := net.ParseIP(parsed.Hostname())
+	return address != nil && address.IsLoopback()
 }
 
 func requireLinuxRoot(command string) error {

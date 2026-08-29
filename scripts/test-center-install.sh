@@ -86,9 +86,10 @@ test -x "$temporary_dir/update-center.sh"
 test -f "$temporary_dir/runtime-network.sh"
 test -f "$temporary_dir/compose.yaml"
 grep -Fq 'docker cp "$agent_container:/usr/local/bin/vastora"' "$temporary_dir/upgrade.sh"
-grep -Fq 'Co-located Agent updated to $new_version before Center reconciliation.' "$temporary_dir/upgrade.sh"
+grep -Fq 'agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url"' "$temporary_dir/upgrade.sh"
+grep -Fq 'Co-located Agent updated to $new_version on the host-only Center channel.' "$temporary_dir/upgrade.sh"
 grep -Fq 'http://127.0.0.1:$bootstrap_port/readyz' "$temporary_dir/upgrade.sh"
-grep -Fq 'Co-located Agent reconciled successfully after Center startup.' "$temporary_dir/upgrade.sh"
+grep -Fq 'Co-located Agent remained connected through Center reconciliation.' "$temporary_dir/upgrade.sh"
 test ! -e "$temporary_dir/headscale"
 if grep -Eq 'headscale/(config\.yaml|policy\.hujson)' "$project_dir/install.sh"; then
   echo "Public installer still requires removed Headscale configuration files" >&2
@@ -155,12 +156,30 @@ cat > "$temporary_dir/fake-vastora" <<'EOF'
 case "${1:-}" in
   version) printf '%s\n' '0.1.0-test' ;;
   help) printf '%s\n' 'Vastora control-plane tools' ;;
+  agent)
+    shift
+    if [ "${1:-}" = "configure-center" ]; then
+      printf '%s\n' "$*" >"$FAKE_AGENT_CONFIGURE_LOG"
+      exit 0
+    fi
+    exit 1
+    ;;
   *) exit 1 ;;
 esac
 EOF
 chmod 0755 "$temporary_dir/fake-vastora"
+agent_executable="$temporary_dir/installed-vastora"
+agent_unit="$temporary_dir/vastora-agent.service"
+agent_data_dir="$temporary_dir/agent-data"
+install -m 0755 "$temporary_dir/fake-vastora" "$agent_executable"
+printf '%s\n' 'Description=Vastora Agent' >"$agent_unit"
+mkdir -p "$agent_data_dir"
 VASTORA_SYSTEMD_UNIT_DIR="$temporary_dir/systemd" \
 VASTORA_HOST_CLI_PATH="$temporary_dir/host-bin/vastora" \
+VASTORA_AGENT_EXECUTABLE="$agent_executable" \
+VASTORA_AGENT_UNIT="$agent_unit" \
+VASTORA_AGENT_DATA_DIR="$agent_data_dir" \
+FAKE_AGENT_CONFIGURE_LOG="$temporary_dir/agent-configure.log" \
 FAKE_VASTORA_BINARY="$temporary_dir/fake-vastora" \
 PATH="$fake_bin:$PATH" \
   "$temporary_dir/upgrade.sh" --install-dir "$existing" >/dev/null
@@ -173,10 +192,11 @@ test -x "$existing/upgrade.sh"
 test -x "$existing/uninstall.sh"
 test -x "$existing/install-host-cli.sh"
 test -x "$existing/update-center.sh"
-test -x "$temporary_dir/host-bin/vastora"
+test -x "$agent_executable"
 test -f "$existing/.host-cli-installed"
 test -f "$temporary_dir/systemd/vastora-center-update.service"
 test -f "$temporary_dir/systemd/vastora-center-update.path"
+grep -Fqx "configure-center --data-dir $agent_data_dir --center-url http://127.0.0.1:19090" "$temporary_dir/agent-configure.log"
 grep -Fq "PathExists=$existing/.update-request" "$temporary_dir/systemd/vastora-center-update.path"
 grep -Fq "$existing/update-center.sh --install-dir $existing" "$temporary_dir/systemd/vastora-center-update.service"
 

@@ -179,7 +179,18 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 			return
 		}
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"connected": true, "centerUrl": network.AgentConnectURL, "tailscaleIsolation": isolation})
+	centerURL := network.AgentConnectURL
+	if s.coLocatedAgentURL != "" {
+		coLocated, err := s.store.networkCandidatesAreCoLocated(input.NetworkCandidates)
+		if err != nil {
+			writeError(writer, http.StatusInternalServerError, err)
+			return
+		}
+		if coLocated {
+			centerURL = s.coLocatedAgentURL
+		}
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"connected": true, "centerUrl": centerURL, "tailscaleIsolation": isolation})
 }
 
 func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Request) {

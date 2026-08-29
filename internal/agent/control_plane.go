@@ -442,16 +442,51 @@ func (c Client) applyDesiredCenterURL(ctx context.Context, store *Store, connect
 		return fmt.Errorf("agent: reject Center-directed URL update: %w", err)
 	}
 	if normalized == connection.CenterURL {
+		if loopbackCenterURL(normalized) {
+			return store.SetLocalCenterChannel(normalized)
+		}
+		return nil
+	}
+	localChannel, err := store.LocalCenterChannel(connection.CenterURL)
+	if err != nil {
+		return err
+	}
+	if localChannel {
+		// A co-located Agent uses the host-only bootstrap listener so its
+		// control channel does not depend on the Caddy instance it manages.
 		return nil
 	}
 	if _, err := c.VerifyCenterURL(ctx, normalized); err != nil {
 		return fmt.Errorf("agent: verify new Center URL before switching: %w", err)
 	}
+	previous := connection
 	connection.CenterURL = normalized
 	if err := store.ReplaceConnection(ctx, connection); err != nil {
 		return fmt.Errorf("agent: save new Center URL: %w", err)
 	}
+	if loopbackCenterURL(normalized) {
+		if err := store.SetLocalCenterChannel(normalized); err != nil {
+			if restoreErr := store.ReplaceConnection(ctx, previous); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("agent: restore previous Center URL: %w", restoreErr))
+			}
+			return err
+		}
+	} else if err := store.SetLocalCenterChannel(""); err != nil {
+		if restoreErr := store.ReplaceConnection(ctx, previous); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("agent: restore previous Center URL: %w", restoreErr))
+		}
+		return err
+	}
 	return nil
+}
+
+func loopbackCenterURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "http" {
+		return false
+	}
+	host := net.ParseIP(parsed.Hostname())
+	return host != nil && host.IsLoopback()
 }
 
 // VerifyCenterURL validates a user- or Center-supplied control-plane address

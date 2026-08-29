@@ -191,6 +191,9 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, builtinHeadscaleRuntimeSetting, "ipv4-only-v1"); err != nil {
+		t.Fatal(err)
+	}
 	installer := &fakeBuiltinHeadscaleInstaller{}
 	server := NewServer(store, "", false).WithInfrastructureManager(installer)
 	if server.startupReady.Load() {
@@ -204,6 +207,9 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 	}
 	if installer.reconcileInput.CenterURL != "https://center.example.com" || installer.reconcileInput.HeadscaleURL != "https://headscale.example.com" {
 		t.Fatalf("unexpected reconciliation input: %#v", installer.reconcileInput)
+	}
+	if installer.reconcileInput.CenterPrivateBindAddress != "" {
+		t.Fatalf("startup reconciliation trusted a pre-restart tailnet address: %#v", installer.reconcileInput)
 	}
 	installer.reconcileInput = deployapi.HeadscaleInstallRequest{}
 	if err := server.ReconcileBuiltinHeadscale(ctx); err != nil {
