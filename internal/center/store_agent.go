@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -349,10 +350,6 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation FROM agents WHERE id = ?`, id).Scan(&previousRuntimeGeneration); err != nil {
 		return fmt.Errorf("center: read Agent runtime generation: %w", err)
 	}
-	var previousHeadscaleAddresses int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_network_candidates WHERE agent_id = ? AND kind = ?`, id, networking.KindHeadscale).Scan(&previousHeadscaleAddresses); err != nil {
-		return fmt.Errorf("center: inspect previous Agent tailnet address: %w", err)
-	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = CASE WHEN runtime_generation < ? THEN ? ELSE runtime_generation END, tailscale_ownership = ?, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
 	}
@@ -395,18 +392,13 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			}
 		}
 	}
-	if heartbeat.Capabilities.Gateway && previousHeadscaleAddresses == 0 && reportedHeadscaleAddress {
-		result, err := tx.ExecContext(ctx, `UPDATE gateway_components SET generation = generation + 1, status = 'failed', lease_expires_at = '', last_error = 'tailnet address became available; queued private listener reconcile', updated_at = ? WHERE gateway_node_id = ? AND desired_status = 'running' AND status = 'ready'`, now.Format(time.RFC3339Nano), id)
+	if heartbeat.Capabilities.Gateway && reportedHeadscaleAddress {
+		needsPrivateListener, err := gatewayStateNeedsReportedHeadscaleListener(ctx, tx, id, heartbeat.NetworkCandidates)
 		if err != nil {
-			return fmt.Errorf("center: queue restored private gateway listener: %w", err)
+			return err
 		}
-		changed, _ := result.RowsAffected()
-		if changed != 0 {
-			var generation int64
-			if err := tx.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, id).Scan(&generation); err != nil {
-				return err
-			}
-			if err := s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(id, generation), id, "gateway.component.apply", generation, "queued", "tailnet address became available; queued private listener reconcile"); err != nil {
+		if needsPrivateListener {
+			if err := s.queueGatewayState(ctx, tx, id, now); err != nil {
 				return err
 			}
 		}
@@ -421,6 +413,38 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}
 	return nil
+}
+
+func gatewayStateNeedsReportedHeadscaleListener(ctx context.Context, tx *sql.Tx, agentID string, candidates []networking.Candidate) (bool, error) {
+	reported := make(map[string]struct{})
+	for _, candidate := range candidates {
+		if candidate.Kind == networking.KindHeadscale {
+			reported[candidate.Address] = struct{}{}
+		}
+	}
+	if len(reported) == 0 {
+		return false, nil
+	}
+	var encoded []byte
+	err := tx.QueryRowContext(ctx, `SELECT desired_json FROM gateway_states WHERE gateway_node_id = ?`, agentID).Scan(&encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("center: inspect private gateway listener: %w", err)
+	}
+	var desired gateway.DesiredState
+	if err := json.Unmarshal(encoded, &desired); err != nil {
+		return false, errors.New("center: stored gateway desired state is invalid")
+	}
+	for _, listener := range desired.Listeners {
+		if listener.Kind == "headscale" {
+			if _, current := reported[listener.Address]; current {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
 }
 
 func invalidateUnusableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID string) error {
