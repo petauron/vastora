@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.63](https://github.com/petauron/vastora/compare/v0.1.0-alpha.62...v0.1.0-alpha.63) (2026-08-29)
+
+
+### Bug Fixes
+
+* **center:** restore private gateway listeners ([#187](https://github.com/petauron/vastora/issues/187)) ([3a7231a](https://github.com/petauron/vastora/commit/3a7231a3d116cb05950ce96d6676d602888df037))
+
 ## [0.1.0-alpha.62](https://github.com/petauron/vastora/compare/v0.1.0-alpha.61...v0.1.0-alpha.62) (2026-08-29)
 
 
