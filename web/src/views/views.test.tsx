@@ -203,12 +203,13 @@ describe("network and app views", () => {
     const data = dashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
     data.centerRemoteAccess = { available: true, enabled: false, status: "disabled" };
-    const configure = vi.spyOn(api, "configureCenterRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center.vastora.example.com", audienceKind: "email", audienceValue: "admin@example.org", status: "configured" });
+    const configure = vi.spyOn(api, "configureCenterRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center-vastora.example.com", audienceKind: "email", audienceValue: "admin@example.org", status: "configured" });
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
     expect(container.textContent).toContain("Center 远程备用入口");
     const remoteAccessCard = [...container.querySelectorAll<HTMLElement>('[data-slot="card"]')].find((card) => card.textContent?.includes("Center 远程备用入口"));
     act(() => remoteAccessCard?.querySelector<HTMLButtonElement>("button")?.click());
     act(() => document.querySelector<HTMLButtonElement>("#center-remote-access-enabled")?.click());
+    expect(document.body.textContent).toContain("center-vastora.example.com");
     const email = document.querySelector<HTMLInputElement>("#center-remote-access-audience")!;
     expect(email).toBeInstanceOf(HTMLInputElement);
     act(() => {

@@ -16,6 +16,8 @@ import (
 
 var cloudflareAccessScopes = []string{"access.write", "access-acct.write"}
 
+const centerRemoteAccessLabel = "center-vastora"
+
 type CenterRemoteAccessInput struct {
 	Enabled       bool   `json:"enabled"`
 	AudienceKind  string `json:"audienceKind,omitempty"`
@@ -83,11 +85,15 @@ func normalizeCenterRemoteAccess(input CenterRemoteAccessInput, centerURL, zoneN
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Port() != "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return CenterRemoteAccessInput{}, "", errors.New("center: remote access requires a standard HTTPS Center hostname")
 	}
-	hostname := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	centerHostname := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
 	zoneName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(zoneName), "."))
-	if hostname != zoneName && !strings.HasSuffix(hostname, "."+zoneName) {
-		return CenterRemoteAccessInput{}, "", fmt.Errorf("center: %s is outside the selected Cloudflare zone %s", hostname, zoneName)
+	if centerHostname != zoneName && !strings.HasSuffix(centerHostname, "."+zoneName) {
+		return CenterRemoteAccessInput{}, "", fmt.Errorf("center: %s is outside the selected Cloudflare zone %s", centerHostname, zoneName)
 	}
+	// Cloudflare Universal SSL covers the zone apex and one subdomain level.
+	// Keep the browser-only fallback flat even when the private Center hostname
+	// lives under Vastora's multi-level service namespace.
+	hostname := centerRemoteAccessLabel + "." + zoneName
 	input.AudienceKind = strings.TrimSpace(input.AudienceKind)
 	input.AudienceValue = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(input.AudienceValue, "@")))
 	switch input.AudienceKind {

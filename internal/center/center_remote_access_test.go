@@ -31,7 +31,7 @@ func TestCenterRemoteAccessCreatesAccessBeforePublishingDNS(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["domain"] != "center.vastora.example.com" || !strings.Contains(mustJSONString(t, body["policies"]), `"email_domain":{"domain":"example.org"}`) {
+			if body["domain"] != "center-vastora.example.com" || !strings.Contains(mustJSONString(t, body["policies"]), `"email_domain":{"domain":"example.org"}`) {
 				t.Fatalf("unexpected Access application: %#v", body)
 			}
 			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"access-app"}}`))
@@ -44,13 +44,24 @@ func TestCenterRemoteAccessCreatesAccessBeforePublishingDNS(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(mustJSONString(t, body), `"service":"http://vastora-center:8080"`) {
+			encoded := mustJSONString(t, body)
+			if !strings.Contains(encoded, `"hostname":"center-vastora.example.com"`) || !strings.Contains(encoded, `"service":"http://vastora-center:8080"`) {
 				t.Fatalf("Tunnel does not target the private bridge alias: %#v", body)
 			}
 			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
 		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records":
+			if request.URL.Query().Get("name") != "center-vastora.example.com" {
+				t.Fatalf("unexpected DNS lookup: %s", request.URL.String())
+			}
 			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
 		case request.Method == http.MethodPost && request.URL.Path == "/zones/zone/dns_records":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["name"] != "center-vastora.example.com" || body["proxied"] != true {
+				t.Fatalf("unexpected remote DNS record: %#v", body)
+			}
 			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"dns-id"}}`))
 		case request.Method == http.MethodDelete:
 			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
@@ -73,7 +84,7 @@ func TestCenterRemoteAccessCreatesAccessBeforePublishingDNS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !view.Enabled || view.Status != "configured" || infrastructure.remoteAccess.Token != "cloudflare-tunnel-token-value" {
+	if !view.Enabled || view.Status != "configured" || view.Hostname != "center-vastora.example.com" || infrastructure.remoteAccess.Token != "cloudflare-tunnel-token-value" {
 		t.Fatalf("unexpected remote access result: %#v runtime=%#v", view, infrastructure.remoteAccess)
 	}
 	accessIndex, dnsIndex := operationIndex(operations, "POST /accounts/account/access/apps"), operationIndex(operations, "POST /zones/zone/dns_records")
@@ -86,6 +97,81 @@ func TestCenterRemoteAccessCreatesAccessBeforePublishingDNS(t *testing.T) {
 	}
 	if view.Enabled || view.Status != "disabled" || infrastructure.remoteAccess.Enabled {
 		t.Fatalf("remote access was not disabled: %#v runtime=%#v", view, infrastructure.remoteAccess)
+	}
+}
+
+func TestNormalizeCenterRemoteAccessUsesUniversalSSLCompatibleHostname(t *testing.T) {
+	input, hostname, err := normalizeCenterRemoteAccess(CenterRemoteAccessInput{Enabled: true, AudienceKind: "email", AudienceValue: "admin@example.com"}, "https://center.vastora.example.com", "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostname != "center-vastora.example.com" || input.AudienceValue != "admin@example.com" {
+		t.Fatalf("unexpected normalized remote access: hostname=%q input=%#v", hostname, input)
+	}
+}
+
+func TestCenterRemoteAccessMigratesLegacyNestedHostname(t *testing.T) {
+	operations := []string{}
+	cloudflare := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		operations = append(operations, request.Method+" "+request.URL.Path)
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"name":"example.com"}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/accounts/account/access/organizations":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"auth_domain":"vastora-account.cloudflareaccess.com"}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/accounts/account/access/identity_providers":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"otp-id","type":"onetimepin"}]}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/accounts/account/access/apps":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"new-access-app"}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/accounts/account/cfd_tunnel":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/accounts/account/cfd_tunnel":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"new-tunnel"}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/accounts/account/cfd_tunnel/new-tunnel/token":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":"new-token"}`))
+		case request.Method == http.MethodPut && request.URL.Path == "/accounts/account/cfd_tunnel/new-tunnel/configurations":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/zones/zone/dns_records":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"new-dns"}}`))
+		case request.Method == http.MethodDelete:
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
+		default:
+			t.Fatalf("unexpected Cloudflare request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer cloudflare.Close()
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.cloudflareOAuth = cloudflareOAuthConfig{APIURL: cloudflare.URL, HTTPClient: cloudflare.Client()}
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access", RefreshToken: "refresh", Scope: "zone.read dns.write argotunnel.write access.write access-acct.write", ExpiresAt: time.Now().Add(time.Hour)})
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`INSERT INTO center_remote_access(id, hostname, audience_kind, audience_value, otp_identity_provider_id, access_application_id, tunnel_id, dns_record_id, status, created_at, updated_at)
+		VALUES(1, 'center.vastora.example.com', 'email_domain', 'example.org', 'old-otp', 'old-access-app', 'old-tunnel', 'old-dns', 'configured', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	infrastructure := &fakeBuiltinHeadscaleInstaller{}
+	view, err := NewServer(store, "", false).WithInfrastructureManager(infrastructure).ConfigureCenterRemoteAccess(context.Background(), CenterRemoteAccessInput{Enabled: true, AudienceKind: "email_domain", AudienceValue: "example.org"}, "https://center.vastora.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Hostname != "center-vastora.example.com" || !view.Enabled || infrastructure.remoteAccess.Token != "new-token" {
+		t.Fatalf("legacy remote access was not migrated: view=%#v runtime=%#v", view, infrastructure.remoteAccess)
+	}
+	for _, removed := range []string{
+		"DELETE /zones/zone/dns_records/old-dns",
+		"DELETE /accounts/account/access/apps/old-access-app",
+		"DELETE /accounts/account/cfd_tunnel/old-tunnel",
+	} {
+		if operationIndex(operations, removed) < 0 {
+			t.Fatalf("legacy resource was not removed (%s): %v", removed, operations)
+		}
 	}
 }
 
