@@ -47,6 +47,17 @@ func TestGeneratedHeadscaleConfigAcceptedByPinnedBinary(t *testing.T) {
 	}
 }
 
+func TestHeadscaleCandidateRejectsMalformedYAMLBeforeBinaryValidation(t *testing.T) {
+	files := map[string][]byte{
+		"config.yaml":   []byte("server_url: https://headscale.example.com\n\tderp: {}\n"),
+		"derp.yaml":     renderHeadscaleDERPMap(),
+		"policy.hujson": renderHeadscalePolicy(),
+	}
+	if err := validateHeadscaleCandidateFiles(files); err == nil {
+		t.Fatal("malformed Headscale YAML was accepted")
+	}
+}
+
 func TestHeadscaleConfigSnapshotRestoresPreviousFiles(t *testing.T) {
 	directory := t.TempDir()
 	installer := DockerHeadscaleInstaller{ConfigDir: directory}

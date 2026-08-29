@@ -19,6 +19,7 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gatewayruntime"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -35,6 +36,9 @@ type headscaleReplacement struct {
 }
 
 func (installer DockerHeadscaleInstaller) validateHeadscaleConfig(ctx context.Context, docker *client.Client, files map[string][]byte) error {
+	if err := validateHeadscaleCandidateFiles(files); err != nil {
+		return err
+	}
 	volumeName := "vastora-headscale-configtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	if _, err := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: volumeName, Labels: map[string]string{
 		gatewayruntime.ManagedLabel:   "true",
@@ -103,6 +107,32 @@ func (installer DockerHeadscaleInstaller) validateHeadscaleConfig(ctx context.Co
 		detail = "no diagnostic output"
 	}
 	return fmt.Errorf("deployer: Headscale rejected candidate configuration (exit %d): %s", status.StatusCode, detail)
+}
+
+func validateHeadscaleCandidateFiles(files map[string][]byte) error {
+	for _, name := range headscaleConfigFiles {
+		if _, ok := files[name]; !ok {
+			return fmt.Errorf("deployer: Headscale candidate is missing %s", name)
+		}
+	}
+	for _, name := range []string{"config.yaml", "derp.yaml"} {
+		decoder := yaml.NewDecoder(bytes.NewReader(files[name]))
+		var document yaml.Node
+		if err := decoder.Decode(&document); err != nil {
+			return fmt.Errorf("deployer: parse Headscale candidate %s: %w", name, err)
+		}
+		if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+			return fmt.Errorf("deployer: Headscale candidate %s must contain one YAML mapping", name)
+		}
+		var extra yaml.Node
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				return fmt.Errorf("deployer: Headscale candidate %s contains multiple YAML documents", name)
+			}
+			return fmt.Errorf("deployer: parse Headscale candidate %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, docker *client.Client, files map[string][]byte) (headscaleReplacement, error) {
