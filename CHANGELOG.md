@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.66](https://github.com/petauron/vastora/compare/v0.1.0-alpha.65...v0.1.0-alpha.66) (2026-08-29)
+
+
+### Features
+
+* **center:** add Access-protected remote fallback ([#193](https://github.com/petauron/vastora/issues/193)) ([575bd33](https://github.com/petauron/vastora/commit/575bd33d6904ca487ce4045ec5591b2ab14708b5))
+
 ## [0.1.0-alpha.65](https://github.com/petauron/vastora/compare/v0.1.0-alpha.64...v0.1.0-alpha.65) (2026-08-29)
 
 
