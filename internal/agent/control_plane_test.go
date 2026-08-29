@@ -332,6 +332,31 @@ func TestHeartbeatSwitchesToVerifiedCenterURL(t *testing.T) {
 	}
 }
 
+func TestHeartbeatKeepsExplicitHostOnlyCenterChannel(t *testing.T) {
+	healthChecks := 0
+	newCenter := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { healthChecks++ }))
+	defer newCenter.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	connection := Connection{AgentID: "agent-1", Name: "center-host", CenterURL: "http://127.0.0.1:8080", Credential: "credential"}
+	if err := store.SaveConnection(context.Background(), connection); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetLocalCenterChannel(connection.CenterURL); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Client{}).applyDesiredCenterURL(context.Background(), store, connection, newCenter.URL); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Connection(context.Background())
+	if err != nil || current.CenterURL != connection.CenterURL || healthChecks != 0 {
+		t.Fatalf("host-only channel changed: connection=%#v healthChecks=%d err=%v", current, healthChecks, err)
+	}
+}
+
 func TestHeartbeatKeepsCurrentCenterWhenDesiredURLIsNotReady(t *testing.T) {
 	newCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")

@@ -24,7 +24,7 @@ import (
 const (
 	headscaleDNSFile               = "headscale-extra-records.json"
 	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
-	builtinHeadscaleRuntimeVersion = "ipv4-only-v1"
+	builtinHeadscaleRuntimeVersion = "direct-endpoints-v2"
 )
 
 type HeadscaleInput struct {
@@ -287,7 +287,14 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 	if err != nil {
 		return nil, err
 	}
-	if owner != nil && owner.ID == strings.TrimSpace(agentID) && owner.Ownership == "managed" {
+	if owner == nil || owner.ID != strings.TrimSpace(agentID) || owner.Ownership != "managed" {
+		return state, nil
+	}
+	current, _, err := s.tailscaleFixedEndpointCurrent(ctx, fixedEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	if current {
 		state.StaticEndpoints = []string{fixedEndpoint.Endpoint}
 	}
 	return state, nil
@@ -489,14 +496,16 @@ func (s *Store) coLocatedHeadscaleAddress(ctx context.Context) (string, error) {
 	}
 	local := make(map[string]string, len(localCandidates))
 	for _, candidate := range localCandidates {
-		if candidate.Kind == networking.KindPublic || candidate.Kind == networking.KindHeadscale {
+		if candidate.Kind == networking.KindLAN || candidate.Kind == networking.KindPublic || candidate.Kind == networking.KindHeadscale {
 			local[candidate.Kind+"\x00"+candidate.Address] = candidate.Address
 		}
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT n.headscale_address, c.kind, c.address
 		FROM agent_network_profiles n JOIN agents a ON a.id = n.agent_id
 		JOIN agent_network_candidates c ON c.agent_id = n.agent_id
-		WHERE a.status = 'active' AND n.headscale_address <> '' ORDER BY a.enrolled_at, c.kind, c.address`)
+		WHERE a.status = 'active' AND a.last_seen_at >= ? AND n.headscale_address <> ''
+		AND EXISTS(SELECT 1 FROM agent_network_candidates h WHERE h.agent_id = n.agent_id AND h.kind = ? AND h.address = n.headscale_address)
+		ORDER BY a.enrolled_at, c.kind, c.address`, s.now().UTC().Add(-45*time.Second).Format(time.RFC3339Nano), networking.KindHeadscale)
 	if err != nil {
 		return "", err
 	}
@@ -506,11 +515,30 @@ func (s *Store) coLocatedHeadscaleAddress(ctx context.Context) (string, error) {
 		if err := rows.Scan(&headscaleAddress, &kind, &address); err != nil {
 			return "", err
 		}
-		if _, exists := local[kind+"\x00"+address]; exists {
+		if _, coLocated := local[kind+"\x00"+address]; coLocated {
 			return headscaleAddress, nil
 		}
 	}
 	return "", rows.Err()
+}
+
+func (s *Store) networkCandidatesAreCoLocated(candidates []networking.Candidate) (bool, error) {
+	host, err := s.discoverNetworkCandidates(s.now().UTC())
+	if err != nil {
+		return false, fmt.Errorf("center: discover co-located Agent addresses: %w", err)
+	}
+	hostAddresses := make(map[string]struct{}, len(host))
+	for _, candidate := range host {
+		if candidate.Kind == networking.KindLAN || candidate.Kind == networking.KindPublic {
+			hostAddresses[candidate.Kind+"\x00"+candidate.Address] = struct{}{}
+		}
+	}
+	for _, candidate := range candidates {
+		if _, exists := hostAddresses[candidate.Kind+"\x00"+candidate.Address]; exists {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Store) reconcileBuiltinHeadscaleDNSIfConfigured(ctx context.Context) error {

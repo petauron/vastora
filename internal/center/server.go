@@ -23,6 +23,7 @@ type Server struct {
 	staticDir            string
 	agentBinariesDir     string
 	setupAgentConnectURL string
+	coLocatedAgentURL    string
 	secureCookies        bool
 	officialCatalog      []byte
 	infrastructure       deployapi.InfrastructureManager
@@ -65,6 +66,11 @@ func (s *Server) WithAgentBinaries(path string) *Server {
 
 func (s *Server) WithSetupAgentConnectURL(value string) *Server {
 	s.setupAgentConnectURL = value
+	return s
+}
+
+func (s *Server) WithCoLocatedAgentURL(value string) *Server {
+	s.coLocatedAgentURL = value
 	return s
 }
 

@@ -25,9 +25,10 @@ import (
 var errApplicationNotInstalled = errors.New("agent: application is not installed")
 
 type Store struct {
-	db  *sql.DB
-	key []byte
-	now func() time.Time
+	db      *sql.DB
+	key     []byte
+	dataDir string
+	now     func() time.Time
 }
 
 type AppliedInstallation struct {
@@ -77,7 +78,7 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("agent: open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db, key: key, now: time.Now}
+	store := &Store{db: db, key: key, dataDir: dataDir, now: time.Now}
 	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize database: %w", err)
@@ -197,6 +198,55 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
 	return store, nil
+}
+
+const localCenterChannelName = "local-center-channel"
+
+func (s *Store) LocalCenterChannel(centerURL string) (bool, error) {
+	content, err := os.ReadFile(filepath.Join(s.dataDir, localCenterChannelName))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("agent: read local Center channel marker: %w", err)
+	}
+	return strings.TrimSpace(string(content)) == strings.TrimSpace(centerURL), nil
+}
+
+func (s *Store) SetLocalCenterChannel(centerURL string) error {
+	path := filepath.Join(s.dataDir, localCenterChannelName)
+	centerURL = strings.TrimSpace(centerURL)
+	if centerURL == "" {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("agent: remove local Center channel marker: %w", err)
+		}
+		return nil
+	}
+	temporary, err := os.CreateTemp(s.dataDir, ".local-center-channel-*")
+	if err != nil {
+		return fmt.Errorf("agent: create local Center channel marker: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.WriteString(centerURL + "\n"); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("agent: publish local Center channel marker: %w", err)
+	}
+	return nil
 }
 
 type GatewayAppliedState struct {

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -119,6 +121,7 @@ func runCenter(arguments []string) error {
 		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
 		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
 		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
+		coLocatedAgentURL := flags.String("co-located-agent-url", "", "host-only Center URL for a co-located Agent")
 		hostNetworkAddresses := flags.String("host-network-addresses", "", "comma-separated host interface=IPv4 values supplied by the container installer")
 		deployerSocket := flags.String("deployer-socket", "", "Unix socket for the restricted infrastructure deployment helper")
 		allowContainerHTTP := flags.Bool("allow-container-http", false, "allow the official bridge-network container listener")
@@ -141,6 +144,19 @@ func runCenter(arguments []string) error {
 			normalizedAgentConnectURL, err = center.NormalizeAgentConnectURL(*agentConnectURL)
 			if err != nil {
 				return err
+			}
+		}
+		normalizedCoLocatedAgentURL := ""
+		if *coLocatedAgentURL != "" {
+			var normalizeErr error
+			normalizedCoLocatedAgentURL, normalizeErr = center.NormalizeAgentConnectURL(*coLocatedAgentURL)
+			if normalizeErr != nil {
+				return fmt.Errorf("co-located Agent URL: %w", normalizeErr)
+			}
+			parsed, _ := url.Parse(normalizedCoLocatedAgentURL)
+			address := net.ParseIP(parsed.Hostname())
+			if parsed.Scheme != "http" || address == nil || !address.IsLoopback() {
+				return errors.New("co-located Agent URL must be a loopback HTTP origin")
 			}
 		}
 		if *tlsCert == "" && !loopbackAddress(*listen) && !*allowContainerHTTP {
@@ -182,6 +198,7 @@ func runCenter(arguments []string) error {
 			WithOfficialCatalog(catalogPayload).
 			WithAgentBinaries(*agentBinariesDir).
 			WithSetupAgentConnectURL(normalizedAgentConnectURL).
+			WithCoLocatedAgentURL(normalizedCoLocatedAgentURL).
 			WithCenterReleaseChecker(center.NewOfficialReleaseChecker(""))
 		if *deployerSocket != "" {
 			installer, err := deployapi.NewClient(*deployerSocket)

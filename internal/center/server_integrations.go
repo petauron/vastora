@@ -215,27 +215,23 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	centerPrivateBindAddress, err := s.store.coLocatedHeadscaleAddress(ctx)
-	if err != nil {
-		return err
-	}
 	if err := s.infrastructure.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
-		CenterURL:                network.AgentConnectURL,
-		HeadscaleURL:             endpoint,
-		CenterAliases:            centerAliases,
-		HeadscaleAliases:         headscaleAliases,
-		PublicAddress:            binding.PublicAddress,
-		GatewayBindAddress:       binding.BindAddress,
-		CenterPrivateBindAddress: centerPrivateBindAddress,
+		CenterURL:          network.AgentConnectURL,
+		HeadscaleURL:       endpoint,
+		CenterAliases:      centerAliases,
+		HeadscaleAliases:   headscaleAliases,
+		PublicAddress:      binding.PublicAddress,
+		GatewayBindAddress: binding.BindAddress,
+		// Startup reconciliation must not trust a pre-restart tailnet address.
+		// The co-located Agent queues the private listener after tailscale0 is
+		// observed again; its control channel remains on the host-only port.
+		CenterPrivateBindAddress: "",
 		CenterCertificatePEM:     centerCertificate.CertificatePEM,
 		CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
 	}); err != nil {
 		return err
 	}
 	if err := s.store.reconcileHeadscaleDNS(ctx); err != nil {
-		return err
-	}
-	if err := s.store.queueAllGatewayStates(ctx); err != nil {
 		return err
 	}
 	if err := s.store.removePublicCenterSetupDNS(ctx, network.AgentConnectURL); err != nil {

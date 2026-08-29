@@ -21,6 +21,7 @@ func TestFixedTailscaleEndpointRequiresExplicitConfirmedChoice(t *testing.T) {
 	store.discoverNetworkCandidates = func(observedAt time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN, ObservedAt: observedAt}}, nil
 	}
+	store.lookupPublicAddress = func(context.Context) (string, error) { return "8.8.8.8", nil }
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at) VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +67,16 @@ func TestFixedTailscaleEndpointRequiresExplicitConfirmedChoice(t *testing.T) {
 	if err != nil || len(state.StaticEndpoints) != 1 || state.StaticEndpoints[0] != "8.8.8.8:41641" {
 		t.Fatalf("fixed endpoint desired state = %#v, err=%v", state, err)
 	}
+	store.lookupPublicAddress = func(context.Context) (string, error) { return "9.9.9.9", nil }
+	state, err = store.tailscaleIsolationDesiredState(ctx, "center-agent")
+	if err != nil || len(state.StaticEndpoints) != 0 {
+		t.Fatalf("changed public address remained advertised: %#v, err=%v", state, err)
+	}
+	view, err = store.TailscaleFixedEndpoint(ctx)
+	if err != nil || view.Status != "action_required" || !strings.Contains(view.LastError, "verified public address differs") {
+		t.Fatalf("changed public address view = %#v, err=%v", view, err)
+	}
+	store.lookupPublicAddress = func(context.Context) (string, error) { return "8.8.8.8", nil }
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership = 'external' WHERE id = 'center-agent'`); err != nil {
 		t.Fatal(err)
 	}

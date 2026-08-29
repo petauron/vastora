@@ -9,6 +9,7 @@ import (
 	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/networking"
+	"gopkg.in/yaml.v3"
 )
 
 func TestBundledServiceURLsUseStandardHTTPS(t *testing.T) {
@@ -34,7 +35,20 @@ func TestBundledServiceURLsUseStandardHTTPS(t *testing.T) {
 }
 
 func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T) {
-	headscale := string(renderHeadscaleConfig("https://headscale.example.com"))
+	headscalePayload := renderHeadscaleConfig("https://headscale.example.com")
+	var parsed struct {
+		DERP struct {
+			URLs  []string `yaml:"urls"`
+			Paths []string `yaml:"paths"`
+		} `yaml:"derp"`
+	}
+	if err := yaml.Unmarshal(headscalePayload, &parsed); err != nil {
+		t.Fatalf("generated Headscale configuration is invalid YAML: %v\n%s", err, headscalePayload)
+	}
+	if len(parsed.DERP.URLs) != 0 || len(parsed.DERP.Paths) != 1 || parsed.DERP.Paths[0] != "/etc/headscale/derp.yaml" {
+		t.Fatalf("generated Headscale DERP sources = %#v", parsed.DERP)
+	}
+	headscale := string(headscalePayload)
 	for _, expected := range []string{
 		"listen_addr: 0.0.0.0:8081",
 		"override_local_dns: true",
@@ -54,7 +68,12 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 			t.Fatalf("Headscale configuration is missing %q:\n%s", expected, headscale)
 		}
 	}
-	derpMap := string(renderHeadscaleDERPMap())
+	derpMapPayload := renderHeadscaleDERPMap()
+	var parsedDERPMap map[string]any
+	if err := yaml.Unmarshal(derpMapPayload, &parsedDERPMap); err != nil {
+		t.Fatalf("generated DERP map is invalid YAML: %v\n%s", err, derpMapPayload)
+	}
+	derpMap := string(derpMapPayload)
 	for _, expected := range []string{"hostname: stun.cloudflare.com", "stunport: 3478", "stunonly: true", "derpport: 0"} {
 		if !strings.Contains(derpMap, expected) {
 			t.Fatalf("Cloudflare STUN map is missing %q:\n%s", expected, derpMap)

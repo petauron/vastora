@@ -68,6 +68,7 @@ candidate_env="$temporary_dir/.env"
 backup_dir="$(mktemp -d "${install_dir}.backup.XXXXXX")"
 agent_container=""
 agent_changed=no
+agent_stopped=no
 files_changed=no
 center_started=no
 layer4_was_running=no
@@ -99,10 +100,14 @@ cleanup() {
   fi
   if [ "$status" -ne 0 ] && [ "$agent_changed" = yes ] && [ "$center_started" = no ]; then
     echo "Upgrade stopped before Center was started; restoring the previous Agent executable." >&2
-    agent_staged="$(mktemp /usr/local/bin/.vastora-rollback.XXXXXX)"
-    install -m 0755 /usr/local/bin/vastora.previous "$agent_staged"
-    mv "$agent_staged" /usr/local/bin/vastora
+    agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-rollback.XXXXXX")"
+    install -m 0755 "$agent_executable.previous" "$agent_staged"
+    mv "$agent_staged" "$agent_executable"
     systemctl restart vastora-agent.service || true
+    agent_stopped=no
+  fi
+  if [ "$status" -ne 0 ] && [ "$agent_stopped" = yes ]; then
+    systemctl start vastora-agent.service || true
   fi
   if [ "$status" -ne 0 ] && [ "$files_changed" = yes ] && [ "$center_started" = no ]; then
     echo "Upgrade stopped before Center was started; restoring the previous managed files." >&2
@@ -138,6 +143,9 @@ awk -v image="$new_image" -v host_addresses="$host_network_addresses" '
   }
 ' "$install_dir/.env" > "$candidate_env"
 chmod 0600 "$candidate_env"
+bootstrap_port="$(awk -F= '$1 == "VASTORA_CENTER_BOOTSTRAP_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$candidate_env")"
+if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
+local_center_url="http://127.0.0.1:$bootstrap_port"
 
 echo "Validating the new deployment with the existing configuration..."
 ensure_vastora_runtime_network
@@ -145,8 +153,9 @@ docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" config 
 echo "Downloading the immutable Center image..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center deployer
 
-agent_executable="/usr/local/bin/vastora"
-agent_unit="/etc/systemd/system/vastora-agent.service"
+agent_executable="${VASTORA_AGENT_EXECUTABLE:-/usr/local/bin/vastora}"
+agent_unit="${VASTORA_AGENT_UNIT:-/etc/systemd/system/vastora-agent.service}"
+agent_data_dir="${VASTORA_AGENT_DATA_DIR:-/var/lib/vastora/agent}"
 if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=Vastora Agent' "$agent_unit"; then
   if ! command -v systemctl >/dev/null 2>&1; then
     echo "systemctl is required to update the co-located Vastora Agent." >&2
@@ -162,20 +171,30 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
     echo "The Center image contains an unexpected Agent version; the upgrade was not started." >&2
     exit 1
   fi
-  agent_staged="$(mktemp /usr/local/bin/.vastora-upgrade.XXXXXX)"
+	if ! curl -fsS "$local_center_url/healthz" >/dev/null 2>&1; then
+	  echo "The host-only Center channel is not healthy; the co-located Agent was not changed." >&2
+	  exit 1
+	fi
+	echo "Moving the co-located Agent to the host-only Center channel..."
+	systemctl stop vastora-agent.service
+	agent_stopped=yes
+	"$temporary_dir/vastora-agent" agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url"
+  agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-upgrade.XXXXXX")"
   install -m 0755 "$temporary_dir/vastora-agent" "$agent_staged"
   install -m 0755 "$agent_executable" "$agent_executable.previous"
   mv "$agent_staged" "$agent_executable"
-  if ! systemctl restart vastora-agent.service || ! systemctl is-active --quiet vastora-agent.service; then
+	if ! systemctl start vastora-agent.service || ! systemctl is-active --quiet vastora-agent.service; then
     echo "The updated Agent did not start; restoring the previous executable." >&2
-    agent_staged="$(mktemp /usr/local/bin/.vastora-rollback.XXXXXX)"
+    agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-rollback.XXXXXX")"
     install -m 0755 "$agent_executable.previous" "$agent_staged"
     mv "$agent_staged" "$agent_executable"
-    systemctl restart vastora-agent.service || true
-    exit 1
-  fi
-  agent_changed=yes
-  echo "Co-located Agent updated to $new_version before Center reconciliation."
+	  systemctl restart vastora-agent.service || true
+	  agent_stopped=no
+	  exit 1
+	fi
+	agent_changed=yes
+	agent_stopped=no
+	echo "Co-located Agent updated to $new_version on the host-only Center channel."
 fi
 
 for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh runtime-network.sh compose.yaml release.env .env; do
@@ -197,9 +216,6 @@ install -m 0644 "$source_dir/compose.yaml" "$install_dir/compose.yaml"
 install -m 0644 "$source_dir/release.env" "$install_dir/release.env"
 install -m 0600 "$candidate_env" "$install_dir/.env"
 files_changed=yes
-
-bootstrap_port="$(awk -F= '$1 == "VASTORA_CENTER_BOOTSTRAP_PORT" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/.env")"
-if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
 
 echo "Starting the updated Center..."
 cd "$install_dir"
@@ -230,11 +246,10 @@ until curl -fsS "http://127.0.0.1:$bootstrap_port/readyz" >/dev/null 2>&1; do
 done
 
 if [ "$agent_changed" = yes ]; then
-  echo "Restarting the co-located Agent after Center reconciliation..."
-  if ! systemctl restart vastora-agent.service || ! systemctl is-active --quiet vastora-agent.service; then
-    echo "The co-located Agent did not restart after Center reconciliation." >&2
-    exit 1
-  fi
+	if ! systemctl is-active --quiet vastora-agent.service; then
+	  echo "The co-located Agent stopped during Center reconciliation." >&2
+	  exit 1
+	fi
   attempt=0
   until curl -fsS http://127.0.0.1:8090/healthz >/dev/null 2>&1; do
     attempt=$((attempt + 1))
@@ -255,7 +270,7 @@ if [ "$agent_changed" = yes ]; then
       sleep 1
     done
   fi
-  echo "Co-located Agent reconciled successfully after Center startup."
+	echo "Co-located Agent remained connected through Center reconciliation."
 else
   "$install_dir/install-host-cli.sh" \
     --image "$new_image" --version "$new_version" --install-dir "$install_dir"

@@ -179,6 +179,26 @@ describe("network and app views", () => {
     expect(configure).toHaveBeenCalledWith({ enabled: true, endpoint: "203.0.113.10:41641", localAddress: "192.168.1.2", confirmMapping: true });
   });
 
+  it("shows the explicit adoption command only for a proven older Vastora Tailscale install", () => {
+    const data = dashboard();
+    data.integrations = [{ kind: "headscale", mode: "builtin", endpoint: "https://headscale.example.com", secretSet: true, status: "configured" }];
+    data.tailscaleFixedEndpoint = {
+      available: false,
+      enabled: false,
+      endpoint: "",
+      localAddress: "",
+      detectedEndpoint: "",
+      detectedLocalAddress: "192.168.1.2",
+      localAddressCandidates: [],
+      status: "unavailable",
+      lastError: "This older Agent reports external Tailscale ownership."
+    };
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.textContent).toContain("接管旧版 Tailscale");
+    expect(container.textContent).toContain("sudo vastora agent adopt-tailscale --confirm-vastora-ownership");
+    expect(container.textContent).not.toContain("固定 Tailscale 直连端点");
+  });
+
   it("shows only successful applications and marks host-privileged packages", () => {
     const container = render(<AppsView data={dashboard()} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("Komari 探针");

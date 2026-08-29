@@ -92,14 +92,10 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
 		return "", "", err
 	}
-	if err := writeAtomic(filepath.Join(settings.ConfigDir, "config.yaml"), renderHeadscaleConfig(headscaleURL), 0o644); err != nil {
-		return "", "", err
-	}
-	if err := writeAtomic(filepath.Join(settings.ConfigDir, "derp.yaml"), renderHeadscaleDERPMap(), 0o644); err != nil {
-		return "", "", err
-	}
-	if err := writeAtomic(filepath.Join(settings.ConfigDir, "policy.hujson"), renderHeadscalePolicy(), 0o644); err != nil {
-		return "", "", err
+	headscaleFiles := map[string][]byte{
+		"config.yaml":   renderHeadscaleConfig(headscaleURL),
+		"derp.yaml":     renderHeadscaleDERPMap(),
+		"policy.hujson": renderHeadscalePolicy(),
 	}
 	for _, image := range []string{settings.HeadscaleImage, settings.CaddyImage} {
 		pull, err := docker.ImagePull(ctx, image, client.ImagePullOptions{})
@@ -117,22 +113,26 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			return "", "", fmt.Errorf("deployer: create volume %s: %w", name, err)
 		}
 	}
-	if err := settings.replaceHeadscale(ctx, docker); err != nil {
+	headscaleReplacement, err := settings.replaceHeadscale(ctx, docker, headscaleFiles)
+	if err != nil {
 		return "", "", err
 	}
 	if err := waitForURL(ctx, settings.HTTPClient, "http://"+DefaultHeadscaleContainer+":8081/health", 90*time.Second); err != nil {
-		return "", "", fmt.Errorf("deployer: Headscale did not become healthy: %w", err)
+		rollbackErr := headscaleReplacement.rollback(ctx, docker)
+		return "", "", errors.Join(fmt.Errorf("deployer: Headscale did not become healthy: %w", err), rollbackErr)
 	}
 	apiKey := ""
 	if createAPIKey {
 		apiKey, err = createHeadscaleAPIKey(ctx, docker, DefaultHeadscaleContainer)
 		if err != nil {
-			return "", "", err
+			rollbackErr := headscaleReplacement.rollback(ctx, docker)
+			return "", "", errors.Join(err, rollbackErr)
 		}
 	}
 	replacement, err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, centerBindAddresses, bindAddresses, settings.CenterAliases, settings.HeadscaleAliases), centerBindAddresses, bindAddresses)
 	if err != nil {
-		return "", "", err
+		rollbackErr := headscaleReplacement.rollback(ctx, docker)
+		return "", "", errors.Join(err, rollbackErr)
 	}
 	for _, health := range []struct {
 		endpoint string
@@ -140,14 +140,14 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 		port     int
 	}{{centerURL, "/healthz", 12443}, {headscaleURL, "/health", 443}} {
 		if err := waitForLocalGateway(ctx, health.endpoint, health.path, health.port, 3*time.Minute); err != nil {
-			rollbackErr := replacement.rollback(ctx, docker)
-			if rollbackErr != nil {
-				return "", "", errors.Join(fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err), rollbackErr)
-			}
-			return "", "", fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err)
+			rollbackErr := errors.Join(replacement.rollback(ctx, docker), headscaleReplacement.rollback(ctx, docker))
+			return "", "", errors.Join(fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err), rollbackErr)
 		}
 	}
 	if err := replacement.commit(ctx, docker); err != nil {
+		return "", "", err
+	}
+	if err := headscaleReplacement.commit(ctx, docker); err != nil {
 		return "", "", err
 	}
 	return headscaleURL, apiKey, nil
@@ -253,23 +253,6 @@ func validateCenterCertificate(endpoint, certificatePEM, privateKeyPEM string) e
 	return nil
 }
 
-func (installer DockerHeadscaleInstaller) replaceHeadscale(ctx context.Context, docker *client.Client) error {
-	if err := removeManagedContainer(ctx, docker, DefaultHeadscaleContainer, "center-headscale"); err != nil {
-		return err
-	}
-	config, hostConfig := installer.headscaleContainerConfig()
-	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: config, HostConfig: hostConfig, NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.HeadscaleAlias), Name: DefaultHeadscaleContainer,
-	})
-	if err != nil {
-		return fmt.Errorf("deployer: create Headscale container: %w", err)
-	}
-	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		return fmt.Errorf("deployer: start Headscale container: %w", err)
-	}
-	return nil
-}
-
 func (installer DockerHeadscaleInstaller) headscaleContainerConfig() (*container.Config, *container.HostConfig) {
 	stunPort := dockernetwork.MustParsePort("3478/udp")
 	return &container.Config{
@@ -360,6 +343,10 @@ func createHeadscaleAPIKey(ctx context.Context, docker *client.Client, container
 }
 
 func copyFile(ctx context.Context, docker *client.Client, containerID, destination, name string, content []byte) error {
+	return copyFileMode(ctx, docker, containerID, destination, name, content, 0o600)
+}
+
+func copyFileMode(ctx context.Context, docker *client.Client, containerID, destination, name string, content []byte, mode int64) error {
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)
 	if directory := filepath.Dir(name); directory != "." {
@@ -367,7 +354,7 @@ func copyFile(ctx context.Context, docker *client.Client, containerID, destinati
 			return err
 		}
 	}
-	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(content)), ModTime: time.Unix(0, 0)}); err != nil {
+	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(content)), ModTime: time.Unix(0, 0)}); err != nil {
 		return err
 	}
 	if _, err := writer.Write(content); err != nil {

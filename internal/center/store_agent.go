@@ -314,6 +314,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	reportedNetworkCandidates := len(heartbeat.NetworkCandidates)
 	seenAddresses := map[string]bool{}
 	filteredCandidates := make([]networking.Candidate, 0, len(heartbeat.NetworkCandidates))
+	reportedHeadscaleAddress := false
 	for _, candidate := range heartbeat.NetworkCandidates {
 		ip := net.ParseIP(candidate.Address)
 		if ip == nil || ip.To4() == nil || candidate.Interface == "" || (candidate.Kind != networking.KindLAN && candidate.Kind != networking.KindHeadscale && candidate.Kind != networking.KindPublic) {
@@ -330,6 +331,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 		seenAddresses[ip.String()] = true
 		filteredCandidates = append(filteredCandidates, candidate)
+		if candidate.Kind == networking.KindHeadscale {
+			reportedHeadscaleAddress = true
+		}
 	}
 	heartbeat.NetworkCandidates = filteredCandidates
 	rolesJSON, _ := json.Marshal(heartbeat.Roles)
@@ -344,6 +348,10 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	var previousRuntimeGeneration int
 	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation FROM agents WHERE id = ?`, id).Scan(&previousRuntimeGeneration); err != nil {
 		return fmt.Errorf("center: read Agent runtime generation: %w", err)
+	}
+	var previousHeadscaleAddresses int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_network_candidates WHERE agent_id = ? AND kind = ?`, id, networking.KindHeadscale).Scan(&previousHeadscaleAddresses); err != nil {
+		return fmt.Errorf("center: inspect previous Agent tailnet address: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = CASE WHEN runtime_generation < ? THEN ? ELSE runtime_generation END, tailscale_ownership = ?, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
@@ -383,6 +391,22 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 				return err
 			}
 			if err := s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(id, generation), id, "gateway.component.apply", generation, "queued", "gateway health check failed; queued for reconcile"); err != nil {
+				return err
+			}
+		}
+	}
+	if heartbeat.Capabilities.Gateway && previousHeadscaleAddresses == 0 && reportedHeadscaleAddress {
+		result, err := tx.ExecContext(ctx, `UPDATE gateway_components SET generation = generation + 1, status = 'failed', lease_expires_at = '', last_error = 'tailnet address became available; queued private listener reconcile', updated_at = ? WHERE gateway_node_id = ? AND desired_status = 'running' AND status = 'ready'`, now.Format(time.RFC3339Nano), id)
+		if err != nil {
+			return fmt.Errorf("center: queue restored private gateway listener: %w", err)
+		}
+		changed, _ := result.RowsAffected()
+		if changed != 0 {
+			var generation int64
+			if err := tx.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, id).Scan(&generation); err != nil {
+				return err
+			}
+			if err := s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(id, generation), id, "gateway.component.apply", generation, "queued", "tailnet address became available; queued private listener reconcile"); err != nil {
 				return err
 			}
 		}

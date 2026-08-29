@@ -91,6 +91,7 @@ func (s *Store) TailscaleFixedEndpoint(ctx context.Context) (TailscaleFixedEndpo
 		if owner != nil && owner.Ownership != "managed" {
 			view.Available = false
 			view.Status = "unavailable"
+			view.LastError = "This older Agent reports external Tailscale ownership. If Vastora originally installed it, run: sudo vastora agent adopt-tailscale --confirm-vastora-ownership"
 			return view, nil
 		}
 	}
@@ -98,9 +99,13 @@ func (s *Store) TailscaleFixedEndpoint(ctx context.Context) (TailscaleFixedEndpo
 		view.Status = "disabled"
 		return view, nil
 	}
-	if !candidateAddressExists(view.LocalAddressCandidates, config.LocalAddress) {
+	current, reason, err := s.tailscaleFixedEndpointCurrent(ctx, config)
+	if err != nil {
+		return view, err
+	}
+	if !current {
 		view.Status = "action_required"
-		view.LastError = "The confirmed local address is no longer present; the stale endpoint is not being advertised."
+		view.LastError = reason
 		return view, nil
 	}
 	owner, err := s.coLocatedTailscaleEndpointOwner(ctx, config.LocalAddress)
@@ -147,6 +152,13 @@ func (s *Store) ConfigureTailscaleFixedEndpoint(ctx context.Context, input Tails
 		config.Endpoint = endpoint
 		config.LocalAddress = localAddress.String()
 		config.ConfirmedAt = s.now().UTC()
+		current, reason, err := s.tailscaleFixedEndpointCurrent(ctx, config)
+		if err != nil {
+			return TailscaleFixedEndpointView{}, err
+		}
+		if !current {
+			return TailscaleFixedEndpointView{}, errors.New("center: " + reason)
+		}
 	}
 	payload, err := json.Marshal(config)
 	if err != nil {
@@ -204,4 +216,34 @@ func candidateAddressExists(candidates []networking.Candidate, address string) b
 		}
 	}
 	return false
+}
+
+func (s *Store) tailscaleFixedEndpointCurrent(ctx context.Context, config tailscaleFixedEndpointConfig) (bool, string, error) {
+	candidates, err := s.discoverNetworkCandidates(s.now().UTC())
+	if err != nil {
+		return false, "", fmt.Errorf("center: discover current fixed-endpoint address: %w", err)
+	}
+	if !candidateAddressExists(candidates, config.LocalAddress) {
+		return false, "The confirmed local address is no longer present; the stale endpoint is not being advertised.", nil
+	}
+	binding, configured, err := s.setupGatewayBinding(ctx)
+	if err != nil {
+		return false, "", fmt.Errorf("center: read current fixed-endpoint binding: %w", err)
+	}
+	if !configured || binding.BindAddress != config.LocalAddress {
+		return false, "The current gateway binding no longer matches the confirmed local address; reconfirm the fixed endpoint.", nil
+	}
+	detected, err := tailscalehost.StaticEndpoint(binding.PublicAddress)
+	if err != nil || detected != config.Endpoint {
+		return false, "The saved public endpoint no longer matches the configured gateway binding; reconfirm the fixed endpoint.", nil
+	}
+	observed, err := s.lookupPublicAddress(ctx)
+	if err != nil {
+		return false, "The current public address could not be verified; the saved endpoint is not being advertised.", nil
+	}
+	observedEndpoint, err := tailscalehost.StaticEndpoint(observed)
+	if err != nil || observedEndpoint != config.Endpoint {
+		return false, "The current verified public address differs from the saved endpoint; reconfirm the fixed endpoint.", nil
+	}
+	return true, "", nil
 }
