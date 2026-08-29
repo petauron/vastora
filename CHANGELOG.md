@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.69](https://github.com/petauron/vastora/compare/v0.1.0-alpha.68...v0.1.0-alpha.69) (2026-08-29)
+
+
+### Features
+
+* show update progress and fix Cloudflare authorization ([#201](https://github.com/petauron/vastora/issues/201)) ([4cf3ef5](https://github.com/petauron/vastora/commit/4cf3ef59e374d54b7f9f6dfff27eb08a4346067a))
+
 ## [0.1.0-alpha.68](https://github.com/petauron/vastora/compare/v0.1.0-alpha.67...v0.1.0-alpha.68) (2026-08-29)
 
 
