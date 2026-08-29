@@ -377,19 +377,8 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	if heartbeat.Capabilities.Gateway && !heartbeat.GatewayHealthy {
-		result, err := tx.ExecContext(ctx, `UPDATE gateway_components SET generation = generation + 1, status = 'failed', lease_expires_at = '', last_error = 'gateway health check failed; queued for reconcile', updated_at = ? WHERE gateway_node_id = ? AND desired_status = 'running' AND status = 'ready'`, now.Format(time.RFC3339Nano), id)
-		if err != nil {
-			return fmt.Errorf("center: queue unhealthy gateway reconcile: %w", err)
-		}
-		changed, _ := result.RowsAffected()
-		if changed != 0 {
-			var generation int64
-			if err := tx.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, id).Scan(&generation); err != nil {
-				return err
-			}
-			if err := s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(id, generation), id, "gateway.component.apply", generation, "queued", "gateway health check failed; queued for reconcile"); err != nil {
-				return err
-			}
+		if err := s.queueUnhealthyGatewayReconcile(ctx, tx, id, now); err != nil {
+			return err
 		}
 	}
 	if heartbeat.Capabilities.Gateway && reportedHeadscaleAddress {
@@ -413,6 +402,37 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) queueUnhealthyGatewayReconcile(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
+	var desiredRevision, appliedRevision int64
+	var stateStatus string
+	err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status FROM gateway_states WHERE gateway_node_id = ?`, agentID).Scan(&desiredRevision, &appliedRevision, &stateStatus)
+	if err == nil {
+		if desiredRevision > appliedRevision || stateStatus != "ready" {
+			return nil
+		}
+		if err := s.queueGatewayState(ctx, tx, agentID, now); err != nil {
+			return fmt.Errorf("center: queue unhealthy gateway state: %w", err)
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("center: inspect unhealthy gateway state: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE gateway_components SET generation = generation + 1, status = 'failed', lease_expires_at = '', last_error = 'gateway health check failed; queued for reconcile', updated_at = ? WHERE gateway_node_id = ? AND desired_status = 'running' AND status = 'ready'`, now.Format(time.RFC3339Nano), agentID)
+	if err != nil {
+		return fmt.Errorf("center: queue unhealthy gateway component: %w", err)
+	}
+	changed, _ := result.RowsAffected()
+	if changed == 0 {
+		return nil
+	}
+	var generation int64
+	if err := tx.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, agentID).Scan(&generation); err != nil {
+		return err
+	}
+	return s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(agentID, generation), agentID, "gateway.component.apply", generation, "queued", "gateway health check failed; queued for reconcile")
 }
 
 func gatewayStateNeedsReportedHeadscaleListener(ctx context.Context, tx *sql.Tx, agentID string, candidates []networking.Candidate) (bool, error) {
