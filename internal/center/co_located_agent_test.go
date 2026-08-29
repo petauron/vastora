@@ -2,9 +2,11 @@ package center
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -78,11 +80,18 @@ func TestRestoredTailnetAddressQueuesPrivateGatewayListener(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "center-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
+	configureBuiltinHeadscaleForTest(t, store)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?), (?, ?)`,
+		agentConnectionModeSetting, "headscale",
+		agentConnectURLSetting, "https://center.example.test",
+		setupGatewayBindingSetting, `{"publicAddress":"192.9.143.79","bindAddress":"10.0.0.10"}`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_components SET status = 'ready', applied_generation = generation WHERE gateway_node_id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	var before int64
-	if err := store.db.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&before); err != nil {
+	var beforeRevision int64
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&beforeRevision); err != nil {
 		t.Fatal(err)
 	}
 	heartbeat := NodeHeartbeat{
@@ -95,12 +104,35 @@ func TestRestoredTailnetAddressQueuesPrivateGatewayListener(t *testing.T) {
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatal(err)
 	}
-	var generation int64
-	var status, lastError string
-	if err := store.db.QueryRowContext(ctx, `SELECT generation, status, last_error FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&generation, &status, &lastError); err != nil {
+	var revision int64
+	var encoded []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision, desired_json FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&revision, &encoded); err != nil {
 		t.Fatal(err)
 	}
-	if generation != before+1 || status != "failed" || lastError != "tailnet address became available; queued private listener reconcile" {
-		t.Fatalf("restored tailnet reconcile = generation %d status %q error %q", generation, status, lastError)
+	if revision != beforeRevision+1 {
+		t.Fatalf("restored tailnet desired revision = %d, want %d", revision, beforeRevision+1)
+	}
+	var desired gateway.DesiredState
+	if err := json.Unmarshal(encoded, &desired); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, listener := range desired.Listeners {
+		if listener.Kind == "headscale" && listener.Address == "100.64.0.1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("restored tailnet desired state is missing its private listener: %#v", desired)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var unchanged int64
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&unchanged); err != nil {
+		t.Fatal(err)
+	}
+	if unchanged != revision {
+		t.Fatalf("matching private listener was queued again: revision %d to %d", revision, unchanged)
 	}
 }
