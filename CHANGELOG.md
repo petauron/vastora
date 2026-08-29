@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.62](https://github.com/petauron/vastora/compare/v0.1.0-alpha.61...v0.1.0-alpha.62) (2026-08-29)
+
+
+### Bug Fixes
+
+* recover NAT 1:1 gateways with split DNS ([#185](https://github.com/petauron/vastora/issues/185)) ([e43e60f](https://github.com/petauron/vastora/commit/e43e60f9bc61cd4c7f40d2020c60594ebe51e551))
+
 ## [0.1.0-alpha.61](https://github.com/petauron/vastora/compare/v0.1.0-alpha.60...v0.1.0-alpha.61) (2026-08-29)
 
 
