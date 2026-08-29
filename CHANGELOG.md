@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.67](https://github.com/petauron/vastora/compare/v0.1.0-alpha.66...v0.1.0-alpha.67) (2026-08-29)
+
+
+### Bug Fixes
+
+* **web:** keep remote access sheet responsive ([#195](https://github.com/petauron/vastora/issues/195)) ([eceba45](https://github.com/petauron/vastora/commit/eceba45a1e3fcce070fd73decebf4ab6bc9ecd28))
+
 ## [0.1.0-alpha.66](https://github.com/petauron/vastora/compare/v0.1.0-alpha.65...v0.1.0-alpha.66) (2026-08-29)
 
 
