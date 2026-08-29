@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/dockerruntime"
@@ -33,6 +34,10 @@ func centerAliasPrivateKeyPath(index int) string {
 type gatewayResolution struct {
 	hostname  string
 	addresses []netip.Addr
+}
+
+type gatewayDNSResolver interface {
+	LookupNetIP(context.Context, string, string) ([]netip.Addr, error)
 }
 
 func normalizePublicURL(value string) (string, error) {
@@ -186,15 +191,29 @@ func renderHeadscalePolicy() []byte {
 }
 
 func gatewayBindAddresses(ctx context.Context, publicAddress, bindAddress string, endpoints ...string) ([]string, error) {
+	// The host resolver may intentionally return the local bind address for a
+	// split-DNS hostname. Validate the public side of a NAT 1:1 mapping through
+	// an independent resolver instead of rejecting that valid local view.
+	publicResolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		transport := "udp4"
+		if strings.HasPrefix(network, "tcp") {
+			transport = "tcp4"
+		}
+		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, transport, "1.1.1.1:53")
+	}}
+	return gatewayBindAddressesWithResolver(ctx, publicResolver, publicAddress, bindAddress, endpoints...)
+}
+
+func gatewayBindAddressesWithResolver(ctx context.Context, resolver gatewayDNSResolver, publicAddress, bindAddress string, endpoints ...string) ([]string, error) {
 	resolutions := make([]gatewayResolution, 0, len(endpoints))
 	for _, endpoint := range endpoints {
 		parsed, err := url.Parse(endpoint)
 		if err != nil || parsed.Hostname() == "" {
 			return nil, errors.New("deployer: gateway endpoint is invalid")
 		}
-		resolved, err := net.DefaultResolver.LookupNetIP(ctx, "ip", parsed.Hostname())
+		resolved, err := resolver.LookupNetIP(ctx, "ip", parsed.Hostname())
 		if err != nil {
-			return nil, fmt.Errorf("deployer: resolve gateway hostname %s: %w", parsed.Hostname(), err)
+			return nil, fmt.Errorf("deployer: resolve public gateway hostname %s: %w", parsed.Hostname(), err)
 		}
 		resolutions = append(resolutions, gatewayResolution{hostname: parsed.Hostname(), addresses: resolved})
 	}
