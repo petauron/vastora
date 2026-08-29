@@ -398,6 +398,14 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	if heartbeat.Startup {
+		if err := s.quarantineReadyRealityGuardsForAgent(ctx, id); err != nil {
+			return fmt.Errorf("center: quarantine REALITY guards after Agent startup: %w", err)
+		}
+		if err := s.startRealityGuardHardening(ctx); err != nil {
+			return fmt.Errorf("center: revalidate REALITY guards after Agent startup: %w", err)
+		}
+	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}

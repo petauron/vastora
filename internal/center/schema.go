@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 25
+const centerSchemaVersion = 26
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -249,6 +249,25 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX three_x_ui_inbound_plans_due_idx ON three_x_ui_inbound_plans(status, next_reset_at, retry_at) WHERE reset_days > 0`,
+		`CREATE TABLE three_x_ui_reality_guards (
+			service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+			target_host TEXT NOT NULL,
+			target_ip TEXT NOT NULL,
+			server_name TEXT NOT NULL,
+			node_asn INTEGER NOT NULL DEFAULT 0 CHECK(node_asn >= 0),
+			target_asn INTEGER NOT NULL DEFAULT 0 CHECK(target_asn >= 0),
+			cdn_provider TEXT NOT NULL DEFAULT '',
+			companion_inbound_id INTEGER NOT NULL DEFAULT 0 CHECK(companion_inbound_id >= 0),
+			companion_tag TEXT NOT NULL,
+			companion_port INTEGER NOT NULL DEFAULT 0 CHECK(companion_port = 0 OR companion_port BETWEEN 21000 AND 21031),
+			revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+			status TEXT NOT NULL CHECK(status IN ('pending', 'hardening', 'ready', 'action_required')),
+			verified_at TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX three_x_ui_reality_guards_status_idx ON three_x_ui_reality_guards(status, updated_at)`,
 		`CREATE TABLE publications (
 			id TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -412,7 +431,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			display_name TEXT NOT NULL DEFAULT '' COLLATE NOCASE,
 			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
-			kind TEXT NOT NULL CHECK(kind IN ('3xui.reality.create', '3xui.reality.rename', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
+			kind TEXT NOT NULL CHECK(kind IN ('3xui.reality.create', '3xui.reality.verify', '3xui.reality.harden', '3xui.reality.rename', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
 			input_json BLOB NOT NULL,
 			result_json BLOB NOT NULL DEFAULT '{}',
 			result_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,

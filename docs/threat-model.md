@@ -40,6 +40,14 @@
   TCP ClientHello SNI routing without terminating TLS, uses no Docker socket,
   and binds only the confirmed public address. Unknown SNI traffic is passed to
   Caddy, which has no matching application route for unconfigured hostnames.
+- Managed VLESS+REALITY fallback traffic never targets an administrator-supplied
+  hostname directly. Agent pins one non-CDN/WAF IP in the node's ASN, verifies
+  TLS 1.3, X25519, H2, SNI, and the certificate, and points REALITY at a
+  loopback Xray `tunnel`. Exact SNI is routed direct and the next same-inbound
+  rule blackholes everything else. Any missing, stale, or failed guard blocks
+  Center publication and leaves the inbound disabled. Invalid REALITY clients
+  may still reach the one approved camouflage IP, which is an intentional
+  REALITY property; this control does not claim to prevent volumetric DDoS.
 - Cloudflare and Headscale credentials are encrypted; list APIs return only
   configuration metadata. Connector tokens are delivered only to the selected
   Agent through authenticated, leased tasks.

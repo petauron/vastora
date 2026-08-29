@@ -290,6 +290,36 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 	}
 }
 
+func TestInitialHeartbeatRequestsRealityGuardRevalidation(t *testing.T) {
+	startup := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			Startup bool `json:"startup"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		startup = payload.Startup
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Client{}).heartbeatWithStartup(context.Background(), store, true); err != nil {
+		t.Fatal(err)
+	}
+	if !startup {
+		t.Fatal("initial heartbeat did not request REALITY guard revalidation")
+	}
+}
+
 func TestHeartbeatSwitchesToVerifiedCenterURL(t *testing.T) {
 	healthChecks := 0
 	newCenter := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

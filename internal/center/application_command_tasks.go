@@ -9,6 +9,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/petauron/vastora/internal/networking"
 )
 
 var (
@@ -36,18 +38,24 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	switch kind {
-	case realityCommandKind, realityRenameCommandKind:
+	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind:
 		var command RealityCommandTask
-		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) {
+		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY operation is invalid"))
 		}
-		if kind == realityCommandKind && (command.Action != "create" || (command.CreateInitialClient && !validThreeXUIClientName(command.ClientName)) || command.InboundTag != realityCommandInboundTag(id) || command.ConnectHostname == "" || net.ParseIP(command.TargetAddress) == nil || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0) {
+		if kind == realityCommandKind && (command.Action != "create" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) || (command.CreateInitialClient && !validThreeXUIClientName(command.ClientName)) || command.InboundTag != realityCommandInboundTag(id) || command.ConnectHostname == "" || !networking.IsPrivateServiceAddress(command.TargetAddress) || net.ParseIP(command.TargetPublicAddress) == nil || !domainSuffixPattern.MatchString(command.TargetHost) || !domainSuffixPattern.MatchString(command.ServerName) || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0) {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY creation operation is invalid"))
+		}
+		if kind == realityVerifyCommandKind && (command.Action != "verify" || net.ParseIP(command.TargetPublicAddress) == nil || !domainSuffixPattern.MatchString(command.TargetHost) || !domainSuffixPattern.MatchString(command.ServerName)) {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY verification operation is invalid"))
+		}
+		if kind == realityHardenCommandKind && (command.Action != "harden" || command.ServiceID == "" || command.InboundID < 1 || command.InboundTag == "" || net.ParseIP(command.TargetAddress) == nil || command.GuardRevision < 1) {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY hardening operation is invalid"))
 		}
 		if kind == realityRenameCommandKind && (command.Action != "rename" || command.InboundID < 1) {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY rename operation is invalid"))
 		}
-		if kind == realityCommandKind && command.TargetNodeID > 0 {
+		if (kind == realityCommandKind || kind == realityHardenCommandKind) && command.TargetNodeID > 0 {
 			command.TargetAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.TargetApplicationID)
 			if err != nil {
 				if errors.Is(err, errThreeXUIAPISecretUnavailable) {
@@ -294,6 +302,12 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	if kind == controllerCommandKind {
 		return s.completeThreeXUIControllerCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
+	if kind == realityVerifyCommandKind {
+		return s.completeRealityVerifyCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == realityHardenCommandKind {
+		return s.completeRealityHardenCommand(ctx, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
+	}
 	if kind == realityRenameCommandKind {
 		return s.completeRealityRenameCommand(ctx, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
 	}
@@ -303,9 +317,50 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	return s.completeRealityCreateCommand(ctx, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
 }
 
+func (s *Store) completeRealityVerifyCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+	var input RealityCommandTask
+	var envelope ApplicationTaskResult
+	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "verify" {
+		return errors.New("center: stored REALITY verification operation is invalid")
+	}
+	if succeeded {
+		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.ApplicationCommand == nil {
+			succeeded = false
+			taskError = "center: Agent returned an invalid REALITY verification result"
+		} else {
+			result := envelope.ApplicationCommand
+			if result.Action != "verify" || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN != result.NodeASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid {
+				succeeded = false
+				taskError = "center: Agent returned an unsafe REALITY target verification"
+			}
+		}
+	}
+	if !succeeded && taskError == "" {
+		taskError = "REALITY target verification failed"
+	}
+	state, event, message := "succeeded", "succeeded", "REALITY target verified"
+	resultJSON := []byte(`{}`)
+	if succeeded {
+		resultJSON, _ = json.Marshal(envelope.ApplicationCommand)
+	} else {
+		state, event, message = "failed", "failed", taskError
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, resultJSON, taskError, now, taskID); err != nil {
+		return err
+	}
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) resumeSucceededRealityPublications(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT command.id, command.application_id, command.gateway_node_id, command.input_json, command.result_json
 		FROM application_commands command
+		JOIN services service ON service.application_id = command.application_id
+		 AND service.name = 'inbound-' || CAST(json_extract(command.result_json, '$.inboundId') AS TEXT)
+		JOIN three_x_ui_reality_guards guard ON guard.service_id = service.id AND guard.status = 'ready'
 		WHERE command.kind = ? AND command.state = 'succeeded'`, realityCommandKind)
 	if err != nil {
 		return err
@@ -337,7 +392,7 @@ func (s *Store) resumeSucceededRealityPublications(ctx context.Context) error {
 			var serviceID string
 			err := s.db.QueryRowContext(s.backgroundCtx, `SELECT id FROM services WHERE application_id = ? AND name = ? AND status <> 'stopped'`, value.applicationID, fmt.Sprintf("inbound-%d", value.result.InboundID)).Scan(&serviceID)
 			if err == nil {
-				err = s.ensureRealityPublication(s.backgroundCtx, serviceID, value.gatewayID, value.input, value.result.SNIHostname)
+				err = s.ensureRealityPublication(s.backgroundCtx, serviceID, value.gatewayID, value.input, value.result.ServerName)
 			}
 			warning := ""
 			if err != nil {
@@ -397,6 +452,10 @@ func (s *Store) completeRealityRenameCommand(ctx context.Context, tx *sql.Tx, ta
 }
 
 func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gatewayID string, input RealityCommandTask, sniHostname string) error {
+	var guardStatus string
+	if err := s.db.QueryRowContext(ctx, `SELECT status FROM three_x_ui_reality_guards WHERE service_id = ?`, serviceID).Scan(&guardStatus); err != nil || guardStatus != "ready" {
+		return errors.New("center: REALITY service is not protected by a ready fallback guard")
+	}
 	var existingID, existingGateway, existingSNI, existingDNS, existingStatus string
 	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(gateway_node_id, ''), sni_hostname, dns_provider, status FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ?`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS, &existingStatus)
 	if err == nil {

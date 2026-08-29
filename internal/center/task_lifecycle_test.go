@@ -155,6 +155,8 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 			GatewayNodeID: controller.ID,
 			Hostname:      "reality-reservation.example.test",
 			DNSProvider:   "manual",
+			TargetHost:    "www.example.com",
+			ServerName:    "www.example.com",
 		})
 	}
 	command, err := create("Edge")

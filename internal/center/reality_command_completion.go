@@ -32,7 +32,7 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, ta
 		}
 		if succeeded {
 			for _, excluded := range input.ExcludedSNI {
-				if result.SNIHostname == excluded {
+				if result.ServerName == excluded {
 					succeeded = false
 					taskError = "center: selected REALITY SNI is already used on this gateway"
 					break
@@ -68,6 +68,28 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, ta
 			if err != nil {
 				succeeded = false
 				taskError = "center: save REALITY service: " + err.Error()
+			}
+			if succeeded {
+				_, guardErr := tx.ExecContext(ctx, `INSERT INTO three_x_ui_reality_guards(
+					service_id, target_host, target_ip, server_name, node_asn, target_asn, cdn_provider,
+					companion_inbound_id, companion_tag, companion_port, revision, status,
+					verified_at, last_error, created_at, updated_at
+				) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ready', ?, '', ?, ?)
+				ON CONFLICT(service_id) DO UPDATE SET target_host = excluded.target_host,
+					target_ip = excluded.target_ip, server_name = excluded.server_name,
+					node_asn = excluded.node_asn, target_asn = excluded.target_asn,
+					cdn_provider = excluded.cdn_provider,
+					companion_inbound_id = excluded.companion_inbound_id,
+					companion_tag = excluded.companion_tag, companion_port = excluded.companion_port,
+					revision = three_x_ui_reality_guards.revision + 1, status = 'ready',
+					verified_at = excluded.verified_at, last_error = '', updated_at = excluded.updated_at`,
+					serviceID, result.TargetHost, result.TargetIP, result.ServerName, result.NodeASN, result.TargetASN, result.CDNProvider,
+					result.CompanionInboundID, result.CompanionTag, result.CompanionPort,
+					now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+				if guardErr != nil {
+					succeeded = false
+					taskError = "center: save REALITY fallback guard: " + guardErr.Error()
+				}
 			}
 			if succeeded {
 				nextResetAt, planErr := nextThreeXUIInboundResetAt(ctx, tx, serviceID, now, input.InboundResetDays)
@@ -139,7 +161,7 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, ta
 		return nil
 	}
 	result := *envelope.ApplicationCommand
-	err := s.ensureRealityPublication(ctx, serviceID, gatewayID, input, result.SNIHostname)
+	err := s.ensureRealityPublication(ctx, serviceID, gatewayID, input, result.ServerName)
 	warning := ""
 	if err != nil {
 		warning = "center: create REALITY access entry: " + err.Error()

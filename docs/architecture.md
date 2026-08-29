@@ -268,7 +268,8 @@ forwarded normally.
 
 3x-ui uses the private runtime bridge. Docker publishes the panel, the optional
 master subscription service, and the reserved managed REALITY range
-`20000-20031` only on the node address selected during installation. On first
+`20000-20031` only on a confirmed loopback, LAN, or Headscale/Tailscale address;
+a public-only service address fails closed. On first
 install, Center generates a strong administrator username/password and displays
 it once. Agent applies those credentials locally, creates a local API token,
 and stores its copy encrypted. Center stores its copy under the Application
@@ -300,17 +301,31 @@ ISO 3166-1 region plus the administrator-provided name (for example,
 Gateway address and remains manually searchable and editable. This keeps client
 grouping prefixes stable even when a 3x-ui controller manages nodes on other
 hosts.
-Agent uses 3x-ui's own live target scanner on the application node, accepts only
-a target that passes TLS 1.3, H2, certificate, and X25519 checks, generates the
-keys and client locally, and binds the private inbound to the confirmed service
-address on an unoccupied high port. Center then creates a `public_shared_443`
+The administrator must provide `targetHost` and an exact `serverName`; target
+port is fixed to 443. Agent resolves candidates on the application node, pins
+one IP, requires the target and node public addresses to have the same Team
+Cymru ASN, rejects addresses identified by ProjectDiscovery's maintained
+CDN/WAF data, and verifies TLS 1.3, X25519, H2, SNI, and the certificate against
+that pinned IP. It then generates the keys and client locally and allocates the
+private inbound on `20000-20031`.
+
+Each managed REALITY inbound has a deterministic loopback `tunnel` companion
+on `21000-21031`. REALITY targets only that companion. TLS sniffing with
+`routeOnly` permits `full:<serverName>` to the Vastora direct outbound; the
+immediately following same-inbound catch-all uses a blackhole outbound. The
+tunnel itself has exactly one destination, the validated pinned IP on port 443.
+Only Vastora-tagged outbounds and rules are replaced; user Xray configuration
+is retained, restarted through 3x-ui's config path, and read back. A failed
+config test restores the prior template and leaves the REALITY inbound disabled.
+
+Center records this proof in `three_x_ui_reality_guards`. A service whose guard
+is not `ready` cannot create or recover a Publication. Center then creates a `public_shared_443`
 Publication: its connection hostname is DNS for the chosen Gateway, while its
 camouflage SNI is the separate HAProxy routing key. The generated VLESS URI is
-encrypted at rest and can be revealed only once. Automatic selection uses the
-node's live reachability and scanner ranking instead of guessing from its ASN;
-an ASN does not prove that a particular target, certificate, or X25519 path is
-usable. Advanced users may supply a target and SNI together, but Agent still
-requires a successful node-local scan and certificate-name match.
+encrypted at rest and can be revealed only once. Existing pre-guard services
+are unpublished first and remain `action_required` until their original inbound
+is disabled, validated, converted, config-tested, and read back. External 443,
+keys, short IDs, clients, and subscription identity are unchanged.
 
 ## Offline and backup boundaries
 

@@ -14,16 +14,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
 )
 
 const (
-	realityCommandKind       = "3xui.reality.create"
-	realityRenameCommandKind = "3xui.reality.rename"
-	subscriptionCommandKind  = "3xui.subscription.configure"
-	clientCommandKind        = "3xui.clients.manage"
-	nodeCommandKind          = "3xui.node.reconcile"
-	controllerCommandKind    = "3xui.controller.manage"
+	centerThreeXUIRealityPortFirst = 20000
+	threeXUIRealityGuardPortFirst  = 21000
+	realityCommandKind             = "3xui.reality.create"
+	realityVerifyCommandKind       = "3xui.reality.verify"
+	realityHardenCommandKind       = "3xui.reality.harden"
+	realityRenameCommandKind       = "3xui.reality.rename"
+	subscriptionCommandKind        = "3xui.subscription.configure"
+	clientCommandKind              = "3xui.clients.manage"
+	nodeCommandKind                = "3xui.node.reconcile"
+	controllerCommandKind          = "3xui.controller.manage"
 )
 
 type RealityCommandInput struct {
@@ -34,8 +39,8 @@ type RealityCommandInput struct {
 	GatewayNodeID     string `json:"gatewayNodeId"`
 	Hostname          string `json:"hostname"`
 	DNSProvider       string `json:"dnsProvider"`
-	Target            string `json:"target,omitempty"`
-	SNIHostname       string `json:"sniHostname,omitempty"`
+	TargetHost        string `json:"targetHost"`
+	ServerName        string `json:"serverName"`
 	InboundTotalBytes int64  `json:"inboundTotalBytes"`
 	InboundResetDays  int    `json:"inboundResetDays"`
 	ClientTotalBytes  int64  `json:"clientTotalBytes"`
@@ -49,6 +54,11 @@ type RealityRenameCommandInput struct {
 	Name       string `json:"name"`
 }
 
+type RealityTargetVerifyInput struct {
+	TargetHost string `json:"targetHost"`
+	ServerName string `json:"serverName"`
+}
+
 type RealityCommandTask struct {
 	Action              string   `json:"action"`
 	RegionCode          string   `json:"regionCode"`
@@ -57,11 +67,12 @@ type RealityCommandTask struct {
 	InboundID           int      `json:"inboundId,omitempty"`
 	ConnectHostname     string   `json:"connectHostname"`
 	DNSProvider         string   `json:"dnsProvider"`
-	Target              string   `json:"target,omitempty"`
-	SNIHostname         string   `json:"sniHostname,omitempty"`
+	TargetHost          string   `json:"targetHost,omitempty"`
+	ServerName          string   `json:"serverName,omitempty"`
 	ExcludedSNI         []string `json:"excludedSni,omitempty"`
 	TargetApplicationID string   `json:"targetApplicationId"`
 	TargetAddress       string   `json:"targetAddress"`
+	TargetPublicAddress string   `json:"targetPublicAddress"`
 	TargetPanelPort     int      `json:"targetPanelPort"`
 	TargetNodeID        int      `json:"targetNodeId,omitempty"`
 	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
@@ -72,22 +83,36 @@ type RealityCommandTask struct {
 	ClientTotalBytes    int64    `json:"clientTotalBytes"`
 	ClientResetDays     int      `json:"clientResetDays"`
 	ClientExpiryTime    int64    `json:"clientExpiryTime"`
+	ServiceID           string   `json:"serviceId,omitempty"`
+	GuardRevision       int64    `json:"guardRevision,omitempty"`
 }
 
 type RealityCommandResult struct {
-	Action            string `json:"action"`
-	InboundID         int    `json:"inboundId"`
-	DisplayName       string `json:"displayName"`
-	ClientName        string `json:"clientName,omitempty"`
-	Listen            string `json:"listen"`
-	Port              int    `json:"port"`
-	Target            string `json:"target"`
-	SNIHostname       string `json:"sniHostname"`
-	ConnectHostname   string `json:"connectHostname"`
-	ShareURI          string `json:"shareUri"`
-	InboundTag        string `json:"inboundTag"`
-	ClientCreated     bool   `json:"clientCreated"`
-	InboundTotalBytes int64  `json:"inboundTotalBytes"`
+	Action             string `json:"action"`
+	InboundID          int    `json:"inboundId"`
+	DisplayName        string `json:"displayName"`
+	ClientName         string `json:"clientName,omitempty"`
+	Listen             string `json:"listen"`
+	Port               int    `json:"port"`
+	TargetHost         string `json:"targetHost"`
+	TargetIP           string `json:"targetIp"`
+	ServerName         string `json:"serverName"`
+	NodeASN            int64  `json:"nodeAsn"`
+	TargetASN          int64  `json:"targetAsn"`
+	CDNProvider        string `json:"cdnProvider,omitempty"`
+	TLS13              bool   `json:"tls13"`
+	X25519             bool   `json:"x25519"`
+	HTTP2              bool   `json:"http2"`
+	CertificateValid   bool   `json:"certificateValid"`
+	CompanionInboundID int    `json:"companionInboundId,omitempty"`
+	CompanionTag       string `json:"companionTag,omitempty"`
+	CompanionPort      int    `json:"companionPort,omitempty"`
+	GuardStatus        string `json:"guardStatus"`
+	ConnectHostname    string `json:"connectHostname"`
+	ShareURI           string `json:"shareUri"`
+	InboundTag         string `json:"inboundTag"`
+	ClientCreated      bool   `json:"clientCreated"`
+	InboundTotalBytes  int64  `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandInput struct {
@@ -241,8 +266,17 @@ type ApplicationCommandView struct {
 	ReconciliationRequired bool                    `json:"reconciliationRequired"`
 	Hostname               string                  `json:"hostname"`
 	DNSProvider            string                  `json:"dnsProvider"`
-	Target                 string                  `json:"target,omitempty"`
-	SNIHostname            string                  `json:"sniHostname,omitempty"`
+	TargetHost             string                  `json:"targetHost,omitempty"`
+	TargetIP               string                  `json:"targetIp,omitempty"`
+	ServerName             string                  `json:"serverName,omitempty"`
+	NodeASN                int64                   `json:"nodeAsn,omitempty"`
+	TargetASN              int64                   `json:"targetAsn,omitempty"`
+	CDNProvider            string                  `json:"cdnProvider,omitempty"`
+	TLS13                  bool                    `json:"tls13,omitempty"`
+	X25519                 bool                    `json:"x25519,omitempty"`
+	HTTP2                  bool                    `json:"h2,omitempty"`
+	CertificateValid       bool                    `json:"certificateValid,omitempty"`
+	GuardStatus            string                  `json:"guardStatus,omitempty"`
 	PublicationID          string                  `json:"publicationId,omitempty"`
 	Action                 string                  `json:"action,omitempty"`
 	RegionCode             string                  `json:"regionCode,omitempty"`
@@ -275,8 +309,8 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	input.GatewayNodeID = strings.TrimSpace(input.GatewayNodeID)
 	input.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.Hostname), "."))
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
-	input.Target = strings.ToLower(strings.TrimSpace(input.Target))
-	input.SNIHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.SNIHostname), "."))
+	input.TargetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.TargetHost), "."))
+	input.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.ServerName), "."))
 	if input.InboundTotalBytes < 0 || input.InboundResetDays < 0 || input.InboundResetDays > maxThreeXUIResetDays || input.ClientTotalBytes < 0 || input.ClientResetDays < 0 || input.ClientResetDays > maxThreeXUIResetDays || input.ClientExpiryTime < 0 {
 		return input, "", errors.New("center: REALITY node or subscription traffic plan is invalid")
 	}
@@ -286,17 +320,8 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	if input.DNSProvider != "manual" && input.DNSProvider != "cloudflare" {
 		return input, "", errors.New("center: REALITY DNS must be manual or Cloudflare")
 	}
-	if (input.Target == "") != (input.SNIHostname == "") {
-		return input, "", errors.New("center: custom REALITY target and SNI must be provided together")
-	}
-	if input.Target != "" {
-		if !strings.Contains(input.Target, ":") {
-			input.Target += ":443"
-		}
-		host, port, err := net.SplitHostPort(input.Target)
-		if err != nil || !domainSuffixPattern.MatchString(strings.TrimSuffix(host, ".")) || port != "443" || !domainSuffixPattern.MatchString(input.SNIHostname) {
-			return input, "", errors.New("center: custom REALITY target must be a hostname on port 443 with a valid SNI")
-		}
+	if !domainSuffixPattern.MatchString(input.TargetHost) || !domainSuffixPattern.MatchString(input.ServerName) {
+		return input, "", errors.New("center: REALITY targetHost and serverName are required valid hostnames; target port is fixed to 443")
 	}
 	return input, displayName, nil
 }
@@ -306,15 +331,15 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + input.InboundTag
 	}
-	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Listen != input.TargetAddress || result.Port < 1024 || result.Port > 65535 || result.Port == 443 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.SNIHostname) || result.InboundTotalBytes != input.InboundTotalBytes {
+	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Listen != input.TargetAddress || result.Port < centerThreeXUIRealityPortFirst || result.Port > centerThreeXUIRealityPortFirst+31 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.ServerName) || result.InboundTotalBytes != input.InboundTotalBytes {
 		return errors.New("center: Agent returned an unsafe REALITY result")
 	}
-	targetHost, targetPort, err := net.SplitHostPort(strings.ToLower(strings.TrimSpace(result.Target)))
-	if err != nil || targetPort != "443" || !domainSuffixPattern.MatchString(strings.TrimSuffix(targetHost, ".")) {
-		return errors.New("center: Agent returned an invalid REALITY target")
+	expectedCompanionTag := input.InboundTag + "-guard"
+	if input.TargetNodeID > 0 {
+		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
-	if input.Target != "" && (result.Target != input.Target || result.SNIHostname != input.SNIHostname) {
-		return errors.New("center: Agent changed the requested REALITY target")
+	if result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" {
+		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
 		return errors.New("center: Agent changed the requested initial subscription client operation")
@@ -333,10 +358,75 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 		return errors.New("center: Agent returned an invalid REALITY client link")
 	}
 	query := share.Query()
-	if query.Get("type") != "tcp" || query.Get("security") != "reality" || query.Get("flow") != "xtls-rprx-vision" || query.Get("sni") != result.SNIHostname || query.Get("pbk") == "" || query.Get("sid") == "" {
+	if query.Get("type") != "tcp" || query.Get("security") != "reality" || query.Get("flow") != "xtls-rprx-vision" || query.Get("sni") != result.ServerName || query.Get("pbk") == "" || query.Get("sid") == "" {
 		return errors.New("center: Agent returned an invalid REALITY client link")
 	}
 	return nil
+}
+
+func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, input RealityTargetVerifyInput) (ApplicationCommandView, error) {
+	applicationID = strings.TrimSpace(applicationID)
+	input.TargetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.TargetHost), "."))
+	input.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.ServerName), "."))
+	if applicationID == "" || !domainSuffixPattern.MatchString(input.TargetHost) || !domainSuffixPattern.MatchString(input.ServerName) {
+		return ApplicationCommandView{}, errors.New("center: application, targetHost, and serverName are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	defer tx.Rollback()
+	var targetAgentID, siteID, appKey, status, role, targetAddress, targetPublicAddress string
+	if err := tx.QueryRowContext(ctx, `SELECT application.node_id, application.site_id, application.app_key, application.status, application.role,
+		COALESCE(profile.service_address, ''), COALESCE(profile.public_address, '')
+		FROM applications application LEFT JOIN agent_network_profiles profile ON profile.agent_id = application.node_id
+		WHERE application.id = ?`, applicationID).Scan(&targetAgentID, &siteID, &appKey, &status, &role, &targetAddress, &targetPublicAddress); errors.Is(err, sql.ErrNoRows) {
+		return ApplicationCommandView{}, errors.New("center: application not found")
+	} else if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if appKey != threeXUIAppKey || status != "running" || (role != threeXUIRoleMaster && role != threeXUIRoleWorker) {
+		return ApplicationCommandView{}, errors.New("center: REALITY target verification requires a running official 3x-ui application")
+	}
+	if !networking.IsPrivateServiceAddress(targetAddress) || net.ParseIP(targetPublicAddress) == nil {
+		return ApplicationCommandView{}, errors.New("center: target VLESS node needs confirmed private service and public addresses")
+	}
+	agentID := targetAgentID
+	targetNodeID := 0
+	if role == threeXUIRoleWorker {
+		if err := tx.QueryRowContext(ctx, `SELECT master.node_id, node.remote_node_id
+			FROM three_x_ui_nodes node JOIN applications master ON master.id = node.master_application_id
+			WHERE node.worker_application_id = ? AND node.status = 'ready' AND master.status = 'running'`, applicationID).Scan(&agentID, &targetNodeID); err != nil {
+			return ApplicationCommandView{}, errors.New("center: this VLESS node is not connected to the Site 3x-ui controller")
+		}
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if active != 0 {
+		return ApplicationCommandView{}, errors.New("center: this 3x-ui controller already has an operation in progress")
+	}
+	token, err := randomToken(18)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	id := "application-command-" + token
+	task := RealityCommandTask{Action: "verify", TargetHost: input.TargetHost, ServerName: input.ServerName,
+		TargetApplicationID: applicationID, TargetAddress: targetAddress, TargetPublicAddress: targetPublicAddress, TargetNodeID: targetNodeID}
+	encoded, _ := json.Marshal(task)
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, site_id, display_name, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
+		VALUES(?, ?, ?, '', ?, ?, ?, ?, 'pending', ?, ?)`, id, applicationID, siteID, agentID, agentID, realityVerifyCommandKind, encoded, now, now); err != nil {
+		return ApplicationCommandView{}, fmt.Errorf("center: queue REALITY target verification: %w", err)
+	}
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "REALITY target verification queued"); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	return s.ApplicationCommand(ctx, id)
 }
 
 func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandInput) (ApplicationCommandView, error) {
@@ -351,10 +441,10 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, err
 	}
 	defer tx.Rollback()
-	var targetAgentID, siteID, appKey, status, role, targetAddress string
+	var targetAgentID, siteID, appKey, status, role, targetAddress, targetPublicAddress string
 	if err := tx.QueryRowContext(ctx, `SELECT a.node_id, a.site_id, a.app_key, a.status, a.role,
-		COALESCE(p.service_address, '')
-		FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.id = ?`, input.ApplicationID).Scan(&targetAgentID, &siteID, &appKey, &status, &role, &targetAddress); errors.Is(err, sql.ErrNoRows) {
+		COALESCE(p.service_address, ''), COALESCE(p.public_address, '')
+		FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.id = ?`, input.ApplicationID).Scan(&targetAgentID, &siteID, &appKey, &status, &role, &targetAddress, &targetPublicAddress); errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: application not found")
 	} else if err != nil {
 		return ApplicationCommandView{}, err
@@ -365,8 +455,11 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if role != threeXUIRoleMaster && role != threeXUIRoleWorker {
 		return ApplicationCommandView{}, errors.New("center: 3x-ui topology role is not configured")
 	}
-	if net.ParseIP(targetAddress) == nil {
+	if !networking.IsPrivateServiceAddress(targetAddress) {
 		return ApplicationCommandView{}, errors.New("center: target VLESS node has no confirmed private service address")
+	}
+	if net.ParseIP(targetPublicAddress) == nil {
+		return ApplicationCommandView{}, errors.New("center: target VLESS node has no confirmed public address for ASN validation")
 	}
 	var agentID string
 	var targetNodeID int
@@ -454,8 +547,8 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, err
 	}
 	id := "application-command-" + token
-	task := RealityCommandTask{Action: "create", RegionCode: input.RegionCode, DisplayName: displayName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, Target: input.Target, SNIHostname: input.SNIHostname, ExcludedSNI: excluded,
-		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID,
+	task := RealityCommandTask{Action: "create", RegionCode: input.RegionCode, DisplayName: displayName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, TargetHost: input.TargetHost, ServerName: input.ServerName, ExcludedSNI: excluded,
+		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPublicAddress: targetPublicAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID,
 		CreateInitialClient: createInitialClient,
 		InboundTag:          realityCommandInboundTag(id),
 		InboundTotalBytes:   input.InboundTotalBytes, InboundResetDays: input.InboundResetDays}
@@ -548,7 +641,7 @@ func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRen
 	if active != 0 {
 		return ApplicationCommandView{}, errors.New("center: this 3x-ui controller already has an operation in progress")
 	}
-	task := RealityCommandTask{Action: "rename", RegionCode: input.RegionCode, DisplayName: displayName, InboundID: inboundID, ConnectHostname: connectHostname, SNIHostname: sniHostname, TargetApplicationID: applicationID, TargetNodeID: targetNodeID}
+	task := RealityCommandTask{Action: "rename", RegionCode: input.RegionCode, DisplayName: displayName, InboundID: inboundID, ConnectHostname: connectHostname, ServerName: sniHostname, TargetApplicationID: applicationID, TargetNodeID: targetNodeID}
 	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)
 	if err != nil {
@@ -597,7 +690,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		return value, err
 	}
 	switch value.Kind {
-	case realityCommandKind, realityRenameCommandKind:
+	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind:
 		var input RealityCommandTask
 		var result RealityCommandResult
 		if json.Unmarshal(inputJSON, &input) != nil || json.Unmarshal(resultJSON, &result) != nil {
@@ -614,12 +707,15 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 			_ = s.db.QueryRowContext(ctx, `SELECT plan.next_reset_at FROM services service JOIN three_x_ui_inbound_plans plan ON plan.service_id = service.id WHERE service.application_id = ? AND service.name = ?`, value.ApplicationID, fmt.Sprintf("inbound-%d", result.InboundID)).Scan(&nextResetAt)
 			value.InboundNextResetAt = nextResetAt
 		}
-		value.Hostname, value.DNSProvider, value.Target, value.SNIHostname = input.ConnectHostname, input.DNSProvider, result.Target, result.SNIHostname
+		value.Hostname, value.DNSProvider = input.ConnectHostname, input.DNSProvider
+		value.TargetHost, value.TargetIP, value.ServerName = result.TargetHost, result.TargetIP, result.ServerName
+		value.NodeASN, value.TargetASN, value.CDNProvider, value.GuardStatus = result.NodeASN, result.TargetASN, result.CDNProvider, result.GuardStatus
+		value.TLS13, value.X25519, value.HTTP2, value.CertificateValid = result.TLS13, result.X25519, result.HTTP2, result.CertificateValid
 		if value.Kind == realityRenameCommandKind {
 			value.DNSProvider = "manual"
 		}
-		if value.Target == "" {
-			value.Target, value.SNIHostname = input.Target, input.SNIHostname
+		if value.TargetHost == "" {
+			value.TargetHost, value.ServerName = input.TargetHost, input.ServerName
 		}
 	case subscriptionCommandKind:
 		var input SubscriptionCommandTask
@@ -671,7 +767,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 }
 
 func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
-	if kind != realityCommandKind && kind != realityRenameCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
+	if kind != realityCommandKind && kind != realityVerifyCommandKind && kind != realityHardenCommandKind && kind != realityRenameCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string

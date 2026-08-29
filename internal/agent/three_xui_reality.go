@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/petauron/vastora/internal/networking"
 )
 
 const threeXUIRealityMinClientVersion = "1.8.2"
@@ -53,13 +55,6 @@ type threeXUIHostGroup struct {
 	SNI               string   `json:"sni"`
 	Fingerprint       string   `json:"fingerprint"`
 	MihomoIPVersion   string   `json:"mihomoIpVersion"`
-}
-
-type realityScanResult struct {
-	Target      string   `json:"target"`
-	Host        string   `json:"host"`
-	Feasible    bool     `json:"feasible"`
-	ServerNames []string `json:"serverNames"`
 }
 
 type uncertainRealityMutationError struct {
@@ -126,20 +121,74 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		}
 		return result, nil
 	}
-	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 {
+	if command.Action == "verify" {
+		verification, verifyErr := realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
+		if verifyErr != nil {
+			return RealityCommandResult{}, verifyErr
+		}
+		return realityVerificationResult(verification), nil
+	}
+	if command.Action == "harden" {
+		if command.InboundID < 1 || strings.TrimSpace(command.InboundTag) == "" || net.ParseIP(command.TargetAddress) == nil {
+			return RealityCommandResult{}, errors.New("agent: REALITY hardening parameters are invalid")
+		}
+		inbound, found, findErr := findRealityInbound(ctx, baseURL, masterToken, command.InboundTag, command.TargetNodeID)
+		if findErr != nil {
+			return RealityCommandResult{}, deferUncertainRealityTask(attempt, findErr)
+		}
+		if !found || inbound.ID != command.InboundID {
+			return RealityCommandResult{}, errors.New("agent: REALITY inbound selected for hardening no longer exists")
+		}
+		disabledUpdate, disableErr := readThreeXUIInboundUpdate(ctx, baseURL, masterToken, inbound.ID)
+		if disableErr != nil {
+			return RealityCommandResult{}, deferUncertainRealityTask(attempt, disableErr)
+		}
+		disabledUpdate["enable"] = false
+		if disableErr := writeThreeXUIInboundUpdate(ctx, baseURL, masterToken, inbound.ID, disabledUpdate); disableErr != nil {
+			return RealityCommandResult{}, deferUncertainRealityTask(attempt, disableErr)
+		}
+		if !networking.IsPrivateServiceAddress(command.TargetAddress) {
+			return RealityCommandResult{}, errors.New("agent: disabled REALITY inbound because its high port was bound to a public-only service address")
+		}
+		if !validThreeXUIShareHostname(command.TargetHost) || !validThreeXUIShareHostname(command.ServerName) {
+			return RealityCommandResult{}, errors.New("agent: disabled REALITY inbound until an administrator selects a valid targetHost and serverName")
+		}
+		verification, verifyErr := realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
+		if verifyErr != nil {
+			return RealityCommandResult{}, verifyErr
+		}
+		inbound, verifyErr = ensureThreeXUIRealityMinimumClientVersion(ctx, baseURL, masterToken, inbound.ID)
+		if verifyErr != nil {
+			return RealityCommandResult{}, deferUncertainRealityTask(attempt, verifyErr)
+		}
+		hardened, companion, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, command.InboundTag, verification)
+		if hardenErr != nil {
+			return RealityCommandResult{}, deferUncertainRealityTask(attempt, hardenErr)
+		}
+		result, resultErr := realityResultFromInbound(hardened, hardened.Tag, command.ConnectHostname, command.DisplayName, "", "")
+		if resultErr != nil {
+			return RealityCommandResult{}, resultErr
+		}
+		result.Action = "harden"
+		result.Listen = command.TargetAddress
+		result.ShareURI = ""
+		return guardedRealityResult(result, verification, companion), nil
+	}
+	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || !validThreeXUIShareHostname(command.TargetHost) || !validThreeXUIShareHostname(command.ServerName) || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 {
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
 	}
 	listen := strings.TrimSpace(command.TargetAddress)
-	if ip := net.ParseIP(listen); ip == nil || ip.To4() == nil {
+	if !networking.IsPrivateServiceAddress(listen) {
 		return RealityCommandResult{}, errors.New("agent: target VLESS node private service address is invalid")
 	}
-	scanURL, scanToken := baseURL, masterToken
 	if command.TargetNodeID > 0 {
 		if command.TargetPanelPort < 1024 || command.TargetPanelPort > 65535 || strings.TrimSpace(command.TargetAPIToken) == "" {
 			return RealityCommandResult{}, errors.New("agent: target VLESS node API connection is unavailable")
 		}
-		scanURL = "http://" + net.JoinHostPort(listen, strconv.Itoa(command.TargetPanelPort))
-		scanToken = strings.TrimSpace(command.TargetAPIToken)
+	}
+	verification, err := realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
+	if err != nil {
+		return RealityCommandResult{}, err
 	}
 	clientEmail := threeXUIClientEmail(command.ClientName, commandID)
 	inboundTag := command.InboundTag
@@ -160,6 +209,10 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		if err != nil {
 			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
 		}
+		existing, companion, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, existing, command.TargetNodeID, inboundTag, verification)
+		if hardenErr != nil {
+			return RealityCommandResult{}, deferUncertainRealityTask(attempt, hardenErr)
+		}
 		result, err := realityResultFromInbound(existing, existing.Tag, command.ConnectHostname, command.DisplayName, command.ClientName, clientEmail)
 		if err != nil {
 			rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
@@ -168,6 +221,8 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			}
 			return RealityCommandResult{}, err
 		}
+		result = guardedRealityResult(result, verification, companion)
+		result.Listen = listen
 		if command.CreateInitialClient && command.ClientResetDays > 0 && command.ClientExpiryTime <= store.now().UTC().UnixMilli() {
 			cause := errors.New("agent: REALITY creation parameters are invalid")
 			if rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, true); rollbackErr != nil {
@@ -184,7 +239,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 				return RealityCommandResult{}, deferUncertainRealityTask(attempt, rollbackErr)
 			}
 		} else {
-			if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
+			if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.ServerName); err != nil {
 				return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
 			}
 			if err := attachAllThreeXUIClientsToInbound(ctx, baseURL, masterToken, result.InboundID); err != nil {
@@ -210,10 +265,6 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		}
 	}
 
-	target, sni, err := selectRealityTarget(ctx, scanURL, scanToken, command)
-	if err != nil {
-		return RealityCommandResult{}, err
-	}
 	keys, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/server/getNewX25519Cert", masterToken, "", nil)
 	if err != nil {
 		return RealityCommandResult{}, fmt.Errorf("agent: generate REALITY keys: %w", err)
@@ -247,11 +298,22 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	if err != nil {
 		return RealityCommandResult{}, err
 	}
+	guardPort, err := realityGuardPort(port)
+	if err != nil {
+		return RealityCommandResult{}, err
+	}
+	companion, err := realityCompanionEnsurer(ctx, baseURL, masterToken, command.TargetNodeID, port, inboundTag, verification.TargetIP)
+	if err != nil {
+		return RealityCommandResult{}, err
+	}
+	if err := realityRoutingEnsurer(ctx, baseURL, masterToken, companion.Tag, verification.ServerName); err != nil {
+		return RealityCommandResult{}, err
+	}
 	payload := map[string]any{
-		"enable": true, "tag": inboundTag, "remark": command.DisplayName, "listen": "0.0.0.0", "port": port, "protocol": "vless", "expiryTime": 0,
+		"enable": false, "tag": inboundTag, "remark": command.DisplayName, "listen": "0.0.0.0", "port": port, "protocol": "vless", "expiryTime": 0,
 		"total": command.InboundTotalBytes, "trafficReset": "never", "trafficResetDay": 1,
 		"settings":       map[string]any{"clients": clients, "decryption": "none", "encryption": "none", "fallbacks": []any{}},
-		"streamSettings": threeXUIRealityStreamSettings(target, sni, keyPair.PrivateKey, keyPair.PublicKey, shortID),
+		"streamSettings": threeXUIRealityStreamSettings(net.JoinHostPort("127.0.0.1", strconv.Itoa(guardPort)), verification.ServerName, keyPair.PrivateKey, keyPair.PublicKey, shortID),
 		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "metadataOnly": false, "routeOnly": false},
 	}
 	if command.TargetNodeID > 0 {
@@ -305,11 +367,13 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			return applyRealityCommandWithRecovery(ctx, store, commandID, attempt, command, true)
 		}
 	} else {
-		result = RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, Target: target, SNIHostname: sni, ConnectHostname: command.ConnectHostname, InboundTag: inbound.Tag, ClientCreated: clientCreated, InboundTotalBytes: command.InboundTotalBytes}
+		result = RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, ServerName: verification.ServerName, ConnectHostname: command.ConnectHostname, InboundTag: inbound.Tag, ClientCreated: clientCreated, InboundTotalBytes: command.InboundTotalBytes}
 		if clientCreated {
-			result.ShareURI = realityShareURI(clientID, command.ConnectHostname, command.DisplayName, sni, keyPair.PublicKey, shortID)
+			result.ShareURI = realityShareURI(clientID, command.ConnectHostname, command.DisplayName, verification.ServerName, keyPair.PublicKey, shortID)
 		}
 	}
+	result = guardedRealityResult(result, verification, companion)
+	result.Listen = listen
 	if err := completeThreeXUIRealityCreation(ctx, baseURL, masterToken, result, clientEmail); err != nil {
 		rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, clientCreated)
 		if rollbackErr != nil {
@@ -317,11 +381,17 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		}
 		return RealityCommandResult{}, err
 	}
+	hardened, hardenedCompanion, err := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, inboundTag, verification)
+	if err != nil {
+		return RealityCommandResult{}, deferUncertainRealityTask(attempt, err)
+	}
+	result.InboundTag = hardened.Tag
+	result = guardedRealityResult(result, verification, hardenedCompanion)
 	return result, nil
 }
 
 func completeThreeXUIRealityCreation(ctx context.Context, baseURL, token string, result RealityCommandResult, clientEmail string) error {
-	if err := syncThreeXUIRealityHost(ctx, baseURL, token, result.InboundID, result.ConnectHostname, result.SNIHostname); err != nil {
+	if err := syncThreeXUIRealityHost(ctx, baseURL, token, result.InboundID, result.ConnectHostname, result.ServerName); err != nil {
 		return err
 	}
 	if err := attachAllThreeXUIClientsToInbound(ctx, baseURL, token, result.InboundID); err != nil {
@@ -357,15 +427,15 @@ func renameThreeXUIRealityInbound(ctx context.Context, baseURL, token string, co
 	if command.InboundID < 1 || !validRealityDisplayName(command.DisplayName) {
 		return RealityCommandResult{}, errors.New("agent: REALITY rename parameters are invalid")
 	}
-	if (command.ConnectHostname != "" || command.SNIHostname != "") && (!validThreeXUIShareHostname(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(command.ConnectHostname), "."))) || !validThreeXUIShareHostname(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(command.SNIHostname), ".")))) {
+	if (command.ConnectHostname != "" || command.ServerName != "") && (!validThreeXUIShareHostname(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(command.ConnectHostname), "."))) || !validThreeXUIShareHostname(strings.ToLower(strings.TrimSuffix(strings.TrimSpace(command.ServerName), ".")))) {
 		return RealityCommandResult{}, errors.New("agent: REALITY rename subscription endpoint is invalid")
 	}
 	inbound, err := updateThreeXUIRealityInbound(ctx, baseURL, token, command.InboundID, command.TargetNodeID, command.DisplayName, nil)
 	if err != nil {
 		return RealityCommandResult{}, err
 	}
-	if command.ConnectHostname != "" || command.SNIHostname != "" {
-		if err := syncThreeXUIRealityHost(ctx, baseURL, token, command.InboundID, command.ConnectHostname, command.SNIHostname); err != nil {
+	if command.ConnectHostname != "" || command.ServerName != "" {
+		if err := syncThreeXUIRealityHost(ctx, baseURL, token, command.InboundID, command.ConnectHostname, command.ServerName); err != nil {
 			// The inbound rename is already committed at this point. Even an
 			// explicit host-update rejection cannot make the overall two-stage
 			// command terminal: replay the same ID until both resources converge.
@@ -703,65 +773,6 @@ func threeXUIClientEmail(name, commandID string) string {
 	return base + "-" + suffix
 }
 
-func selectRealityTarget(ctx context.Context, baseURL, token string, command RealityCommandTask) (string, string, error) {
-	excluded := map[string]bool{}
-	for _, hostname := range command.ExcludedSNI {
-		excluded[strings.ToLower(strings.TrimSpace(hostname))] = true
-	}
-	if command.Target != "" {
-		form := url.Values{"target": {command.Target}, "sni": {command.SNIHostname}, "xver": {"0"}}
-		result, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/server/scanRealityTarget", token, "application/x-www-form-urlencoded", form)
-		if err != nil {
-			return "", "", fmt.Errorf("agent: scan custom REALITY target: %w", err)
-		}
-		var scan realityScanResult
-		if json.Unmarshal(result, &scan) != nil || !scan.Feasible || excluded[command.SNIHostname] || !realityScanAllowsSNI(scan, command.SNIHostname) {
-			return "", "", errors.New("agent: custom REALITY target is not feasible, its certificate does not cover the SNI, or the SNI is already in use")
-		}
-		return scan.Target, command.SNIHostname, nil
-	}
-	result, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/server/scanRealityTargets", token, "application/x-www-form-urlencoded", url.Values{"targets": {""}})
-	if err != nil {
-		return "", "", fmt.Errorf("agent: scan REALITY targets: %w", err)
-	}
-	var scans []realityScanResult
-	if json.Unmarshal(result, &scans) != nil {
-		return "", "", errors.New("agent: 3x-ui returned invalid REALITY target candidates")
-	}
-	for _, scan := range scans {
-		if !scan.Feasible {
-			continue
-		}
-		candidates := append([]string(nil), scan.ServerNames...)
-		candidates = append(candidates, scan.Host)
-		for _, candidate := range candidates {
-			candidate = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(candidate), "."))
-			if candidate != "" && !strings.HasPrefix(candidate, "*.") && !excluded[candidate] {
-				return scan.Target, candidate, nil
-			}
-		}
-	}
-	return "", "", errors.New("agent: no feasible unused REALITY target was found from this node")
-}
-
-func realityScanAllowsSNI(scan realityScanResult, hostname string) bool {
-	hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
-	for _, candidate := range append(append([]string(nil), scan.ServerNames...), scan.Host) {
-		candidate = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(candidate), "."))
-		if candidate == hostname {
-			return true
-		}
-		if strings.HasPrefix(candidate, "*.") {
-			suffix := strings.TrimPrefix(candidate, "*")
-			prefix := strings.TrimSuffix(hostname, suffix)
-			if prefix != hostname && prefix != "" && !strings.Contains(prefix, ".") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func findRealityInbound(ctx context.Context, baseURL, token, inboundTag string, nodeID int) (threeXUIRealityInbound, bool, error) {
 	result, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
 	if err != nil {
@@ -807,7 +818,7 @@ func realityResultFromInbound(inbound threeXUIRealityInbound, inboundTag, connec
 			break
 		}
 	}
-	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: displayName, ClientName: clientName, Listen: inbound.Listen, Port: inbound.Port, Target: stream.Reality.Target, SNIHostname: stream.Reality.ServerNames[0], ConnectHostname: connectHostname, InboundTag: inboundTag, ClientCreated: clientID != "", InboundTotalBytes: inbound.Total}
+	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: displayName, ClientName: clientName, Listen: inbound.Listen, Port: inbound.Port, ServerName: stream.Reality.ServerNames[0], ConnectHostname: connectHostname, InboundTag: inboundTag, ClientCreated: clientID != "", InboundTotalBytes: inbound.Total}
 	if clientID != "" {
 		result.ShareURI = realityShareURI(clientID, connectHostname, displayName, stream.Reality.ServerNames[0], stream.Reality.Settings.PublicKey, stream.Reality.ShortIDs[0])
 	}

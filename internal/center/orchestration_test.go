@@ -641,7 +641,7 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	}
 	installTask := claimTask(t, store, node)
 	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.61", "edge-api-token")
-	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual"})
+	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,13 +650,13 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 		t.Fatalf("unexpected command task: %#v", task)
 	}
 	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 35443, Target: "www.example.com:443", SNIHostname: "www.example.com", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 20000, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, CompanionInboundID: 10, CompanionTag: task.ApplicationCommand.InboundTag + "-guard", CompanionPort: 21000, GuardStatus: "ready", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
 	encoded, _ := json.Marshal(result)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || !completed.ResultAvailable || completed.SNIHostname != "www.example.com" {
+	if err != nil || completed.State != "succeeded" || !completed.ResultAvailable || completed.ServerName != "www.example.com" || completed.GuardStatus != "ready" {
 		t.Fatalf("unexpected completed command: %#v err=%v", completed, err)
 	}
 	publications, err := store.ListPublications(ctx)
@@ -816,20 +816,31 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 }
 
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
-	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", TargetAddress: "10.0.0.61", InboundTag: "vastora-test", CreateInitialClient: true}
+	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", TargetHost: "www.example.com", ServerName: "www.example.com", TargetAddress: "10.0.0.61", InboundTag: "vastora-test", CreateInitialClient: true}
 	valid := RealityCommandResult{
-		Action:          "create",
-		InboundID:       9,
-		DisplayName:     "🇺🇸 美国Edge",
-		ClientName:      "MacBook",
-		Listen:          "10.0.0.61",
-		Port:            35443,
-		Target:          "www.example.com:443",
-		SNIHostname:     "www.example.com",
-		ConnectHostname: "reality.edge.site.example.test",
-		ShareURI:        "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
-		InboundTag:      "vastora-test",
-		ClientCreated:   true,
+		Action:             "create",
+		InboundID:          9,
+		DisplayName:        "🇺🇸 美国Edge",
+		ClientName:         "MacBook",
+		Listen:             "10.0.0.61",
+		Port:               20000,
+		TargetHost:         "www.example.com",
+		TargetIP:           "203.0.113.10",
+		ServerName:         "www.example.com",
+		NodeASN:            64500,
+		TargetASN:          64500,
+		TLS13:              true,
+		X25519:             true,
+		HTTP2:              true,
+		CertificateValid:   true,
+		CompanionInboundID: 10,
+		CompanionTag:       "vastora-test-guard",
+		CompanionPort:      21000,
+		GuardStatus:        "ready",
+		ConnectHostname:    "reality.edge.site.example.test",
+		ShareURI:           "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
+		InboundTag:         "vastora-test",
+		ClientCreated:      true,
 	}
 	if err := validateRealityCommandResult(input, valid); err != nil {
 		t.Fatalf("valid result rejected: %v", err)

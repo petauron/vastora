@@ -232,6 +232,67 @@ func TestVersion8MigrationKeepsShared443SNISeparateFromConnectionHostname(t *tes
 	}
 }
 
+func TestVersion26MigrationQuarantinesEveryExistingRealityPublication(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 25); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	statements := []string{
+		`INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
+		 VALUES('reality-v25-app', '3x-ui', 'agent-v3', 'site-v3', 'vastora-official/3x-ui', '', 'running', 'docker', 'master', '` + now + `', '` + now + `')`,
+		`INSERT INTO services(id, application_id, site_id, name, display_name, protocol, container_port, host_port, endpoint, source, app_protocol, status, created_at, updated_at)
+		 VALUES('reality-v25-service', 'reality-v25-app', 'site-v3', 'inbound-17', 'Legacy REALITY', 'tcp', 20000, 20000, '10.0.0.17:20000', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO application_commands(id, application_id, site_id, display_name, agent_id, gateway_node_id, kind, input_json, result_json, state, created_at, updated_at)
+		 VALUES('reality-v25-command', 'reality-v25-app', 'site-v3', 'Legacy REALITY', 'agent-v3', 'agent-v3', '3xui.reality.create', '{"inboundTag":"vastora-legacy"}', '{"inboundId":17,"target":"www.example.com:443","sniHostname":"www.example.com"}', 'succeeded', '` + now + `', '` + now + `')`,
+		`INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
+		 VALUES('reality-v25-publication', 'reality-v25-service', 'public_shared_443', 'agent-v3', 'reality.legacy.example.test', 'www.example.com', 'manual', 1, 1, 'ready', '` + now + `', '` + now + `')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var targetHost, serverName, guardStatus, guardError, serviceStatus, publicationStatus string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT guard.target_host, guard.server_name, guard.status, guard.last_error, service.status, publication.status
+		FROM three_x_ui_reality_guards guard JOIN services service ON service.id = guard.service_id
+		JOIN publications publication ON publication.service_id = service.id
+		WHERE guard.service_id = 'reality-v25-service'`).Scan(&targetHost, &serverName, &guardStatus, &guardError, &serviceStatus, &publicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if targetHost != "www.example.com" || serverName != "www.example.com" || guardStatus != "action_required" || serviceStatus != "degraded" || publicationStatus != "stopped" || !strings.Contains(guardError, "disabled") {
+		t.Fatalf("migrated target=%q sni=%q guard=%q error=%q service=%q publication=%q", targetHost, serverName, guardStatus, guardError, serviceStatus, publicationStatus)
+	}
+	var version int64
+	if err := migrated.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 26 {
+		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}
+
 func TestVersion11MigrationSelectsOneRunningThreeXUIControllerPerSite(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
