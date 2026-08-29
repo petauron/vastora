@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.68](https://github.com/petauron/vastora/compare/v0.1.0-alpha.67...v0.1.0-alpha.68) (2026-08-29)
+
+
+### Features
+
+* **security:** prevent REALITY fallback relay abuse ([#199](https://github.com/petauron/vastora/issues/199)) ([4a73e63](https://github.com/petauron/vastora/commit/4a73e63566c653aa4079b8781bf448f4c27f9b5f)), closes [#198](https://github.com/petauron/vastora/issues/198)
+
 ## [0.1.0-alpha.67](https://github.com/petauron/vastora/compare/v0.1.0-alpha.66...v0.1.0-alpha.67) (2026-08-29)
 
 
