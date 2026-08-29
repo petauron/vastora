@@ -58,6 +58,33 @@ func TestCloudflareOAuthStartUsesPKCEWithoutExposingSecrets(t *testing.T) {
 	}
 }
 
+func TestCloudflareOAuthExchangePreservesRequestedScopeWhenOmitted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if request.Form.Get("grant_type") != "authorization_code" || request.Form.Get("code") != "authorization-code" || request.Form.Get("code_verifier") != "pkce-verifier" {
+			t.Fatalf("unexpected token exchange request: %#v", request.Form)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"access_token":"access-secret","refresh_token":"refresh-secret","token_type":"bearer","expires_in":3600}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.cloudflareOAuth = cloudflareOAuthConfig{ClientID: "oauth-client", TokenURL: server.URL, HTTPClient: server.Client()}
+	token, err := store.exchangeCloudflareCode(context.Background(), "authorization-code", "pkce-verifier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token.Scope != cloudflareOAuthScopes {
+		t.Fatalf("OAuth exchange scope = %q, want %q", token.Scope, cloudflareOAuthScopes)
+	}
+}
+
 func TestCloudflareOAuthRefreshPreservesGrantedScopeWhenOmitted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if err := request.ParseForm(); err != nil {
