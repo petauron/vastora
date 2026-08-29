@@ -48,6 +48,15 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 			_ = json.NewEncoder(writer).Encode(PublicEntryProbe{ID: "probe-id", Challenge: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", Ports: []int{80, 443}, ExpiresAt: "2026-08-25T00:00:30Z"})
 		case request.Method == http.MethodDelete && request.URL.Path == "/v1/public-entry/probes/probe-id":
 			_ = json.NewEncoder(writer).Encode(map[string]string{"status": "stopped"})
+		case request.Method == http.MethodPut && request.URL.Path == "/v1/center/remote-access":
+			var input CenterRemoteAccessRequest
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+				t.Fatal(err)
+			}
+			if !input.Enabled || input.Token != "cloudflare-tunnel-token-value" {
+				t.Fatalf("unexpected remote access input: %#v", input)
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ready"})
 		default:
 			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
 		}
@@ -80,6 +89,9 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 		t.Fatalf("unexpected probe result: %#v", probe)
 	}
 	if err := client.StopPublicEntryProbe(context.Background(), probe.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ApplyCenterRemoteAccess(context.Background(), CenterRemoteAccessRequest{Enabled: true, Token: "cloudflare-tunnel-token-value"}); err != nil {
 		t.Fatal(err)
 	}
 }

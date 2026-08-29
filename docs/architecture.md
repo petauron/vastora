@@ -122,6 +122,15 @@ still depends on it.
 6. Cloudflare Tunnel Publications update the remotely managed Tunnel ingress and DNS records, then queue a versioned cloudflared connector task on the selected node.
 7. Gateway and Tunnel task results advance only the exact desired revision and claim attempt. DNS and reachability checks provide the final ready state where propagation is asynchronous.
 
+The optional Center remote fallback is separate from application publications.
+Center creates a dedicated Cloudflare Access application and policy first,
+configures a dedicated remotely managed Tunnel to
+`http://vastora-center:8080`, asks the restricted local deployer to start the
+fixed cloudflared image on `vastora-runtime`, and publishes the proxied CNAME
+last. Cleanup removes DNS first and stops the connector before deleting the
+Access application and Tunnel. Agent control APIs never share this interactive
+browser entry.
+
 Removing one Publication leaves sibling Publications and the private Service
 running. Uninstall stops all Publications for the Application and removes their
 routes; persistent volumes are retained unless the administrator explicitly

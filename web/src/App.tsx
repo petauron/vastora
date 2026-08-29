@@ -222,6 +222,7 @@ export function App() {
   if (phase === "setup-wizard") return <Suspense fallback={<CenteredState language={language} loading />}><SetupWizard
     builtinHeadscaleAvailable={setupStatus?.builtinHeadscaleAvailable ?? false}
     cloudflareConfigured={setupStatus?.cloudflareConfigured ?? false}
+    cloudflareAccessConfigured={setupStatus?.cloudflareAccessConfigured ?? false}
     cloudflareOAuthAvailable={setupStatus?.cloudflareOAuthAvailable ?? false}
     cloudflareZone={setupStatus?.cloudflareZone}
     language={language}

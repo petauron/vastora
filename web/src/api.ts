@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -70,7 +70,7 @@ export const api = {
   logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST", body: "{}" }),
   changePassword: (currentPassword: string, newPassword: string) => request<{ changed: boolean }>("/api/v1/auth/password", { method: "PUT", body: JSON.stringify({ currentPassword, newPassword }) }),
   status: () => request<CenterStatus>("/api/v1/status"),
-  centerUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update"),
+  centerUpdate: (refresh = false) => request<CenterUpdateStatus>(`/api/v1/system/update${refresh ? "?refresh=true" : ""}`),
   startCenterUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update", { method: "POST", body: "{}" }),
   systemDomain: () => request<SystemDomain>("/api/v1/system/domain"),
   switchSystemDomain: (zoneId: string) => request<SystemDomainSwitchResult>("/api/v1/system/domain", { method: "POST", body: JSON.stringify({ zoneId, confirm: true }) }),
@@ -124,6 +124,8 @@ export const api = {
   configureHeadscale: (input: { mode: "builtin" | "external"; url: string; apiKey?: string }) => request<Integration>("/api/v1/integrations/headscale", { method: "PUT", body: JSON.stringify(input) }),
   tailscaleFixedEndpoint: () => request<TailscaleFixedEndpoint>("/api/v1/network/tailscale-fixed-endpoint"),
   configureTailscaleFixedEndpoint: (input: TailscaleFixedEndpointInput) => request<TailscaleFixedEndpoint>("/api/v1/network/tailscale-fixed-endpoint", { method: "PUT", body: JSON.stringify(input) }),
+  centerRemoteAccess: () => request<CenterRemoteAccess>("/api/v1/network/center-remote-access"),
+  configureCenterRemoteAccess: (input: CenterRemoteAccessInput) => request<CenterRemoteAccess>("/api/v1/network/center-remote-access", { method: "PUT", body: JSON.stringify(input) }),
   createHeadscaleJoin: (agentId: string) => request<HeadscaleJoin>(`/api/v1/agents/${encodeURIComponent(agentId)}/headscale-join`, { method: "POST", body: "{}" }),
   createSource: (source: {
     id: string;

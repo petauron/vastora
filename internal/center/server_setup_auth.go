@@ -1,6 +1,7 @@
 package center
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -68,18 +69,19 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 		}
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"administratorConfigured":   status.AdministratorConfigured,
-		"onboardingComplete":        status.OnboardingComplete,
-		"suggestedAgentConnectUrl":  s.setupAgentConnectURL,
-		"builtinHeadscaleAvailable": s.infrastructure != nil,
-		"cloudflareOAuthAvailable":  s.store.CloudflareOAuthAvailable(),
-		"cloudflareConfigured":      cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
-		"cloudflareZone":            cloudflare.Endpoint,
-		"publicAddressCandidates":   publicAddresses,
-		"gatewayAddressCandidates":  gatewayAddresses,
-		"observedPublicAddress":     observedPublicAddress,
-		"suggestedGatewayAddress":   suggestedGatewayAddress,
-		"publicAddressDetection":    publicAddressDetection,
+		"administratorConfigured":    status.AdministratorConfigured,
+		"onboardingComplete":         status.OnboardingComplete,
+		"suggestedAgentConnectUrl":   s.setupAgentConnectURL,
+		"builtinHeadscaleAvailable":  s.infrastructure != nil,
+		"cloudflareOAuthAvailable":   s.store.CloudflareOAuthAvailable(),
+		"cloudflareConfigured":       cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
+		"cloudflareAccessConfigured": cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.AccessManagement,
+		"cloudflareZone":             cloudflare.Endpoint,
+		"publicAddressCandidates":    publicAddresses,
+		"gatewayAddressCandidates":   gatewayAddresses,
+		"observedPublicAddress":      observedPublicAddress,
+		"suggestedGatewayAddress":    suggestedGatewayAddress,
+		"publicAddressDetection":     publicAddressDetection,
 	})
 }
 
@@ -107,6 +109,10 @@ func (s *Server) handleSetupComplete(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
+	if input.CenterRemoteAccess != nil && input.CenterRemoteAccess.Enabled && input.Network.AgentConnectionMode != "headscale" {
+		writeError(writer, http.StatusBadRequest, errors.New("center: the remote fallback is available only with secure private networking"))
+		return
+	}
 	if input.Network.AgentConnectionMode == "headscale" && input.Headscale != nil {
 		if _, err := s.configureHeadscale(request.Context(), *input.Headscale, input.Network.AgentConnectURL); err != nil {
 			writeError(writer, http.StatusBadRequest, err)
@@ -119,8 +125,20 @@ func (s *Server) handleSetupComplete(writer http.ResponseWriter, request *http.R
 			}
 		}
 	}
+	remoteAccessEnabled := false
+	if input.CenterRemoteAccess != nil {
+		if _, err := s.ConfigureCenterRemoteAccess(request.Context(), *input.CenterRemoteAccess, input.Network.AgentConnectURL); err != nil {
+			writeError(writer, http.StatusBadRequest, err)
+			return
+		}
+		remoteAccessEnabled = input.CenterRemoteAccess.Enabled
+	}
 	result, err := s.store.CompleteInitialSetup(request.Context(), input)
 	if err != nil {
+		if remoteAccessEnabled {
+			_, cleanupErr := s.ConfigureCenterRemoteAccess(context.WithoutCancel(request.Context()), CenterRemoteAccessInput{}, input.Network.AgentConnectURL)
+			err = errors.Join(err, cleanupErr)
+		}
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}

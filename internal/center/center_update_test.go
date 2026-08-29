@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,9 +14,13 @@ import (
 type fixedReleaseChecker struct {
 	version string
 	err     error
+	checks  *[]bool
 }
 
-func (checker fixedReleaseChecker) LatestVersion(context.Context) (string, time.Time, error) {
+func (checker fixedReleaseChecker) LatestVersion(_ context.Context, refresh bool) (string, time.Time, error) {
+	if checker.checks != nil {
+		*checker.checks = append(*checker.checks, refresh)
+	}
 	return checker.version, time.Date(2026, 8, 25, 1, 2, 3, 0, time.UTC), checker.err
 }
 
@@ -43,7 +48,7 @@ func TestOfficialReleaseCheckerReadsTheR2ReleaseVersion(t *testing.T) {
 	}))
 	defer installer.Close()
 	checker := NewOfficialReleaseChecker(installer.URL)
-	version, checkedAt, err := checker.LatestVersion(context.Background())
+	version, checkedAt, err := checker.LatestVersion(context.Background(), false)
 	if err != nil || version != "0.1.0-alpha.48" || checkedAt.IsZero() {
 		t.Fatalf("unexpected release: version=%q checked=%s err=%v", version, checkedAt, err)
 	}
@@ -67,7 +72,7 @@ func TestOfficialReleaseCheckerRejectsRedirectsAndMissingVersionHeaders(t *testi
 				writer.WriteHeader(test.status)
 			}))
 			defer installer.Close()
-			if _, _, err := NewOfficialReleaseChecker(installer.URL).LatestVersion(context.Background()); err == nil {
+			if _, _, err := NewOfficialReleaseChecker(installer.URL).LatestVersion(context.Background(), false); err == nil {
 				t.Fatal("invalid installer response was accepted")
 			}
 		})
@@ -80,7 +85,7 @@ func TestCenterUpdateStatusAndStartUseTheRestrictedUpdater(t *testing.T) {
 	defer func() { Version = previousVersion }()
 	updater := &fakeCenterUpdater{status: deployapi.CenterUpdateExecution{Available: true, State: "idle"}}
 	server := &Server{updates: updater, releaseChecker: fixedReleaseChecker{version: "0.1.0-alpha.48"}}
-	status := server.centerUpdateStatus(context.Background())
+	status := server.centerUpdateStatus(context.Background(), false)
 	if !status.UpdateAvailable || !status.Automatic || status.LatestVersion != "0.1.0-alpha.48" {
 		t.Fatalf("unexpected update status: %#v", status)
 	}
@@ -88,5 +93,41 @@ func TestCenterUpdateStatusAndStartUseTheRestrictedUpdater(t *testing.T) {
 	server.handleStartCenterUpdate(response, httptest.NewRequest(http.MethodPost, "/api/v1/system/update", nil))
 	if response.Code != http.StatusAccepted || updater.started != "0.1.0-alpha.48" {
 		t.Fatalf("start status=%d body=%s version=%q", response.Code, response.Body.String(), updater.started)
+	}
+}
+
+func TestOfficialReleaseCheckerBypassesItsCacheWhenRefreshIsRequested(t *testing.T) {
+	requests := 0
+	installer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		writer.Header().Set("X-Vastora-Version", fmt.Sprintf("0.1.0-alpha.%d", 47+requests))
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer installer.Close()
+	checker := NewOfficialReleaseChecker(installer.URL)
+	first, _, err := checker.LatestVersion(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached, _, err := checker.LatestVersion(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed, _, err := checker.LatestVersion(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "0.1.0-alpha.48" || cached != first || refreshed != "0.1.0-alpha.49" || requests != 2 {
+		t.Fatalf("first=%q cached=%q refreshed=%q requests=%d", first, cached, refreshed, requests)
+	}
+}
+
+func TestCenterUpdateStatusHandlerRequestsAnOfficialRefresh(t *testing.T) {
+	checks := []bool{}
+	server := &Server{releaseChecker: fixedReleaseChecker{version: "0.1.0-alpha.60", checks: &checks}}
+	response := httptest.NewRecorder()
+	server.handleCenterUpdateStatus(response, httptest.NewRequest(http.MethodGet, "/api/v1/system/update?refresh=true", nil))
+	if response.Code != http.StatusOK || len(checks) != 1 || !checks[0] {
+		t.Fatalf("status=%d checks=%v body=%s", response.Code, checks, response.Body.String())
 	}
 }

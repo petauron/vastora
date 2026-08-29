@@ -23,6 +23,7 @@ const (
 	cloudflareOAuthClientID    = "565bf36df0a8deb0fde1bd27367a44bd"
 	cloudflareOAuthRedirectURI = "https://vastora.petauron.com/oauth/cloudflare/callback"
 	cloudflareOAuthLifetime    = 10 * time.Minute
+	cloudflareOAuthScopes      = "zone.read dns.write argotunnel.write access.write access-acct.write offline_access"
 	setupGatewayBindingSetting = "cloudflare_setup_gateway_binding"
 )
 
@@ -148,7 +149,7 @@ func (s *Store) StartCloudflareOAuth() (CloudflareOAuthStart, error) {
 		"client_id":             {config.ClientID},
 		"redirect_uri":          {cloudflareOAuthRedirectURI},
 		"response_type":         {"code"},
-		"scope":                 {"zone.read dns.write argotunnel.write offline_access"},
+		"scope":                 {cloudflareOAuthScopes},
 		"state":                 {state},
 		"code_challenge":        {oauthSHA256(verifier)},
 		"code_challenge_method": {"S256"},
@@ -230,6 +231,12 @@ func (s *Store) PollCloudflareOAuth(ctx context.Context, sessionID string) (Clou
 }
 
 func (s *Store) CompleteCloudflareOAuth(ctx context.Context, sessionID, zoneID string) (IntegrationView, error) {
+	s.domainSwitchMu.Lock()
+	defer s.domainSwitchMu.Unlock()
+	s.remoteAccessMu.Lock()
+	defer s.remoteAccessMu.Unlock()
+	s.cloudflareTokenMu.Lock()
+	defer s.cloudflareTokenMu.Unlock()
 	sessionID, selected, token, err := s.cloudflareOAuthSelection(sessionID, zoneID)
 	if err != nil {
 		return IntegrationView{}, err
@@ -238,6 +245,17 @@ func (s *Store) CompleteCloudflareOAuth(ctx context.Context, sessionID, zoneID s
 	zoneName, err := client.verify(ctx)
 	if err != nil {
 		return IntegrationView{}, err
+	}
+	if _, configured, recordErr := s.centerRemoteAccessRecord(ctx); recordErr != nil {
+		return IntegrationView{}, recordErr
+	} else if configured {
+		var currentAccountID, currentZoneID string
+		if err := s.db.QueryRowContext(ctx, `SELECT account_id, zone_id FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&currentAccountID, &currentZoneID); err != nil {
+			return IntegrationView{}, fmt.Errorf("center: read the Cloudflare integration protected by Center remote access: %w", err)
+		}
+		if selected.AccountID != currentAccountID || selected.ID != currentZoneID {
+			return IntegrationView{}, errors.New("center: disable the Center remote fallback before changing the Cloudflare account or zone")
+		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -553,13 +571,17 @@ func (s *Store) exchangeCloudflareCode(ctx context.Context, code, verifier strin
 	return s.normalizeCloudflareToken(response, "")
 }
 
-func (s *Store) refreshCloudflareToken(ctx context.Context, refreshToken string) (cloudflareOAuthToken, error) {
-	values := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refreshToken}, "client_id": {s.cloudflareOAuth.ClientID}}
+func (s *Store) refreshCloudflareToken(ctx context.Context, previous cloudflareOAuthToken) (cloudflareOAuthToken, error) {
+	values := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {previous.RefreshToken}, "client_id": {s.cloudflareOAuth.ClientID}}
 	response, err := s.postCloudflareToken(ctx, values)
 	if err != nil {
 		return cloudflareOAuthToken{}, err
 	}
-	return s.normalizeCloudflareToken(response, refreshToken)
+	refreshed, err := s.normalizeCloudflareToken(response, previous.RefreshToken)
+	if err == nil && strings.TrimSpace(refreshed.Scope) == "" {
+		refreshed.Scope = previous.Scope
+	}
+	return refreshed, err
 }
 
 func (s *Store) postCloudflareToken(ctx context.Context, values url.Values) (cloudflareTokenResponse, error) {

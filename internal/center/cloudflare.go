@@ -18,15 +18,16 @@ import (
 const cloudflareAPIURL = "https://api.cloudflare.com/client/v4"
 
 type IntegrationView struct {
-	Kind      string    `json:"kind"`
-	Mode      string    `json:"mode,omitempty"`
-	Endpoint  string    `json:"endpoint,omitempty"`
-	AccountID string    `json:"accountId,omitempty"`
-	ZoneID    string    `json:"zoneId,omitempty"`
-	SecretSet bool      `json:"secretSet"`
-	Status    string    `json:"status"`
-	LastError string    `json:"lastError,omitempty"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Kind             string    `json:"kind"`
+	Mode             string    `json:"mode,omitempty"`
+	Endpoint         string    `json:"endpoint,omitempty"`
+	AccountID        string    `json:"accountId,omitempty"`
+	ZoneID           string    `json:"zoneId,omitempty"`
+	SecretSet        bool      `json:"secretSet"`
+	AccessManagement bool      `json:"accessManagement,omitempty"`
+	Status           string    `json:"status"`
+	LastError        string    `json:"lastError,omitempty"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type cloudflareClient struct {
@@ -40,6 +41,16 @@ type cloudflareClient struct {
 type cloudflareError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+type cloudflareAPIError struct {
+	StatusCode int
+	Code       int
+	Message    string
+}
+
+func (failure *cloudflareAPIError) Error() string {
+	return failure.Message
 }
 
 var errStalePublicationReconcile = errors.New("center: publication changed during external reconciliation")
@@ -78,6 +89,14 @@ func (s *Store) Integration(ctx context.Context, kind string) (IntegrationView, 
 		return IntegrationView{}, err
 	}
 	value.SecretSet = secretID.Valid
+	if kind == "cloudflare" && value.Mode == "oauth" && secretID.Valid {
+		if encoded, secretErr := s.getSecret(ctx, secretID.String, "integration:cloudflare"); secretErr == nil {
+			var token cloudflareOAuthToken
+			if json.Unmarshal(encoded, &token) == nil {
+				value.AccessManagement = oauthScopesGranted(token.Scope, cloudflareAccessScopes...)
+			}
+		}
+	}
 	value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
 	return value, nil
 }
@@ -95,6 +114,10 @@ func (s *Store) ListIntegrations(ctx context.Context) ([]IntegrationView, error)
 }
 
 func (s *Store) cloudflare(ctx context.Context) (cloudflareClient, error) {
+	return s.cloudflareWithScopes(ctx)
+}
+
+func (s *Store) cloudflareWithScopes(ctx context.Context, requiredScopes ...string) (cloudflareClient, error) {
 	s.cloudflareTokenMu.Lock()
 	defer s.cloudflareTokenMu.Unlock()
 	var accountID, zoneID, secretID string
@@ -116,7 +139,7 @@ func (s *Store) cloudflare(ctx context.Context) (cloudflareClient, error) {
 		return cloudflareClient{}, errors.New("center: reconnect Cloudflare with OAuth before using it")
 	}
 	if !s.now().UTC().Before(token.ExpiresAt.Add(-2 * time.Minute)) {
-		token, err = s.refreshCloudflareToken(ctx, token.RefreshToken)
+		token, err = s.refreshCloudflareToken(ctx, token)
 		if err != nil {
 			return cloudflareClient{}, err
 		}
@@ -124,7 +147,28 @@ func (s *Store) cloudflare(ctx context.Context) (cloudflareClient, error) {
 			return cloudflareClient{}, err
 		}
 	}
+	if !oauthScopesGranted(token.Scope, requiredScopes...) {
+		return cloudflareClient{}, fmt.Errorf("center: reconnect Cloudflare to grant %s permission", strings.Join(requiredScopes, " and "))
+	}
 	return cloudflareClient{accountID: accountID, zoneID: zoneID, token: token.AccessToken, baseURL: s.cloudflareOAuth.APIURL, http: s.cloudflareOAuth.HTTPClient}, nil
+}
+
+func oauthScopeGranted(scopes, required string) bool {
+	for _, scope := range strings.FieldsFunc(scopes, func(value rune) bool { return value == ' ' || value == ',' }) {
+		if scope == required {
+			return true
+		}
+	}
+	return false
+}
+
+func oauthScopesGranted(scopes string, required ...string) bool {
+	for _, scope := range required {
+		if !oauthScopeGranted(scopes, scope) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Store) CloudflareZones(ctx context.Context) ([]CloudflareZone, error) {
@@ -396,6 +440,117 @@ func (client cloudflareClient) putTunnelConfiguration(ctx context.Context, tunne
 	return client.do(ctx, http.MethodPut, "/accounts/"+url.PathEscape(client.accountID)+"/cfd_tunnel/"+url.PathEscape(tunnelID)+"/configurations", map[string]any{"config": map[string]any{"ingress": rules}}, &ignored)
 }
 
+func (client cloudflareClient) deleteTunnel(ctx context.Context, tunnelID string) error {
+	var ignored json.RawMessage
+	return client.do(ctx, http.MethodDelete, "/accounts/"+url.PathEscape(client.accountID)+"/cfd_tunnel/"+url.PathEscape(tunnelID), nil, &ignored)
+}
+
+type cloudflareAccessIdentityProvider struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+func (client cloudflareClient) ensureAccessOrganization(ctx context.Context) error {
+	path := "/accounts/" + url.PathEscape(client.accountID) + "/access/organizations"
+	var organization struct {
+		AuthDomain string `json:"auth_domain"`
+	}
+	err := client.do(ctx, http.MethodGet, path, nil, &organization)
+	if err == nil && strings.TrimSpace(organization.AuthDomain) != "" {
+		return nil
+	}
+	var apiFailure *cloudflareAPIError
+	if err == nil || !errors.As(err, &apiFailure) || apiFailure.StatusCode != http.StatusNotFound {
+		if err == nil {
+			return errors.New("center: Cloudflare Access organization has no authentication domain")
+		}
+		return fmt.Errorf("center: inspect Cloudflare Access organization: %w", err)
+	}
+	authLabel := "vastora-" + sanitizeCloudflareName(client.accountID)
+	if len(authLabel) > 32 {
+		authLabel = authLabel[:32]
+	}
+	body := map[string]any{
+		"auth_domain":               authLabel + ".cloudflareaccess.com",
+		"name":                      "Vastora",
+		"session_duration":          "24h",
+		"auto_redirect_to_identity": true,
+	}
+	if err := client.do(ctx, http.MethodPost, path, body, &organization); err != nil {
+		return fmt.Errorf("center: create Cloudflare Access organization: %w", err)
+	}
+	if strings.TrimSpace(organization.AuthDomain) == "" {
+		return errors.New("center: Cloudflare did not return an Access authentication domain")
+	}
+	return nil
+}
+
+func (client cloudflareClient) ensureOneTimePINIdentityProvider(ctx context.Context) (string, error) {
+	var providers []cloudflareAccessIdentityProvider
+	path := "/accounts/" + url.PathEscape(client.accountID) + "/access/identity_providers"
+	if err := client.do(ctx, http.MethodGet, path, nil, &providers); err != nil {
+		return "", fmt.Errorf("center: list Cloudflare Access identity providers: %w", err)
+	}
+	for _, provider := range providers {
+		if provider.Type == "onetimepin" && provider.ID != "" {
+			return provider.ID, nil
+		}
+	}
+	var created cloudflareAccessIdentityProvider
+	if err := client.do(ctx, http.MethodPost, path, map[string]any{"name": "Vastora one-time PIN", "type": "onetimepin", "config": map[string]any{}}, &created); err != nil {
+		return "", fmt.Errorf("center: create Cloudflare Access one-time PIN provider: %w", err)
+	}
+	if created.ID == "" {
+		return "", errors.New("center: Cloudflare did not return an Access identity provider ID")
+	}
+	return created.ID, nil
+}
+
+func (client cloudflareClient) createAccessApplication(ctx context.Context, hostname, audienceKind, audienceValue, identityProviderID string) (string, error) {
+	selector := map[string]any{}
+	switch audienceKind {
+	case "email":
+		selector["email"] = map[string]string{"email": audienceValue}
+	case "email_domain":
+		selector["email_domain"] = map[string]string{"domain": audienceValue}
+	default:
+		return "", errors.New("center: unsupported Cloudflare Access audience")
+	}
+	body := map[string]any{
+		"name":                      "Vastora Center",
+		"domain":                    hostname,
+		"type":                      "self_hosted",
+		"session_duration":          "24h",
+		"auto_redirect_to_identity": true,
+		"allowed_idps":              []string{identityProviderID},
+		"policies": []map[string]any{{
+			"name":       "Vastora Center administrators",
+			"decision":   "allow",
+			"precedence": 1,
+			"include":    []map[string]any{selector},
+			"require": []map[string]any{{
+				"login_method": map[string]string{"id": identityProviderID},
+			}},
+		}},
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := client.do(ctx, http.MethodPost, "/accounts/"+url.PathEscape(client.accountID)+"/access/apps", body, &result); err != nil {
+		return "", fmt.Errorf("center: create Cloudflare Access application: %w", err)
+	}
+	if result.ID == "" {
+		return "", errors.New("center: Cloudflare did not return an Access application ID")
+	}
+	return result.ID, nil
+}
+
+func (client cloudflareClient) deleteAccessApplication(ctx context.Context, applicationID string) error {
+	var ignored json.RawMessage
+	return client.do(ctx, http.MethodDelete, "/accounts/"+url.PathEscape(client.accountID)+"/access/apps/"+url.PathEscape(applicationID), nil, &ignored)
+}
+
 func (client cloudflareClient) createDNSRecord(ctx context.Context, recordType, name, content string, proxied bool) (string, error) {
 	var result struct {
 		ID string `json:"id"`
@@ -445,10 +600,12 @@ func (client cloudflareClient) do(ctx context.Context, method, path string, body
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || !envelope.Success {
 		message := response.Status
+		code := 0
 		if len(envelope.Errors) != 0 {
 			message = envelope.Errors[0].Message
+			code = envelope.Errors[0].Code
 		}
-		return errors.New(message)
+		return &cloudflareAPIError{StatusCode: response.StatusCode, Code: code, Message: message}
 	}
 	if output != nil && len(envelope.Result) != 0 && string(envelope.Result) != "null" {
 		if err := json.Unmarshal(envelope.Result, output); err != nil {

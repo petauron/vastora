@@ -36,6 +36,7 @@ type InitialSetupInput struct {
 	Network                CenterNetworkInput           `json:"network"`
 	Headscale              *HeadscaleInput              `json:"headscale,omitempty"`
 	TailscaleFixedEndpoint *TailscaleFixedEndpointInput `json:"tailscaleFixedEndpoint,omitempty"`
+	CenterRemoteAccess     *CenterRemoteAccessInput     `json:"centerRemoteAccess,omitempty"`
 }
 
 type InitialSetupResult struct {
