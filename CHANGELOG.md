@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.70](https://github.com/petauron/vastora/compare/v0.1.0-alpha.69...v0.1.0-alpha.70) (2026-08-29)
+
+
+### Bug Fixes
+
+* use a flat Center remote hostname ([#203](https://github.com/petauron/vastora/issues/203)) ([be068b3](https://github.com/petauron/vastora/commit/be068b39c57217020fc9ab68e4a112916732143c))
+
 ## [0.1.0-alpha.69](https://github.com/petauron/vastora/compare/v0.1.0-alpha.68...v0.1.0-alpha.69) (2026-08-29)
 
 
