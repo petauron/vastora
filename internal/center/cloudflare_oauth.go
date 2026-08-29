@@ -568,7 +568,11 @@ func (s *Store) exchangeCloudflareCode(ctx context.Context, code, verifier strin
 	if err != nil {
 		return cloudflareOAuthToken{}, err
 	}
-	return s.normalizeCloudflareToken(response, "")
+	token, err := s.normalizeCloudflareToken(response, "")
+	if err == nil && strings.TrimSpace(token.Scope) == "" {
+		token.Scope = cloudflareOAuthScopes
+	}
+	return token, err
 }
 
 func (s *Store) refreshCloudflareToken(ctx context.Context, previous cloudflareOAuthToken) (cloudflareOAuthToken, error) {
