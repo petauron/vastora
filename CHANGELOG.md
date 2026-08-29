@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.61](https://github.com/petauron/vastora/compare/v0.1.0-alpha.60...v0.1.0-alpha.61) (2026-08-29)
+
+
+### Bug Fixes
+
+* complete Tailscale direct endpoint upgrades ([#183](https://github.com/petauron/vastora/issues/183)) ([a0c0072](https://github.com/petauron/vastora/commit/a0c007206569c6df2ded4a19bdf0e97ffa29a8fe))
+
 ## [0.1.0-alpha.60](https://github.com/petauron/vastora/compare/v0.1.0-alpha.59...v0.1.0-alpha.60) (2026-08-28)
 
 
