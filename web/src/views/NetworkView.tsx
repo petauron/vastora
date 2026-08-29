@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { CableIcon, CloudIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon, TerminalIcon } from "lucide-react";
+import { CableIcon, CloudIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon, ShieldCheckIcon, TerminalIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { AgentView, HeadscaleJoin, Integration, NetworkKind, NetworkProfile, TailscaleFixedEndpoint, TailscaleFixedEndpointInput } from "../types";
@@ -7,6 +7,7 @@ import type { AgentView, HeadscaleJoin, Integration, NetworkKind, NetworkProfile
 import type { Language } from "../translations";
 import { CopyButton, PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
+import { CenterRemoteAccessSheet } from "./CenterRemoteAccessSheet";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ import { Switch } from "@/components/ui/switch";
 
 const tailscaleAdoptionCommand = "sudo vastora agent adopt-tailscale --confirm-vastora-ownership";
 
-type IntegrationEditor = "headscale" | "cloudflare" | "tailscale-endpoint" | null;
+type IntegrationEditor = "headscale" | "cloudflare" | "tailscale-endpoint" | "center-remote-access" | null;
 
 export function NetworkView({ data, language, mutate }: { data: AppData; language: Language; mutate: Mutate }) {
   const [editor, setEditor] = useState<IntegrationEditor>(null);
@@ -32,6 +33,7 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
   const headscale = integration(data.integrations, "headscale");
   const cloudflare = integration(data.integrations, "cloudflare");
   const tailscaleFixedEndpoint = data.tailscaleFixedEndpoint;
+  const centerRemoteAccess = data.centerRemoteAccess;
   const activeAgents = data.agents.filter((agent) => agent.status === "active");
   const enabledCount = (kind: NetworkKind) => activeAgents.filter((agent) => agent.networkProfile?.enabledKinds.includes(kind)).length;
   const joinedAgentHasHeadscale = joinAgentID !== "" && data.agents.some((agent) => agent.id === joinAgentID && agent.networkCandidates.some((candidate) => candidate.kind === "headscale"));
@@ -74,6 +76,11 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
 
       <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "外部服务", "Connections")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "可选连接只在需要自动管理域名或公网网页时使用。", "Optional connections are used only for automatic domain management or public websites.")}</p></div>
+        {centerRemoteAccess ? <Card>
+          <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "Center 远程备用入口", "Center remote fallback")}</CardTitle><CardDescription>{copy(language, "安全私网不可用时，通过 Cloudflare Access 登录同一个 Center 域名。", "Sign in to the same Center hostname through Cloudflare Access when the secure private network is unavailable.")}</CardDescription><CardAction><StateBadge value={centerRemoteAccess.status} /></CardAction></CardHeader>
+          <CardContent><p className="text-sm text-muted-foreground">{centerRemoteAccess.enabled ? copy(language, `已保护 ${centerRemoteAccess.hostname}，允许 ${centerRemoteAccess.audienceKind === "email" ? "邮箱" : "邮箱域"} ${centerRemoteAccess.audienceValue}。`, `${centerRemoteAccess.hostname} is protected for ${centerRemoteAccess.audienceKind === "email" ? "email" : "email domain"} ${centerRemoteAccess.audienceValue}.`) : copy(language, "当前关闭，Center 仅通过已配置的私网或本地入口访问。", "Currently off. Center is reachable only through its configured private or local entry.")}</p>{centerRemoteAccess.status === "failed" && centerRemoteAccess.lastError ? <Alert className="mt-3" variant="destructive"><AlertTitle>{copy(language, "需要处理", "Action required")}</AlertTitle><AlertDescription className="break-words">{centerRemoteAccess.lastError}</AlertDescription></Alert> : null}</CardContent>
+          <CardFooter className="justify-end"><Button disabled={!centerRemoteAccess.available} onClick={() => setEditor("center-remote-access")} size="sm" variant="outline">{centerRemoteAccess.enabled ? copy(language, "修改", "Edit") : copy(language, "设置", "Set up")}</Button></CardFooter>
+        </Card> : null}
         <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><CloudIcon />Cloudflare</CardTitle><CardDescription>{copy(language, "自动管理域名解析，并可安全发布公网网页。", "Automatically manages DNS and can securely publish public websites.")}</CardDescription><CardAction><StateBadge value={cloudflare.status} /></CardAction></CardHeader>
           <CardContent><p className="text-sm text-muted-foreground">{cloudflare.status === "configured" ? copy(language, `已连接域名 ${cloudflare.endpoint}`, `Connected zone ${cloudflare.endpoint}`) : copy(language, "可选，不影响局域网和安全私网使用。", "Optional; local and secure private access work without it.")}</p></CardContent>
@@ -95,6 +102,7 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
       <HeadscaleSheet integration={headscale} language={language} open={editor === "headscale"} onClose={() => setEditor(null)} onSave={async (input) => { await mutate(() => api.configureHeadscale(input), copy(language, "Headscale 已连接。", "Headscale connected.")); setEditor(null); }} />
       {tailscaleFixedEndpoint?.available ? <TailscaleFixedEndpointSheet endpoint={tailscaleFixedEndpoint} language={language} open={editor === "tailscale-endpoint"} onClose={() => setEditor(null)} onSave={async (input) => { await mutate(() => api.configureTailscaleFixedEndpoint(input), copy(language, "固定直连端点配置已保存。", "Fixed direct endpoint settings saved.")); setEditor(null); }} /> : null}
       <CloudflareSheet integration={cloudflare} language={language} open={editor === "cloudflare"} onClose={() => setEditor(null)} onConnected={async () => { await mutate(async () => undefined, copy(language, "Cloudflare 已连接。", "Cloudflare connected.")); setEditor(null); }} />
+      {centerRemoteAccess ? <CenterRemoteAccessSheet access={centerRemoteAccess} cloudflare={cloudflare} language={language} open={editor === "center-remote-access"} onClose={() => setEditor(null)} onCloudflareConnected={async () => { await mutate(async () => undefined, copy(language, "Cloudflare 已重新授权。", "Cloudflare reauthorized.")); }} onSave={async (input) => { await mutate(() => api.configureCenterRemoteAccess(input), input.enabled ? copy(language, "Center 远程备用入口已启用。", "Center remote fallback enabled.") : copy(language, "Center 远程备用入口已关闭。", "Center remote fallback disabled.")); setEditor(null); }} /> : null}
     </section>
   );
 }

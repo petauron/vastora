@@ -15,7 +15,7 @@ import (
 const officialInstallerURL = "https://vastora.petauron.com/install.sh"
 
 type CenterReleaseChecker interface {
-	LatestVersion(context.Context) (string, time.Time, error)
+	LatestVersion(context.Context, bool) (string, time.Time, error)
 }
 
 type CenterUpdateStatus struct {
@@ -53,11 +53,11 @@ func NewOfficialReleaseChecker(endpoint string) *OfficialReleaseChecker {
 	}
 }
 
-func (checker *OfficialReleaseChecker) LatestVersion(ctx context.Context) (string, time.Time, error) {
+func (checker *OfficialReleaseChecker) LatestVersion(ctx context.Context, refresh bool) (string, time.Time, error) {
 	checker.mu.Lock()
 	defer checker.mu.Unlock()
 	now := time.Now().UTC()
-	if checker.version != "" && now.Before(checker.expiresAt) {
+	if !refresh && checker.version != "" && now.Before(checker.expiresAt) {
 		return checker.version, checker.checkedAt, nil
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, checker.url, nil)
@@ -92,11 +92,12 @@ func releaseVersionFromHeader(value string) (string, error) {
 }
 
 func (s *Server) handleCenterUpdateStatus(writer http.ResponseWriter, request *http.Request) {
-	writeJSON(writer, http.StatusOK, s.centerUpdateStatus(request.Context()))
+	refresh := request.URL.Query().Get("refresh") == "true"
+	writeJSON(writer, http.StatusOK, s.centerUpdateStatus(request.Context(), refresh))
 }
 
 func (s *Server) handleStartCenterUpdate(writer http.ResponseWriter, request *http.Request) {
-	status := s.centerUpdateStatus(request.Context())
+	status := s.centerUpdateStatus(request.Context(), false)
 	if status.Error != "" {
 		writeError(writer, http.StatusConflict, errors.New(status.Error))
 		return
@@ -121,13 +122,13 @@ func (s *Server) handleStartCenterUpdate(writer http.ResponseWriter, request *ht
 	writeJSON(writer, http.StatusAccepted, status)
 }
 
-func (s *Server) centerUpdateStatus(ctx context.Context) CenterUpdateStatus {
+func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) CenterUpdateStatus {
 	result := CenterUpdateStatus{CurrentVersion: Version, State: "idle"}
 	if s.releaseChecker == nil {
 		result.Error = "center: release checking is unavailable"
 		return result
 	}
-	latest, checkedAt, err := s.releaseChecker.LatestVersion(ctx)
+	latest, checkedAt, err := s.releaseChecker.LatestVersion(ctx, refreshOfficial)
 	if err != nil {
 		result.Error = err.Error()
 		return result

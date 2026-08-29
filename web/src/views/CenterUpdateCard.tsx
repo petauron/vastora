@@ -43,7 +43,7 @@ export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }
 
   const refresh = async () => {
     setBusy(true); setError("");
-    try { onStatusChange(await api.centerUpdate()); } catch (refreshError) { setError(userError(language, refreshError)); } finally { setBusy(false); }
+    try { onStatusChange(await api.centerUpdate(true)); } catch (refreshError) { setError(userError(language, refreshError)); } finally { setBusy(false); }
   };
   const start = async () => {
     setBusy(true); setError("");

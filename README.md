@@ -61,7 +61,13 @@ root zone separate and defaults Vastora to the `vastora.example.com` namespace.
 Center and bundled Headscale use `center.vastora.example.com` and
 `headscale.vastora.example.com`; only Headscale receives a public DNS record.
 Center receives a browser-trusted DNS-01 certificate and a Headscale DNS record,
-so its console is reachable only after joining the private network. App hostnames use a visible hierarchy such as
+so its console is reachable only after joining the private network by default. The
+wizard can optionally add a Cloudflare Tunnel fallback protected by Access. That
+fallback accepts either one exact administrator email or one email domain and
+still requires the Center administrator login. Agent APIs remain on their
+separate private path. A Cloudflare connection created by an older Center must
+be reauthorized once before enabling the fallback so its OAuth grant includes
+Access management. App hostnames use a visible hierarchy such as
 `manager.cpa.home.vastora.example.com`, and node-specific raw entries use names
 such as `reality.edge-1.home.vastora.example.com`. Existing DNS records outside this
 namespace are not overwritten.

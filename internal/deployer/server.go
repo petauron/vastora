@@ -17,6 +17,7 @@ type Server struct {
 	installer         deployapi.HeadscaleInstaller
 	publicEntryProber deployapi.PublicEntryProber
 	centerUpdater     deployapi.CenterUpdater
+	remoteAccess      deployapi.CenterRemoteAccessManager
 }
 
 func NewServer(installer deployapi.HeadscaleInstaller) *Server {
@@ -33,6 +34,11 @@ func (server *Server) WithCenterUpdater(updater deployapi.CenterUpdater) *Server
 	return server
 }
 
+func (server *Server) WithCenterRemoteAccessManager(manager deployapi.CenterRemoteAccessManager) *Server {
+	server.remoteAccess = manager
+	return server
+}
+
 func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
@@ -44,7 +50,24 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/public-entry/probes/{id}", server.stopPublicEntryProbe)
 	mux.HandleFunc("GET /v1/center/update", server.centerUpdateStatus)
 	mux.HandleFunc("POST /v1/center/update", server.startCenterUpdate)
+	mux.HandleFunc("PUT /v1/center/remote-access", server.applyCenterRemoteAccess)
 	return mux
+}
+
+func (server *Server) applyCenterRemoteAccess(writer http.ResponseWriter, request *http.Request) {
+	if server.remoteAccess == nil {
+		writeError(writer, http.StatusConflict, errors.New("deployer: Center remote access is unavailable"))
+		return
+	}
+	var input deployapi.CenterRemoteAccessRequest
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	if err := server.remoteAccess.ApplyCenterRemoteAccess(request.Context(), input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (server *Server) centerUpdateStatus(writer http.ResponseWriter, request *http.Request) {

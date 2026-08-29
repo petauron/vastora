@@ -29,6 +29,7 @@ type PublicEntryProber interface {
 type InfrastructureManager interface {
 	HeadscaleInstaller
 	PublicEntryProber
+	CenterRemoteAccessManager
 }
 
 func (client *Client) StartPublicEntryProbe(ctx context.Context, input PublicEntryProbeRequest) (PublicEntryProbe, error) {

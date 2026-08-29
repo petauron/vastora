@@ -101,6 +101,11 @@
 Vastora does not protect against a malicious root user on an Agent, operate a
 quorum or leader election system, provide automatic cross-Site routing or
 Gateway HA scheduling, provide multi-user RBAC, or collect telemetry by default.
-The first version does not manage Cloudflare Access or host firewall rules.
-Publishing an application management page publicly therefore relies on the
-application's own authentication and an explicit administrator confirmation.
+Vastora manages Cloudflare Access only for the optional Center browser fallback.
+It creates the Access application before the proxied DNS record, limits entry to
+an exact email or email domain through one-time PIN login, and keeps Center's
+own administrator authentication as a second layer. This policy does not cover
+Agent APIs or application publications. Vastora does not manage host firewall
+rules. Publishing an application management page publicly therefore still
+relies on the application's own authentication and an explicit administrator
+confirmation.

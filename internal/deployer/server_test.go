@@ -21,6 +21,15 @@ type fakePublicEntryProber struct {
 	stoppedID string
 }
 
+type fakeCenterRemoteAccessManager struct {
+	input deployapi.CenterRemoteAccessRequest
+}
+
+func (manager *fakeCenterRemoteAccessManager) ApplyCenterRemoteAccess(_ context.Context, input deployapi.CenterRemoteAccessRequest) error {
+	manager.input = input
+	return nil
+}
+
 func (prober *fakePublicEntryProber) StartPublicEntryProbe(_ context.Context, input deployapi.PublicEntryProbeRequest) (deployapi.PublicEntryProbe, error) {
 	prober.input = input
 	return deployapi.PublicEntryProbe{ID: "probe-id", Challenge: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", Ports: []int{80, 443}, ExpiresAt: "2026-08-25T00:00:30Z"}, nil
@@ -79,5 +88,18 @@ func TestServerExposesOnlyTheFixedHeadscaleOperation(t *testing.T) {
 	handler.ServeHTTP(unknown, httptest.NewRequest(http.MethodPost, "/v1/docker/run", nil))
 	if unknown.Code != http.StatusNotFound {
 		t.Fatalf("arbitrary Docker route is exposed: %d", unknown.Code)
+	}
+}
+
+func TestServerExposesOnlyTheFixedCenterRemoteAccessOperation(t *testing.T) {
+	manager := &fakeCenterRemoteAccessManager{}
+	handler := NewServer(&fakeInstaller{}).WithCenterRemoteAccessManager(manager).Handler()
+	payload, _ := json.Marshal(deployapi.CenterRemoteAccessRequest{Enabled: true, Token: "cloudflare-tunnel-token-value"})
+	request := httptest.NewRequest(http.MethodPut, "/v1/center/remote-access", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !manager.input.Enabled || manager.input.Token != "cloudflare-tunnel-token-value" {
+		t.Fatalf("unexpected remote access response %d %s input=%#v", response.Code, response.Body.String(), manager.input)
 	}
 }

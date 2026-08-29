@@ -103,6 +103,11 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 	if current.ActivePublications != 0 || current.PendingCleanup != 0 {
 		return SystemDomainSwitchResult{}, errors.New("center: stop all access points and wait for cleanup before switching the system domain")
 	}
+	if _, configured, err := s.store.centerRemoteAccessRecord(ctx); err != nil {
+		return SystemDomainSwitchResult{}, err
+	} else if configured {
+		return SystemDomainSwitchResult{}, errors.New("center: disable the Cloudflare Access fallback before switching the system domain")
+	}
 	cloudflare, selected, err := s.store.cloudflareForZone(ctx, input.ZoneID)
 	if err != nil {
 		return SystemDomainSwitchResult{}, err

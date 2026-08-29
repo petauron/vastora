@@ -40,6 +40,7 @@ export type AppData = {
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
   systemDomain: SystemDomain;
   tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
+  centerRemoteAccess?: CenterRemoteAccess;
 };
 
 export type SystemEndpointAlias = { kind: "center" | "headscale"; endpoint: string; certificateNotAfter?: string };
@@ -81,6 +82,7 @@ export type SetupStatus = {
   builtinHeadscaleAvailable: boolean;
   cloudflareOAuthAvailable: boolean;
   cloudflareConfigured: boolean;
+  cloudflareAccessConfigured: boolean;
   cloudflareZone?: string;
   publicAddressCandidates: NetworkCandidate[];
   gatewayAddressCandidates: NetworkCandidate[];
@@ -94,6 +96,24 @@ export type InitialSetupInput = {
   network: { agentConnectionMode: AgentConnectionMode; agentConnectUrl: string };
   headscale?: { mode: "builtin" | "external"; url: string; apiKey?: string };
   tailscaleFixedEndpoint?: TailscaleFixedEndpointInput;
+  centerRemoteAccess?: CenterRemoteAccessInput;
+};
+
+export type CenterRemoteAccessInput = {
+  enabled: boolean;
+  audienceKind?: "email" | "email_domain";
+  audienceValue?: string;
+};
+
+export type CenterRemoteAccess = {
+  available: boolean;
+  enabled: boolean;
+  hostname?: string;
+  audienceKind?: "email" | "email_domain";
+  audienceValue?: string;
+  status: "disabled" | "pending" | "configured" | "failed";
+  lastError?: string;
+  updatedAt?: string;
 };
 
 export type TailscaleFixedEndpointInput = {
@@ -200,7 +220,7 @@ export type PublicationKind = "lan_gateway" | "headscale_gateway" | "public_dire
 export type DNSRecordInstruction = { type: "A" | "CNAME"; name: string; value: string; proxy: boolean };
 export type Publication = { id: string; serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; dnsRecordId?: string; dnsRecord?: DNSRecordInstruction; tlsEnabled: boolean; certificateExpiresAt?: string; desiredRevision: number; appliedRevision: number; status: "pending" | "applying" | "ready" | "degraded" | "failed" | "stopped"; lastError?: string; accessUrl?: string; createdAt: string; updatedAt: string };
 export type Route = { id: string; publicationId: string; siteId: string; serviceId: string; gatewayNodeId: string; hostname: string; protocol: string; upstreams: string[]; tlsEnabled: boolean; status: string; desiredRevision: number; appliedRevision: number; lastError?: string; createdAt: string; updatedAt: string };
-export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string };
+export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; accessManagement?: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string };
 export type CloudflareZone = { id: string; name: string; accountId: string; accountName: string };
 export type CloudflareOAuthStart = { sessionId: string; authorizationUrl: string; expiresAt: string };
 export type CloudflareOAuthPoll = { status: "pending" | "authorized"; zones?: CloudflareZone[] };

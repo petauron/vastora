@@ -25,6 +25,12 @@ type fakeBuiltinHeadscaleInstaller struct {
 	probe          deployapi.PublicEntryProbe
 	stoppedProbeID string
 	stopProbeErr   error
+	remoteAccess   deployapi.CenterRemoteAccessRequest
+}
+
+func (installer *fakeBuiltinHeadscaleInstaller) ApplyCenterRemoteAccess(_ context.Context, input deployapi.CenterRemoteAccessRequest) error {
+	installer.remoteAccess = input
+	return nil
 }
 
 func (installer *fakeBuiltinHeadscaleInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {

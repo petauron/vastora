@@ -45,7 +45,7 @@ func TestCloudflareOAuthStartUsesPKCEWithoutExposingSecrets(t *testing.T) {
 	if query.Get("state") != session.State || query.Get("code_challenge") != oauthSHA256(session.PKCEVerifier) || query.Get("code_challenge_method") != "S256" {
 		t.Fatalf("OAuth request did not bind state and PKCE: %s", started.AuthorizationURL)
 	}
-	if query.Get("scope") != "zone.read dns.write argotunnel.write offline_access" {
+	if query.Get("scope") != cloudflareOAuthScopes {
 		t.Fatalf("OAuth request used unexpected scopes: %q", query.Get("scope"))
 	}
 	for _, secret := range []string{session.PollSecret, session.PKCEVerifier} {
@@ -55,6 +55,33 @@ func TestCloudflareOAuthStartUsesPKCEWithoutExposingSecrets(t *testing.T) {
 	}
 	if started.ExpiresAt != fixed.Add(cloudflareOAuthLifetime) {
 		t.Fatalf("OAuth expiry = %s", started.ExpiresAt)
+	}
+}
+
+func TestCloudflareOAuthRefreshPreservesGrantedScopeWhenOmitted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if request.Form.Get("grant_type") != "refresh_token" || request.Form.Get("refresh_token") != "old-refresh" {
+			t.Fatalf("unexpected refresh request: %#v", request.Form)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"access_token":"new-access","refresh_token":"new-refresh","token_type":"bearer","expires_in":3600}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.cloudflareOAuth = cloudflareOAuthConfig{ClientID: "oauth-client", TokenURL: server.URL, HTTPClient: server.Client()}
+	refreshed, err := store.refreshCloudflareToken(context.Background(), cloudflareOAuthToken{RefreshToken: "old-refresh", Scope: "zone.read access.write access-acct.write"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Scope != "zone.read access.write access-acct.write" || refreshed.RefreshToken != "new-refresh" {
+		t.Fatalf("unexpected refreshed token metadata: %#v", refreshed)
 	}
 }
 
