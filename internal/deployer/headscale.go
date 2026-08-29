@@ -294,22 +294,6 @@ func inspectManagedContainer(ctx context.Context, docker *client.Client, name, c
 	return &inspected, nil
 }
 
-func managedContainerExists(ctx context.Context, docker *client.Client, name, component string) (bool, error) {
-	inspected, err := inspectManagedContainer(ctx, docker, name, component)
-	return inspected != nil, err
-}
-
-func removeManagedContainer(ctx context.Context, docker *client.Client, name, component string) error {
-	exists, err := managedContainerExists(ctx, docker, name, component)
-	if err != nil || !exists {
-		return err
-	}
-	if _, err := docker.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true}); err != nil {
-		return fmt.Errorf("deployer: replace managed container %s: %w", name, err)
-	}
-	return nil
-}
-
 func createHeadscaleAPIKey(ctx context.Context, docker *client.Client, containerName string) (string, error) {
 	exec, err := docker.ExecCreate(ctx, containerName, client.ExecCreateOptions{
 		AttachStdout: true,
