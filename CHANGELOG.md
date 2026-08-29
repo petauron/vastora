@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.65](https://github.com/petauron/vastora/compare/v0.1.0-alpha.64...v0.1.0-alpha.65) (2026-08-29)
+
+
+### Bug Fixes
+
+* **gateway:** restore system service protection ([#191](https://github.com/petauron/vastora/issues/191)) ([cc9f1a4](https://github.com/petauron/vastora/commit/cc9f1a4480e55ace97b4fa63276dbc08a86e82cd))
+
 ## [0.1.0-alpha.64](https://github.com/petauron/vastora/compare/v0.1.0-alpha.63...v0.1.0-alpha.64) (2026-08-29)
 
 
