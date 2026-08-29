@@ -233,6 +233,7 @@ describe("network and app views", () => {
     act(() => remoteAccessCard?.querySelector<HTMLButtonElement>("button")?.click());
     act(() => document.querySelector<HTMLButtonElement>("#center-remote-access-enabled")?.click());
     expect(document.body.textContent).toContain("重新连接");
+    expect(document.body.textContent).toContain("请先在上方完成 Cloudflare 授权并确认域名，随后即可保存");
     expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存并启用"))?.disabled).toBe(true);
   });
 
@@ -1250,6 +1251,28 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("重新打开登录页");
     expect(container.textContent).toContain("复制登录链接");
     expect(container.textContent).toContain("取消");
+  });
+
+  it("keeps Cloudflare zone confirmation inside a narrow container", async () => {
+    vi.useFakeTimers();
+    const popupDocument = document.implementation.createHTMLDocument("Cloudflare");
+    const popup = { close: vi.fn(), document: popupDocument, location: { replace: vi.fn() }, opener: window } as unknown as Window;
+    vi.spyOn(window, "open").mockReturnValue(popup);
+    vi.spyOn(api, "startCloudflareOAuth").mockResolvedValue({ sessionId: "session", authorizationUrl: "https://dash.cloudflare.test/oauth2/auth", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    vi.spyOn(api, "pollCloudflareOAuth").mockResolvedValue({ status: "authorized", zones: [{ id: "zone", name: "example.com", accountId: "account", accountName: "A very long Cloudflare account name" }] });
+    const container = render(<CloudflareOAuthConnect available connected language="zh-CN" onConnected={() => undefined} zoneName="example.com" />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("重新连接"))?.click();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+
+    const section = container.querySelector<HTMLElement>('section[aria-label="连接 Cloudflare"]')!;
+    const confirm = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("使用这个域名"))!;
+    expect(section.className).toContain("@container/cloudflare-oauth");
+    expect(confirm.className).toContain("w-full");
+    expect(confirm.className).toContain("@md/cloudflare-oauth:w-auto");
   });
 
   it("uses the saved Center address when adding a node and keeps editing advanced", () => {

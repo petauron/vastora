@@ -26,7 +26,7 @@ type SelectControlProps = {
 export function SelectControl({ className, disabled, id, onValueChange, options, placeholder, required, size, value, ...accessibility }: SelectControlProps) {
   return (
     <Select disabled={disabled} id={id} items={options} onValueChange={(next) => { if (next !== null) onValueChange(next); }} required={required} value={value}>
-      <SelectTrigger className={cn("w-full", className)} size={size} {...accessibility}>
+      <SelectTrigger className={cn("min-w-0 max-w-full w-full", className)} size={size} {...accessibility}>
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
