@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.64](https://github.com/petauron/vastora/compare/v0.1.0-alpha.63...v0.1.0-alpha.64) (2026-08-29)
+
+
+### Bug Fixes
+
+* **gateway:** recover full runtime state ([#189](https://github.com/petauron/vastora/issues/189)) ([e04dc41](https://github.com/petauron/vastora/commit/e04dc41492aa6552491cdcd1d5cb860f95a29b55))
+
 ## [0.1.0-alpha.63](https://github.com/petauron/vastora/compare/v0.1.0-alpha.62...v0.1.0-alpha.63) (2026-08-29)
 
 
