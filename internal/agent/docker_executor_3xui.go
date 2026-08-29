@@ -20,6 +20,7 @@ import (
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/networking"
 )
 
 const (
@@ -147,6 +148,9 @@ func threeXUIPorts(bindAddress string, panelPort int, role string) (dockernetwor
 	address, err := netip.ParseAddr(bindAddress)
 	if err != nil || !address.Unmap().Is4() {
 		return nil, nil, errors.New("agent: 3x-ui requires a valid IPv4 service address")
+	}
+	if !networking.IsPrivateServiceAddress(address.String()) {
+		return nil, nil, errors.New("agent: 3x-ui REALITY ports require a LAN, Headscale/Tailscale, or loopback service address")
 	}
 	if role != "master" && role != "worker" {
 		return nil, nil, errors.New("agent: invalid 3x-ui topology role")

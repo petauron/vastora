@@ -178,11 +178,12 @@ type RealityCommandTask struct {
 	InboundID           int      `json:"inboundId,omitempty"`
 	ConnectHostname     string   `json:"connectHostname"`
 	DNSProvider         string   `json:"dnsProvider"`
-	Target              string   `json:"target,omitempty"`
-	SNIHostname         string   `json:"sniHostname,omitempty"`
+	TargetHost          string   `json:"targetHost,omitempty"`
+	ServerName          string   `json:"serverName,omitempty"`
 	ExcludedSNI         []string `json:"excludedSni,omitempty"`
 	TargetApplicationID string   `json:"targetApplicationId"`
 	TargetAddress       string   `json:"targetAddress"`
+	TargetPublicAddress string   `json:"targetPublicAddress"`
 	TargetPanelPort     int      `json:"targetPanelPort"`
 	TargetNodeID        int      `json:"targetNodeId,omitempty"`
 	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
@@ -193,22 +194,36 @@ type RealityCommandTask struct {
 	ClientTotalBytes    int64    `json:"clientTotalBytes"`
 	ClientResetDays     int      `json:"clientResetDays"`
 	ClientExpiryTime    int64    `json:"clientExpiryTime"`
+	ServiceID           string   `json:"serviceId,omitempty"`
+	GuardRevision       int64    `json:"guardRevision,omitempty"`
 }
 
 type RealityCommandResult struct {
-	Action            string `json:"action"`
-	InboundID         int    `json:"inboundId"`
-	DisplayName       string `json:"displayName"`
-	ClientName        string `json:"clientName,omitempty"`
-	Listen            string `json:"listen"`
-	Port              int    `json:"port"`
-	Target            string `json:"target"`
-	SNIHostname       string `json:"sniHostname"`
-	ConnectHostname   string `json:"connectHostname"`
-	ShareURI          string `json:"shareUri"`
-	InboundTag        string `json:"inboundTag"`
-	ClientCreated     bool   `json:"clientCreated"`
-	InboundTotalBytes int64  `json:"inboundTotalBytes"`
+	Action             string `json:"action"`
+	InboundID          int    `json:"inboundId"`
+	DisplayName        string `json:"displayName"`
+	ClientName         string `json:"clientName,omitempty"`
+	Listen             string `json:"listen"`
+	Port               int    `json:"port"`
+	TargetHost         string `json:"targetHost"`
+	TargetIP           string `json:"targetIp"`
+	ServerName         string `json:"serverName"`
+	NodeASN            int64  `json:"nodeAsn"`
+	TargetASN          int64  `json:"targetAsn"`
+	CDNProvider        string `json:"cdnProvider,omitempty"`
+	TLS13              bool   `json:"tls13"`
+	X25519             bool   `json:"x25519"`
+	HTTP2              bool   `json:"http2"`
+	CertificateValid   bool   `json:"certificateValid"`
+	CompanionInboundID int    `json:"companionInboundId,omitempty"`
+	CompanionTag       string `json:"companionTag,omitempty"`
+	CompanionPort      int    `json:"companionPort,omitempty"`
+	GuardStatus        string `json:"guardStatus"`
+	ConnectHostname    string `json:"connectHostname"`
+	ShareURI           string `json:"shareUri"`
+	InboundTag         string `json:"inboundTag"`
+	ClientCreated      bool   `json:"clientCreated"`
+	InboundTotalBytes  int64  `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandTask struct {
@@ -384,6 +399,10 @@ func (c Client) Heartbeat(ctx context.Context, store *Store) error {
 }
 
 func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
+	return c.heartbeatWithStartup(ctx, store, false)
+}
+
+func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup bool) (error, error) {
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return nil, err
@@ -417,6 +436,7 @@ func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           c.TailscaleOwnership,
+		"startup":                      startup,
 	}, connection.Credential, &response)
 	if err != nil {
 		return observeErr, err
@@ -591,15 +611,19 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 		report(gatewayErr)
 	}
 	restoreCancel()
+	startup := true
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		observeErr, err := c.heartbeat(requestContext, store)
+		observeErr, err := c.heartbeatWithStartup(requestContext, store, startup)
 		if observeErr != nil && report != nil {
 			report(observeErr)
 		}
 		if err != nil && report != nil {
 			report(err)
+		}
+		if err == nil {
+			startup = false
 		}
 	}
 	send()

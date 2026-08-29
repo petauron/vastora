@@ -27,9 +27,15 @@ func TestThreeXUIPortsPublishOnlySelectedServices(t *testing.T) {
 	}
 	for _, number := range []string{"2053/tcp", "20000/tcp", "20031/tcp"} {
 		port := dockernetwork.MustParsePort(number)
-		if _, exists := exposed[port]; !exists || len(bindings[port]) != 1 {
+		if _, exists := exposed[port]; !exists || len(bindings[port]) != 1 || bindings[port][0].HostIP.String() != "100.64.0.10" {
 			t.Fatalf("3x-ui mapping %s is missing", number)
 		}
+	}
+}
+
+func TestThreeXUIPortsRejectPublicOnlyServiceAddress(t *testing.T) {
+	if _, _, err := threeXUIPorts("198.51.100.10", 2053, "master"); err == nil {
+		t.Fatalf("public-only 3x-ui binding was accepted: %v", err)
 	}
 }
 

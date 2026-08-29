@@ -114,6 +114,18 @@ func Classify(interfaceName string, ip net.IP) string {
 	return KindPublic
 }
 
+// IsPrivateServiceAddress reports addresses that may safely back a private
+// service port. Loopback is accepted for co-located development; LAN and
+// Headscale/Tailscale addresses are accepted for distributed nodes. Public,
+// unspecified, multicast, and link-local addresses are rejected.
+func IsPrivateServiceAddress(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	if ip == nil || ip.To4() == nil || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || inCGNAT(ip)
+}
+
 // IsVirtualInterface reports interfaces that represent a container, VM, or
 // separate overlay network rather than a LAN that Vastora should offer as a
 // service address. Tailscale is handled before this check because it is a

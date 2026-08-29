@@ -408,7 +408,9 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#reality-subscription-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
     expect(document.querySelector<HTMLButtonElement>("#reality-gateway")?.textContent).toContain("home-server");
-    expect(document.body.textContent).toContain("高级：自定义伪装目标");
+    expect(document.body.textContent).toContain("REALITY 防盗目标");
+    expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.required).toBe(true);
+    expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.required).toBe(true);
   });
 
   it("offers a separate one-click public 3x-ui subscription", async () => {
@@ -678,7 +680,7 @@ describe("network and app views", () => {
 
 	it("reveals a REALITY client link only after explicit confirmation", async () => {
     const data = realityDashboard();
-	    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", target: "www.example.com:443", sniHostname: "www.example.com", clientCreated: true, resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
+	    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", targetAsn: 64500, guardStatus: "ready", clientCreated: true, resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
@@ -697,7 +699,7 @@ describe("network and app views", () => {
 
 	it("keeps the one-time REALITY link available when only public access fails", async () => {
 		const data = realityDashboard();
-		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-degraded", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "cloudflare", displayName: "🇺🇸 美国Edge", target: "www.example.com:443", sniHostname: "www.example.com", clientCreated: true, error: "center: create REALITY access entry: SNI conflict", resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
+		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-degraded", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "cloudflare", displayName: "🇺🇸 美国Edge", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", targetAsn: 64500, guardStatus: "ready", clientCreated: true, error: "center: create REALITY access entry: SNI conflict", resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 		await act(async () => {
 			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
@@ -778,6 +780,7 @@ describe("network and app views", () => {
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
 		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.20", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64500, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
 		mockCommandEvent(pending);
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -791,12 +794,20 @@ describe("network and app views", () => {
 		act(() => {
 			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(nodeName, "Oracle");
 			nodeName.dispatchEvent(new Event("input", { bubbles: true }));
+			const targetHost = document.querySelector<HTMLInputElement>("#reality-target-host")!;
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(targetHost, "www.example.com");
+			targetHost.dispatchEvent(new Event("input", { bubbles: true }));
+			const serverName = document.querySelector<HTMLInputElement>("#reality-server-name")!;
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(serverName, "www.example.com");
+			serverName.dispatchEvent(new Event("input", { bubbles: true }));
 		});
 		await act(async () => {
-			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("自动创建"))?.click();
+			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("校验并创建"))?.click();
+			await Promise.resolve();
 			await Promise.resolve();
 		});
-			expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", regionCode: "US", name: "Oracle", clientName: "我的设备", gatewayNodeId: "agent", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", target: undefined, sniHostname: undefined, inboundTotalBytes: 0, inboundResetDays: 0, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
+		expect(verify).toHaveBeenCalledWith("three-x-ui", "www.example.com", "www.example.com");
+		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", regionCode: "US", name: "Oracle", clientName: "我的设备", gatewayNodeId: "agent", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDays: 0, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
 		});
 
   it("keeps subscriber quotas on the controller even when a worker creates the first VLESS node", async () => {
@@ -807,6 +818,7 @@ describe("network and app views", () => {
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
     vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "worker", publicAddress: "203.0.113.20", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
+    const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-worker-reality", applicationId: "three-x-ui-worker", gatewayNodeId: "worker", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.30", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64500, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
     const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue({ id: "worker-reality", applicationId: "three-x-ui-worker", gatewayNodeId: "worker", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", action: "create", clientCreated: false, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
@@ -818,11 +830,21 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("如果还没有用户");
     expect(document.querySelector("#reality-client-name")).toBeNull();
     expect(document.querySelector("#reality-subscription-quota")).toBeNull();
+    act(() => {
+      const targetHost = document.querySelector<HTMLInputElement>("#reality-target-host")!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(targetHost, "www.example.com");
+      targetHost.dispatchEvent(new Event("input", { bubbles: true }));
+      const serverName = document.querySelector<HTMLInputElement>("#reality-server-name")!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(serverName, "www.example.com");
+      serverName.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     await act(async () => {
-      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("自动创建"))?.click();
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("校验并创建"))?.click();
+      await Promise.resolve();
       await Promise.resolve();
     });
-    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", regionCode: "US", name: "oracle-worker", gatewayNodeId: "worker", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", target: undefined, sniHostname: undefined, inboundTotalBytes: 0, inboundResetDays: 0 });
+    expect(verify).toHaveBeenCalledWith("three-x-ui-worker", "www.example.com", "www.example.com");
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", regionCode: "US", name: "oracle-worker", gatewayNodeId: "worker", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDays: 0 });
     expect(document.body.textContent).not.toContain("客户端链接只显示一次");
   });
 

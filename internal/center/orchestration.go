@@ -519,8 +519,10 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 }
 
 func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.application_id, s.site_id, s.name, s.display_name, s.region_code, s.protocol, s.container_port, s.host_port, s.endpoint, s.source, s.app_protocol, s.management, s.observed_listen, s.status, s.last_error, s.created_at, s.updated_at, a.last_seen_at
-		FROM services s JOIN applications app ON app.id = s.application_id JOIN agents a ON a.id = app.node_id ORDER BY s.name, s.id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.application_id, s.site_id, s.name, s.display_name, s.region_code, s.protocol, s.container_port, s.host_port, s.endpoint, s.source, s.app_protocol, s.management, s.observed_listen, s.status, s.last_error, s.created_at, s.updated_at, a.last_seen_at,
+		COALESCE(guard.status, ''), COALESCE(guard.target_host, ''), COALESCE(guard.target_ip, ''), COALESCE(guard.server_name, ''), COALESCE(guard.target_asn, 0), COALESCE(guard.last_error, '')
+		FROM services s JOIN applications app ON app.id = s.application_id JOIN agents a ON a.id = app.node_id
+		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = s.id ORDER BY s.name, s.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -529,9 +531,17 @@ func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 	for rows.Next() {
 		var value ServiceView
 		var created, updated, lastSeen string
+		var guardTargetHost, guardTargetIP, guardServerName, guardError string
+		var guardTargetASN int64
 		var management int
-		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen); err != nil {
+		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen, &value.GuardStatus, &guardTargetHost, &guardTargetIP, &guardServerName, &guardTargetASN, &guardError); err != nil {
 			return nil, err
+		}
+		if value.GuardStatus != "" {
+			value.GuardSummary = fmt.Sprintf("%s -> %s:443; SNI %s; ASN %d", guardTargetHost, guardTargetIP, guardServerName, guardTargetASN)
+			if value.GuardStatus == "action_required" {
+				value.ActionRequired = guardError
+			}
 		}
 		value.Management = management == 1
 		lastSeenAt, err := time.Parse(time.RFC3339Nano, lastSeen)

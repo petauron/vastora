@@ -158,6 +158,20 @@ func (s *Server) handleCreateRealityCommand(writer http.ResponseWriter, request 
 	writeJSON(writer, http.StatusCreated, value)
 }
 
+func (s *Server) handleVerifyRealityTarget(writer http.ResponseWriter, request *http.Request) {
+	var input RealityTargetVerifyInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.VerifyRealityTarget(request.Context(), request.PathValue("id"), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusAccepted, value)
+}
+
 func (s *Server) handleRenameRealityCommand(writer http.ResponseWriter, request *http.Request) {
 	var input RealityRenameCommandInput
 	if err := decodeJSON(request, &input); err != nil {

@@ -421,7 +421,7 @@ func TestPublicationReadyCommitIsFencedWhenReconciliationStartsDuringVerificatio
 	}
 }
 
-func TestSucceededRealityPublicationRecoveryCreatesOnlyMissingAccessAndPreservesExplicitStop(t *testing.T) {
+func TestSucceededRealityPublicationRecoveryRequiresReadyGuardAndPreservesExplicitStop(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -451,6 +451,8 @@ func TestSucceededRealityPublicationRecoveryCreatesOnlyMissingAccessAndPreserves
 		DisplayName:         "🇺🇸 美国Recovery",
 		ConnectHostname:     "reality.recovery.example.test",
 		DNSProvider:         "manual",
+		TargetHost:          "www.example.com",
+		ServerName:          "www.example.com",
 		TargetApplicationID: "reality-recovery-app",
 		TargetAddress:       "10.0.0.97",
 		InboundTag:          "vastora-recovery",
@@ -461,7 +463,8 @@ func TestSucceededRealityPublicationRecoveryCreatesOnlyMissingAccessAndPreserves
 		DisplayName:     input.DisplayName,
 		Listen:          "10.0.0.97",
 		Port:            35443,
-		SNIHostname:     "www.example.com",
+		TargetHost:      "www.example.com",
+		ServerName:      "www.example.com",
 		ConnectHostname: input.ConnectHostname,
 	}
 	inputJSON, _ := json.Marshal(input)
@@ -476,6 +479,21 @@ func TestSucceededRealityPublicationRecoveryCreatesOnlyMissingAccessAndPreserves
 	}
 	store.backgroundWG.Wait()
 	publications, err := store.ListPublications(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(publications) != 0 {
+		t.Fatalf("unguarded REALITY access was reconstructed: %#v", publications)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_reality_guards(service_id, target_host, target_ip, server_name, node_asn, target_asn, companion_inbound_id, companion_tag, companion_port, status, verified_at, created_at, updated_at)
+		VALUES('reality-recovery-service', 'www.example.com', '203.0.113.10', 'www.example.com', 64500, 64500, 10, 'vastora-recovery-guard', 21000, 'ready', ?, ?, ?)`, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.resumeSucceededRealityPublications(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store.backgroundWG.Wait()
+	publications, err = store.ListPublications(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

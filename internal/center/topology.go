@@ -43,6 +43,7 @@ type NodeHeartbeat struct {
 	GatewayHealthy               bool
 	ApplicationRuntimeGeneration int
 	TailscaleOwnership           string
+	Startup                      bool
 }
 
 type ApplicationEndpointObservation struct {
@@ -128,6 +129,9 @@ type ServiceView struct {
 	ObservedListen string    `json:"observedListen,omitempty"`
 	Status         string    `json:"status"`
 	LastError      string    `json:"lastError,omitempty"`
+	GuardStatus    string    `json:"guardStatus,omitempty"`
+	GuardSummary   string    `json:"guardSummary,omitempty"`
+	ActionRequired string    `json:"actionRequiredReason,omitempty"`
 	CreatedAt      time.Time `json:"createdAt"`
 	UpdatedAt      time.Time `json:"updatedAt"`
 }

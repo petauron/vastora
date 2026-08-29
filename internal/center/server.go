@@ -109,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/three-x-ui-migrations/{id}/retry-cleanup", s.requireAuth(true, s.handleRetryThreeXUIControllerMigrationCleanup))
 	mux.HandleFunc("GET /api/v1/applications/{id}/commands/latest", s.requireAuth(false, s.handleLatestApplicationCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/reality", s.requireAuth(true, s.handleCreateRealityCommand))
+	mux.HandleFunc("POST /api/v1/applications/{id}/reality-targets/verify", s.requireAuth(true, s.handleVerifyRealityTarget))
 	mux.HandleFunc("POST /api/v1/application-commands/reality/rename", s.requireAuth(true, s.handleRenameRealityCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/subscription", s.requireAuth(true, s.handleCreateSubscriptionCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/clients", s.requireAuth(true, s.handleCreateThreeXUIClientCommand))

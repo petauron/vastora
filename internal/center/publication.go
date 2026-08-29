@@ -109,16 +109,22 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		return PublicationView{}, err
 	}
 	defer tx.Rollback()
-	var siteID, appNodeID, protocol, endpoint, serviceStatus, observedListen, applicationRole string
+	var siteID, appNodeID, protocol, endpoint, serviceStatus, observedListen, applicationRole, appProtocol string
 	var management int
-	if err := tx.QueryRowContext(ctx, `SELECT s.site_id, a.node_id, s.protocol, s.endpoint, s.status, s.management, s.observed_listen, a.role
-		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, input.ServiceID).Scan(&siteID, &appNodeID, &protocol, &endpoint, &serviceStatus, &management, &observedListen, &applicationRole); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT s.site_id, a.node_id, s.protocol, s.endpoint, s.status, s.management, s.observed_listen, a.role, s.app_protocol
+		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, input.ServiceID).Scan(&siteID, &appNodeID, &protocol, &endpoint, &serviceStatus, &management, &observedListen, &applicationRole, &appProtocol); errors.Is(err, sql.ErrNoRows) {
 		return PublicationView{}, errors.New("center: service not found")
 	} else if err != nil {
 		return PublicationView{}, err
 	}
 	if serviceStatus == "stopped" || serviceStatus == "failed" {
 		return PublicationView{}, errors.New("center: service must be running before it can be published")
+	}
+	if appProtocol == "vless/tcp/reality" {
+		var guardStatus string
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM three_x_ui_reality_guards WHERE service_id = ?`, input.ServiceID).Scan(&guardStatus); err != nil || guardStatus != "ready" {
+			return PublicationView{}, errors.New("center: REALITY service must have a ready fallback guard before publication")
+		}
 	}
 	if err := s.ensureServicePublicationChangeAllowed(ctx, tx, input.ServiceID); err != nil {
 		return PublicationView{}, err

@@ -111,7 +111,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if observedPlan.TotalBytes != 2147483648 || observedPlan.ResetDays != 30 || observedPlan.Revision != 2 {
 		t.Fatalf("heartbeat overwrote a Center-managed REALITY plan: %#v", observedPlan)
 	}
-	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, RegionCode: "US", Name: "Worker", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual"})
+	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, RegionCode: "US", Name: "Worker", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if err := store.CompleteTask(ctx, master.ID, master.Credential, realityTask.ID, realityTask.Attempt, false, "simulated worker setup failure", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: masterDeployment.ApplicationID, RegionCode: "US", Name: "Controller", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.controller.example.test", DNSProvider: "manual"}); err != nil {
+	if _, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: masterDeployment.ApplicationID, RegionCode: "US", Name: "Controller", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.controller.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
 		t.Fatal(err)
 	}
 	controllerRealityTask := claimTask(t, store, master)
@@ -142,6 +142,9 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 
 func completeThreeXUIDeployment(t *testing.T, store *Store, node AgentCredential, task *AgentTask, address, apiToken string) {
 	t.Helper()
+	if _, err := store.db.Exec(`UPDATE agent_network_profiles SET public_address = '198.51.100.10' WHERE agent_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
 	services := []ApplicationServiceResult{
 		{Name: "panel", Protocol: "http", ContainerPort: 2053, HostPort: 2053, Address: address},
 	}
