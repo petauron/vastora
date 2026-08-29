@@ -26,6 +26,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 type fakeGatewayDriver struct {
@@ -476,6 +477,36 @@ func TestWaitForCaddyAdminSocket(t *testing.T) {
 	defer listener.Close()
 	if err := waitForCaddyAdminSocket(context.Background(), path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSystemGatewayProtectionIsRecoveredFromCompleteDesiredState(t *testing.T) {
+	desired := gateway.DesiredState{
+		Revision: 1,
+		Listeners: []gateway.Listener{
+			{Kind: "public", Address: "192.0.2.10", HTTPPort: 80, HTTPSPort: 443},
+			{Kind: "headscale", Address: "100.64.0.1", HTTPPort: 80, HTTPSPort: 443},
+			{Kind: "system", Address: "127.0.0.1", HTTPPort: 80, HTTPSPort: 443},
+		},
+		Routes: []gateway.Route{
+			{ID: "system-center", Hostname: "center.example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center", Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
+			{ID: "system-center-local", Hostname: "center.example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center", Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
+			{ID: "system-headscale", Hostname: "headscale.example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center-headscale", Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			{ID: "system-headscale-local", Hostname: "headscale.example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center-headscale", Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
+			{ID: "system-agent-bootstrap", Hostname: "headscale.example.test", Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			{ID: "system-agent-binary-bootstrap", Hostname: "headscale.example.test", Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		},
+	}
+	label, err := systemServicesForGatewayTransition("", &desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if label != gatewayruntime.SystemServices {
+		t.Fatalf("recovered system services label = %q, want %q", label, gatewayruntime.SystemServices)
+	}
+	desired.Routes = desired.Routes[1:]
+	if _, err := systemServicesForGatewayTransition(gatewayruntime.SystemServices, &desired); err == nil {
+		t.Fatal("incomplete desired state was allowed to replace a protected system gateway")
 	}
 }
 

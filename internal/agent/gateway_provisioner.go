@@ -63,9 +63,10 @@ func (provisioner DockerGatewayProvisioner) ProtectedSystemServices(ctx context.
 		return nil, err
 	}
 	encoded := strings.TrimSpace(existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel])
-	if encoded == "" {
-		return nil, nil
-	}
+	return parseSystemServices(encoded), nil
+}
+
+func parseSystemServices(encoded string) []string {
 	seen := map[string]bool{}
 	services := make([]string, 0, 2)
 	for _, value := range strings.Split(encoded, ",") {
@@ -75,7 +76,7 @@ func (provisioner DockerGatewayProvisioner) ProtectedSystemServices(ctx context.
 			services = append(services, value)
 		}
 	}
-	return services, nil
+	return services
 }
 
 func (provisioner DockerGatewayProvisioner) Ensure(ctx context.Context) error {
@@ -107,8 +108,16 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	if err != nil {
 		return err
 	}
-	protectedSystemGateway := existing != nil && strings.TrimSpace(existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel]) != ""
-	if protectedSystemGateway && !caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) {
+	existingSystemServices := ""
+	if existing != nil {
+		existingSystemServices = strings.TrimSpace(existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel])
+	}
+	desiredSystemServices, err := systemServicesForGatewayTransition(existingSystemServices, desired)
+	if err != nil {
+		return err
+	}
+	protectedSystemGateway := existingSystemServices != "" || desiredSystemServices != ""
+	if existing != nil && protectedSystemGateway && !caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) {
 		return errors.New("agent: the protected system gateway must be reconciled by the Center deployment helper before Agent can adopt it")
 	}
 	var exposedPorts dockernetwork.PortSet
@@ -121,7 +130,8 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	}
 	matchesRuntime := existing != nil && existing.Container.HostConfig != nil && existing.Container.HostConfig.NetworkMode == container.NetworkMode(dockerruntime.NetworkName)
 	matchesPorts := desired == nil || existing != nil && caddyPortsMatch(existing.Container.Config, existing.Container.HostConfig, exposedPorts, portBindings)
-	if existing != nil && matchesRuntime && matchesPorts && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
+	matchesProtection := desired == nil || existingSystemServices == desiredSystemServices
+	if existing != nil && matchesRuntime && matchesPorts && matchesProtection && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
 		if existing.Container.State != nil && existing.Container.State.Running {
 			return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
 		}
@@ -172,8 +182,8 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		gatewayruntime.ManagedLabel:   "true",
 		gatewayruntime.ComponentLabel: gatewayruntime.CaddyComponentLabel,
 	}
-	if protectedSystemGateway {
-		labels[gatewayruntime.SystemServicesLabel] = existing.Container.Config.Labels[gatewayruntime.SystemServicesLabel]
+	if desiredSystemServices != "" {
+		labels[gatewayruntime.SystemServicesLabel] = desiredSystemServices
 	}
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
@@ -202,6 +212,32 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		return fmt.Errorf("agent: start Caddy container: %w", err)
 	}
 	return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
+}
+
+func systemServicesForGatewayTransition(existingLabel string, desired *gateway.DesiredState) (string, error) {
+	existingServices := parseSystemServices(existingLabel)
+	if desired == nil {
+		return strings.Join(existingServices, ","), nil
+	}
+	desiredServices := make([]string, 0, 2)
+	for _, service := range []string{"center", "headscale"} {
+		for _, route := range desired.Routes {
+			if route.System && route.ID == "system-"+service {
+				desiredServices = append(desiredServices, service)
+				break
+			}
+		}
+	}
+	requiredServices := existingServices
+	if len(requiredServices) == 0 {
+		requiredServices = desiredServices
+	}
+	if len(requiredServices) != 0 {
+		if err := validateProtectedSystemRoutes(*desired, requiredServices); err != nil {
+			return "", err
+		}
+	}
+	return strings.Join(desiredServices, ","), nil
 }
 
 func caddyPortsMatch(config *container.Config, host *container.HostConfig, expectedExposed dockernetwork.PortSet, expectedBindings dockernetwork.PortMap) bool {
