@@ -12,13 +12,19 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/petauron/vastora/internal/gateway"
 )
 
@@ -437,6 +443,39 @@ func TestGatewayProvisionerSharesUnixAdminSocketWithHost(t *testing.T) {
 	}
 	if _, err := (DockerGatewayProvisioner{AdminSocketPath: "relative.sock"}).settings(); err == nil {
 		t.Fatal("relative Admin socket path was accepted")
+	}
+}
+
+func TestCaddyPortsMatchAllowsImageExposedPorts(t *testing.T) {
+	https := dockernetwork.MustParsePort("443/tcp")
+	admin := dockernetwork.MustParsePort("2019/tcp")
+	expectedExposed := dockernetwork.PortSet{https: {}}
+	expectedBindings := dockernetwork.PortMap{https: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("100.64.0.1"), HostPort: "443"}}}
+	config := &container.Config{ExposedPorts: dockernetwork.PortSet{https: {}, admin: {}}}
+	host := &container.HostConfig{PortBindings: expectedBindings}
+	if !caddyPortsMatch(config, host, expectedExposed, expectedBindings) {
+		t.Fatal("image-declared Admin port forced an unnecessary Caddy replacement")
+	}
+	host.PortBindings = dockernetwork.PortMap{https: []dockernetwork.PortBinding{{HostIP: netip.MustParseAddr("127.0.0.1"), HostPort: "443"}}}
+	if caddyPortsMatch(config, host, expectedExposed, expectedBindings) {
+		t.Fatal("changed host port binding was treated as current")
+	}
+}
+
+func TestWaitForCaddyAdminSocket(t *testing.T) {
+	directory, err := os.MkdirTemp("/tmp", "vastora-caddy-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	path := filepath.Join(directory, "admin.sock")
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := waitForCaddyAdminSocket(context.Background(), path); err != nil {
+		t.Fatal(err)
 	}
 }
 

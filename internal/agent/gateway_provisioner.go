@@ -120,15 +120,15 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		}
 	}
 	matchesRuntime := existing != nil && existing.Container.HostConfig != nil && existing.Container.HostConfig.NetworkMode == container.NetworkMode(dockerruntime.NetworkName)
-	matchesPorts := desired == nil || existing != nil && reflect.DeepEqual(existing.Container.Config.ExposedPorts, exposedPorts) && reflect.DeepEqual(existing.Container.HostConfig.PortBindings, portBindings)
+	matchesPorts := desired == nil || existing != nil && caddyPortsMatch(existing.Container.Config, existing.Container.HostConfig, exposedPorts, portBindings)
 	if existing != nil && matchesRuntime && matchesPorts && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
 		if existing.Container.State != nil && existing.Container.State.Running {
-			return nil
+			return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
 		}
 		if _, err := docker.ContainerStart(ctx, existing.Container.ID, client.ContainerStartOptions{}); err != nil {
 			return fmt.Errorf("agent: start existing Caddy container: %w", err)
 		}
-		return nil
+		return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
 	}
 	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
 	if err != nil {
@@ -201,7 +201,46 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	if _, err := docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("agent: start Caddy container: %w", err)
 	}
-	return nil
+	return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
+}
+
+func caddyPortsMatch(config *container.Config, host *container.HostConfig, expectedExposed dockernetwork.PortSet, expectedBindings dockernetwork.PortMap) bool {
+	if config == nil || host == nil || !reflect.DeepEqual(host.PortBindings, expectedBindings) {
+		return false
+	}
+	for port := range expectedExposed {
+		if _, exists := config.ExposedPorts[port]; !exists {
+			return false
+		}
+	}
+	return true
+}
+
+func waitForCaddyAdminSocket(ctx context.Context, socketPath string) error {
+	if socketPath == "" {
+		return nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		info, err := os.Lstat(socketPath)
+		if err == nil {
+			if info.Mode()&os.ModeSocket == 0 {
+				return errors.New("agent: Caddy Admin socket path is occupied by a non-socket file")
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("agent: inspect Caddy Admin socket: %w", err)
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("agent: wait for Caddy Admin socket: %w", waitCtx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func gatewayMounts(settings DockerGatewayProvisioner) []mount.Mount {

@@ -136,3 +136,86 @@ func TestRestoredTailnetAddressQueuesPrivateGatewayListener(t *testing.T) {
 		t.Fatalf("matching private listener was queued again: revision %d to %d", revision, unchanged)
 	}
 }
+
+func TestUnhealthyGatewayRequeuesFullStateWithoutComponentRace(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "gateway-recovery", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_components SET status = 'ready', applied_generation = generation WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	var generation, revision int64
+	if err := store.db.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_states SET applied_revision = desired_revision, status = 'ready' WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := NodeHeartbeat{
+		Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, GatewayHealthy: false,
+		NetworkCandidates: []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN}},
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var nextGeneration, nextRevision int64
+	var componentStatus, stateStatus string
+	if err := store.db.QueryRowContext(ctx, `SELECT generation, status FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&nextGeneration, &componentStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision, status FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&nextRevision, &stateStatus); err != nil {
+		t.Fatal(err)
+	}
+	if nextGeneration != generation || componentStatus != "ready" {
+		t.Fatalf("unhealthy gateway component changed from generation %d to %d with status %q", generation, nextGeneration, componentStatus)
+	}
+	if nextRevision != revision+1 || stateStatus != "pending" {
+		t.Fatalf("unhealthy gateway state = revision %d status %q, want revision %d pending", nextRevision, stateStatus, revision+1)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var unchangedRevision int64
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&unchangedRevision); err != nil {
+		t.Fatal(err)
+	}
+	if unchangedRevision != nextRevision {
+		t.Fatalf("pending gateway recovery queued again: revision %d to %d", nextRevision, unchangedRevision)
+	}
+}
+
+func TestUnhealthyGatewayWithoutDesiredStateRequeuesComponent(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "gateway-bootstrap-recovery", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM gateway_states WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_components SET status = 'ready', applied_generation = generation WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	var generation int64
+	if err := store.db.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := NodeHeartbeat{
+		Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, GatewayHealthy: false,
+		NetworkCandidates: []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN}},
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var nextGeneration int64
+	var status, lastError string
+	if err := store.db.QueryRowContext(ctx, `SELECT generation, status, last_error FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&nextGeneration, &status, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if nextGeneration != generation+1 || status != "failed" || lastError != "gateway health check failed; queued for reconcile" {
+		t.Fatalf("unhealthy gateway bootstrap = generation %d status %q error %q", nextGeneration, status, lastError)
+	}
+}
