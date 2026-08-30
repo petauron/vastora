@@ -188,16 +188,26 @@ func (s *Server) requireAuth(mutation bool, handler http.HandlerFunc) http.Handl
 	}
 }
 
-func (s *Server) setSessionCookies(writer http.ResponseWriter, session, csrf string) {
+func (s *Server) setSessionCookies(writer http.ResponseWriter, request *http.Request, session, csrf string) {
 	expires := time.Now().Add(sessionLifetime)
-	http.SetCookie(writer, &http.Cookie{Name: "vastora_session", Value: session, Path: "/", Expires: expires, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.secureCookies})
-	http.SetCookie(writer, &http.Cookie{Name: "vastora_csrf", Value: csrf, Path: "/", Expires: expires, HttpOnly: false, SameSite: http.SameSiteStrictMode, Secure: s.secureCookies})
+	secure := s.secureCookies || forwardedHTTPS(request)
+	http.SetCookie(writer, &http.Cookie{Name: "vastora_session", Value: session, Path: "/", Expires: expires, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure})
+	http.SetCookie(writer, &http.Cookie{Name: "vastora_csrf", Value: csrf, Path: "/", Expires: expires, HttpOnly: false, SameSite: http.SameSiteStrictMode, Secure: secure})
 }
 
-func (s *Server) clearSessionCookies(writer http.ResponseWriter) {
+func (s *Server) clearSessionCookies(writer http.ResponseWriter, request *http.Request) {
+	secure := s.secureCookies || forwardedHTTPS(request)
 	for _, name := range []string{"vastora_session", "vastora_csrf"} {
-		http.SetCookie(writer, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: name == "vastora_session", SameSite: http.SameSiteStrictMode, Secure: s.secureCookies})
+		http.SetCookie(writer, &http.Cookie{Name: name, Value: "", Path: "/", MaxAge: -1, HttpOnly: name == "vastora_session", SameSite: http.SameSiteStrictMode, Secure: secure})
 	}
+}
+
+func forwardedHTTPS(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+	value := strings.TrimSpace(strings.Split(request.Header.Get("X-Forwarded-Proto"), ",")[0])
+	return strings.EqualFold(value, "https")
 }
 
 func (s *Server) staticHandler() http.Handler {

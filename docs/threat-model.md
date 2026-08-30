@@ -14,6 +14,12 @@
 
 - Center secrets, catalog Bearer tokens, and registry credentials use
   AES-256-GCM with a root key stored outside SQLite.
+- Catalog source URLs cannot embed userinfo credentials; private catalog access
+  uses only the separately encrypted Bearer token field.
+- Browser sessions are server-side and revocable. Session cookies are HttpOnly,
+  both authentication cookies are SameSite=Strict, HTTPS requests receive
+  Secure cookies whether TLS terminates at Center or its reverse proxy, and
+  every authenticated browser mutation requires the matching CSRF token.
 - Catalog documents are bounded in size, decoded only after signature
   verification, and cached only after validation succeeds.
 - The Center never mounts Docker's socket. The Agent deployment executor exposes

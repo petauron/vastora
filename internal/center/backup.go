@@ -107,6 +107,9 @@ func Restore(backupPath, destination, password string) error {
 	if err := os.MkdirAll(destination, 0o700); err != nil {
 		return fmt.Errorf("center: create restore destination: %w", err)
 	}
+	if err := os.Chmod(destination, 0o700); err != nil {
+		return fmt.Errorf("center: protect restore destination: %w", err)
+	}
 	for _, name := range []string{"center.db", "center.key"} {
 		if err := writePrivateFile(filepath.Join(destination, name), files[name]); err != nil {
 			return fmt.Errorf("center: restore %s: %w", name, err)
@@ -165,7 +168,7 @@ func readArchive(raw []byte) (map[string][]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("center: read backup archive: %w", err)
 		}
-		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != header.Name || header.Size < 0 || header.Size > 32<<20 {
+		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != header.Name || header.Size < 0 || header.Size > int64(len(raw)) {
 			return nil, errors.New("center: backup archive contains an invalid entry")
 		}
 		if _, exists := files[header.Name]; exists {

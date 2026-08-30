@@ -336,9 +336,12 @@ Agent persists the last successfully applied Gateway state and restores it
 before contacting Center. Existing containers, Caddy routes, and connectors
 continue while Center is unavailable; only desired-state changes pause.
 
-Center backup contains Center SQLite and its encryption key. Agent credentials,
-applied state, Headscale data, Caddy data, cloudflared runtime state, and
-application volumes have separate host-local backup boundaries.
+Center backup contains a consistent Center SQLite snapshot and its encryption
+key. ACME account keys and certificates are encrypted records in that snapshot,
+so no separate control-plane CA file exists. Restore requires an equivalent
+Vastora version and an empty Center data directory. Agent credentials, applied
+state, Headscale data, Caddy data, cloudflared runtime state, and application
+volumes have separate host-local backup boundaries.
 
 Released and pre-alpha Center schemas follow the same rule: structural changes
 advance through tested, forward-only migrations after Center creates a backup.

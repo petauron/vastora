@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -68,8 +69,13 @@ func (s *Store) CreateSource(ctx context.Context, input SourceInput) error {
 	if !sourceIDPattern.MatchString(input.ID) {
 		return errors.New("center: source id must use lowercase letters, digits, and hyphens")
 	}
-	if strings.TrimSpace(input.DisplayName) == "" || strings.TrimSpace(input.URL) == "" {
+	input.URL = strings.TrimSpace(input.URL)
+	if strings.TrimSpace(input.DisplayName) == "" || input.URL == "" {
 		return errors.New("center: source display name and URL are required")
+	}
+	parsedURL, err := url.Parse(input.URL)
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil {
+		return errors.New("center: source URL must be absolute HTTPS without credentials")
 	}
 	if len(input.PublicKey) != 32 {
 		return errors.New("center: source requires an Ed25519 public key")
@@ -124,6 +130,7 @@ func (s *Store) ListSources(ctx context.Context) ([]CatalogSource, error) {
 		if err := rows.Scan(&source.ID, &source.DisplayName, &source.URL, &key, &bearerID, &customCA, &enabled, &source.RefreshSeconds, &fetchedAt, &source.LastError); err != nil {
 			return nil, fmt.Errorf("center: scan source: %w", err)
 		}
+		source.URL = catalogSourceMetadataURL(source.URL)
 		source.PublicKey = base64.RawURLEncoding.EncodeToString(key)
 		source.BearerTokenSet = len(bearerID) > 0
 		source.CustomCASet = len(customCA) > 0
@@ -134,6 +141,21 @@ func (s *Store) ListSources(ctx context.Context) ([]CatalogSource, error) {
 		sources = append(sources, source)
 	}
 	return sources, rows.Err()
+}
+
+func catalogSourceMetadataURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	if parsed.Scheme == "builtin" && parsed.Host == OfficialCatalogSourceID && parsed.User == nil {
+		return parsed.String()
+	}
+	if parsed.Scheme != "https" || parsed.Host == "" {
+		return ""
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 
 func (s *Store) SourceForRefresh(ctx context.Context, id string) (sourceCredential, error) {
