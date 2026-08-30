@@ -68,6 +68,7 @@ candidate_env="$temporary_dir/.env"
 backup_dir="$(mktemp -d "${install_dir}.backup.XXXXXX")"
 agent_container=""
 agent_changed=no
+agent_database_opened=no
 agent_stopped=no
 files_changed=no
 center_started=no
@@ -99,11 +100,20 @@ cleanup() {
     docker rm -f "$agent_container" >/dev/null 2>&1 || true
   fi
   if [ "$status" -ne 0 ] && [ "$agent_changed" = yes ] && [ "$center_started" = no ]; then
-    echo "Upgrade stopped before Center was started; restoring the previous Agent executable." >&2
-    agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-rollback.XXXXXX")"
-    install -m 0755 "$agent_executable.previous" "$agent_staged"
-    mv "$agent_staged" "$agent_executable"
-    systemctl restart vastora-agent.service || true
+    if [ "$agent_database_opened" = yes ]; then
+      echo "Upgrade stopped after the Agent database migration boundary; keeping the schema-compatible Agent executable." >&2
+      if ! systemctl restart vastora-agent.service; then
+        echo "The compatible Agent could not be restarted; operator recovery is required." >&2
+      fi
+    else
+      echo "Upgrade stopped before the Agent database was opened; restoring the previous Agent executable." >&2
+      agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-rollback.XXXXXX")"
+      install -m 0755 "$agent_executable.previous" "$agent_staged"
+      mv "$agent_staged" "$agent_executable"
+      if ! systemctl restart vastora-agent.service; then
+        echo "The previous Agent could not be restarted; operator recovery is required." >&2
+      fi
+    fi
     agent_stopped=no
   fi
   if [ "$status" -ne 0 ] && [ "$agent_stopped" = yes ]; then
@@ -176,23 +186,24 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
 	  exit 1
 	fi
 	echo "Moving the co-located Agent to the host-only Center channel..."
+	if [ -f "$agent_data_dir/agent.db" ]; then
+	  agent_database_backup="$(mktemp "$agent_data_dir/.agent.db.pre-upgrade.$new_version.XXXXXX")"
+	  install -m 0600 "$agent_data_dir/agent.db" "$agent_database_backup"
+	  echo "Protected the pre-migration Agent database at $agent_database_backup"
+	fi
 	systemctl stop vastora-agent.service
 	agent_stopped=yes
-	"$temporary_dir/vastora-agent" agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url"
   agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-upgrade.XXXXXX")"
   install -m 0755 "$temporary_dir/vastora-agent" "$agent_staged"
   install -m 0755 "$agent_executable" "$agent_executable.previous"
   mv "$agent_staged" "$agent_executable"
+	agent_changed=yes
+	agent_database_opened=yes
+	"$agent_executable" agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url"
 	if ! systemctl start vastora-agent.service || ! systemctl is-active --quiet vastora-agent.service; then
-    echo "The updated Agent did not start; restoring the previous executable." >&2
-    agent_staged="$(mktemp "$(dirname "$agent_executable")/.vastora-rollback.XXXXXX")"
-    install -m 0755 "$agent_executable.previous" "$agent_staged"
-    mv "$agent_staged" "$agent_executable"
-	  systemctl restart vastora-agent.service || true
-	  agent_stopped=no
+	  echo "The updated Agent did not start; keeping its schema-compatible executable for recovery." >&2
 	  exit 1
 	fi
-	agent_changed=yes
 	agent_stopped=no
 	echo "Co-located Agent updated to $new_version on the host-only Center channel."
 fi

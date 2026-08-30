@@ -32,7 +32,6 @@ if [ ! -f "$request" ]; then
 fi
 
 target_version="$(awk 'NR == 1 {print; exit}' "$request")"
-rm -f "$request"
 if ! printf '%s\n' "$target_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
   echo "The requested Center version is invalid." >&2
   exit 2
@@ -50,6 +49,13 @@ write_status() {
   mv "$temporary_status" "$status_file"
 }
 
+installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+if [ "$installed_version" = "$target_version" ]; then
+  write_status succeeded "$installed_version" "Center was updated successfully."
+  rm -f "$request"
+  exit 0
+fi
+
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-center-update.XXXXXX")"
 installer="$temporary_dir/install.sh"
 installer_headers="$temporary_dir/install.headers"
@@ -60,6 +66,7 @@ cleanup() {
   rm -rf "$temporary_dir"
   if [ "$result" -ne 0 ] && [ "$completed" = no ]; then
     write_status failed "$target_version" "$failure_message"
+    rm -f "$request"
   fi
   exit "$result"
 }
@@ -115,4 +122,5 @@ if [ "$installed_version" != "$target_version" ]; then
   exit 1
 fi
 write_status succeeded "$installed_version" "Center was updated successfully."
+rm -f "$request"
 completed=yes
