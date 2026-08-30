@@ -157,7 +157,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		if verifyErr != nil {
 			return RealityCommandResult{}, verifyErr
 		}
-		inbound, verifyErr = ensureThreeXUIRealityMinimumClientVersion(ctx, baseURL, masterToken, inbound.ID)
+		inbound, verifyErr = ensureThreeXUIRealityRuntimeRequirements(ctx, baseURL, masterToken, inbound.ID)
 		if verifyErr != nil {
 			return RealityCommandResult{}, deferUncertainRealityTask(attempt, verifyErr)
 		}
@@ -205,7 +205,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		if err != nil {
 			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
 		}
-		existing, err = ensureThreeXUIRealityMinimumClientVersion(ctx, baseURL, masterToken, existing.ID)
+		existing, err = ensureThreeXUIRealityRuntimeRequirements(ctx, baseURL, masterToken, existing.ID)
 		if err != nil {
 			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
 		}
@@ -367,7 +367,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			return applyRealityCommandWithRecovery(ctx, store, commandID, attempt, command, true)
 		}
 	} else {
-		result = RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, ServerName: verification.ServerName, ConnectHostname: command.ConnectHostname, InboundTag: inbound.Tag, ClientCreated: clientCreated, InboundTotalBytes: command.InboundTotalBytes}
+		result = RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, ServerName: verification.ServerName, ConnectHostname: command.ConnectHostname, InboundTag: inbound.Tag, ClientCreated: clientCreated, InboundTotalBytes: command.InboundTotalBytes, ProxyProtocol: true}
 		if clientCreated {
 			result.ShareURI = realityShareURI(clientID, command.ConnectHostname, command.DisplayName, verification.ServerName, keyPair.PublicKey, shortID)
 		}
@@ -617,7 +617,8 @@ func containsInt(values []int, expected int) bool {
 func threeXUIRealityStreamSettings(target, sni, privateKey, publicKey, shortID string) map[string]any {
 	return map[string]any{
 		"network":     "tcp",
-		"tcpSettings": map[string]any{"header": map[string]string{"type": "none"}},
+		"tcpSettings": map[string]any{"acceptProxyProtocol": true, "header": map[string]string{"type": "none"}},
+		"sockopt":     map[string]any{"acceptProxyProtocol": true},
 		"security":    "reality",
 		"realitySettings": map[string]any{
 			"show": false, "xver": 0, "target": target, "serverNames": []string{sni},
@@ -628,7 +629,7 @@ func threeXUIRealityStreamSettings(target, sni, privateKey, publicKey, shortID s
 	}
 }
 
-func ensureThreeXUIRealityMinimumClientVersion(ctx context.Context, baseURL, token string, inboundID int) (threeXUIRealityInbound, error) {
+func ensureThreeXUIRealityRuntimeRequirements(ctx context.Context, baseURL, token string, inboundID int) (threeXUIRealityInbound, error) {
 	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/get/"+strconv.Itoa(inboundID), token, "", nil)
 	if err != nil {
 		return threeXUIRealityInbound{}, fmt.Errorf("agent: get 3x-ui REALITY inbound: %w", err)
@@ -646,22 +647,46 @@ func ensureThreeXUIRealityMinimumClientVersion(ctx context.Context, baseURL, tok
 	if !ok {
 		return threeXUIRealityInbound{}, errors.New("agent: selected REALITY inbound is incomplete")
 	}
-	if minClientVersion, _ := realitySettings["minClientVer"].(string); strings.TrimSpace(minClientVersion) == threeXUIRealityMinClientVersion {
+	if minClientVersion, _ := realitySettings["minClientVer"].(string); strings.TrimSpace(minClientVersion) == threeXUIRealityMinClientVersion && realityStreamAcceptsProxyProtocol(streamSettings) {
 		return inbound, nil
 	}
 	realitySettings["minClientVer"] = threeXUIRealityMinClientVersion
+	tcpSettings, ok := streamSettings["tcpSettings"].(map[string]any)
+	if !ok {
+		tcpSettings = map[string]any{}
+		streamSettings["tcpSettings"] = tcpSettings
+	}
+	tcpSettings["acceptProxyProtocol"] = true
+	sockopt, ok := streamSettings["sockopt"].(map[string]any)
+	if !ok {
+		sockopt = map[string]any{}
+		streamSettings["sockopt"] = sockopt
+	}
+	sockopt["acceptProxyProtocol"] = true
 	delete(update, "id")
 	delete(update, "clientStats")
 	delete(update, "fallbackParent")
 	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/update/"+strconv.Itoa(inboundID), token, "application/json", update); err != nil {
 		return threeXUIRealityInbound{}, fmt.Errorf("agent: set 3x-ui REALITY minimum client version: %w", err)
 	}
-	encodedStreamSettings, err := json.Marshal(streamSettings)
-	if err != nil {
-		return threeXUIRealityInbound{}, err
+	observed, err := getThreeXUIInbound(ctx, baseURL, token, inboundID)
+	if err != nil || !realityInboundAcceptsProxyProtocol(observed) {
+		return threeXUIRealityInbound{}, errors.New("agent: managed REALITY Proxy Protocol v2 configuration failed read-back")
 	}
-	inbound.StreamSettings = encodedStreamSettings
-	return inbound, nil
+	return observed, nil
+}
+
+func realityStreamAcceptsProxyProtocol(streamSettings map[string]any) bool {
+	tcpSettings, tcpOK := streamSettings["tcpSettings"].(map[string]any)
+	sockopt, sockoptOK := streamSettings["sockopt"].(map[string]any)
+	tcpAccepts, tcpBool := tcpSettings["acceptProxyProtocol"].(bool)
+	sockoptAccepts, sockoptBool := sockopt["acceptProxyProtocol"].(bool)
+	return tcpOK && sockoptOK && tcpBool && sockoptBool && tcpAccepts && sockoptAccepts
+}
+
+func realityInboundAcceptsProxyProtocol(inbound threeXUIRealityInbound) bool {
+	var streamSettings map[string]any
+	return json.Unmarshal(inbound.StreamSettings, &streamSettings) == nil && realityStreamAcceptsProxyProtocol(streamSettings)
 }
 
 func syncThreeXUIRealityHost(ctx context.Context, baseURL, token string, inboundID int, connectHostname, sniHostname string) error {
@@ -808,7 +833,7 @@ func realityResultFromInbound(inbound threeXUIRealityInbound, inboundTag, connec
 			} `json:"settings"`
 		} `json:"realitySettings"`
 	}
-	if json.Unmarshal(inbound.Settings, &settings) != nil || json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Security != "reality" || len(stream.Reality.ServerNames) == 0 || len(stream.Reality.ShortIDs) == 0 || stream.Reality.Settings.PublicKey == "" {
+	if json.Unmarshal(inbound.Settings, &settings) != nil || json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Security != "reality" || len(stream.Reality.ServerNames) == 0 || len(stream.Reality.ShortIDs) == 0 || stream.Reality.Settings.PublicKey == "" || !realityInboundAcceptsProxyProtocol(inbound) {
 		return RealityCommandResult{}, errors.New("agent: existing Vastora REALITY inbound is incomplete")
 	}
 	clientID := ""
@@ -818,7 +843,7 @@ func realityResultFromInbound(inbound threeXUIRealityInbound, inboundTag, connec
 			break
 		}
 	}
-	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: displayName, ClientName: clientName, Listen: inbound.Listen, Port: inbound.Port, ServerName: stream.Reality.ServerNames[0], ConnectHostname: connectHostname, InboundTag: inboundTag, ClientCreated: clientID != "", InboundTotalBytes: inbound.Total}
+	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: displayName, ClientName: clientName, Listen: inbound.Listen, Port: inbound.Port, ServerName: stream.Reality.ServerNames[0], ConnectHostname: connectHostname, InboundTag: inboundTag, ClientCreated: clientID != "", InboundTotalBytes: inbound.Total, ProxyProtocol: true}
 	if clientID != "" {
 		result.ShareURI = realityShareURI(clientID, connectHostname, displayName, stream.Reality.ServerNames[0], stream.Reality.Settings.PublicKey, stream.Reality.ShortIDs[0])
 	}

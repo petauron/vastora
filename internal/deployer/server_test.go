@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
 )
@@ -14,6 +15,22 @@ import (
 type fakeInstaller struct {
 	input          deployapi.HeadscaleInstallRequest
 	reconcileInput deployapi.HeadscaleInstallRequest
+}
+
+type blockingInstaller struct {
+	started chan string
+	release chan struct{}
+}
+
+func (installer *blockingInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
+	installer.started <- "install"
+	<-installer.release
+	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz", APIKeyID: 1, APIKeyPrefix: "abcdefghijkl", APIKeyExpiresAt: time.Now().Add(365 * 24 * time.Hour)}, nil
+}
+
+func (installer *blockingInstaller) ReconcileHeadscale(_ context.Context, _ deployapi.HeadscaleInstallRequest) error {
+	installer.started <- "reconcile"
+	return nil
 }
 
 type fakePublicEntryProber struct {
@@ -42,7 +59,7 @@ func (prober *fakePublicEntryProber) StopPublicEntryProbe(_ context.Context, id 
 
 func (installer *fakeInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
 	installer.input = input
-	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"}, nil
+	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz", APIKeyID: 1, APIKeyPrefix: "abcdefghijkl", APIKeyExpiresAt: time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 
 func (installer *fakeInstaller) ReconcileHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) error {
@@ -101,5 +118,58 @@ func TestServerExposesOnlyTheFixedCenterRemoteAccessOperation(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !manager.input.Enabled || manager.input.Token != "cloudflare-tunnel-token-value" {
 		t.Fatalf("unexpected remote access response %d %s input=%#v", response.Code, response.Body.String(), manager.input)
+	}
+}
+
+func TestServerSerializesHeadscaleRuntimeOperations(t *testing.T) {
+	installer := &blockingInstaller{started: make(chan string, 2), release: make(chan struct{})}
+	handler := NewServer(installer).Handler()
+	payload, _ := json.Marshal(deployapi.HeadscaleInstallRequest{CenterURL: "https://center.example.com", HeadscaleURL: "https://headscale.example.com"})
+	request := func(path string) *http.Request {
+		value := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(payload))
+		value.Header.Set("Content-Type", "application/json")
+		return value
+	}
+	installed := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(httptest.NewRecorder(), request("/v1/headscale/install"))
+		close(installed)
+	}()
+	select {
+	case operation := <-installer.started:
+		if operation != "install" {
+			t.Fatalf("unexpected first operation %q", operation)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Headscale installation did not start")
+	}
+	reconciled := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(httptest.NewRecorder(), request("/v1/headscale/reconcile"))
+		close(reconciled)
+	}()
+	select {
+	case operation := <-installer.started:
+		t.Fatalf("Headscale operation %q overlapped installation", operation)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(installer.release)
+	select {
+	case <-installed:
+	case <-time.After(time.Second):
+		t.Fatal("Headscale installation did not complete")
+	}
+	select {
+	case operation := <-installer.started:
+		if operation != "reconcile" {
+			t.Fatalf("unexpected second operation %q", operation)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Headscale reconciliation did not start after installation")
+	}
+	select {
+	case <-reconciled:
+	case <-time.After(time.Second):
+		t.Fatal("Headscale reconciliation did not complete")
 	}
 }

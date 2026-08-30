@@ -23,8 +23,10 @@ import { ThreeXUIInboundTrafficSheet } from "./ThreeXUIInboundTrafficSheet";
 import { RealitySheet } from "./RealitySheet";
 import { RegionCombobox, regionBaseName, regionDisplayName } from "./RegionCombobox";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
+import { clearSecretOperation, deploymentSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
 
 type DeploymentEditor = { app: AppView; agent?: AgentView; operation: "install" | "upgrade" | "configure" } | null;
+type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
 
 function AppSectionCount({ active, value }: { active: boolean; value: number }) {
   return <span className={active ? "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-foreground/10 px-1.5 text-xs font-semibold text-primary-foreground tabular-nums ring-1 ring-primary-foreground/20 ring-inset" : "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-secondary px-1.5 text-xs font-semibold text-secondary-foreground tabular-nums ring-1 ring-border ring-inset"} data-active={active} data-slot="app-section-count">{value}</span>;
@@ -34,7 +36,9 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
   const [deploymentEditor, setDeploymentEditor] = useState<DeploymentEditor>(null);
   const [publicationService, setPublicationService] = useState<Service | null>(null);
   const [uninstallApplication, setUninstallApplication] = useState<Application | null>(null);
-  const [credentials, setCredentials] = useState<Deployment["oneTimeCredentials"]>(undefined);
+	const [credentials, setCredentials] = useState<CredentialDelivery | undefined>(undefined);
+	const [credentialAckBusy, setCredentialAckBusy] = useState(false);
+	const credentialRecovery = useRef("");
 	const [realityApplication, setRealityApplication] = useState<Application | null>(null);
 	const [realityRenameService, setRealityRenameService] = useState<Service | null>(null);
   const [trafficService, setTrafficService] = useState<Service | null>(null);
@@ -55,11 +59,43 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
     if (app && agent) setDeploymentEditor({ app, agent, operation });
   };
 
+	useEffect(() => {
+		if (credentials) return;
+		for (const deployment of data.deployments) {
+			if (!deployment.oneTimeCredentialsAvailable) continue;
+			const scope = deploymentSecretScope(deployment.agentId, deployment.appKey, deployment.operation);
+			const operationKey = readSecretOperation(scope);
+			if (!operationKey) continue;
+			const recoveryKey = `${deployment.id}:${operationKey}`;
+			if (credentialRecovery.current === recoveryKey) return;
+			credentialRecovery.current = recoveryKey;
+			void api.revealDeploymentCredentials(deployment.id, operationKey).then((value) => {
+				setCredentials({ ...value, deploymentId: deployment.id, operationKey, scope });
+			}).catch(() => { /* The next screen refresh may retry the same durable delivery. */ }).finally(() => {
+				if (credentialRecovery.current === recoveryKey) credentialRecovery.current = "";
+			});
+			return;
+		}
+	}, [credentials, data.deployments]);
+
+	const acknowledgeCredentials = async () => {
+		if (!credentials) return;
+		setCredentialAckBusy(true);
+		try {
+			await mutate(() => api.acknowledgeDeploymentCredentials(credentials.deploymentId, credentials.operationKey), copy(language, "3x-ui 管理账号已确认保存。", "3x-ui administrator credentials were acknowledged."));
+			clearSecretOperation(credentials.scope);
+			credentialRecovery.current = "";
+			setCredentials(undefined);
+		} finally {
+			setCredentialAckBusy(false);
+		}
+	};
+
   return (
     <section className="flex flex-col gap-7">
       <PageHeading title={copy(language, "应用", "Apps")} description={copy(language, "先把应用安装为私有服务，再为需要访问的服务添加一个或多个入口。", "Install an app as a private service first, then add one or more access points to the services you need.")} />
 
-      {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "请立即保存 3x-ui 管理账号", "Save the 3x-ui administrator account now")}</AlertTitle><AlertDescription><p>{copy(language, "凭据只显示这一次。Center 和 Agent 会分别加密保存。", "These credentials are shown only once. Center and Agent store them separately in encrypted form.")}</p><dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password} /></dd></div></dl><Button className="mt-3" onClick={() => setCredentials(undefined)} size="sm" variant="outline">{copy(language, "我已保存", "I saved them")}</Button></AlertDescription></Alert> : null}
+      {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "请保存 3x-ui 管理账号", "Save the 3x-ui administrator account")}</AlertTitle><AlertDescription><p>{copy(language, "确认保存前可在断线或刷新后重新领取；确认后 Center 会永久关闭再次显示。", "Until you acknowledge it, the same browser can recover these credentials after a disconnect or refresh. Acknowledgement permanently disables disclosure.")}</p><dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password} /></dd></div></dl><Button className="mt-3" disabled={credentialAckBusy} onClick={() => void acknowledgeCredentials()} size="sm" variant="outline">{credentialAckBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存并关闭再次显示", "Saved — disable further disclosure")}</Button></AlertDescription></Alert> : null}
 
       {recentOperations.length ? <div aria-live="polite" className="flex flex-col gap-3"><div><h2 className="text-lg font-semibold">{copy(language, "最近操作", "Recent operations")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "页面会自动更新，无需手动刷新。", "This page updates automatically; no manual refresh is needed.")}</p></div>{recentOperations.map((deployment) => {
         const app = catalogByKey.get(deployment.appKey); const agent = data.agents.find((value) => value.id === deployment.agentId); const application = data.applications.find((value) => value.id === deployment.applicationId);
@@ -97,9 +133,11 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 
       <DeploymentSheet data={data} editor={deploymentEditor} language={language} onClose={() => setDeploymentEditor(null)} onSubmit={async (agent, app, config, operation, role, registryCredentialId) => {
         let result: Deployment | undefined;
+		const scope = deploymentSecretScope(agent.id, app.key, operation);
+		const operationKey = app.key === "vastora-official/3x-ui" && operation === "install" && role !== "worker" ? secretOperation(scope) : undefined;
         const messages = { install: copy(language, "安装任务已创建。可在活动中查看进度。", "Install task created. Follow progress in Activity."), upgrade: copy(language, "升级任务已创建。", "Upgrade task created."), configure: copy(language, "配置任务已创建。", "Configuration task created.") };
-        await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId); }, messages[operation]);
-        if (result?.oneTimeCredentials) setCredentials(result.oneTimeCredentials);
+        await mutate(async () => { result = await api.createDeployment(agent.id, app.key, config, operation, false, role, registryCredentialId, operationKey); }, messages[operation]);
+        if (result?.oneTimeCredentials && operationKey) setCredentials({ ...result.oneTimeCredentials, deploymentId: result.id, operationKey, scope });
         setDeploymentEditor(null);
       }} />
       <PublicationSheet data={data} language={language} onClose={() => setPublicationService(null)} onSubmit={async (input) => { await mutate(() => api.createPublication(input), copy(language, "访问入口已创建。", "Access point created.")); setPublicationService(null); }} service={publicationService} />

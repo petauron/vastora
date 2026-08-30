@@ -15,6 +15,7 @@ check: go-check web-check deployment-check
 go-check:
 	@VASTORA_FORMATTED_FILES="$$(gofmt -l cmd internal)"; \
 	/bin/test -z "$$VASTORA_FORMATTED_FILES" || { printf 'Run gofmt on:\n%s\n' "$$VASTORA_FORMATTED_FILES"; exit 1; }
+	node scripts/generate-openapi.mjs --check
 	$(GO) test -race $(GO_PACKAGES)
 	$(GO) vet $(GO_PACKAGES)
 	$(GO) run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) $(GO_PACKAGES)

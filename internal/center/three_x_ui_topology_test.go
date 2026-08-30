@@ -58,7 +58,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 		t.Fatalf("unexpected controller node task: %#v", nodeTask)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
-	if err := store.CompleteTask(ctx, master.ID, master.Credential, nodeTask.ID, nodeTask.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, master.ID, master.Credential, nodeTask.ID, nodeTask.Attempt, true, "", result, nodeTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,7 +125,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if realityTask.ApplicationCommand == nil || realityTask.ApplicationCommand.TargetApplicationID != workerDeployment.ApplicationID || realityTask.ApplicationCommand.TargetNodeID != 7 || realityTask.ApplicationCommand.TargetAddress != "10.0.0.91" || realityTask.ApplicationCommand.TargetAPIToken != "worker-api-token" || realityTask.ApplicationCommand.CreateInitialClient || realityTask.ApplicationCommand.ClientName != "" {
 		t.Fatalf("unexpected cross-node REALITY task: %#v", realityTask)
 	}
-	if err := store.CompleteTask(ctx, master.ID, master.Credential, realityTask.ID, realityTask.Attempt, false, "simulated worker setup failure", nil); err != nil {
+	if err := store.CompleteTask(ctx, master.ID, master.Credential, realityTask.ID, realityTask.Attempt, false, "simulated worker setup failure", nil, realityTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: masterDeployment.ApplicationID, RegionCode: "US", Name: "Controller", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.controller.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
@@ -155,7 +155,7 @@ func completeThreeXUIDeployment(t *testing.T, store *Store, node AgentCredential
 		Services:         services,
 		GeneratedSecrets: map[string]string{"api_token": apiToken},
 	})
-	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 }

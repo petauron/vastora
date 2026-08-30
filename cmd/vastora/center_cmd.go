@@ -213,6 +213,12 @@ func runCenter(arguments []string) error {
 			}
 			centerServer.WithInfrastructureManager(installer)
 			centerServer.WithCenterUpdater(installer)
+			go centerServer.RunSystemEndpointAliasMaintenance(maintenanceContext, time.Minute, func(err error) {
+				fmt.Fprintf(os.Stderr, "Center system endpoint alias maintenance: %v\n", err)
+			})
+			go centerServer.RunHeadscaleAPIKeyMaintenance(maintenanceContext, 12*time.Hour, func(err error) {
+				fmt.Fprintf(os.Stderr, "Center Headscale API key maintenance: %v\n", err)
+			})
 			go func() {
 				reconcileContext, cancel := context.WithTimeout(maintenanceContext, 8*time.Minute)
 				defer cancel()

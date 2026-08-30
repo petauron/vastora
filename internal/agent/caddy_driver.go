@@ -26,6 +26,7 @@ type CaddyGatewayDriver struct {
 	HTTPClient      *http.Client
 	SystemGateway   SystemGatewayInspector
 
+	mutationMu   sync.Mutex
 	mu           sync.RWMutex
 	state        gateway.DesiredState
 	certificates []gateway.Certificate
@@ -61,6 +62,12 @@ func NewCaddyGatewayDriver(adminURL string) (*CaddyGatewayDriver, error) {
 }
 
 func (driver *CaddyGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
+	return driver.applyConfiguration(ctx, desired, certificates)
+}
+
+func (driver *CaddyGatewayDriver) applyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	if err := desired.Validate(); err != nil {
 		return err
 	}
@@ -147,6 +154,8 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 }
 
 func (driver *CaddyGatewayDriver) ApplyRoute(ctx context.Context, route gateway.Route) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
 	driver.mu.RLock()
 	next := driver.state.Sorted()
 	certificates := append([]gateway.Certificate(nil), driver.certificates...)
@@ -166,10 +175,12 @@ func (driver *CaddyGatewayDriver) ApplyRoute(ctx context.Context, route gateway.
 	} else {
 		next.Revision++
 	}
-	return driver.ApplyConfiguration(ctx, next, certificates)
+	return driver.applyConfiguration(ctx, next, certificates)
 }
 
 func (driver *CaddyGatewayDriver) DeleteRoute(ctx context.Context, routeID string) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
 	driver.mu.RLock()
 	current := driver.state.Sorted()
 	certificates := append([]gateway.Certificate(nil), driver.certificates...)
@@ -185,13 +196,19 @@ func (driver *CaddyGatewayDriver) DeleteRoute(ctx context.Context, routeID strin
 	} else {
 		next.Revision++
 	}
-	return driver.ApplyConfiguration(ctx, next, certificates)
+	return driver.applyConfiguration(ctx, next, certificates)
 }
 
 func (driver *CaddyGatewayDriver) ListRoutes(context.Context) ([]gateway.Route, error) {
 	driver.mu.RLock()
 	defer driver.mu.RUnlock()
 	return driver.state.Sorted().Routes, nil
+}
+
+func (driver *CaddyGatewayDriver) CurrentConfiguration() (gateway.DesiredState, []gateway.Certificate) {
+	driver.mu.RLock()
+	defer driver.mu.RUnlock()
+	return driver.state.Sorted(), append([]gateway.Certificate(nil), driver.certificates...)
 }
 
 func (driver *CaddyGatewayDriver) GetRouteStatus(ctx context.Context, routeID string) (string, error) {

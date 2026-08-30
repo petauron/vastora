@@ -113,6 +113,25 @@ func (s *Store) ValidateSession(ctx context.Context, sessionToken, csrfToken str
 	return nil
 }
 
+func (s *Store) SessionAdminID(ctx context.Context, sessionToken string) (string, error) {
+	if sessionToken == "" {
+		return "", errors.New("center: authentication required")
+	}
+	var adminID, expiresAt string
+	err := s.db.QueryRowContext(ctx, `SELECT admin_id, expires_at FROM sessions WHERE token_hash = ?`, tokenHash(sessionToken)).Scan(&adminID, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", errors.New("center: session is invalid")
+	}
+	if err != nil {
+		return "", fmt.Errorf("center: read session identity: %w", err)
+	}
+	expires, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil || !expires.After(s.now()) {
+		return "", errors.New("center: session has expired")
+	}
+	return adminID, nil
+}
+
 func (s *Store) Logout(ctx context.Context, sessionToken string) error {
 	if sessionToken == "" {
 		return errors.New("center: authentication required")

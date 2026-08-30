@@ -24,7 +24,11 @@ import (
 
 var Version = "0.1.0-dev"
 
-const maxDeferredTaskAttempts int64 = 4
+const (
+	maxDeferredTaskAttempts int64 = 4
+	taskLeaseRenewInterval        = time.Minute
+	taskControlTimeout            = 15 * time.Second
+)
 
 type Client struct {
 	HTTPClient         *http.Client
@@ -49,7 +53,14 @@ type TailscaleIsolationDesiredState struct {
 
 type HostDecommissioner interface {
 	Prepare(context.Context, bool) error
-	ScheduleFinalRemoval(context.Context, bool) error
+	ScheduleFinalRemoval(context.Context, HostDecommissionRequest) error
+}
+
+type HostDecommissionRequest struct {
+	TaskID     string
+	Attempt    int64
+	DeleteData bool
+	Connection Connection
 }
 
 // deferredTaskCompletionError leaves the Center task lease active so the same
@@ -234,6 +245,7 @@ type RealityCommandResult struct {
 	CompanionTag       string `json:"companionTag,omitempty"`
 	CompanionPort      int    `json:"companionPort,omitempty"`
 	GuardStatus        string `json:"guardStatus"`
+	ProxyProtocol      bool   `json:"proxyProtocol"`
 	ConnectHostname    string `json:"connectHostname"`
 	ShareURI           string `json:"shareUri"`
 	InboundTag         string `json:"inboundTag"`
@@ -387,10 +399,6 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if strings.TrimSpace(enrollmentToken) == "" {
 		return Enrollment{}, errors.New("agent: enrollment token is required")
 	}
-	privateKey, publicKey, err := controlplane.GenerateKeyPair()
-	if err != nil {
-		return Enrollment{}, err
-	}
 	caFingerprint = normalizeCAFingerprint(caFingerprint)
 	if caFingerprint == "" && !loopbackCenterURL(baseURL) {
 		caFingerprint, err = c.probeCenterCAFingerprint(ctx, baseURL)
@@ -401,28 +409,38 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if err := validateCAFingerprint(baseURL, caFingerprint); err != nil {
 		return Enrollment{}, err
 	}
+	operation, err := store.BeginEnrollmentOperation(ctx, baseURL, enrollmentToken, caFingerprint, replace)
+	if err != nil {
+		return Enrollment{}, err
+	}
+	if operation.Phase != "enrollment_pending" {
+		return store.EnrollmentForInstallOperation(ctx)
+	}
+	publicKey, err := controlplane.PublicKey(operation.PrivateKey)
+	if err != nil {
+		return Enrollment{}, errors.New("agent: stored enrollment identity is invalid")
+	}
 	var response Enrollment
 	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]any{
-		"token": enrollmentToken, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH, "publicKey": publicKey,
+		"token": operation.Token, "operationId": operation.OperationID, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH, "publicKey": publicKey,
 	}, "", caFingerprint, &response); err != nil {
 		return Enrollment{}, err
 	}
 	if response.ID == "" || response.Credential == "" || strings.TrimSpace(response.Name) == "" || len(response.Roles) == 0 {
 		return Enrollment{}, errors.New("agent: Center returned an incomplete enrollment response")
 	}
-	connection := Connection{AgentID: response.ID, Name: response.Name, CenterURL: baseURL, Credential: response.Credential, PrivateKey: privateKey, CAFingerprint: caFingerprint}
-	if replace {
-		err = store.ReplaceConnection(ctx, connection)
-	} else {
-		err = store.SaveConnection(ctx, connection)
-	}
-	if err != nil {
+	if err := store.CompleteEnrollmentOperation(ctx, operation, response); err != nil {
 		return Enrollment{}, err
 	}
 	return response, nil
 }
 
 func (c Client) Heartbeat(ctx context.Context, store *Store) error {
+	if c.GatewayDriver != nil {
+		if err := store.requireGatewayStartup(); err != nil {
+			return err
+		}
+	}
 	_, err := c.heartbeat(ctx, store)
 	return err
 }
@@ -444,10 +462,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, err
 	}
-	gatewayHealthy := false
-	if c.GatewayDriver != nil {
-		gatewayHealthy = c.GatewayDriver.Health(ctx) == nil
-	}
+	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver)
 	candidates, err := networking.Discover(time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
@@ -471,6 +486,8 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"publicKey": publicKey,
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
+		"gatewayRevision":              gatewayRevision,
+		"gatewayConfigHash":            gatewayConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           c.TailscaleOwnership,
@@ -682,11 +699,14 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 	if interval < time.Second {
 		interval = 15 * time.Second
 	}
-	restoreContext, restoreCancel := context.WithTimeout(ctx, 5*time.Minute)
-	if gatewayErr := restoreGatewayState(restoreContext, store, c.GatewayDriver); gatewayErr != nil && report != nil {
-		report(gatewayErr)
+	if c.GatewayDriver != nil {
+		if err := store.requireGatewayStartup(); err != nil {
+			if report != nil {
+				report(err)
+			}
+			return
+		}
 	}
-	restoreCancel()
 	startup := true
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -716,10 +736,41 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 }
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
+	if c.GatewayDriver != nil {
+		if err := store.requireGatewayStartup(); err != nil {
+			if report != nil {
+				report(err)
+			}
+			return
+		}
+	}
 	var lastMaintenance time.Time
 	var lastRestore time.Time
 	restorePending := true
 	for {
+		completionContext, completionCancel := freshTaskControlContext(ctx)
+		pendingCompletion, completionErr := store.PendingTaskCompletion(completionContext)
+		completionCancel()
+		if completionErr != nil {
+			if report != nil && ctx.Err() == nil {
+				report(completionErr)
+			}
+			if !waitForTaskRetry(ctx) {
+				return
+			}
+			continue
+		}
+		if pendingCompletion != nil {
+			if err := c.deliverTaskCompletion(ctx, store, *pendingCompletion); err != nil {
+				if report != nil && ctx.Err() == nil {
+					report(err)
+				}
+				if !waitForTaskRetry(ctx) {
+					return
+				}
+			}
+			continue
+		}
 		if restorePending {
 			receiptTaskID, receiptKind, receiptErr := store.UnresolvedApplicationTaskReceipt(ctx)
 			if receiptErr != nil {
@@ -749,9 +800,7 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 						report(err)
 					}
 				} else if task != nil {
-					requestContext, requestCancel := context.WithTimeout(ctx, 5*time.Minute)
-					c.processTask(requestContext, store, *task, report)
-					requestCancel()
+					c.processTaskWithLease(ctx, store, *task, report)
 				}
 				continue
 			}
@@ -808,9 +857,66 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		if task == nil {
 			continue
 		}
-		requestContext, requestCancel := context.WithTimeout(ctx, 5*time.Minute)
-		c.processTask(requestContext, store, *task, report)
-		requestCancel()
+		c.processTaskWithLease(ctx, store, *task, report)
+	}
+}
+
+func freshTaskControlContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), taskControlTimeout)
+}
+
+func (c Client) deliverTaskCompletion(parent context.Context, store *Store, completion TaskCompletion) error {
+	deliveryContext, deliveryCancel := freshTaskControlContext(parent)
+	err := c.sendTaskCompletion(deliveryContext, store, completion)
+	deliveryCancel()
+	if err != nil {
+		return err
+	}
+	acknowledgeContext, acknowledgeCancel := freshTaskControlContext(parent)
+	err = store.AcknowledgeTaskCompletion(acknowledgeContext, completion.TaskID)
+	acknowledgeCancel()
+	return err
+}
+
+func (c Client) processTaskWithLease(parent context.Context, store *Store, task DeploymentTask, report func(error)) {
+	c.processTaskWithLeaseInterval(parent, store, task, report, taskLeaseRenewInterval)
+}
+
+func (c Client) processTaskWithLeaseInterval(parent context.Context, store *Store, task DeploymentTask, report func(error), interval time.Duration) {
+	executionContext, cancelExecution := context.WithCancel(parent)
+	renewalResult := make(chan error, 1)
+	go func() {
+		err := c.renewTaskLeaseLoop(executionContext, store, task, interval)
+		if err != nil {
+			cancelExecution()
+		}
+		renewalResult <- err
+	}()
+	c.processTask(executionContext, store, task, report)
+	cancelExecution()
+	if err := <-renewalResult; err != nil && parent.Err() == nil && report != nil {
+		report(err)
+	}
+}
+
+func (c Client) renewTaskLeaseLoop(ctx context.Context, store *Store, task DeploymentTask, interval time.Duration) error {
+	if interval <= 0 {
+		return errors.New("agent: task lease renewal interval must be positive")
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			requestContext, cancel := context.WithTimeout(ctx, taskControlTimeout)
+			err := c.renewTaskLease(requestContext, store, task.ID, task.Attempt)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("agent: renew task lease: %w", err)
+			}
+		}
 	}
 }
 
@@ -824,7 +930,9 @@ func waitForTaskRetry(ctx context.Context) bool {
 }
 
 func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTask, report func(error)) {
-	storedCompletion, receiptErr := store.PrepareTaskReceipt(ctx, task)
+	receiptContext, receiptCancel := freshTaskControlContext(ctx)
+	storedCompletion, receiptErr := store.PrepareTaskReceipt(receiptContext, task)
+	receiptCancel()
 	if receiptErr != nil {
 		if report != nil {
 			report(receiptErr)
@@ -832,22 +940,19 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		return
 	}
 	if storedCompletion != nil {
-		if err := c.sendTaskCompletion(ctx, store, *storedCompletion); err != nil {
+		if err := c.deliverTaskCompletion(ctx, store, *storedCompletion); err != nil {
 			if report != nil {
 				report(err)
 			}
-			return
-		}
-		if err := store.AcknowledgeTaskCompletion(ctx, task.ID); err != nil && report != nil {
-			report(err)
 		}
 		return
 	}
 	var result ApplicationTaskResult
 	var err error
+	decommissionHandedOff := false
 	switch task.Kind {
 	case "application.apply":
-		if task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 		} else if c.Executor == nil {
 			err = errors.New("agent: application capability is not configured")
@@ -901,7 +1006,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			}
 		} else {
 			var commandResult ThreeXUIControllerCommandResult
-			commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, *task.ControllerCommand)
+			commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, task.ID, *task.ControllerCommand)
 			if err == nil {
 				result.ControllerCommand = &commandResult
 			}
@@ -915,18 +1020,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	case "gateway.component.apply":
 		if c.GatewayProvisioner == nil || !c.Capabilities.Gateway {
 			err = errors.New("agent: gateway provisioning capability is not configured")
-		} else if task.Operation == "running" {
-			err = c.GatewayProvisioner.Ensure(ctx)
-			if err == nil {
-				err = waitForGateway(ctx, c.GatewayDriver)
-			}
-		} else if task.Operation == "stopped" {
-			err = c.GatewayProvisioner.Remove(ctx)
-			if err == nil {
-				err = store.ClearGatewayState(ctx)
-			}
 		} else {
-			err = errors.New("agent: invalid gateway component operation")
+			store.gatewayMutationMu.Lock()
+			if task.Operation == "running" {
+				err = c.GatewayProvisioner.Ensure(ctx)
+				if err == nil {
+					err = waitForGateway(ctx, c.GatewayDriver)
+				}
+			} else if task.Operation == "stopped" {
+				err = c.GatewayProvisioner.Remove(ctx)
+				if err == nil {
+					err = store.ClearGatewayState(ctx)
+				}
+			} else {
+				err = errors.New("agent: invalid gateway component operation")
+			}
+			store.gatewayMutationMu.Unlock()
 		}
 	case "tunnel.state.apply":
 		if c.TunnelProvisioner == nil || !c.Capabilities.Tunnel || task.TunnelState == nil {
@@ -938,10 +1047,20 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		if c.Decommissioner == nil {
 			err = errors.New("agent: host decommission capability is not configured")
 		} else if err = c.Decommissioner.Prepare(ctx, task.DeleteData); err == nil {
-			err = c.Decommissioner.ScheduleFinalRemoval(ctx, task.DeleteData)
+			var connection Connection
+			connection, err = store.Connection(ctx)
+			if err == nil {
+				err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, Connection: connection})
+				decommissionHandedOff = err == nil
+			}
 		}
 	default:
 		err = errors.New("agent: unsupported task kind")
+	}
+	if decommissionHandedOff {
+		// The persistent host helper owns the terminal result. A successful
+		// schedule is not evidence that host cleanup itself has completed.
+		return
 	}
 	if task.Kind == "application.apply" && task.Operation != "uninstall" && len(result.GeneratedSecrets) != 0 {
 		merged, mergeErr := mergeGeneratedSecrets(task.Secrets, result.GeneratedSecrets)
@@ -956,13 +1075,17 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		err = deferTaskUntilReconciled(err)
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+		persistContext, persistCancel := freshTaskControlContext(ctx)
+		_, err = store.RecordApplied(persistContext, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+		persistCancel()
 		if err != nil && committedThreeXUI {
 			err = deferTaskUntilReconciled(err)
 		}
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation == "uninstall" {
-		err = store.RemoveApplied(ctx, task.AppKey)
+		persistContext, persistCancel := freshTaskControlContext(ctx)
+		err = store.RemoveApplied(persistContext, task.AppKey)
+		persistCancel()
 	}
 	if taskCompletionShouldBeDeferred(err, task.Attempt) {
 		// Do not turn an uncertain compensation into a terminal failure. Center's
@@ -978,18 +1101,19 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if task.Kind == "application.apply" {
 		completion.ApplicationRuntimeGeneration = platform.ApplicationRuntimeGeneration
 	}
-	if completionErr := store.RecordTaskCompletion(ctx, completion); completionErr != nil {
+	completionContext, completionCancel := freshTaskControlContext(ctx)
+	completionErr := store.RecordTaskCompletion(completionContext, completion)
+	completionCancel()
+	if completionErr != nil {
 		if report != nil {
 			report(completionErr)
 		}
 		return
 	}
-	if completeErr := c.sendTaskCompletion(ctx, store, completion); completeErr != nil {
+	if completeErr := c.deliverTaskCompletion(ctx, store, completion); completeErr != nil {
 		if report != nil {
 			report(completeErr)
 		}
-	} else if acknowledgeErr := store.AcknowledgeTaskCompletion(ctx, task.ID); acknowledgeErr != nil && report != nil {
-		report(acknowledgeErr)
 	}
 	if err != nil && report != nil {
 		report(errors.New(safeTaskError(err)))
@@ -1099,6 +1223,39 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 		payload["error"] = deploymentErr.Error()
 	}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+// BeginHostDecommission transfers responsibility for a claimed cleanup from
+// the short Agent task lease to the persistent host helper.
+func (c Client) BeginHostDecommission(ctx context.Context, connection Connection, taskID string, attempt int64) error {
+	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+		return errors.New("agent: invalid host decommission handoff")
+	}
+	payload := map[string]any{"taskId": taskID, "attempt": attempt}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/decommission/start", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+// CompleteHostDecommission reports the actual helper outcome without relying
+// on Agent state that the helper has already removed.
+func (c Client) CompleteHostDecommission(ctx context.Context, connection Connection, taskID string, attempt int64, cleanupErr error) error {
+	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+		return errors.New("agent: invalid host decommission completion")
+	}
+	payload := map[string]any{"attempt": attempt, "succeeded": cleanupErr == nil, "error": safeTaskError(cleanupErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string, attempt int64) error {
+	connection, err := store.Connection(ctx)
+	if err != nil {
+		return err
+	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"attempt": attempt}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/lease", payload, connection.Credential, connection.CAFingerprint, nil)
 }
 
 func (c Client) post(ctx context.Context, endpoint string, payload any, credential, caFingerprint string, target any) error {

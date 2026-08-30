@@ -26,11 +26,11 @@ case "$install_dir" in
   /*) ;;
   *) echo "The installation directory must be absolute." >&2; exit 2 ;;
 esac
-if [ ! -f "$install_dir/.env" ] || [ ! -f "$install_dir/compose.yaml" ]; then
+if [ ! -f "$install_dir/.env" ] || [ ! -f "$install_dir/compose.yaml" ] || [ ! -f "$install_dir/release.env" ]; then
   echo "$install_dir is not a complete Center installation." >&2
   exit 1
 fi
-for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh runtime-network.sh compose.yaml release.env; do
+for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk runtime-network.sh compose.yaml release.env; do
   if [ ! -f "$source_dir/$required_file" ]; then
     echo "The upgrade bundle is incomplete: missing $required_file" >&2
     exit 1
@@ -54,6 +54,17 @@ fi
 
 new_image="$(awk -F= '$1 == "VASTORA_CENTER_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' "$source_dir/release.env")"
 new_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$source_dir/release.env")"
+installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+for candidate_version in "$new_version" "$installed_version"; do
+  if ! printf '%s\n' "$candidate_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+    echo "The upgrade requires valid installed and target Center versions." >&2
+    exit 2
+  fi
+done
+if [ "$(awk -f "$source_dir/compare-semver.awk" "$new_version" "$installed_version")" = "-1" ]; then
+  echo "Refusing to downgrade Center from $installed_version to $new_version; no files were changed." >&2
+  exit 1
+fi
 case "$new_image" in
   *@sha256:????????????????????????????????????????????????????????????????) ;;
   *) echo "The release image is not pinned by a complete sha256 digest." >&2; exit 2 ;;
@@ -78,7 +89,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' vastora-gateway-haproxy 2>/dev/nu
 fi
 
 restore_files() {
-  for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh runtime-network.sh compose.yaml release.env .env; do
+  for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk runtime-network.sh compose.yaml release.env .env; do
     if [ -f "$backup_dir/$relative" ]; then
       install -d -m 0755 "$(dirname "$install_dir/$relative")"
       install -m 0644 "$backup_dir/$relative" "$install_dir/$relative"
@@ -208,7 +219,7 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
 	echo "Co-located Agent updated to $new_version on the host-only Center channel."
 fi
 
-for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh runtime-network.sh compose.yaml release.env .env; do
+for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk runtime-network.sh compose.yaml release.env .env; do
   if [ -f "$install_dir/$relative" ]; then
     install -d -m 0755 "$(dirname "$backup_dir/$relative")"
     install -m 0644 "$install_dir/$relative" "$backup_dir/$relative"
@@ -222,6 +233,7 @@ install -m 0755 "$source_dir/uninstall.sh" "$install_dir/uninstall.sh"
 install -m 0755 "$source_dir/install-host-cli.sh" "$install_dir/install-host-cli.sh"
 install -m 0755 "$source_dir/install-update-service.sh" "$install_dir/install-update-service.sh"
 install -m 0755 "$source_dir/update-center.sh" "$install_dir/update-center.sh"
+install -m 0644 "$source_dir/compare-semver.awk" "$install_dir/compare-semver.awk"
 install -m 0644 "$source_dir/runtime-network.sh" "$install_dir/runtime-network.sh"
 install -m 0644 "$source_dir/compose.yaml" "$install_dir/compose.yaml"
 install -m 0644 "$source_dir/release.env" "$install_dir/release.env"

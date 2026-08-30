@@ -54,12 +54,22 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		defer store.Close()
-		existing, connectionErr := store.Connection(context.Background())
-		if connectionErr == nil && !*replaceExisting {
+		hasConnection, err := store.HasConnection(context.Background())
+		if err != nil {
+			return err
+		}
+		operation, operationExists, operationErr := store.InstallOperation(context.Background())
+		if operationErr != nil {
+			return operationErr
+		}
+		if hasConnection && !*replaceExisting && !operationExists {
 			return errors.New("agent is already installed; use agent update or agent configure")
 		}
-		if connectionErr != nil && *replaceExisting {
+		if !hasConnection && *replaceExisting && !operationExists {
 			return errors.New("agent cannot replace a Center enrollment because no existing enrollment was found")
+		}
+		if operationExists && operation.ReplaceExisting != *replaceExisting {
+			return errors.New("agent installation is incomplete; rerun it with the original replacement choice")
 		}
 		token, err := readPrivateToken(*tokenFile)
 		if err != nil {
@@ -75,32 +85,18 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		rollback := func(cause error) error {
-			if !*replaceExisting {
-				return cause
-			}
-			if rollbackErr := store.ReplaceConnection(context.Background(), existing); rollbackErr != nil {
-				return fmt.Errorf("%w; additionally failed to restore the previous Center connection: %v", cause, rollbackErr)
-			}
-			return cause
-		}
 		roles, capabilities, err := validatedNodeRuntime(strings.Join(enrollment.Roles, ","), nodeCapabilitiesString(enrollment.Capabilities))
 		if err != nil {
-			return rollback(fmt.Errorf("center returned an invalid Agent profile: %w", err))
+			return fmt.Errorf("center returned an invalid Agent profile: %w", err)
 		}
 		executable, err := os.Executable()
 		if err != nil {
-			return rollback(fmt.Errorf("locate vastora executable: %w", err))
+			return fmt.Errorf("locate vastora executable: %w", err)
 		}
-		if err := installSystemdAgent(executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities)); err != nil {
-			return rollback(err)
+		if err := resumeSystemdAgentInstall(context.Background(), store, executable, *dataDir, strings.Join(roles, ","), nodeCapabilitiesString(capabilities), *replaceExisting, defaultAgentSystemdInstallEnvironment()); err != nil {
+			return err
 		}
 		if *replaceExisting {
-			if output, restartErr := exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput(); restartErr != nil {
-				cause := rollback(fmt.Errorf("restart migrated Agent service: %s: %w", strings.TrimSpace(string(output)), restartErr))
-				_, _ = exec.Command("systemctl", "restart", "vastora-agent.service").CombinedOutput()
-				return cause
-			}
 			fmt.Printf("Agent %s moved to the new Center and restarted\n", enrollment.Name)
 			return nil
 		}
@@ -118,6 +114,25 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		fmt.Printf("Agent: %s\nCenter: %s\nAgent ID: %s\n", connection.Name, connection.CenterURL, connection.AgentID)
+		return nil
+	case "install-state":
+		flags := flag.NewFlagSet("agent install-state", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		operation, exists, err := agent.InspectInstallOperation(*dataDir)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			fmt.Println("none")
+		} else if operation.ReplaceExisting {
+			fmt.Println("replace")
+		} else {
+			fmt.Println("fresh")
+		}
 		return nil
 	case "configure":
 		flags := flag.NewFlagSet("agent configure", flag.ContinueOnError)
@@ -254,6 +269,34 @@ func runAgent(arguments []string) error {
 		}
 		fmt.Println("Vastora Agent and its managed host state were removed")
 		return nil
+	case "finish-decommission":
+		flags := flag.NewFlagSet("agent finish-decommission", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		operationFile := flags.String("operation-file", hostDecommissionOperationPath, "internal: protected host cleanup operation")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("invalid persistent host cleanup command")
+		}
+		if err := requireLinuxRoot("agent finish-decommission"); err != nil {
+			return err
+		}
+		return runPersistentHostDecommission(context.Background(), *operationFile)
+	case "cleanup-decommission":
+		flags := flag.NewFlagSet("agent cleanup-decommission", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		operationFile := flags.String("operation-file", hostDecommissionOperationPath, "internal: protected host cleanup operation")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("invalid persistent host cleanup finalizer")
+		}
+		if err := requireLinuxRoot("agent cleanup-decommission"); err != nil {
+			return err
+		}
+		return cleanPersistentHostDecommission(*operationFile)
 	case "enroll":
 		flags := flag.NewFlagSet("agent enroll", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -280,6 +323,9 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
+		if err := store.CompleteEnrollmentOnlyOperation(context.Background()); err != nil {
+			return err
+		}
 		fmt.Printf("Agent %s enrolled with %s\n", enrollment.Name, *centerURL)
 		return nil
 	case "init":
@@ -299,6 +345,51 @@ func runAgent(arguments []string) error {
 		defer store.Close()
 		fmt.Printf("Agent state initialized at %s\n", *dataDir)
 		return nil
+	case "switch-control-plane":
+		if len(arguments) < 2 {
+			return errors.New("agent switch-control-plane action is required")
+		}
+		flags := flag.NewFlagSet("agent switch-control-plane "+arguments[1], flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		targetCenterURL := flags.String("target-center-url", "", "requested Center URL")
+		tailscaleOwnership := flags.String("tailscale-ownership", "", "Tailscale ownership after a successful switch")
+		tailscaleEnrolled := flags.Bool("tailscale-enrolled", false, "record a successful private-network enrollment")
+		if err := flags.Parse(arguments[2:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent switch-control-plane"); err != nil {
+			return err
+		}
+		environment := defaultControlPlaneSwitchEnvironment(*dataDir)
+		switch arguments[1] {
+		case "begin":
+			if *targetCenterURL == "" || flags.NArg() != 0 {
+				return errors.New("usage: vastora agent switch-control-plane begin --target-center-url URL")
+			}
+			complete, err := beginControlPlaneSwitch(context.Background(), *dataDir, *targetCenterURL, environment)
+			if err != nil {
+				return err
+			}
+			if complete {
+				fmt.Println("complete")
+			} else {
+				fmt.Println("pending")
+			}
+			return nil
+		case "rollback":
+			if flags.NArg() != 0 {
+				return errors.New("usage: vastora agent switch-control-plane rollback")
+			}
+			return rollbackControlPlaneSwitch(context.Background(), *dataDir, environment)
+		case "commit":
+			if *tailscaleOwnership == "" || flags.NArg() != 0 {
+				return errors.New("usage: vastora agent switch-control-plane commit --tailscale-ownership auto|managed|external|none")
+			}
+			return commitControlPlaneSwitch(*dataDir, *tailscaleOwnership, *tailscaleEnrolled, environment)
+		default:
+			return errors.New("agent switch-control-plane action must be begin, rollback, or commit")
+		}
 	case "prepare-tailscale":
 		flags := flag.NewFlagSet("agent prepare-tailscale", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -426,6 +517,12 @@ func runAgent(arguments []string) error {
 			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
 		}
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		restoreContext, restoreCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		err = client.PrepareGatewayStartup(restoreContext, store)
+		restoreCancel()
+		if err != nil {
+			return fmt.Errorf("restore Gateway before starting the Agent control plane: %w", err)
+		}
 		if err := client.Heartbeat(context.Background(), store); err != nil {
 			controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 		}
@@ -606,6 +703,123 @@ func agentUpdateEndpoint(connection agent.Connection, operatingSystem, architect
 }
 
 const vastoraAgentUnitPath = "/etc/systemd/system/vastora-agent.service"
+
+type agentSystemdInstallEnvironment struct {
+	unitPath     string
+	readFile     func(string) ([]byte, error)
+	writeFile    func(string, []byte, os.FileMode) error
+	rename       func(string, string) error
+	runSystemctl func(...string) ([]byte, error)
+	verify       func(context.Context, *agent.Store, string, string) error
+}
+
+func defaultAgentSystemdInstallEnvironment() agentSystemdInstallEnvironment {
+	return agentSystemdInstallEnvironment{
+		unitPath:  vastoraAgentUnitPath,
+		readFile:  os.ReadFile,
+		writeFile: os.WriteFile,
+		rename:    os.Rename,
+		runSystemctl: func(arguments ...string) ([]byte, error) {
+			return exec.Command("systemctl", arguments...).CombinedOutput()
+		},
+		verify: func(ctx context.Context, store *agent.Store, rolesValue, capabilitiesValue string) error {
+			roles, capabilities, err := validatedNodeRuntime(rolesValue, capabilitiesValue)
+			if err != nil {
+				return err
+			}
+			verifyContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			return (agent.Client{Roles: roles, Capabilities: capabilities}).Heartbeat(verifyContext, store)
+		},
+	}
+}
+
+func resumeSystemdAgentInstall(ctx context.Context, store *agent.Store, executable, dataDir, roles, capabilities string, replace bool, environment agentSystemdInstallEnvironment) error {
+	executable, err := filepath.Abs(executable)
+	if err != nil {
+		return fmt.Errorf("resolve executable path: %w", err)
+	}
+	dataDir, err = filepath.Abs(dataDir)
+	if err != nil {
+		return fmt.Errorf("resolve Agent data path: %w", err)
+	}
+	for {
+		operation, exists, err := store.InstallOperation(ctx)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return errors.New("agent: resumable installation operation is missing")
+		}
+		fail := func(cause error) error {
+			store.RecordInstallOperationError(context.WithoutCancel(ctx), cause)
+			return cause
+		}
+		switch operation.Phase {
+		case "enrolled":
+			unit := systemdAgentUnit(executable, dataDir, roles, capabilities)
+			if existing, readErr := environment.readFile(environment.unitPath); readErr == nil && !strings.Contains(string(existing), "Description=Vastora Agent") {
+				return fail(errors.New("refusing to replace an unrelated vastora-agent.service"))
+			} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return fail(fmt.Errorf("inspect systemd service: %w", readErr))
+			}
+			temporary := environment.unitPath + ".tmp"
+			if err := environment.writeFile(temporary, []byte(unit), 0o644); err != nil {
+				return fail(fmt.Errorf("write systemd service: %w", err))
+			}
+			if err := environment.rename(temporary, environment.unitPath); err != nil {
+				return fail(fmt.Errorf("install systemd service: %w", err))
+			}
+			if err := store.AdvanceInstallOperation(ctx, "enrolled", "unit_written"); err != nil {
+				return fail(err)
+			}
+		case "unit_written":
+			if output, err := environment.runSystemctl("daemon-reload"); err != nil {
+				return fail(fmt.Errorf("reload systemd: %s: %w", strings.TrimSpace(string(output)), err))
+			}
+			if err := store.AdvanceInstallOperation(ctx, "unit_written", "reloaded"); err != nil {
+				return fail(err)
+			}
+		case "reloaded":
+			if output, err := environment.runSystemctl("enable", "vastora-agent.service"); err != nil {
+				return fail(fmt.Errorf("enable Agent service: %s: %w", strings.TrimSpace(string(output)), err))
+			}
+			if err := store.AdvanceInstallOperation(ctx, "reloaded", "enabled"); err != nil {
+				return fail(err)
+			}
+		case "enabled":
+			action := "start"
+			if replace {
+				action = "restart"
+			}
+			if output, err := environment.runSystemctl(action, "vastora-agent.service"); err != nil {
+				return fail(fmt.Errorf("%s Agent service: %s: %w", action, strings.TrimSpace(string(output)), err))
+			}
+			if err := store.AdvanceInstallOperation(ctx, "enabled", "started"); err != nil {
+				return fail(err)
+			}
+		case "started":
+			if environment.verify == nil {
+				return fail(errors.New("verify Agent Center connection: verifier is required"))
+			}
+			if err := environment.verify(ctx, store, roles, capabilities); err != nil {
+				return fail(fmt.Errorf("verify Agent heartbeat with the requested Center: %w", err))
+			}
+			if err := store.AdvanceInstallOperation(ctx, "started", "healthy"); err != nil {
+				return fail(err)
+			}
+		case "healthy":
+			if replace {
+				return nil
+			}
+			return store.CompleteInstallOperation(ctx)
+		case "enrollment_pending":
+			return fail(errors.New("agent: enrollment must complete before systemd installation"))
+		default:
+			return fail(errors.New("agent: stored installation phase is invalid"))
+		}
+	}
+}
 
 func installSystemdAgent(executable, dataDir, roles, capabilities string) error {
 	executable, err := filepath.Abs(executable)

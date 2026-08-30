@@ -45,6 +45,10 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 	defer store.Close()
 	store.cloudflareOAuth = cloudflareOAuthConfig{APIURL: cloudflare.URL, HTTPClient: cloudflare.Client()}
 	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "saved-access-token", RefreshToken: "saved-refresh-token", ExpiresAt: time.Now().Add(time.Hour)})
+	oldDNS, _ := json.Marshal([]SetupDNSRecord{{ID: "old-headscale-record", Type: "A", Name: "headscale.vastora.old.example.com", Content: "203.0.113.10"}})
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES('cloudflare_setup_dns_records', ?)`, string(oldDNS)); err != nil {
+		t.Fatal(err)
+	}
 	store.discoverNetworkCandidates = func(time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{{Address: "100.64.0.1", Interface: "tailscale0", Kind: networking.KindHeadscale}}, nil
 	}

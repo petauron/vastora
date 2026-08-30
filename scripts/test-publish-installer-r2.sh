@@ -12,9 +12,15 @@ fake_r2="$temporary_dir/r2"
 source_dir="$temporary_dir/dist"
 bundle_dir="$temporary_dir/bundle"
 mkdir -p "$fake_bin" "$fake_r2/objects" "$source_dir" "$bundle_dir"
-printf 'VASTORA_VERSION=0.1.0-test\n' > "$bundle_dir/release.env"
-tar -czf "$source_dir/vastora-center-install.tar.gz" -C "$bundle_dir" .
-(cd "$source_dir" && sha256sum vastora-center-install.tar.gz > vastora-center-install.tar.gz.sha256)
+
+create_bundle() {
+  bundle_version="$1"
+  bundle_content="$2"
+  printf 'VASTORA_VERSION=%s\n' "$bundle_version" > "$bundle_dir/release.env"
+  printf '%s\n' "$bundle_content" > "$bundle_dir/content.txt"
+  tar -czf "$source_dir/vastora-center-install.tar.gz" -C "$bundle_dir" .
+  (cd "$source_dir" && sha256sum vastora-center-install.tar.gz > vastora-center-install.tar.gz.sha256)
+}
 
 cat > "$fake_bin/aws" <<'EOF'
 #!/bin/sh
@@ -44,7 +50,10 @@ object="$FAKE_R2_DIR/objects/$key"
 meta="$FAKE_R2_DIR/metadata/$key"
 case "$operation" in
   head-object)
-    [ -f "$object" ] || exit 254
+    if [ ! -f "$object" ]; then
+      echo 'An error occurred (404) when calling the HeadObject operation: Not Found' >&2
+      exit 254
+    fi
     digest="$(cat "$meta")"
     if [ -n "$query" ]; then
       printf '%s\n' "$digest"
@@ -73,7 +82,8 @@ export FAKE_R2_DIR="$fake_r2"
 export PATH="$fake_bin:$PATH"
 endpoint="https://0123456789abcdef0123456789abcdef.r2.cloudflarestorage.com"
 bucket="petauron-downloads"
-version="0.1.0-test"
+version="0.1.0-alpha.10"
+create_bundle "$version" initial
 
 "$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null
 manifest="$fake_r2/objects/vastora/releases/v$version/manifest.json"
@@ -84,10 +94,26 @@ jq -e --arg version "$version" '.schema == 1 and .version == $version and (.asse
 "$script_dir/publish-installer-r2.sh" activate --version "$version" --bucket "$bucket" --endpoint "$endpoint" >/dev/null
 cmp -s "$manifest" "$fake_r2/objects/vastora/releases/v$version/activated.json"
 cmp -s "$manifest" "$fake_r2/objects/vastora/current.json"
+"$script_dir/publish-installer-r2.sh" activate --version "$version" --bucket "$bucket" --endpoint "$endpoint" >/dev/null
 
-printf 'changed\n' > "$bundle_dir/content.txt"
-tar -czf "$source_dir/vastora-center-install.tar.gz" -C "$bundle_dir" .
-(cd "$source_dir" && sha256sum vastora-center-install.tar.gz > vastora-center-install.tar.gz.sha256)
+current_digest="$(sha256sum "$fake_r2/objects/vastora/current.json" | awk 'NR == 1 {print $1}')"
+downgrade_version="0.1.0-alpha.9"
+create_bundle "$downgrade_version" downgrade
+"$script_dir/publish-installer-r2.sh" stage --version "$downgrade_version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null
+if "$script_dir/publish-installer-r2.sh" activate --version "$downgrade_version" --bucket "$bucket" --endpoint "$endpoint" >/dev/null 2>&1; then
+  echo "R2 publication moved the current release pointer backward." >&2
+  exit 1
+fi
+test "$(sha256sum "$fake_r2/objects/vastora/current.json" | awk 'NR == 1 {print $1}')" = "$current_digest"
+test ! -e "$fake_r2/objects/vastora/releases/v$downgrade_version/activated.json"
+
+newer_version="0.1.0-alpha.11"
+create_bundle "$newer_version" newer
+"$script_dir/publish-installer-r2.sh" stage --version "$newer_version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null
+"$script_dir/publish-installer-r2.sh" activate --version "$newer_version" --bucket "$bucket" --endpoint "$endpoint" >/dev/null
+jq -e --arg version "$newer_version" '.version == $version' "$fake_r2/objects/vastora/current.json" >/dev/null
+
+create_bundle "$version" changed
 if "$script_dir/publish-installer-r2.sh" stage --version "$version" --bucket "$bucket" --endpoint "$endpoint" --source-dir "$source_dir" --installer "$project_dir/install.sh" >/dev/null 2>&1; then
   echo "Immutable R2 release assets accepted changed content." >&2
   exit 1

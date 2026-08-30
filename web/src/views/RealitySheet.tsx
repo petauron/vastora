@@ -4,6 +4,7 @@ import { api } from "../api";
 import type { AppData, Application, ApplicationCommand, AgentView } from "../types";
 import type { Language } from "../translations";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
+import { clearSecretOperation, commandSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
 import { defaultRealityHostname } from "./appAccess";
 import { RegionCombobox, regionDisplayName } from "./RegionCombobox";
 import { bytesFromGB, dateInputValueInTimeZone, endOfDayEpochInTimeZone, InboundTrafficPlanFields, nextRenewalDateInTimeZone, SubscriptionTrafficPlanFields } from "./TrafficPlanFields";
@@ -40,6 +41,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
   const [verification, setVerification] = useState<ApplicationCommand | null>(null);
   const [shareURI, setShareURI] = useState("");
+	const [shareOperationKey, setShareOperationKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const baseline = useRef<RealityDraft>(emptyDraft());
@@ -76,6 +78,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     setCommand(null);
     setVerification(null);
     setShareURI("");
+		setShareOperationKey("");
     setBusy(false);
     setError("");
     let cancelled = false;
@@ -83,6 +86,14 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
 			if (cancelled || latest.state === "failed" && !latest.reconciliationRequired) return;
       setCommand(latest);
       setDraft((current) => ({ ...current, gatewayID: latest.gatewayNodeId, hostname: latest.hostname, dnsProvider: latest.dnsProvider }));
+			if (latest.resultAvailable) {
+				const operationKey = readSecretOperation(commandSecretScope(application.id, latest.id));
+				if (operationKey) void api.revealApplicationCommand(latest.id, operationKey).then((result) => {
+					if (cancelled) return;
+					setShareOperationKey(operationKey);
+					setShareURI(result.shareUri);
+				}).catch(() => { /* The durable result remains available for a later retry. */ });
+			}
       if (latest.state === "pending" || latest.state === "running") {
         void execute(() => Promise.resolve(latest), setCommand).catch((pollError) => setError(userError(language, pollError)));
       }
@@ -127,13 +138,31 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     setBusy(true);
     setError("");
     try {
-      setShareURI((await api.revealApplicationCommand(command.id)).shareUri);
-      setCommand({ ...command, resultAvailable: false });
+			const operationKey = secretOperation(commandSecretScope(command.applicationId, command.id));
+			setShareOperationKey(operationKey);
+			setShareURI((await api.revealApplicationCommand(command.id, operationKey)).shareUri);
     } catch (revealError) {
       setError(userError(language, revealError));
     } finally {
       setBusy(false);
     }
+	};
+
+	const acknowledgeShareURI = async () => {
+		if (!command || !shareOperationKey) return;
+		setBusy(true);
+		setError("");
+		try {
+			await api.acknowledgeApplicationCommand(command.id, shareOperationKey);
+			clearSecretOperation(commandSecretScope(command.applicationId, command.id));
+			setCommand({ ...command, resultAvailable: false });
+			setShareURI("");
+			setShareOperationKey("");
+		} catch (ackError) {
+			setError(userError(language, ackError));
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	const resumeReconciliation = async () => {
@@ -199,7 +228,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
         <SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle>
         <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、共享 443 网关和 DNS。", "Vastora is configuring 3x-ui, the shared 443 gateway, and DNS on the node.") : copy(language, "选择公网入口后，Vastora 会自动识别地区并生成标准节点名。", "After choosing a public entry, Vastora detects its region and creates a standard node name.")}</SheetDescription>
       </SheetHeader>
-		{command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
+		{command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onAcknowledge={() => void acknowledgeShareURI()} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
       {command ? <SheetFooter><Button onClick={requestClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
@@ -278,7 +307,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
   </form>;
 }
 
-function RealityResult({ busy, command, displayName, dnsProvider, error, gateway, language, onReveal, onRetry, shareURI }: { busy: boolean; command: ApplicationCommand; displayName: string; dnsProvider: "manual" | "cloudflare"; error: string; gateway?: AgentView; language: Language; onReveal: () => void; onRetry: () => void; shareURI: string }) {
+function RealityResult({ busy, command, displayName, dnsProvider, error, gateway, language, onAcknowledge, onReveal, onRetry, shareURI }: { busy: boolean; command: ApplicationCommand; displayName: string; dnsProvider: "manual" | "cloudflare"; error: string; gateway?: AgentView; language: Language; onAcknowledge: () => void; onReveal: () => void; onRetry: () => void; shareURI: string }) {
 	const publicationWarning = command.state === "succeeded" && Boolean(command.error);
 	const recoveryRequired = command.state === "failed" && Boolean(command.reconciliationRequired);
   return <div aria-live="polite" className="flex flex-1 flex-col gap-4 px-4">
@@ -289,8 +318,8 @@ function RealityResult({ busy, command, displayName, dnsProvider, error, gateway
     </Alert>
 		{publicationWarning ? <FieldError>{userError(language, new Error(command.error))}</FieldError> : null}
     {command.state === "succeeded" && command.guardStatus === "ready" ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "防盗保护已启用", "Fallback guard enabled")}</AlertTitle><AlertDescription><code className="break-all">{command.targetHost} → {command.targetIp}:443</code><span className="mt-1 block">SNI {command.serverName} · ASN {command.targetAsn}</span></AlertDescription></Alert> : null}
-    {command.state === "succeeded" && command.clientCreated && command.resultAvailable && !shareURI ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "客户端链接只显示一次", "The client link is shown once")}</AlertTitle><AlertDescription><p>{copy(language, "准备好立即导入客户端后再显示；显示后 Center 会删除保存的副本。", "Reveal it only when you are ready to import it. Center deletes its saved copy afterward.")}</p><Button className="mt-3" disabled={busy} onClick={onReveal} size="sm">{busy ? <Spinner data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}{copy(language, "显示一次性链接", "Reveal one-time link")}</Button></AlertDescription></Alert> : null}
-    {shareURI ? <div><p className="mb-2 text-sm font-medium">{copy(language, "一次性客户端链接", "One-time client link")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{shareURI}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制链接", "Copy link")} language={language} size="icon" value={shareURI} /></div><p className="mt-2 text-xs text-muted-foreground">{copy(language, "请立即导入客户端并保存；Center 已删除这份一次性链接。", "Import and save it now. Center has deleted its one-time copy.")}</p></div> : null}
+    {command.state === "succeeded" && command.clientCreated && command.resultAvailable && !shareURI ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "领取客户端链接", "Reveal the client link")}</AlertTitle><AlertDescription><p>{copy(language, "领取后在确认保存前可用同一浏览器恢复；Center 不会因一次断线提前销毁。", "After reveal, the same browser can recover it until you acknowledge saving it. A disconnect no longer destroys the copy.")}</p><Button className="mt-3" disabled={busy} onClick={onReveal} size="sm">{busy ? <Spinner data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}{copy(language, "显示客户端链接", "Reveal client link")}</Button></AlertDescription></Alert> : null}
+    {shareURI ? <div><p className="mb-2 text-sm font-medium">{copy(language, "客户端链接", "Client link")}</p><div className="relative"><code className="block max-h-48 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{shareURI}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制链接", "Copy link")} language={language} size="icon" value={shareURI} /></div><p className="mt-2 text-xs text-muted-foreground">{copy(language, "导入并保存后请确认，Center 随后永久关闭再次显示。", "After importing and saving it, acknowledge below so Center permanently disables disclosure.")}</p><Button className="mt-3" disabled={busy} onClick={onAcknowledge} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存", "I saved it")}</Button></div> : null}
     {command.state === "failed" && command.error ? <FieldError>{userError(language, new Error(command.error))}</FieldError> : null}
 		{command.state === "failed" ? <Button className="w-fit" disabled={busy} onClick={onRetry} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{recoveryRequired ? copy(language, "继续恢复", "Continue recovery") : copy(language, "修改后重试", "Edit and retry")}</Button> : null}
     {error ? <FieldError role="alert">{error}</FieldError> : null}

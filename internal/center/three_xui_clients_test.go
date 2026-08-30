@@ -68,7 +68,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	}
 	metadata := []ThreeXUIClientView{{Email: "MacBook", Enabled: true, TotalBytes: 10 << 30, UsedBytes: 1024, InboundIDs: []int{9}, HasSubscription: true}}
 	result, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds, InboundsObserved: true}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
@@ -82,7 +82,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	}
 	task = claimTask(t, store, node)
 	result, _ = json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Inbounds: task.ClientCommand.Inbounds, InboundsObserved: true}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err = store.ApplicationCommand(ctx, inboundList.ID)
@@ -97,7 +97,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	task = claimTask(t, store, node)
 	secretLink := "vless://11111111-2222-4333-8444-555555555555@reality.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=deadbeef#MacBook"
 	result, _ = json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds, Secret: secretLink, SecretKind: "client_link"}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err = store.ApplicationCommand(ctx, reveal.ID)
@@ -111,12 +111,22 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	if strings.Contains(publicResult, "11111111-2222-4333-8444-555555555555") || strings.Contains(publicResult, "vless://") {
 		t.Fatalf("client secret leaked into public command data: %s", publicResult)
 	}
-	consumed, err := store.ConsumeApplicationCommandResult(ctx, reveal.ID)
+	const deliveryOwner = "test-administrator"
+	consumed, err := store.RevealApplicationCommandResult(ctx, reveal.ID, deliveryOwner, "client-link-operation-1")
 	if err != nil || consumed != secretLink {
 		t.Fatalf("revealed link = %q err=%v", consumed, err)
 	}
-	if _, err := store.ConsumeApplicationCommandResult(ctx, reveal.ID); err == nil {
-		t.Fatal("client link was revealed more than once")
+	if replay, err := store.RevealApplicationCommandResult(ctx, reveal.ID, deliveryOwner, "client-link-operation-1"); err != nil || replay != secretLink {
+		t.Fatalf("replayed link = %q err=%v", replay, err)
+	}
+	if _, err := store.RevealApplicationCommandResult(ctx, reveal.ID, deliveryOwner, "different-client-link-operation"); err == nil {
+		t.Fatal("a different delivery operation claimed the same client link")
+	}
+	if err := store.AcknowledgeApplicationCommandResult(ctx, reveal.ID, deliveryOwner, "client-link-operation-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevealApplicationCommandResult(ctx, reveal.ID, deliveryOwner, "client-link-operation-1"); err == nil {
+		t.Fatal("acknowledged client link remained available")
 	}
 
 	subscriptionReveal, err := store.CreateThreeXUIClientCommand(ctx, ThreeXUIClientCommandInput{ApplicationID: "three-x-ui-clients", Action: "reveal_subscription", Email: "MacBook"})
@@ -126,14 +136,14 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	task = claimTask(t, store, node)
 	subscriptionLink := "https://subscription.example.test/sub/client-sub-id"
 	result, _ = json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds, Secret: subscriptionLink, SecretKind: "subscription"}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err = store.ApplicationCommand(ctx, subscriptionReveal.ID)
 	if err != nil || !completed.ResultAvailable {
 		t.Fatalf("one-time subscription was unavailable: %#v err=%v", completed, err)
 	}
-	consumed, err = store.ConsumeApplicationCommandResult(ctx, subscriptionReveal.ID)
+	consumed, err = store.RevealApplicationCommandResult(ctx, subscriptionReveal.ID, deliveryOwner, "subscription-link-operation-1")
 	if err != nil || consumed != subscriptionLink {
 		t.Fatalf("revealed subscription = %q err=%v", consumed, err)
 	}
@@ -170,7 +180,7 @@ func TestThreeXUIClientCommandSelectsMultipleSiteNodes(t *testing.T) {
 	}
 	metadata := []ThreeXUIClientView{{Email: "Router", Enabled: true, InboundIDs: []int{9, 10}, HasSubscription: true}}
 	result, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)

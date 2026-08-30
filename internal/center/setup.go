@@ -17,8 +17,10 @@ const (
 )
 
 type SetupStatusView struct {
-	AdministratorConfigured bool `json:"administratorConfigured"`
-	OnboardingComplete      bool `json:"onboardingComplete"`
+	AdministratorConfigured bool   `json:"administratorConfigured"`
+	OnboardingComplete      bool   `json:"onboardingComplete"`
+	OperationPhase          string `json:"operationPhase,omitempty"`
+	LastError               string `json:"lastError,omitempty"`
 }
 
 type CenterNetworkInput struct {
@@ -42,6 +44,11 @@ type InitialSetupInput struct {
 type InitialSetupResult struct {
 	Site    SiteView            `json:"site"`
 	Network CenterNetworkConfig `json:"network"`
+}
+
+type validatedInitialSetup struct {
+	Site    SiteInput
+	Network CenterNetworkConfig
 }
 
 func NormalizeAgentConnectURL(value string) (string, error) {
@@ -93,10 +100,17 @@ func (s *Store) SetupStatus(ctx context.Context) (SetupStatusView, error) {
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key IN (?, ?)`, agentConnectionModeSetting, agentConnectURLSetting).Scan(&networkSettings); err != nil {
 		return SetupStatusView{}, fmt.Errorf("center: read initial network settings: %w", err)
 	}
-	return SetupStatusView{
+	result := SetupStatusView{
 		AdministratorConfigured: administrators > 0,
 		OnboardingComplete:      administrators > 0 && sites > 0 && networkSettings == 2,
-	}, nil
+	}
+	if operation, exists, operationErr := s.initialSetupOperation(ctx); operationErr != nil {
+		return SetupStatusView{}, operationErr
+	} else if exists && operation.Phase != "completed" {
+		result.OperationPhase = operation.Phase
+		result.LastError = operation.LastError
+	}
+	return result, nil
 }
 
 func (s *Store) CenterNetworkConfig(ctx context.Context) (CenterNetworkConfig, error) {
@@ -114,15 +128,23 @@ func (s *Store) CenterNetworkConfig(ctx context.Context) (CenterNetworkConfig, e
 	return normalizeCenterNetwork(CenterNetworkInput{AgentConnectionMode: mode, AgentConnectURL: connectURL})
 }
 
-func (s *Store) CompleteInitialSetup(ctx context.Context, input InitialSetupInput) (InitialSetupResult, error) {
+func validateInitialSetupInput(input InitialSetupInput) (validatedInitialSetup, error) {
 	site, err := normalizeSiteInput(input.Site)
 	if err != nil {
-		return InitialSetupResult{}, err
+		return validatedInitialSetup{}, err
 	}
 	if len(site.GatewayNodes) != 0 {
-		return InitialSetupResult{}, errors.New("center: the initial site cannot have gateways before a node is connected")
+		return validatedInitialSetup{}, errors.New("center: the initial site cannot have gateways before a node is connected")
 	}
 	networkConfig, err := normalizeCenterNetwork(input.Network)
+	if err != nil {
+		return validatedInitialSetup{}, err
+	}
+	return validatedInitialSetup{Site: site, Network: networkConfig}, nil
+}
+
+func (s *Store) CompleteInitialSetup(ctx context.Context, input InitialSetupInput) (InitialSetupResult, error) {
+	validated, err := validateInitialSetupInput(input)
 	if err != nil {
 		return InitialSetupResult{}, err
 	}
@@ -130,12 +152,31 @@ func (s *Store) CompleteInitialSetup(ctx context.Context, input InitialSetupInpu
 	if err != nil {
 		return InitialSetupResult{}, err
 	}
+	return s.completeInitialSetup(ctx, validated, "", siteID)
+}
+
+func (s *Store) completeInitialSetup(ctx context.Context, validated validatedInitialSetup, operationHash, siteID string) (InitialSetupResult, error) {
 	now := s.now().UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return InitialSetupResult{}, fmt.Errorf("center: begin initial setup: %w", err)
 	}
 	defer tx.Rollback()
+	if operationHash != "" {
+		var storedHash, phase, storedSiteID string
+		if err := tx.QueryRowContext(ctx, `SELECT input_hash, phase, site_id FROM initial_setup_operations WHERE id = 1`).Scan(&storedHash, &phase, &storedSiteID); err != nil {
+			return InitialSetupResult{}, fmt.Errorf("center: read initial setup operation: %w", err)
+		}
+		if storedHash != operationHash || storedSiteID != siteID {
+			return InitialSetupResult{}, errors.New("center: initial setup operation changed before commit")
+		}
+		if phase == "completed" {
+			return s.initialSetupResultTx(ctx, tx, storedSiteID)
+		}
+		if phase != "commit" {
+			return InitialSetupResult{}, errors.New("center: initial setup operation is not ready to commit")
+		}
+	}
 	var administrators, sites int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM admins`).Scan(&administrators); err != nil {
 		return InitialSetupResult{}, err
@@ -149,7 +190,7 @@ func (s *Store) CompleteInitialSetup(ctx context.Context, input InitialSetupInpu
 	if sites != 0 {
 		return InitialSetupResult{}, errors.New("center: initial setup is already complete")
 	}
-	if networkConfig.AgentConnectionMode == "headscale" {
+	if validated.Network.AgentConnectionMode == "headscale" {
 		var integrations int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM network_integrations WHERE kind = 'headscale' AND status = 'configured'`).Scan(&integrations); err != nil {
 			return InitialSetupResult{}, err
@@ -159,21 +200,50 @@ func (s *Store) CompleteInitialSetup(ctx context.Context, input InitialSetupInpu
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO sites(id, organization_id, name, code, description, timezone, domain_suffix, status, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`, siteID, defaultOrganizationID, site.Name, site.Code, site.Description, site.Timezone, site.DomainSuffix, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`, siteID, defaultOrganizationID, validated.Site.Name, validated.Site.Code, validated.Site.Description, validated.Site.Timezone, validated.Site.DomainSuffix, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return InitialSetupResult{}, fmt.Errorf("center: create initial site: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)`, agentConnectionModeSetting, networkConfig.AgentConnectionMode, agentConnectURLSetting, networkConfig.AgentConnectURL); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)`, agentConnectionModeSetting, validated.Network.AgentConnectionMode, agentConnectURLSetting, validated.Network.AgentConnectURL); err != nil {
 		return InitialSetupResult{}, fmt.Errorf("center: save initial network settings: %w", err)
+	}
+	if operationHash != "" {
+		result, err := tx.ExecContext(ctx, `UPDATE initial_setup_operations SET phase = 'completed', last_error = '', updated_at = ?, completed_at = ?
+			WHERE id = 1 AND input_hash = ? AND phase = 'commit'`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), operationHash)
+		if err != nil {
+			return InitialSetupResult{}, fmt.Errorf("center: complete initial setup operation: %w", err)
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return InitialSetupResult{}, errors.New("center: initial setup operation changed before completion")
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return InitialSetupResult{}, fmt.Errorf("center: commit initial setup: %w", err)
 	}
 	return InitialSetupResult{
 		Site: SiteView{
-			ID: siteID, OrganizationID: defaultOrganizationID, Name: site.Name, Code: site.Code,
-			Description: site.Description, Timezone: site.Timezone, DomainSuffix: site.DomainSuffix,
+			ID: siteID, OrganizationID: defaultOrganizationID, Name: validated.Site.Name, Code: validated.Site.Code,
+			Description: validated.Site.Description, Timezone: validated.Site.Timezone, DomainSuffix: validated.Site.DomainSuffix,
 			GatewayNodes: []string{}, Status: "active", CreatedAt: now, UpdatedAt: now,
 		},
-		Network: networkConfig,
+		Network: validated.Network,
 	}, nil
+}
+
+func (s *Store) initialSetupResultTx(ctx context.Context, tx *sql.Tx, siteID string) (InitialSetupResult, error) {
+	var result InitialSetupResult
+	var createdAt, updatedAt string
+	if err := tx.QueryRowContext(ctx, `SELECT id, organization_id, name, code, description, timezone, domain_suffix, status, created_at, updated_at
+		FROM sites WHERE id = ?`, siteID).Scan(&result.Site.ID, &result.Site.OrganizationID, &result.Site.Name, &result.Site.Code,
+		&result.Site.Description, &result.Site.Timezone, &result.Site.DomainSuffix, &result.Site.Status, &createdAt, &updatedAt); err != nil {
+		return InitialSetupResult{}, fmt.Errorf("center: read completed initial site: %w", err)
+	}
+	result.Site.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	result.Site.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	result.Site.GatewayNodes = []string{}
+	if err := tx.QueryRowContext(ctx, `SELECT
+		(SELECT value FROM settings WHERE key = ?),
+		(SELECT value FROM settings WHERE key = ?)`, agentConnectionModeSetting, agentConnectURLSetting).Scan(&result.Network.AgentConnectionMode, &result.Network.AgentConnectURL); err != nil {
+		return InitialSetupResult{}, fmt.Errorf("center: read completed initial network: %w", err)
+	}
+	return result, nil
 }
