@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 26
+const centerSchemaVersion = 27
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -62,7 +62,10 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			custom_ca BLOB,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			refresh_seconds INTEGER NOT NULL,
+			generation TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 1,
 			created_at TEXT NOT NULL,
+			last_checked_at TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE catalog_cache (
@@ -71,6 +74,14 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			etag TEXT NOT NULL DEFAULT '',
 			last_modified TEXT NOT NULL DEFAULT '',
 			fetched_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE catalog_manifest_history (
+			source_id TEXT NOT NULL,
+			app_id TEXT NOT NULL,
+			version TEXT NOT NULL,
+			manifest_sha256 TEXT NOT NULL,
+			first_seen_at TEXT NOT NULL,
+			PRIMARY KEY(source_id, app_id, version)
 		)`,
 		`CREATE TABLE registry_credentials (
 			id TEXT PRIMARY KEY,

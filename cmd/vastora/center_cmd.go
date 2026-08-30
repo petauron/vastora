@@ -203,6 +203,9 @@ func runCenter(arguments []string) error {
 			WithSetupAgentConnectURL(normalizedAgentConnectURL).
 			WithCoLocatedAgentURL(normalizedCoLocatedAgentURL).
 			WithCenterReleaseChecker(center.NewOfficialReleaseChecker(""))
+		go centerServer.RunCatalogRefresh(maintenanceContext, time.Minute, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center catalog refresh: %v\n", err)
+		})
 		if *deployerSocket != "" {
 			installer, err := deployapi.NewClient(*deployerSocket)
 			if err != nil {

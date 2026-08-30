@@ -2,6 +2,8 @@ package center
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -288,8 +291,77 @@ func TestVersion26MigrationQuarantinesEveryExistingRealityPublication(t *testing
 		t.Fatalf("migrated target=%q sni=%q guard=%q error=%q service=%q publication=%q", targetHost, serverName, guardStatus, guardError, serviceStatus, publicationStatus)
 	}
 	var version int64
-	if err := migrated.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != 26 {
+	if err := migrated.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != centerSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}
+
+func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 26); err != nil {
+		t.Fatal(err)
+	}
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := catalogLifecycleManifest("v1.0.0", "Migrated manifest")
+	setCatalogIntegerDefault(&manifest, `1e0`)
+	rawEnvelope := signedCatalogEnvelope(t, privateKey, manifest)
+	fetchedAt := time.Date(2026, 8, 30, 4, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `INSERT INTO catalog_sources(id, display_name, url, public_key, enabled, refresh_seconds, created_at)
+		VALUES(?, ?, ?, ?, 1, 3600, ?)`, "migration-source", "Migration source", "https://catalog.example.invalid", publicKey, fetchedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO catalog_cache(source_id, envelope, etag, last_modified, fetched_at) VALUES(?, ?, ?, ?, ?)`,
+		"migration-source", rawEnvelope, `"v1"`, "Sat, 30 Aug 2026 04:00:00 GMT", fetchedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var generation, checkedAt, historyVersion string
+	var revision int64
+	if err := store.db.QueryRowContext(ctx, `SELECT generation, revision, last_checked_at FROM catalog_sources WHERE id = ?`, "migration-source").Scan(&generation, &revision, &checkedAt); err != nil {
+		t.Fatal(err)
+	}
+	if generation == "" || revision != 1 || checkedAt != fetchedAt {
+		t.Fatalf("migrated source generation=%q revision=%d checkedAt=%q", generation, revision, checkedAt)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT version FROM catalog_manifest_history WHERE source_id = ? AND app_id = ?`, "migration-source", "catalog-app").Scan(&historyVersion); err != nil {
+		t.Fatal(err)
+	}
+	if historyVersion != "1.0.0" {
+		t.Fatalf("backfilled immutable version = %q", historyVersion)
+	}
+	changed := catalogLifecycleManifest("1.0.0", "Changed after migration")
+	setCatalogIntegerDefault(&changed, `1`)
+	if err := commitCatalogForTest(ctx, store, "migration-source", signedCatalogEnvelope(t, privateKey, changed), "", ""); err == nil || !strings.Contains(err.Error(), "immutable catalog manifest changed") {
+		t.Fatalf("migrated immutable history was bypassed: %v", err)
+	}
+	if _, err := catalog.CanonicalAppManifest(manifest.Apps[0]); err != nil {
+		t.Fatalf("migration fixture is invalid: %v", err)
 	}
 }
 
@@ -768,6 +840,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE three_x_ui_nodes`,
 		`DROP TABLE system_endpoint_aliases`,
 		`DROP TABLE center_remote_access`,
+		`DROP TABLE catalog_manifest_history`,
 		`DROP TABLE agent_decommissions`,
 		`DROP INDEX applications_one_three_x_ui_master_idx`,
 		`ALTER TABLE agents DROP COLUMN operating_system`,
@@ -779,6 +852,9 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE deployments DROP COLUMN runtime_generation`,
 		`ALTER TABLE services DROP COLUMN region_code`,
 		`ALTER TABLE services DROP COLUMN display_name`,
+		`ALTER TABLE catalog_sources DROP COLUMN last_checked_at`,
+		`ALTER TABLE catalog_sources DROP COLUMN generation`,
+		`ALTER TABLE catalog_sources DROP COLUMN revision`,
 		`DROP TABLE application_commands`,
 		`DROP TABLE certificate_authorities`,
 		`CREATE TABLE publications_v3 (

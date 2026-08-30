@@ -21,7 +21,12 @@
   Secure cookies whether TLS terminates at Center or its reverse proxy, and
   every authenticated browser mutation requires the matching CSRF token.
 - Catalog documents are bounded in size, decoded only after signature
-  verification, and cached only after validation succeeds.
+  verification, and cached only after validation succeeds. Every redirect must
+  remain credential-free HTTPS, cross-origin redirects lose Authorization, and
+  the number of redirects is bounded. Center permanently binds each
+  source/app/version identity to its first canonical manifest digest; source
+  deletion or key rotation cannot reset that history. Refresh failures preserve
+  the exact last verified cache.
 - The Center never mounts Docker's socket. The Agent deployment executor exposes
   only typed, catalog-declared application operations and no arbitrary Docker API,
   Compose input, or shell hook.

@@ -45,6 +45,17 @@ flowchart LR
 - A `Publication` is one access entry for one Service. A Service can have any number of independent Publications.
 - A `Route` is the Caddy-specific realization of a Web Publication. It is not the source-of-truth service model.
 
+Catalog sources are independent namespaces. The built-in `vastora-official`
+source is read-only; administrators may manage additional signed HTTPS sources.
+Center performs manual and scheduled refresh through one lifecycle service. A
+verified refresh atomically checks permanent source/app/version manifest
+history and swaps the last-good cache. Each source lifetime has a random,
+non-reusable generation, so an in-flight response cannot cross a delete and
+recreate boundary. Disabled sources do not refresh or offer
+new installations, while installed applications retain their saved manifest so
+they remain configurable and uninstallable after a source is disabled or
+deleted.
+
 There are three node network capabilities, and they are additive rather than
 mutually exclusive: `lan`, `headscale`, and `public`. Cloudflare Tunnel is a
 Service publication method, not a fourth network.

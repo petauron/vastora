@@ -70,12 +70,12 @@ export function PageHeading({ title, description, action }: { title: string; des
 }
 
 export function StateBadge({ value, language = document.documentElement.lang === "zh-CN" ? "zh-CN" : "en" }: { value: string; language?: Language }) {
-  const good = ["ready", "running", "succeeded", "configured", "connected", "active"].includes(value);
-	const bad = ["failed", "degraded", "offline", "lease_expired", "recovery"].includes(value);
+  const good = ["ready", "running", "succeeded", "configured", "connected", "active", "healthy"].includes(value);
+  const bad = ["failed", "degraded", "offline", "lease_expired", "recovery"].includes(value);
   const Icon = good ? CircleCheckIcon : bad ? CircleAlertIcon : Clock3Icon;
   const labels: Record<string, [string, string]> = {
-    ready: ["就绪", "Ready"], running: ["运行中", "Running"], succeeded: ["成功", "Succeeded"], configured: ["已配置", "Configured"], connected: ["已连接", "Connected"], active: ["正常", "Active"],
-		failed: ["失败", "Failed"], degraded: ["异常", "Degraded"], recovery: ["需恢复", "Recovery needed"], offline: ["离线", "Offline"], lease_expired: ["已重试", "Retried"], pending: ["等待中", "Pending"], applying: ["配置中", "Applying"], stopped: ["已停止", "Stopped"], disabled: ["未启用", "Disabled"], unconfigured: ["未配置", "Not configured"], queued: ["已排队", "Queued"], claimed: ["执行中", "In progress"]
+    ready: ["就绪", "Ready"], running: ["运行中", "Running"], succeeded: ["成功", "Succeeded"], configured: ["已配置", "Configured"], connected: ["已连接", "Connected"], active: ["正常", "Active"], healthy: ["健康", "Healthy"], stale: ["使用缓存", "Using cache"],
+    failed: ["失败", "Failed"], degraded: ["异常", "Degraded"], recovery: ["需恢复", "Recovery needed"], offline: ["离线", "Offline"], lease_expired: ["已重试", "Retried"], pending: ["等待中", "Pending"], applying: ["配置中", "Applying"], stopped: ["已停止", "Stopped"], disabled: ["未启用", "Disabled"], unconfigured: ["未配置", "Not configured"], queued: ["已排队", "Queued"], claimed: ["执行中", "In progress"]
   };
   const label = labels[value];
   return <Badge variant={bad ? "destructive" : good ? "secondary" : "outline"}><Icon data-icon="inline-start" />{label ? copy(language, ...label) : value}</Badge>;

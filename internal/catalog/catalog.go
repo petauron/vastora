@@ -328,6 +328,57 @@ func NormalizePortableInteger(raw json.RawMessage) (json.RawMessage, error) {
 	return json.RawMessage(rational.Num().String()), nil
 }
 
+// CanonicalAppManifest returns the semantic identity used by Center's
+// immutable catalog history. It collapses accepted alternate encodings that
+// have identical deployment behavior, such as v1.0.0 versus 1.0.0 and JSON
+// integer lexemes 1, 1.0, and 1e0.
+func CanonicalAppManifest(app AppManifest) (AppManifest, error) {
+	if err := ValidateApp(app); err != nil {
+		return AppManifest{}, err
+	}
+	canonical := app
+	canonical.Version = strings.TrimPrefix(app.Version, "v")
+	canonical.Config = append([]ConfigField(nil), app.Config...)
+	for index := range canonical.Config {
+		field := &canonical.Config[index]
+		if field.Default == nil {
+			continue
+		}
+		var normalized json.RawMessage
+		switch field.Type {
+		case "integer":
+			value, err := NormalizePortableInteger(*field.Default)
+			if err != nil {
+				return AppManifest{}, err
+			}
+			normalized = value
+		case "string":
+			var value string
+			if err := json.Unmarshal(*field.Default, &value); err != nil {
+				return AppManifest{}, err
+			}
+			valueJSON, err := json.Marshal(value)
+			if err != nil {
+				return AppManifest{}, err
+			}
+			normalized = valueJSON
+		case "boolean":
+			var value bool
+			if err := json.Unmarshal(*field.Default, &value); err != nil {
+				return AppManifest{}, err
+			}
+			valueJSON, err := json.Marshal(value)
+			if err != nil {
+				return AppManifest{}, err
+			}
+			normalized = valueJSON
+		}
+		raw := json.RawMessage(append([]byte(nil), normalized...))
+		field.Default = &raw
+	}
+	return canonical, nil
+}
+
 func validateLocalized(kind, appID string, value LocalizedText) error {
 	if strings.TrimSpace(value.English) == "" || strings.TrimSpace(value.SimplifiedChinese) == "" {
 		return fmt.Errorf("catalog: %s for %q needs en and zh-CN values", kind, appID)

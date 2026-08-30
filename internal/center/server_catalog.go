@@ -1,10 +1,13 @@
 package center
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
 )
@@ -58,47 +61,145 @@ func (s *Server) handleCreateSource(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, http.StatusCreated, map[string]string{"id": input.ID})
 }
 
+func (s *Server) handleUpdateSource(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		DisplayName    *string `json:"displayName"`
+		URL            *string `json:"url"`
+		PublicKey      *string `json:"publicKey"`
+		BearerToken    *string `json:"bearerToken"`
+		CustomCAPEM    *string `json:"customCA"`
+		RefreshSeconds *int    `json:"refreshIntervalSeconds"`
+		Enabled        *bool   `json:"enabled"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	var publicKey *[]byte
+	if input.PublicKey != nil {
+		decoded, err := base64.RawURLEncoding.DecodeString(*input.PublicKey)
+		if err != nil {
+			writeError(writer, http.StatusBadRequest, errors.New("center: public key must be base64url"))
+			return
+		}
+		publicKey = &decoded
+	}
+	identifier := request.PathValue("id")
+	if err := s.store.UpdateSource(request.Context(), identifier, SourceUpdate{
+		DisplayName: input.DisplayName, URL: input.URL, PublicKey: publicKey, BearerToken: input.BearerToken,
+		CustomCAPEM: input.CustomCAPEM, RefreshSeconds: input.RefreshSeconds, Enabled: input.Enabled,
+	}); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"id": identifier})
+}
+
+func (s *Server) handleDeleteSource(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.DeleteSource(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+type CatalogRefreshResult struct {
+	SourceID    string `json:"sourceID"`
+	Apps        int    `json:"apps,omitempty"`
+	NotModified bool   `json:"notModified"`
+}
+
 func (s *Server) handleRefreshSource(writer http.ResponseWriter, request *http.Request) {
 	identifier := request.PathValue("id")
+	result, err := s.RefreshCatalogSource(request.Context(), identifier)
+	if err != nil {
+		writeError(writer, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func (s *Server) RefreshCatalogSource(ctx context.Context, identifier string) (CatalogRefreshResult, error) {
+	s.catalogRefreshMu.Lock()
+	defer s.catalogRefreshMu.Unlock()
+
 	if identifier == OfficialCatalogSourceID {
 		if len(s.officialCatalog) == 0 {
-			writeError(writer, http.StatusNotFound, errors.New("center: official catalog is unavailable"))
-			return
+			return CatalogRefreshResult{}, errors.New("center: official catalog is unavailable")
 		}
-		if err := s.store.SeedOfficialCatalog(request.Context(), s.officialCatalog); err != nil {
-			writeError(writer, http.StatusInternalServerError, err)
-			return
+		value, err := catalog.ParseCatalog(s.officialCatalog)
+		if err != nil {
+			return CatalogRefreshResult{}, err
 		}
-		writeJSON(writer, http.StatusOK, map[string]any{"sourceID": identifier, "apps": 0, "notModified": false})
-		return
+		if err := s.store.SeedOfficialCatalog(ctx, s.officialCatalog); err != nil {
+			return CatalogRefreshResult{}, err
+		}
+		return CatalogRefreshResult{SourceID: identifier, Apps: len(value.Apps)}, nil
 	}
-	source, err := s.store.SourceForRefresh(request.Context(), identifier)
+	source, err := s.store.SourceForRefresh(ctx, identifier)
 	if err != nil {
-		writeError(writer, http.StatusNotFound, err)
-		return
+		return CatalogRefreshResult{}, err
 	}
-	result, err := catalog.Fetch(request.Context(), catalog.FetchConfig{
+	result, err := catalog.Fetch(ctx, catalog.FetchConfig{
 		URL: source.URL, PublicKey: ed25519.PublicKey(source.publicKey), BearerToken: source.bearerToken,
 		CustomCAPEM: source.customCA, ETag: source.etag, LastModified: source.lastMod,
 	})
 	if err != nil {
-		_ = s.store.RecordCatalogError(request.Context(), identifier, err)
-		writeError(writer, http.StatusBadGateway, err)
-		return
+		if recordErr := s.store.RecordCatalogErrorForRevision(ctx, identifier, source.generation, source.revision, err); recordErr != nil {
+			return CatalogRefreshResult{}, errors.Join(err, recordErr)
+		}
+		return CatalogRefreshResult{}, err
 	}
 	if result.NotModified {
-		if err := s.store.ClearCatalogError(request.Context(), identifier); err != nil {
-			writeError(writer, http.StatusInternalServerError, err)
+		if err := s.store.MarkCatalogNotModifiedForRevision(ctx, identifier, source.generation, source.revision, result.ETag, result.LastModified); err != nil {
+			if recordErr := s.store.RecordCatalogErrorForRevision(ctx, identifier, source.generation, source.revision, err); recordErr != nil {
+				return CatalogRefreshResult{}, errors.Join(err, recordErr)
+			}
+			return CatalogRefreshResult{}, err
+		}
+		return CatalogRefreshResult{SourceID: identifier, NotModified: true}, nil
+	}
+	if err := s.store.CommitCatalogRefresh(ctx, identifier, source.generation, source.revision, result.RawEnvelope, result.ETag, result.LastModified); err != nil {
+		if recordErr := s.store.RecordCatalogErrorForRevision(ctx, identifier, source.generation, source.revision, err); recordErr != nil {
+			return CatalogRefreshResult{}, errors.Join(err, recordErr)
+		}
+		return CatalogRefreshResult{}, err
+	}
+	return CatalogRefreshResult{SourceID: identifier, Apps: len(result.Catalog.Apps)}, nil
+}
+
+func (s *Server) RunCatalogRefresh(ctx context.Context, interval time.Duration, onError func(error)) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	run := func() {
+		ids, err := s.store.DueCatalogSourceIDs(ctx, s.store.now())
+		if err != nil {
+			if onError != nil {
+				onError(err)
+			}
 			return
 		}
-		writeJSON(writer, http.StatusOK, map[string]any{"sourceID": identifier, "notModified": true})
-		return
+		for _, id := range ids {
+			refreshContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+			_, err := s.RefreshCatalogSource(refreshContext, id)
+			cancel()
+			if err != nil && ctx.Err() == nil && onError != nil {
+				onError(fmt.Errorf("catalog %s: %w", id, err))
+			}
+		}
 	}
-	if err := s.store.SaveCatalog(request.Context(), identifier, result.RawEnvelope, result.ETag, result.LastModified); err != nil {
-		writeError(writer, http.StatusInternalServerError, err)
-		return
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"sourceID": identifier, "apps": len(result.Catalog.Apps), "notModified": false})
 }
 
 func (s *Server) handleListApps(writer http.ResponseWriter, request *http.Request) {
