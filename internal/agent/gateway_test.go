@@ -350,7 +350,7 @@ func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
 func TestHAProxyContainerBootstrapsConfigurationInWritableTmpfs(t *testing.T) {
 	configuration := []byte("global\n  maxconn 4096\n")
 	options := haproxyContainerCreateOptions(
-		DockerLayer4Provisioner{Image: defaultHAProxyImage, Container: defaultHAProxyContainer},
+		DockerLayer4Provisioner{Image: DefaultHAProxyImage, Container: defaultHAProxyContainer},
 		gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443},
 		configuration,
 	)

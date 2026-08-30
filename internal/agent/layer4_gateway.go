@@ -22,7 +22,10 @@ import (
 )
 
 const (
-	defaultHAProxyImage      = "docker.io/library/haproxy:3.2.7-alpine@sha256:3b80483d47e1c7d1fc7eb4b9104f33d9a51259769be299eb675524dca2bc8157"
+	// DefaultHAProxyImage is the multi-architecture runtime index used by every
+	// Agent entrypoint. Keep the default here so CLI wiring cannot drift from
+	// gateway reconciliation.
+	DefaultHAProxyImage      = "docker.io/library/haproxy:3.2.7-alpine@sha256:3b80483d47e1c7d1fc7eb4b9104f33d9a51259769be299eb675524dca2bc8157"
 	defaultHAProxyContainer  = gatewayruntime.HAProxyContainer
 	haproxyConfigurationDir  = "/usr/local/etc/haproxy"
 	haproxyConfigurationPath = haproxyConfigurationDir + "/haproxy.cfg"
@@ -336,7 +339,7 @@ func (provisioner DockerLayer4Provisioner) client() (*client.Client, error) {
 
 func (provisioner DockerLayer4Provisioner) settings() DockerLayer4Provisioner {
 	if provisioner.Image == "" {
-		provisioner.Image = defaultHAProxyImage
+		provisioner.Image = DefaultHAProxyImage
 	}
 	if provisioner.Container == "" {
 		provisioner.Container = defaultHAProxyContainer
