@@ -71,6 +71,17 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t)); err != nil {
 		t.Fatalf("binary download consumed enrollment token: %v", err)
 	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/agent-binaries/linux/amd64", nil)
+	request.Header.Set("Authorization", "Bearer "+enrollment.Token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "binary-linux-amd64" {
+		t.Fatalf("recovery binary download failed after enrollment commit: status=%d body=%q", response.Code, response.Body.String())
+	}
+	profile, err := store.AgentEnrollmentInstallProfile(context.Background(), enrollment.Token)
+	if err != nil || profile.Name != "downloaded-agent" {
+		t.Fatalf("recovery installer profile is unavailable after enrollment commit: profile=%#v err=%v", profile, err)
+	}
 }
 
 func TestEnrolledAgentCanDownloadAuthenticatedUpdate(t *testing.T) {
@@ -151,7 +162,7 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatalf("authenticated installer status = %d, body = %q", response.Code, response.Body.String())
 	}
 	script := response.Body.String()
-	for _, expected := range []string{"center_url='https://center.example.com'", "bootstrap_url='https://center.example.com'", "IFS= read -r token", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "aarch64|arm64", "supports Ubuntu 24.04 on x86_64 and ARM64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${bootstrap_url%/}/api/v1/agent-binaries/linux/$arch", "agent status --data-dir /var/lib/vastora/agent", "Switch this Agent to the requested Center? [y/N]", "Waiting for the requested Center to become reachable", "${center_url%/}/install/agent.sh", "--replace-existing", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
+	for _, expected := range []string{"center_url='https://center.example.com'", "bootstrap_url='https://center.example.com'", "IFS= read -r token", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "aarch64|arm64", "supports Ubuntu 24.04 on x86_64 and ARM64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${bootstrap_url%/}/api/v1/agent-binaries/linux/$arch", "agent install-state --data-dir /var/lib/vastora/agent", "resume_install=1", "agent status --data-dir /var/lib/vastora/agent", "Switch this Agent to the requested Center? [y/N]", "Waiting for the requested Center to become reachable", "${center_url%/}/install/agent.sh", "--replace-existing", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("installer is missing %q:\n%s", expected, script)
 		}
@@ -210,6 +221,9 @@ func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T)
 	}
 	if download, prompt, join := strings.Index(script, "Downloading the Vastora Agent"), strings.Index(script, "Switch this Agent to the requested Center?"), strings.Index(script, "Joining the private network"); download < 0 || prompt < download || join < prompt {
 		t.Fatalf("installer does not inspect and confirm an existing Agent before changing Headscale:\n%s", script)
+	}
+	if state, guardedJoin := strings.Index(script, "agent install-state"), strings.Index(script, "if [ \"$resume_install\" -eq 0 ]; then\n"); state < 0 || guardedJoin < state {
+		t.Fatalf("installer does not skip private-network mutation while resuming:\n%s", script)
 	}
 	command := exec.Command("sh", "-n")
 	command.Stdin = strings.NewReader(script)

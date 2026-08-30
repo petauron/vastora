@@ -119,6 +119,7 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 	}
 	if _, err := store.db.Exec(`DROP TABLE three_x_ui_reset_journal;
 		DROP TABLE task_receipts;
+		DROP TABLE agent_install_operations;
 		ALTER TABLE control_plane_connection DROP COLUMN sealed_private_key;
 		ALTER TABLE control_plane_connection DROP COLUMN ca_fingerprint;
 		ALTER TABLE applied_installations RENAME TO applied_installations_v5_test;
@@ -180,7 +181,7 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`PRAGMA user_version = 7`); err != nil {
+	if _, err := store.db.Exec(`DROP TABLE agent_install_operations; PRAGMA user_version = 7`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

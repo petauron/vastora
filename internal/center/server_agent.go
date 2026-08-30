@@ -133,6 +133,7 @@ func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request
 func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		Token           string `json:"token"`
+		OperationID     string `json:"operationId"`
 		Version         string `json:"version"`
 		OperatingSystem string `json:"operatingSystem"`
 		Architecture    string `json:"architecture"`
@@ -142,7 +143,7 @@ func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Version, input.OperatingSystem, input.Architecture, input.PublicKey)
+	credential, err := s.store.EnrollAgentOperation(request.Context(), input.Token, input.OperationID, input.Version, input.OperatingSystem, input.Architecture, input.PublicKey)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return

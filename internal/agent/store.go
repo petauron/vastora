@@ -71,7 +71,7 @@ type Connection struct {
 	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 8
+const agentSchemaVersion = 9
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -308,6 +308,40 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 8
 		}
+		if version == 8 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE agent_install_operations (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					operation_id TEXT NOT NULL UNIQUE,
+					center_url TEXT NOT NULL,
+					token_hash BLOB NOT NULL,
+					sealed_token BLOB NOT NULL,
+					sealed_private_key BLOB NOT NULL,
+					ca_fingerprint TEXT NOT NULL,
+					replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
+					phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started')),
+					agent_id TEXT NOT NULL DEFAULT '',
+					name TEXT NOT NULL DEFAULT '',
+					roles_json BLOB NOT NULL DEFAULT '[]',
+					capabilities_json BLOB NOT NULL DEFAULT '{}',
+					last_error TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				PRAGMA user_version = 9`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 8 to 9: %w", migrateErr)
+			}
+			version = 9
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -330,6 +364,24 @@ func Open(dataDir string) (*Store, error) {
 			sealed_credential BLOB NOT NULL,
 			sealed_private_key BLOB NOT NULL,
 			ca_fingerprint TEXT NOT NULL
+		);
+		CREATE TABLE agent_install_operations (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			operation_id TEXT NOT NULL UNIQUE,
+			center_url TEXT NOT NULL,
+			token_hash BLOB NOT NULL,
+			sealed_token BLOB NOT NULL,
+			sealed_private_key BLOB NOT NULL,
+			ca_fingerprint TEXT NOT NULL,
+			replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
+			phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started')),
+			agent_id TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL DEFAULT '',
+			roles_json BLOB NOT NULL DEFAULT '[]',
+			capabilities_json BLOB NOT NULL DEFAULT '{}',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
 		);
 		CREATE TABLE task_receipts (
 			task_id TEXT PRIMARY KEY,
@@ -363,7 +415,7 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 8;`); err != nil {
+		PRAGMA user_version = 9;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
@@ -588,6 +640,18 @@ func (s *Store) ReplaceConnection(ctx context.Context, connection Connection) er
 		return fmt.Errorf("agent: replace Center connection: %w", err)
 	}
 	return nil
+}
+
+// HasConnection reports whether enrollment state is present without requiring
+// its encrypted contents to be readable. Install recovery must distinguish a
+// missing enrollment from a damaged one without silently treating damage as a
+// fresh host.
+func (s *Store) HasConnection(ctx context.Context) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_plane_connection WHERE id = 1`).Scan(&count); err != nil {
+		return false, fmt.Errorf("agent: inspect Center connection: %w", err)
+	}
+	return count == 1, nil
 }
 
 func (s *Store) sealConnection(connection Connection) ([]byte, []byte, error) {

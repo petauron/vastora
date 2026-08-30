@@ -387,10 +387,6 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if strings.TrimSpace(enrollmentToken) == "" {
 		return Enrollment{}, errors.New("agent: enrollment token is required")
 	}
-	privateKey, publicKey, err := controlplane.GenerateKeyPair()
-	if err != nil {
-		return Enrollment{}, err
-	}
 	caFingerprint = normalizeCAFingerprint(caFingerprint)
 	if caFingerprint == "" && !loopbackCenterURL(baseURL) {
 		caFingerprint, err = c.probeCenterCAFingerprint(ctx, baseURL)
@@ -401,22 +397,27 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if err := validateCAFingerprint(baseURL, caFingerprint); err != nil {
 		return Enrollment{}, err
 	}
+	operation, err := store.BeginEnrollmentOperation(ctx, baseURL, enrollmentToken, caFingerprint, replace)
+	if err != nil {
+		return Enrollment{}, err
+	}
+	if operation.Phase != "enrollment_pending" {
+		return store.EnrollmentForInstallOperation(ctx)
+	}
+	publicKey, err := controlplane.PublicKey(operation.PrivateKey)
+	if err != nil {
+		return Enrollment{}, errors.New("agent: stored enrollment identity is invalid")
+	}
 	var response Enrollment
 	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]any{
-		"token": enrollmentToken, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH, "publicKey": publicKey,
+		"token": operation.Token, "operationId": operation.OperationID, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH, "publicKey": publicKey,
 	}, "", caFingerprint, &response); err != nil {
 		return Enrollment{}, err
 	}
 	if response.ID == "" || response.Credential == "" || strings.TrimSpace(response.Name) == "" || len(response.Roles) == 0 {
 		return Enrollment{}, errors.New("agent: Center returned an incomplete enrollment response")
 	}
-	connection := Connection{AgentID: response.ID, Name: response.Name, CenterURL: baseURL, Credential: response.Credential, PrivateKey: privateKey, CAFingerprint: caFingerprint}
-	if replace {
-		err = store.ReplaceConnection(ctx, connection)
-	} else {
-		err = store.SaveConnection(ctx, connection)
-	}
-	if err != nil {
+	if err := store.CompleteEnrollmentOperation(ctx, operation, response); err != nil {
 		return Enrollment{}, err
 	}
 	return response, nil

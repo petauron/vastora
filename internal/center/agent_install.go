@@ -109,7 +109,21 @@ if [ -z "$expected_version" ] || [ "$("$temporary" version)" != "$expected_versi
 fi
 
 replace_existing=0
-if [ -s /var/lib/vastora/agent/agent.db ] || systemctl is-enabled --quiet vastora-agent.service 2>/dev/null || systemctl is-active --quiet vastora-agent.service 2>/dev/null; then
+resume_install=0
+if [ -s /var/lib/vastora/agent/agent.db ]; then
+  if ! install_state="$("$temporary" agent install-state --data-dir /var/lib/vastora/agent 2>&1)"; then
+    echo "An existing Vastora Agent was found, but its installation state could not be inspected." >&2
+    echo "$install_state" >&2
+    exit 1
+  fi
+  case "$install_state" in
+    fresh) resume_install=1 ;;
+    replace) resume_install=1; replace_existing=1 ;;
+    none) ;;
+    *) echo "The stored Vastora Agent installation state is invalid." >&2; exit 1 ;;
+  esac
+fi
+if [ "$resume_install" -eq 0 ] && { [ -s /var/lib/vastora/agent/agent.db ] || systemctl is-enabled --quiet vastora-agent.service 2>/dev/null || systemctl is-active --quiet vastora-agent.service 2>/dev/null; }; then
   if ! existing_status="$("$temporary" agent status --data-dir /var/lib/vastora/agent 2>&1)"; then
     echo "An existing Vastora Agent was found, but its Center registration could not be inspected." >&2
     echo "$existing_status" >&2
@@ -132,7 +146,9 @@ if [ -s /var/lib/vastora/agent/agent.db ] || systemctl is-enabled --quiet vastor
   esac
 fi
 
+if [ "$resume_install" -eq 0 ]; then
 @@HEADSCALE_BOOTSTRAP@@
+fi
 
 case "$center_url" in
   https://*) center_protocol="https" ;;
@@ -241,15 +257,25 @@ func (s *Store) ValidateAgentEnrollment(ctx context.Context, token string) error
 		return errors.New("center: agent enrollment token is invalid")
 	}
 	var expiresAt string
-	var usedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT expires_at, used_at FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(token)).Scan(&expiresAt, &usedAt)
-	if errors.Is(err, sql.ErrNoRows) || usedAt.Valid {
+	var usedAt, recoveryExpiresAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT tokens.expires_at, tokens.used_at, operations.expires_at
+		FROM agent_enrollment_tokens tokens
+		LEFT JOIN agent_enrollment_operations operations ON operations.token_hash = tokens.token_hash
+		WHERE tokens.token_hash = ?`, tokenHash(token)).Scan(&expiresAt, &usedAt, &recoveryExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: agent enrollment token is invalid")
 	}
 	if err != nil {
 		return err
 	}
-	expires, err := time.Parse(time.RFC3339Nano, expiresAt)
+	validUntil := expiresAt
+	if usedAt.Valid {
+		if !recoveryExpiresAt.Valid {
+			return errors.New("center: agent enrollment token is invalid")
+		}
+		validUntil = recoveryExpiresAt.String
+	}
+	expires, err := time.Parse(time.RFC3339Nano, validUntil)
 	if err != nil || !expires.After(s.now()) {
 		return errors.New("center: agent enrollment token has expired")
 	}
