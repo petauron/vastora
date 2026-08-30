@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.0-alpha.71](https://github.com/petauron/vastora/compare/v0.1.0-alpha.70...v0.1.0-alpha.71) (2026-08-30)
+
+
+### Features
+
+* **catalog:** freeze v0.1 interoperability contract ([#242](https://github.com/petauron/vastora/issues/242)) ([2c454a5](https://github.com/petauron/vastora/commit/2c454a588d1317de0d5baf8ca1f6e47b194fd0d5)), closes [#1](https://github.com/petauron/vastora/issues/1)
+* complete verified catalog lifecycle ([e9bbd02](https://github.com/petauron/vastora/commit/e9bbd026f03f53b72809988f277b1f315447c7fc))
+* secure Agent control plane and node runtime ([2829d4e](https://github.com/petauron/vastora/commit/2829d4ec9e7a95b2c1bd00d8122816d847d7cb54))
+
+
+### Bug Fixes
+
+* complete secure Center recovery ([4c635fd](https://github.com/petauron/vastora/commit/4c635fd2da8ffd3623724dbc570b794a9f10f29e))
+* enforce canonical catalog contracts ([678c2e2](https://github.com/petauron/vastora/commit/678c2e2b6c99ddcd202676d3f2a8795d64132bfc))
+* harden deployment and gateway defaults ([d553d1b](https://github.com/petauron/vastora/commit/d553d1bd0f932f56c05d4be34f58bb8bc9946d97))
+* make Center updates recoverable ([49caab1](https://github.com/petauron/vastora/commit/49caab14e5ff98c457f7bac6f2b148fe206bd757))
+
 ## [0.1.0-alpha.70](https://github.com/petauron/vastora/compare/v0.1.0-alpha.69...v0.1.0-alpha.70) (2026-08-29)
 
 
