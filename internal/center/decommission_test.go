@@ -36,6 +36,9 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 			if hostTask.Kind != "agent.decommission" || hostTask.DeleteData != deleteData {
 				t.Fatalf("unexpected Agent host cleanup task: %#v", hostTask)
 			}
+			if err := store.beginAgentDecommission(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt); err != nil {
+				t.Fatal(err)
+			}
 			if err := store.CompleteTask(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt, true, "", nil, hostTask.RequiredRuntimeGeneration); err != nil {
 				t.Fatal(err)
 			}
@@ -56,6 +59,38 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 				t.Fatalf("application was not stopped: %#v err=%v", applications, err)
 			}
 		})
+	}
+}
+
+func TestAgentDecommissionRequiresDurableCleanupHandoff(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	node := enrollOrchestrationNode(t, store, "durable-cleanup-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
+	if err := store.queueAgentDecommission(context.Background(), node.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	task := waitForDecommissionTask(t, store, node)
+	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
+		t.Fatal("scheduled cleanup was accepted as completed before helper handoff")
+	}
+	if err := store.beginAgentDecommission(context.Background(), node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.beginAgentDecommission(context.Background(), node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+		t.Fatalf("duplicate helper handoff was not idempotent: %v", err)
+	}
+	var state, lease string
+	if err := store.db.QueryRow(`SELECT state, lease_expires_at FROM agent_decommissions WHERE agent_id = ?`, node.ID).Scan(&state, &lease); err != nil {
+		t.Fatal(err)
+	}
+	if state != "cleaning" || lease != "" {
+		t.Fatalf("durable cleanup state = %q lease=%q", state, lease)
+	}
+	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
+		t.Fatalf("duplicate final callback was not idempotent: %v", err)
 	}
 }
 

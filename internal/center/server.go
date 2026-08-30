@@ -157,6 +157,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/heartbeat", s.handleAgentHeartbeat)
 	mux.HandleFunc("GET /api/v1/agents/{id}/tasks/next", s.handleClaimTask)
 	mux.HandleFunc("POST /api/v1/agents/{id}/tasks/{taskID}/lease", s.handleRenewTaskLease)
+	mux.HandleFunc("POST /api/v1/agents/{id}/decommission/start", s.handleStartAgentDecommission)
 	mux.HandleFunc("POST /api/v1/agents/{id}/tasks/{taskID}/result", s.handleCompleteTask)
 	mux.HandleFunc("PUT /api/v1/agents/{id}/three-x-ui-backups/{applicationID}/{revision}", s.handleStoreThreeXUIBackup)
 	mux.HandleFunc("GET /api/v1/agents/{id}/three-x-ui-migrations/{migrationID}/backup", s.handleThreeXUIMigrationBackup)

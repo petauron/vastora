@@ -138,6 +138,15 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	if state != "processing" {
 		return nil, errors.New("agent: stored task receipt state is invalid")
 	}
+	if task.Kind == "agent.decommission" {
+		// The durable host helper makes this task resumable. Re-delivery after a
+		// lease recovery must re-arm that helper instead of manufacturing an
+		// unknown terminal outcome.
+		if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, updated_at = ? WHERE task_id = ? AND state = 'processing'`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID); err != nil {
+			return nil, fmt.Errorf("agent: resume host decommission receipt: %w", err)
+		}
+		return nil, nil
+	}
 	if resumable, err := s.resumableThreeXUIControllerPromotion(ctx, task); err != nil {
 		return nil, err
 	} else if resumable {

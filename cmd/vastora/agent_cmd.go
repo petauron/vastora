@@ -269,6 +269,34 @@ func runAgent(arguments []string) error {
 		}
 		fmt.Println("Vastora Agent and its managed host state were removed")
 		return nil
+	case "finish-decommission":
+		flags := flag.NewFlagSet("agent finish-decommission", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		operationFile := flags.String("operation-file", hostDecommissionOperationPath, "internal: protected host cleanup operation")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("invalid persistent host cleanup command")
+		}
+		if err := requireLinuxRoot("agent finish-decommission"); err != nil {
+			return err
+		}
+		return runPersistentHostDecommission(context.Background(), *operationFile)
+	case "cleanup-decommission":
+		flags := flag.NewFlagSet("agent cleanup-decommission", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		operationFile := flags.String("operation-file", hostDecommissionOperationPath, "internal: protected host cleanup operation")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("invalid persistent host cleanup finalizer")
+		}
+		if err := requireLinuxRoot("agent cleanup-decommission"); err != nil {
+			return err
+		}
+		return cleanPersistentHostDecommission(*operationFile)
 	case "enroll":
 		flags := flag.NewFlagSet("agent enroll", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)

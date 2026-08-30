@@ -614,7 +614,6 @@ func openOrchestrationStore(t *testing.T) *Store {
 		store.Close()
 		t.Fatal(err)
 	}
-	store.agentDecommissionGrace = 0
 	return store
 }
 

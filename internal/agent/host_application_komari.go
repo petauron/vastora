@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	komariBinaryPath = "/opt/komari/agent"
-	komariConfigPath = "/etc/komari-agent/config.json"
-	komariUnitPath   = "/etc/systemd/system/komari-agent.service"
-	maxArtifactBytes = 64 << 20
-	komariUnitMarker = "# Managed by Vastora\n"
+	komariBinaryPath         = "/opt/komari/agent"
+	komariConfigPath         = "/etc/komari-agent/config.json"
+	komariUnitPath           = "/etc/systemd/system/komari-agent.service"
+	komariRemovalJournalPath = "/var/lib/vastora/komari-uninstall.json"
+	maxArtifactBytes         = 64 << 20
+	komariUnitMarker         = "# Managed by Vastora\n"
 )
 
 type SystemdHostApplicationManager struct {
@@ -46,6 +47,16 @@ type komariConfig struct {
 	DisableWebSSH      bool    `json:"disable_web_ssh"`
 	IgnoreUnsafeCert   bool    `json:"ignore_unsafe_cert"`
 	ProtocolVersion    int     `json:"protocol_version"`
+}
+
+type komariRemovalJournal struct {
+	Version int                          `json:"version"`
+	Files   map[string]komariRemovalFile `json:"files"`
+}
+
+type komariRemovalFile struct {
+	Exists bool   `json:"exists"`
+	SHA256 string `json:"sha256,omitempty"`
 }
 
 func (manager SystemdHostApplicationManager) ApplyKomari(ctx context.Context, task DeploymentTask) error {
@@ -235,29 +246,96 @@ func (manager SystemdHostApplicationManager) RestoreKomari(ctx context.Context, 
 }
 
 func (manager SystemdHostApplicationManager) RemoveKomari(ctx context.Context) error {
+	journal, err := manager.prepareKomariRemoval()
+	if err != nil || journal == nil {
+		return err
+	}
 	unitPath := manager.path(komariUnitPath)
 	unit, err := captureHostFile(unitPath)
 	if err != nil {
 		return err
 	}
-	if !unit.Exists {
-		return nil
-	}
-	if !bytes.Contains(unit.Data, []byte(komariUnitMarker)) {
-		return errors.New("agent: refusing to remove a Komari Agent service not managed by Vastora")
-	}
-	if err := manager.run(ctx, "systemctl", "disable", "--now", "komari-agent.service"); err != nil {
-		return fmt.Errorf("agent: stop Komari Agent: %w", err)
+	if unit.Exists {
+		if err := manager.run(ctx, "systemctl", "disable", "--now", "komari-agent.service"); err != nil {
+			return fmt.Errorf("agent: stop Komari Agent: %w", err)
+		}
 	}
 	for _, path := range []string{unitPath, manager.path(komariConfigPath), manager.path(komariBinaryPath)} {
-		if err := removeHostFile(path); err != nil {
+		if err := removeJournaledKomariFile(path, journal); err != nil {
 			return err
 		}
 	}
 	if err := manager.run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return fmt.Errorf("agent: reload systemd after removing Komari Agent: %w", err)
 	}
-	return nil
+	return removeHostFile(manager.path(komariRemovalJournalPath))
+}
+
+func (manager SystemdHostApplicationManager) prepareKomariRemoval() (*komariRemovalJournal, error) {
+	journalPath := manager.path(komariRemovalJournalPath)
+	if raw, err := os.ReadFile(journalPath); err == nil {
+		var journal komariRemovalJournal
+		if json.Unmarshal(raw, &journal) != nil || journal.Version != 1 || len(journal.Files) != 3 {
+			return nil, errors.New("agent: invalid Komari Agent uninstall journal")
+		}
+		return &journal, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("agent: read Komari Agent uninstall journal: %w", err)
+	}
+	paths := []string{manager.path(komariUnitPath), manager.path(komariConfigPath), manager.path(komariBinaryPath)}
+	snapshots := make([]hostFileSnapshot, 0, len(paths))
+	for _, path := range paths {
+		snapshot, err := captureHostFile(path)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	if !snapshots[0].Exists {
+		if !snapshots[1].Exists && !snapshots[2].Exists {
+			return nil, nil
+		}
+		return nil, errors.New("agent: refusing to remove residual Komari Agent files without Vastora ownership evidence")
+	}
+	if !bytes.Contains(snapshots[0].Data, []byte(komariUnitMarker)) {
+		return nil, errors.New("agent: refusing to remove a Komari Agent service not managed by Vastora")
+	}
+	journal := &komariRemovalJournal{Version: 1, Files: make(map[string]komariRemovalFile, len(snapshots))}
+	for _, snapshot := range snapshots {
+		entry := komariRemovalFile{Exists: snapshot.Exists}
+		if snapshot.Exists {
+			digest := sha256.Sum256(snapshot.Data)
+			entry.SHA256 = hex.EncodeToString(digest[:])
+		}
+		journal.Files[snapshot.Path] = entry
+	}
+	raw, err := json.Marshal(journal)
+	if err != nil {
+		return nil, fmt.Errorf("agent: encode Komari Agent uninstall journal: %w", err)
+	}
+	if err := writeHostFileAtomic(journalPath, append(raw, '\n'), 0o600); err != nil {
+		return nil, fmt.Errorf("agent: persist Komari Agent uninstall journal: %w", err)
+	}
+	return journal, nil
+}
+
+func removeJournaledKomariFile(path string, journal *komariRemovalJournal) error {
+	expected, ok := journal.Files[path]
+	if !ok {
+		return errors.New("agent: Komari Agent uninstall journal does not cover a managed path")
+	}
+	snapshot, err := captureHostFile(path)
+	if err != nil || !snapshot.Exists {
+		return err
+	}
+	if !expected.Exists {
+		return fmt.Errorf("agent: refusing to remove Komari Agent file created after uninstall began: %s", path)
+	}
+	digest := sha256.Sum256(snapshot.Data)
+	if hex.EncodeToString(digest[:]) != expected.SHA256 {
+		return fmt.Errorf("agent: refusing to remove changed Komari Agent file: %s", path)
+	}
+	return removeHostFile(path)
 }
 
 func declaredArtifact(manifest catalog.AppManifest, name string, target platform.Target) (catalog.Artifact, error) {

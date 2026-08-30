@@ -40,7 +40,7 @@ func testConnection(t *testing.T, agentID, name, centerURL, credential string) C
 type fakeHostDecommissioner struct {
 	prepared      bool
 	scheduled     bool
-	deleteData    bool
+	request       HostDecommissionRequest
 	prepareCalls  int
 	scheduleCalls int
 }
@@ -48,16 +48,17 @@ type fakeHostDecommissioner struct {
 func (d *fakeHostDecommissioner) Prepare(_ context.Context, deleteData bool) error {
 	d.prepared = true
 	d.prepareCalls++
-	d.deleteData = deleteData
+	d.request.DeleteData = deleteData
 	return nil
 }
 
-func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, deleteData bool) error {
+func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, request HostDecommissionRequest) error {
 	d.scheduled = true
 	d.scheduleCalls++
-	if deleteData != d.deleteData {
+	if request.DeleteData != d.request.DeleteData {
 		return errors.New("delete-data changed between cleanup phases")
 	}
+	d.request = request
 	return nil
 }
 
@@ -567,14 +568,11 @@ func TestTunnelDesiredStateRequiresFixedImageAndTokenWhileRunning(t *testing.T) 
 	}
 }
 
-func TestAgentDecommissionSchedulesFinalRemovalBeforeAcknowledgement(t *testing.T) {
+func TestAgentDecommissionHandsOffWithoutPrematureAcknowledgement(t *testing.T) {
 	acknowledged := false
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/agents/agent-1/tasks/agent-decommission-agent-1/result" || request.Header.Get("Authorization") != "Bearer credential" {
-			t.Fatalf("unexpected task acknowledgement: %s %s", request.Method, request.URL.Path)
-		}
 		acknowledged = true
-		response.WriteHeader(http.StatusNoContent)
+		t.Fatalf("unexpected request before host cleanup completed: %s %s", request.Method, request.URL.Path)
 	}))
 	defer server.Close()
 	directory := t.TempDir()
@@ -600,11 +598,46 @@ func TestAgentDecommissionSchedulesFinalRemovalBeforeAcknowledgement(t *testing.
 	(Client{HTTPClient: server.Client(), Decommissioner: decommissioner}).processTask(context.Background(), store, DeploymentTask{
 		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 1, DeleteData: true,
 	}, func(err error) { t.Errorf("duplicate task error: %v", err) })
-	if !decommissioner.prepared || !decommissioner.scheduled || !acknowledged {
+	if !decommissioner.prepared || !decommissioner.scheduled || acknowledged {
 		t.Fatalf("decommission lifecycle incomplete: %#v acknowledged=%v", decommissioner, acknowledged)
 	}
-	if decommissioner.prepareCalls != 1 || decommissioner.scheduleCalls != 1 {
+	if decommissioner.prepareCalls != 2 || decommissioner.scheduleCalls != 2 {
 		t.Fatalf("duplicate delivery repeated the external effect: %#v", decommissioner)
+	}
+	if decommissioner.request.TaskID != "agent-decommission-agent-1" || decommissioner.request.Attempt != 1 || decommissioner.request.Connection.Credential != "credential" {
+		t.Fatalf("decommission handoff is incomplete: %#v", decommissioner.request)
+	}
+}
+
+func TestHostDecommissionHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
+	started := false
+	completed := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer credential" || request.Method != http.MethodPost {
+			t.Fatalf("unauthenticated host cleanup callback: %s %s", request.Method, request.Header.Get("Authorization"))
+		}
+		switch request.URL.Path {
+		case "/api/v1/agents/agent-1/decommission/start":
+			started = true
+		case "/api/v1/agents/agent-1/tasks/agent-decommission-agent-1/result":
+			completed = true
+		default:
+			t.Fatalf("unexpected host cleanup callback: %s", request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
+	client := Client{HTTPClient: server.Client()}
+	if err := client.BeginHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CompleteHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !started || !completed {
+		t.Fatalf("host cleanup lifecycle callbacks: started=%v completed=%v", started, completed)
 	}
 }
 

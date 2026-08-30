@@ -53,7 +53,14 @@ type TailscaleIsolationDesiredState struct {
 
 type HostDecommissioner interface {
 	Prepare(context.Context, bool) error
-	ScheduleFinalRemoval(context.Context, bool) error
+	ScheduleFinalRemoval(context.Context, HostDecommissionRequest) error
+}
+
+type HostDecommissionRequest struct {
+	TaskID     string
+	Attempt    int64
+	DeleteData bool
+	Connection Connection
 }
 
 // deferredTaskCompletionError leaves the Center task lease active so the same
@@ -941,6 +948,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	var result ApplicationTaskResult
 	var err error
+	decommissionHandedOff := false
 	switch task.Kind {
 	case "application.apply":
 		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
@@ -1038,10 +1046,20 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		if c.Decommissioner == nil {
 			err = errors.New("agent: host decommission capability is not configured")
 		} else if err = c.Decommissioner.Prepare(ctx, task.DeleteData); err == nil {
-			err = c.Decommissioner.ScheduleFinalRemoval(ctx, task.DeleteData)
+			var connection Connection
+			connection, err = store.Connection(ctx)
+			if err == nil {
+				err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, Connection: connection})
+				decommissionHandedOff = err == nil
+			}
 		}
 	default:
 		err = errors.New("agent: unsupported task kind")
+	}
+	if decommissionHandedOff {
+		// The persistent host helper owns the terminal result. A successful
+		// schedule is not evidence that host cleanup itself has completed.
+		return
 	}
 	if task.Kind == "application.apply" && task.Operation != "uninstall" && len(result.GeneratedSecrets) != 0 {
 		merged, mergeErr := mergeGeneratedSecrets(task.Secrets, result.GeneratedSecrets)
@@ -1203,6 +1221,26 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 	if deploymentErr != nil {
 		payload["error"] = deploymentErr.Error()
 	}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+// BeginHostDecommission transfers responsibility for a claimed cleanup from
+// the short Agent task lease to the persistent host helper.
+func (c Client) BeginHostDecommission(ctx context.Context, connection Connection, taskID string, attempt int64) error {
+	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+		return errors.New("agent: invalid host decommission handoff")
+	}
+	payload := map[string]any{"taskId": taskID, "attempt": attempt}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/decommission/start", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+// CompleteHostDecommission reports the actual helper outcome without relying
+// on Agent state that the helper has already removed.
+func (c Client) CompleteHostDecommission(ctx context.Context, connection Connection, taskID string, attempt int64, cleanupErr error) error {
+	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+		return errors.New("agent: invalid host decommission completion")
+	}
+	payload := map[string]any{"attempt": attempt, "succeeded": cleanupErr == nil, "error": safeTaskError(cleanupErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
 }
 

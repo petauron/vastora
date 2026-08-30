@@ -278,6 +278,31 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, http.StatusOK, map[string]bool{"completed": true})
 }
 
+func (s *Server) handleStartAgentDecommission(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input struct {
+		TaskID  string `json:"taskId"`
+		Attempt int64  `json:"attempt"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.beginAgentDecommission(request.Context(), request.PathValue("id"), credential, input.TaskID, input.Attempt); err != nil {
+		if errors.Is(err, errStaleTaskLease) {
+			writeError(writer, http.StatusConflict, err)
+			return
+		}
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"started": true})
+}
+
 func (s *Server) handleRenewTaskLease(writer http.ResponseWriter, request *http.Request) {
 	credential, err := agentCredential(request)
 	if err != nil {

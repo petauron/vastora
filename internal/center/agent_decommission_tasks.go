@@ -17,12 +17,44 @@ func (s *Store) queueAgentDecommission(ctx context.Context, agentID string, dele
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_decommissions(agent_id, delete_data, state, created_at, updated_at)
 		VALUES(?, ?, 'pending', ?, ?)
-		ON CONFLICT(agent_id) DO UPDATE SET delete_data = excluded.delete_data, state = CASE WHEN agent_decommissions.state = 'succeeded' THEN agent_decommissions.state ELSE 'pending' END,
+		ON CONFLICT(agent_id) DO UPDATE SET delete_data = excluded.delete_data, state = CASE WHEN agent_decommissions.state IN ('cleaning', 'succeeded') THEN agent_decommissions.state ELSE 'pending' END,
 		lease_expires_at = '', last_error = '', updated_at = excluded.updated_at`, agentID, deleteData, now, now)
 	if err != nil {
 		return fmt.Errorf("center: queue Agent host cleanup: %w", err)
 	}
 	return s.recordStandaloneTaskEvent(ctx, agentDecommissionTaskID(agentID), agentID, "agent.decommission", 1, "queued", "host cleanup queued")
+}
+
+func (s *Store) beginAgentDecommission(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64) error {
+	if taskID != agentDecommissionTaskID(agentID) || expectedAttempt <= 0 {
+		return errStaleTaskLease
+	}
+	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'cleaning', lease_expires_at = '', updated_at = ?
+		WHERE agent_id = ? AND state = 'running' AND attempt = ?`, now, agentID, expectedAttempt)
+	if err != nil {
+		return fmt.Errorf("center: begin Agent host cleanup handoff: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		var state string
+		var attempt int64
+		if err := tx.QueryRowContext(ctx, `SELECT state, attempt FROM agent_decommissions WHERE agent_id = ?`, agentID).Scan(&state, &attempt); err != nil || attempt != expectedAttempt || (state != "cleaning" && state != "succeeded") {
+			return errStaleTaskLease
+		}
+		return tx.Commit()
+	}
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "agent.decommission", 1, "claimed", fmt.Sprintf("persistent host cleanup helper started attempt %d", expectedAttempt)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) claimAgentDecommission(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
@@ -69,12 +101,17 @@ func (s *Store) completeAgentDecommission(ctx context.Context, agentID string, e
 	}
 	defer tx.Rollback()
 	result, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = ?, lease_expires_at = '', last_error = ?, updated_at = ?
-		WHERE agent_id = ? AND state = 'running' AND attempt = ?`, state, taskError, s.now().UTC().Format(time.RFC3339Nano), agentID, expectedAttempt)
+		WHERE agent_id = ? AND state = 'cleaning' AND attempt = ?`, state, taskError, s.now().UTC().Format(time.RFC3339Nano), agentID, expectedAttempt)
 	if err != nil {
 		return fmt.Errorf("center: complete Agent host cleanup: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		return errors.New("center: Agent host cleanup task is stale")
+		var existingState string
+		var attempt int64
+		if err := tx.QueryRowContext(ctx, `SELECT state, attempt FROM agent_decommissions WHERE agent_id = ?`, agentID).Scan(&existingState, &attempt); err != nil || attempt != expectedAttempt || existingState != state {
+			return errors.New("center: Agent host cleanup task is stale")
+		}
+		return tx.Commit()
 	}
 	if err := s.recordTaskEvent(ctx, tx, agentDecommissionTaskID(agentID), agentID, "agent.decommission", 1, state, taskError); err != nil {
 		return err
@@ -112,18 +149,6 @@ func (s *Store) waitForAgentDecommissions(ctx context.Context, agents []AgentVie
 		case <-ctx.Done():
 			return fmt.Errorf("center: Agent host cleanup did not finish: %w", ctx.Err())
 		case <-ticker.C:
-		}
-	}
-	if len(agents) != 0 && s.agentDecommissionGrace > 0 {
-		if progress != nil {
-			progress("Waiting for acknowledged Agent host cleanup to finish...")
-		}
-		timer := time.NewTimer(s.agentDecommissionGrace)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("center: final Agent host cleanup did not finish: %w", ctx.Err())
-		case <-timer.C:
 		}
 	}
 	return nil
