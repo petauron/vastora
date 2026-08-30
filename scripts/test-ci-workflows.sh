@@ -40,6 +40,7 @@ fi
 ci_frontend="$(printf '%s\n' 'web/src/App.tsx' | "$classifier" --files ci)"
 ci_lockfile="$(printf '%s\n' 'web/package-lock.json' | "$classifier" --files ci)"
 codeql_go="$(printf '%s\n' 'internal/center/server.go' | "$classifier" --files codeql)"
+ci_openapi="$(printf '%s\n' 'docs/openapi.json' | "$classifier" --files ci)"
 if ! printf '%s\n' "$ci_frontend" | grep -Fq 'web=true' || ! printf '%s\n' "$ci_frontend" | grep -Fq 'container=false'; then
   echo 'Ordinary frontend source changes were classified incorrectly.' >&2
   exit 1
@@ -50,6 +51,10 @@ if ! printf '%s\n' "$ci_lockfile" | grep -Fq 'web=true' || ! printf '%s\n' "$ci_
 fi
 if ! printf '%s\n' "$codeql_go" | grep -Fq 'go=true' || ! printf '%s\n' "$codeql_go" | grep -Fq 'javascript=false'; then
   echo 'CodeQL language changes were classified incorrectly.' >&2
+  exit 1
+fi
+if ! printf '%s\n' "$ci_openapi" | grep -Fq 'go=true'; then
+  echo 'OpenAPI contract changes must run the Go contract validator.' >&2
   exit 1
 fi
 if grep -Fq 'dorny/paths-filter' "$ci_workflow" "$codeql_workflow" || grep -Fq 'gitleaks/gitleaks-action' "$ci_workflow"; then
