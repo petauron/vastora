@@ -26,6 +26,8 @@ type fakeBuiltinHeadscaleInstaller struct {
 	stoppedProbeID string
 	stopProbeErr   error
 	remoteAccess   deployapi.CenterRemoteAccessRequest
+	installCommits []deployapi.HeadscaleInstallCommitRequest
+	installCalls   int
 }
 
 type blockingBuiltinHeadscaleInstaller struct {
@@ -47,12 +49,18 @@ func (installer *fakeBuiltinHeadscaleInstaller) ApplyCenterRemoteAccess(_ contex
 }
 
 func (installer *fakeBuiltinHeadscaleInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
+	installer.installCalls++
 	installer.input = input
 	return deployapi.HeadscaleInstallResult{Endpoint: installer.endpoint, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz", APIKeyID: 1, APIKeyPrefix: "abcdefghijkl", APIKeyExpiresAt: time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 
 func (installer *fakeBuiltinHeadscaleInstaller) ReconcileHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) error {
 	installer.reconcileInput = input
+	return nil
+}
+
+func (installer *fakeBuiltinHeadscaleInstaller) CommitHeadscaleInstall(_ context.Context, input deployapi.HeadscaleInstallCommitRequest) error {
+	installer.installCommits = append(installer.installCommits, input)
 	return nil
 }
 

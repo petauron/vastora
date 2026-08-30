@@ -2,6 +2,8 @@ package center
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -146,6 +148,10 @@ func (s *Server) handleConfigureHeadscale(writer http.ResponseWriter, request *h
 }
 
 func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, centerURL string) (IntegrationView, error) {
+	return s.configureHeadscaleOperation(ctx, input, centerURL, "")
+}
+
+func (s *Server) configureHeadscaleOperation(ctx context.Context, input HeadscaleInput, centerURL, operationID string) (IntegrationView, error) {
 	if strings.TrimSpace(input.Mode) != "builtin" {
 		return s.store.ConfigureHeadscale(ctx, input)
 	}
@@ -174,7 +180,7 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	result, err := s.infrastructure.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
+	installRequest := deployapi.HeadscaleInstallRequest{
 		CenterURL:                centerURL,
 		HeadscaleURL:             input.URL,
 		CenterAliases:            centerAliases,
@@ -184,7 +190,16 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 		CenterPrivateBindAddress: centerPrivateBindAddress,
 		CenterCertificatePEM:     centerCertificate.CertificatePEM,
 		CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
-	})
+	}
+	if operationID == "" {
+		encodedRequest, marshalErr := json.Marshal(installRequest)
+		if marshalErr != nil {
+			return IntegrationView{}, marshalErr
+		}
+		operationID = fmt.Sprintf("headscale-%x", sha256.Sum256(encodedRequest))
+	}
+	installRequest.OperationID = operationID
+	result, err := s.infrastructure.InstallHeadscale(ctx, installRequest)
 	if err != nil {
 		return IntegrationView{}, err
 	}
@@ -192,10 +207,7 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	if err := s.store.queueAllGatewayStates(ctx); err != nil {
-		return IntegrationView{}, err
-	}
-	if err := s.store.markBuiltinHeadscaleRuntime(ctx); err != nil {
+	if err := s.finalizeSetupHeadscale(ctx, "builtin", operationID); err != nil {
 		return IntegrationView{}, err
 	}
 	return value, nil

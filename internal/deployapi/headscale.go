@@ -14,6 +14,7 @@ import (
 )
 
 type HeadscaleInstallRequest struct {
+	OperationID              string                `json:"operationId,omitempty"`
 	CenterURL                string                `json:"centerUrl"`
 	HeadscaleURL             string                `json:"headscaleUrl"`
 	CenterAliases            []CenterEndpointAlias `json:"centerAliases,omitempty"`
@@ -55,6 +56,14 @@ type HeadscaleAPIKeyCommitRequest struct {
 	CurrentPrefix  string `json:"currentPrefix"`
 }
 
+type HeadscaleInstallCommitRequest struct {
+	OperationID string `json:"operationId"`
+}
+
+type HeadscaleInstallCommitter interface {
+	CommitHeadscaleInstall(context.Context, HeadscaleInstallCommitRequest) error
+}
+
 type HeadscaleAPIKeyRotator interface {
 	PrepareHeadscaleAPIKeyRotation(context.Context, HeadscaleAPIKeyRotationRequest) (HeadscaleAPIKeyRotation, error)
 	CommitHeadscaleAPIKeyRotation(context.Context, HeadscaleAPIKeyCommitRequest) error
@@ -94,6 +103,15 @@ func (client *Client) InstallHeadscale(ctx context.Context, input HeadscaleInsta
 		return HeadscaleInstallResult{}, errors.New("center: deployment helper returned an incomplete Headscale result")
 	}
 	return result, nil
+}
+
+func (client *Client) CommitHeadscaleInstall(ctx context.Context, input HeadscaleInstallCommitRequest) error {
+	payload, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	_, err = client.request(ctx, http.MethodPost, "/v1/headscale/install/commit", payload)
+	return err
 }
 
 func (client *Client) PrepareHeadscaleAPIKeyRotation(ctx context.Context, input HeadscaleAPIKeyRotationRequest) (HeadscaleAPIKeyRotation, error) {

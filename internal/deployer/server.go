@@ -47,6 +47,7 @@ func (server *Server) Handler() http.Handler {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/headscale/install", server.installHeadscale)
+	mux.HandleFunc("POST /v1/headscale/install/commit", server.commitHeadscaleInstall)
 	mux.HandleFunc("POST /v1/headscale/reconcile", server.reconcileHeadscale)
 	mux.HandleFunc("POST /v1/headscale/api-key/prepare", server.prepareHeadscaleAPIKeyRotation)
 	mux.HandleFunc("POST /v1/headscale/api-key/commit", server.commitHeadscaleAPIKeyRotation)
@@ -56,6 +57,25 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/center/update", server.startCenterUpdate)
 	mux.HandleFunc("PUT /v1/center/remote-access", server.applyCenterRemoteAccess)
 	return mux
+}
+
+func (server *Server) commitHeadscaleInstall(writer http.ResponseWriter, request *http.Request) {
+	committer, ok := server.installer.(deployapi.HeadscaleInstallCommitter)
+	if !ok {
+		writeError(writer, http.StatusConflict, errors.New("deployer: Headscale install commit is unavailable"))
+		return
+	}
+	var input deployapi.HeadscaleInstallCommitRequest
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
+	if err := committer.CommitHeadscaleInstall(request.Context(), input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "committed"})
 }
 
 func (server *Server) prepareHeadscaleAPIKeyRotation(writer http.ResponseWriter, request *http.Request) {

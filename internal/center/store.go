@@ -40,6 +40,7 @@ type Store struct {
 	cloudflareTokenMu              sync.Mutex
 	certificateMu                  sync.Mutex
 	domainSwitchMu                 sync.Mutex
+	initialSetupMu                 sync.Mutex
 	remoteAccessMu                 sync.Mutex
 	siteCertificateMu              sync.Mutex
 	publicationCleanupMu           sync.Mutex
