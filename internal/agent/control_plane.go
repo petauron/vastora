@@ -982,7 +982,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			}
 		} else {
 			var commandResult ThreeXUIControllerCommandResult
-			commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, *task.ControllerCommand)
+			commandResult, err = c.applyThreeXUIControllerCommand(ctx, store, task.ID, *task.ControllerCommand)
 			if err == nil {
 				result.ControllerCommand = &commandResult
 			}

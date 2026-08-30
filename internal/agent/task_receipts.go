@@ -130,6 +130,11 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	if state != "processing" {
 		return nil, errors.New("agent: stored task receipt state is invalid")
 	}
+	if resumable, err := s.resumableThreeXUIControllerPromotion(ctx, task); err != nil {
+		return nil, err
+	} else if resumable {
+		return nil, nil
+	}
 	// An existing processing receipt means the previous process may have
 	// committed the external effect before it could persist its completion.
 	// Fail closed instead of executing the effect a second time. The operator
@@ -183,10 +188,18 @@ func (s *Store) storeTaskCompletion(ctx context.Context, completion TaskCompleti
 }
 
 func (s *Store) AcknowledgeTaskCompletion(ctx context.Context, taskID string) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET state = CASE WHEN state = 'reconciliation_required' THEN 'reconciliation_acknowledged' ELSE 'acknowledged' END, updated_at = ? WHERE task_id = ? AND state IN ('completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')`, s.now().UTC().Format(time.RFC3339Nano), taskID); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE task_receipts SET state = CASE WHEN state = 'reconciliation_required' THEN 'reconciliation_acknowledged' ELSE 'acknowledged' END, updated_at = ? WHERE task_id = ? AND state IN ('completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')`, s.now().UTC().Format(time.RFC3339Nano), taskID); err != nil {
 		return fmt.Errorf("agent: clear acknowledged task completion: %w", err)
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_controller_promotions WHERE task_id = ? AND phase = 'applied'`, taskID); err != nil {
+		return fmt.Errorf("agent: clear acknowledged 3x-ui controller promotion: %w", err)
+	}
+	return tx.Commit()
 }
 
 func deploymentTaskHash(task DeploymentTask) ([]byte, error) {

@@ -73,7 +73,7 @@ type Connection struct {
 	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 12
+const agentSchemaVersion = 13
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -484,6 +484,36 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 12
 		}
+		if version == 12 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE IF NOT EXISTS three_x_ui_controller_promotions (
+				id INTEGER PRIMARY KEY CHECK(id = 1),
+				migration_id TEXT NOT NULL UNIQUE,
+				task_id TEXT NOT NULL UNIQUE,
+				application_id TEXT NOT NULL,
+				command_hash BLOB NOT NULL,
+				phase TEXT NOT NULL CHECK(phase IN ('prepared', 'imported', 'api_ready', 'role_configured', 'applied')),
+				sealed_state BLOB NOT NULL,
+				last_error TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version = 13`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 12 to 13: %w", migrateErr)
+			}
+			version = 13
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -539,6 +569,18 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
+		CREATE TABLE three_x_ui_controller_promotions (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			migration_id TEXT NOT NULL UNIQUE,
+			task_id TEXT NOT NULL UNIQUE,
+			application_id TEXT NOT NULL,
+			command_hash BLOB NOT NULL,
+			phase TEXT NOT NULL CHECK(phase IN ('prepared', 'imported', 'api_ready', 'role_configured', 'applied')),
+			sealed_state BLOB NOT NULL,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
 		CREATE TABLE task_receipts (
 			task_id TEXT PRIMARY KEY,
 			task_kind TEXT NOT NULL,
@@ -571,7 +613,7 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 12;`); err != nil {
+		PRAGMA user_version = 13;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
