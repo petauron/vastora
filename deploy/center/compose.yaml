@@ -4,6 +4,9 @@ services:
   center:
     image: ${VASTORA_CENTER_IMAGE:?set VASTORA_CENTER_IMAGE to a pinned Center image}
     restart: unless-stopped
+    labels:
+      io.vastora.managed: "true"
+      io.vastora.component: center
     command:
       - center
       - serve
@@ -37,6 +40,9 @@ services:
   deployer:
     image: ${VASTORA_CENTER_IMAGE:?set VASTORA_CENTER_IMAGE to a pinned Center image}
     restart: unless-stopped
+    labels:
+      io.vastora.managed: "true"
+      io.vastora.component: deployer
     user: "0:0"
     command:
       - deployer

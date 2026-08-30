@@ -37,6 +37,7 @@ deployment-check:
 	sh -n scripts/assert-image-platforms.sh
 	sh -n scripts/check-runtime-image-platforms.sh
 	sh -n scripts/test-center-install.sh
+	sh -n scripts/test-runtime-network.sh
 	sh -n scripts/test-center-uninstall.sh
 	sh -n scripts/test-center-update.sh
 	sh -n scripts/test-release-metadata.sh
@@ -52,6 +53,7 @@ deployment-check:
 	scripts/publish-installer-r2.sh --help >/dev/null
 	scripts/verify-installer-release.sh --help >/dev/null
 	scripts/test-center-install.sh
+	scripts/test-runtime-network.sh
 	scripts/test-center-uninstall.sh
 	scripts/test-center-update.sh
 	scripts/test-release-metadata.sh
