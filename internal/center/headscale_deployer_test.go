@@ -28,6 +28,19 @@ type fakeBuiltinHeadscaleInstaller struct {
 	remoteAccess   deployapi.CenterRemoteAccessRequest
 }
 
+type blockingBuiltinHeadscaleInstaller struct {
+	fakeBuiltinHeadscaleInstaller
+	started chan struct{}
+	release chan struct{}
+}
+
+func (installer *blockingBuiltinHeadscaleInstaller) ReconcileHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) error {
+	installer.reconcileInput = input
+	close(installer.started)
+	<-installer.release
+	return nil
+}
+
 func (installer *fakeBuiltinHeadscaleInstaller) ApplyCenterRemoteAccess(_ context.Context, input deployapi.CenterRemoteAccessRequest) error {
 	installer.remoteAccess = input
 	return nil
@@ -223,5 +236,57 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 	}
 	if installer.reconcileInput.CenterURL != "" || installer.reconcileInput.HeadscaleURL != "" {
 		t.Fatal("current built-in runtime was reconciled again")
+	}
+}
+
+func TestReconcileBuiltinHeadscaleSerializesDomainMutations(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)`, agentConnectionModeSetting, "headscale", agentConnectURLSetting, "https://center.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	storeSystemCenterCertificateForTest(t, store, "center.example.com")
+	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO network_integrations(kind, mode, endpoint, status, created_at, updated_at)
+		VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, builtinHeadscaleRuntimeSetting, "ipv4-only-v1"); err != nil {
+		t.Fatal(err)
+	}
+	installer := &blockingBuiltinHeadscaleInstaller{started: make(chan struct{}), release: make(chan struct{})}
+	server := NewServer(store, "", false).WithInfrastructureManager(installer)
+	reconciled := make(chan error, 1)
+	go func() {
+		reconciled <- server.ReconcileBuiltinHeadscale(ctx)
+	}()
+	select {
+	case <-installer.started:
+	case <-time.After(time.Second):
+		t.Fatal("Headscale reconciliation did not start")
+	}
+	lockAcquired := make(chan struct{})
+	go func() {
+		store.domainSwitchMu.Lock()
+		close(lockAcquired)
+		store.domainSwitchMu.Unlock()
+	}()
+	select {
+	case <-lockAcquired:
+		t.Fatal("domain mutation lock was released while Headscale reconciliation was running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(installer.release)
+	if err := <-reconciled; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-lockAcquired:
+	case <-time.After(time.Second):
+		t.Fatal("domain mutation lock was not released after Headscale reconciliation")
 	}
 }

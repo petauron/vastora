@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/petauron/vastora/internal/deployapi"
 )
@@ -18,6 +19,7 @@ type Server struct {
 	publicEntryProber deployapi.PublicEntryProber
 	centerUpdater     deployapi.CenterUpdater
 	remoteAccess      deployapi.CenterRemoteAccessManager
+	headscaleMu       sync.Mutex
 }
 
 func NewServer(installer deployapi.HeadscaleInstaller) *Server {
@@ -128,6 +130,8 @@ func (server *Server) reconcileHeadscale(writer http.ResponseWriter, request *ht
 	if !ok {
 		return
 	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
 	if err := server.installer.ReconcileHeadscale(request.Context(), input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
@@ -140,6 +144,8 @@ func (server *Server) installHeadscale(writer http.ResponseWriter, request *http
 	if !ok {
 		return
 	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
 	result, err := server.installer.InstallHeadscale(request.Context(), input)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
