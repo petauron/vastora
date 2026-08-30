@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -15,6 +17,7 @@ func TestTransformThreeXUIControllerDatabaseSwapsLocalAndTargetInbounds(t *testi
 		t.Fatal(err)
 	}
 	result, err := transformThreeXUIControllerDatabase(content, ThreeXUIControllerCommandTask{
+		MigrationID:         "migration-1",
 		SourceApplicationID: "source-controller", SourceName: "source-node", SourceAddress: "100.64.0.10", SourcePanelPort: 2053,
 		SourceRemoteNodeID: 7, SourceAPIToken: "source-token",
 	}, threeXUIControllerTargetSettings{Address: "100.64.0.20", PanelPort: 3053, PanelGUID: "target-panel-guid"})
@@ -42,11 +45,12 @@ func TestTransformThreeXUIControllerDatabaseSwapsLocalAndTargetInbounds(t *testi
 		t.Fatalf("source placeholder = %q %q %q %d %q", name, remark, address, port, token)
 	}
 	wantSettings := map[string]string{
-		"webListen": "100.64.0.20",
-		"webPort":   "3053",
-		"subListen": "100.64.0.20",
-		"subPort":   "2096",
-		"panelGuid": "target-panel-guid",
+		"webListen":                  "100.64.0.20",
+		"webPort":                    "3053",
+		"subListen":                  "100.64.0.20",
+		"subPort":                    "2096",
+		"panelGuid":                  "target-panel-guid",
+		"vastoraControllerMigration": "migration-1",
 	}
 	for key, want := range wantSettings {
 		var got string
@@ -56,6 +60,67 @@ func TestTransformThreeXUIControllerDatabaseSwapsLocalAndTargetInbounds(t *testi
 		if got != want {
 			t.Fatalf("setting %s = %q, want %q", key, got, want)
 		}
+	}
+}
+
+func TestThreeXUIControllerPromotionSurvivesRestartUntilCompletionAcknowledged(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := ThreeXUIControllerCommandTask{
+		Action: "promote", MigrationID: "migration-1", ApplicationID: "target", SourceApplicationID: "source",
+		SourceName: "source", SourceAddress: "100.64.0.10", SourcePanelPort: 2053, SourceRemoteNodeID: 7,
+		BackupRevision: 1, SourceAPIToken: "new-token",
+	}
+	task := DeploymentTask{ID: "task-1", Attempt: 1, Kind: "application.command", ControllerCommand: &command}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("prepare task receipt: completion=%#v err=%v", completion, err)
+	}
+	originalSecrets, _ := json.Marshal(map[string]string{"api_token": "old-token"})
+	database := append([]byte("SQLite format 3\x00"), []byte("durable test state")...)
+	promotion, err := store.BeginThreeXUIControllerPromotion(context.Background(), task.ID, command, threeXUIControllerPromotionRecovery{
+		OriginalDatabase: database, TransformedDB: append([]byte(nil), database...), OriginalSecrets: originalSecrets,
+		OldToken: "old-token", NewToken: "new-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if promotion.Phase != "prepared" {
+		t.Fatalf("phase = %q, want prepared", promotion.Phase)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("resume task receipt: completion=%#v err=%v", completion, err)
+	}
+	for _, transition := range [][2]string{{"prepared", "imported"}, {"imported", "api_ready"}, {"api_ready", "role_configured"}, {"role_configured", "applied"}} {
+		if err := store.AdvanceThreeXUIControllerPromotion(context.Background(), transition[0], transition[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{
+		TaskID: task.ID, Attempt: task.Attempt,
+		Result: ApplicationTaskResult{ControllerCommand: &ThreeXUIControllerCommandResult{Action: "promote", BackupRevision: 1, SourceRemoteNodeID: 7}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ThreeXUIControllerPromotion(context.Background()); err != nil || !found {
+		t.Fatalf("promotion before acknowledgement: found=%t err=%v", found, err)
+	}
+	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.ThreeXUIControllerPromotion(context.Background()); err != nil || found {
+		t.Fatalf("promotion after acknowledgement: found=%t err=%v", found, err)
 	}
 }
 

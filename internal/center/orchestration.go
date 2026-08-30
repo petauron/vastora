@@ -313,9 +313,12 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 	if err := rows.Close(); err != nil {
 		return gateway.DesiredState{}, err
 	}
-	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, n.public_address
+	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, n.public_address,
+		CASE WHEN application.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' AND guard.status = 'ready' THEN 'v2' ELSE '' END
 		FROM publications p JOIN services s ON s.id = p.service_id
+		JOIN applications application ON application.id = s.application_id
 		JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
+		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = s.id
 		WHERE p.gateway_node_id = ? AND p.kind = 'public_shared_443'
 		AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.id`, gatewayID)
 	if err != nil {
@@ -325,7 +328,7 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 	for sharedRows.Next() {
 		var route gateway.Layer4Route
 		var endpoint, publicAddress string
-		if err := sharedRows.Scan(&route.ID, &route.Hostname, &endpoint, &publicAddress); err != nil {
+		if err := sharedRows.Scan(&route.ID, &route.Hostname, &endpoint, &publicAddress, &route.ProxyProtocol); err != nil {
 			sharedRows.Close()
 			return gateway.DesiredState{}, err
 		}

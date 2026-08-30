@@ -150,7 +150,7 @@ fi
 install -d -m 0755 "$(dirname "$install_dir")"
 staging="$(mktemp -d "${install_dir}.new.XXXXXX")"
 tar -xzf "$archive" -C "$staging"
-for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compose.yaml release.env; do
+for required_file in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk compose.yaml release.env; do
   if [ ! -f "$staging/$required_file" ]; then
     echo "The Center release is incomplete: missing $required_file" >&2
     exit 1
@@ -178,8 +178,17 @@ if [ "$operation" = "uninstall" ]; then
 fi
 
 if [ -d "$install_dir" ]; then
-  if [ ! -f "$install_dir/.env" ]; then
+  if [ ! -f "$install_dir/.env" ] || [ ! -f "$install_dir/release.env" ]; then
     echo "$install_dir exists but is not a managed Center installation; no files were changed." >&2
+    exit 1
+  fi
+  installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+  if ! printf '%s\n' "$installed_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+    echo "The installed Center version is invalid; no files were changed." >&2
+    exit 1
+  fi
+  if [ "$(awk -f "$staging/compare-semver.awk" "$bundle_version" "$installed_version")" = "-1" ]; then
+    echo "Refusing to downgrade Center from $installed_version to $bundle_version; no files were changed." >&2
     exit 1
   fi
   echo "Existing Center installation found; upgrading it in place..."

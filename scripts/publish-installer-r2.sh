@@ -64,6 +64,13 @@ for required in awk aws cmp grep jq mktemp sha256sum; do
   fi
 done
 
+script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+semver_comparator="$script_dir/compare-semver.awk"
+if [ ! -f "$semver_comparator" ]; then
+  echo "Release tooling is incomplete: compare-semver.awk is missing." >&2
+  exit 1
+fi
+
 tag="v$version"
 prefix="vastora/releases/$tag"
 manifest_key="$prefix/manifest.json"
@@ -122,19 +129,21 @@ upload_immutable() {
 }
 
 verify_manifest() {
-  manifest="$1"
+  verify_manifest_path="$1"
+  verify_manifest_version="${2:-$version}"
+  verify_manifest_prefix="vastora/releases/v$verify_manifest_version/"
   jq -e \
-    --arg version "$version" \
-    --arg prefix "$prefix/" \
+    --arg version "$verify_manifest_version" \
+    --arg prefix "$verify_manifest_prefix" \
     '(.schema == 1) and (.version == $version) and
      ((.assets | keys | sort) == ["install.sh", "vastora-center-install.tar.gz", "vastora-center-install.tar.gz.sha256"]) and
      (all(.assets[]; (.key | startswith($prefix)) and (.sha256 | test("^[0-9a-f]{64}$"))))' \
-    "$manifest" >/dev/null
+    "$verify_manifest_path" >/dev/null
 }
 
 verify_remote_assets() {
-  manifest="$1"
-  jq -r '.assets[] | [.key, .sha256] | @tsv' "$manifest" |
+  verify_remote_manifest_path="$1"
+  jq -r '.assets[] | [.key, .sha256] | @tsv' "$verify_remote_manifest_path" |
     while IFS="$(printf '\t')" read -r key digest; do
       if [ "$(remote_digest "$key")" != "$digest" ]; then
         echo "R2 manifest references an unavailable or mismatched object: $key" >&2
@@ -150,7 +159,6 @@ if [ "$command_name" = "stage" ]; then
       exit 1
     fi
   done
-  script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
   project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
   if [ -z "$installer" ]; then installer="$project_dir/install.sh"; fi
   bundle="$source_dir/vastora-center-install.tar.gz"
@@ -205,6 +213,33 @@ manifest="$temporary_dir/manifest.json"
 retry aws_r2 get-object --bucket "$bucket" --key "$manifest_key" "$manifest" >/dev/null
 verify_manifest "$manifest"
 verify_remote_assets "$manifest"
+active_manifest="$temporary_dir/active-current.json"
+active_head="$temporary_dir/active-current-head.json"
+active_head_error="$temporary_dir/active-current-head.err"
+active_exists=no
+if aws_r2 head-object --bucket "$bucket" --key "$current_key" >"$active_head" 2>"$active_head_error"; then
+  active_exists=yes
+elif ! grep -Eq '(^|[^0-9])404([^0-9]|$)|NoSuchKey|Not Found' "$active_head_error"; then
+  echo "R2 current release pointer could not be inspected; refusing activation." >&2
+  cat "$active_head_error" >&2
+  exit 1
+fi
+if [ "$active_exists" = yes ]; then
+  retry aws_r2 get-object --bucket "$bucket" --key "$current_key" "$active_manifest" >/dev/null
+  active_version="$(jq -er '.version | strings' "$active_manifest")"
+  if ! printf '%s' "$active_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+    echo "R2 current release pointer contains an invalid version; refusing to replace it." >&2
+    exit 1
+  fi
+  if ! verify_manifest "$active_manifest" "$active_version"; then
+    echo "R2 current release pointer is invalid; refusing to replace it." >&2
+    exit 1
+  fi
+  if [ "$(awk -f "$semver_comparator" "$version" "$active_version")" = "-1" ]; then
+    echo "Refusing to move R2 current release backward from $active_version to $version." >&2
+    exit 1
+  fi
+fi
 upload_immutable "$manifest" "$activated_key" 'application/json; charset=utf-8' >/dev/null
 manifest_digest="$(sha256sum "$manifest" | awk 'NR == 1 {print tolower($1)}')"
 retry aws_r2 put-object \

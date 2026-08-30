@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/petauron/vastora/internal/deployapi"
 )
@@ -18,6 +19,7 @@ type Server struct {
 	publicEntryProber deployapi.PublicEntryProber
 	centerUpdater     deployapi.CenterUpdater
 	remoteAccess      deployapi.CenterRemoteAccessManager
+	headscaleMu       sync.Mutex
 }
 
 func NewServer(installer deployapi.HeadscaleInstaller) *Server {
@@ -45,13 +47,74 @@ func (server *Server) Handler() http.Handler {
 		writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/headscale/install", server.installHeadscale)
+	mux.HandleFunc("POST /v1/headscale/install/commit", server.commitHeadscaleInstall)
 	mux.HandleFunc("POST /v1/headscale/reconcile", server.reconcileHeadscale)
+	mux.HandleFunc("POST /v1/headscale/api-key/prepare", server.prepareHeadscaleAPIKeyRotation)
+	mux.HandleFunc("POST /v1/headscale/api-key/commit", server.commitHeadscaleAPIKeyRotation)
 	mux.HandleFunc("POST /v1/public-entry/probes", server.startPublicEntryProbe)
 	mux.HandleFunc("DELETE /v1/public-entry/probes/{id}", server.stopPublicEntryProbe)
 	mux.HandleFunc("GET /v1/center/update", server.centerUpdateStatus)
 	mux.HandleFunc("POST /v1/center/update", server.startCenterUpdate)
 	mux.HandleFunc("PUT /v1/center/remote-access", server.applyCenterRemoteAccess)
 	return mux
+}
+
+func (server *Server) commitHeadscaleInstall(writer http.ResponseWriter, request *http.Request) {
+	committer, ok := server.installer.(deployapi.HeadscaleInstallCommitter)
+	if !ok {
+		writeError(writer, http.StatusConflict, errors.New("deployer: Headscale install commit is unavailable"))
+		return
+	}
+	var input deployapi.HeadscaleInstallCommitRequest
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
+	if err := committer.CommitHeadscaleInstall(request.Context(), input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "committed"})
+}
+
+func (server *Server) prepareHeadscaleAPIKeyRotation(writer http.ResponseWriter, request *http.Request) {
+	rotator, ok := server.installer.(deployapi.HeadscaleAPIKeyRotator)
+	if !ok {
+		writeError(writer, http.StatusConflict, errors.New("deployer: Headscale API key rotation is unavailable"))
+		return
+	}
+	var input deployapi.HeadscaleAPIKeyRotationRequest
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
+	result, err := rotator.PrepareHeadscaleAPIKeyRotation(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, result)
+}
+
+func (server *Server) commitHeadscaleAPIKeyRotation(writer http.ResponseWriter, request *http.Request) {
+	rotator, ok := server.installer.(deployapi.HeadscaleAPIKeyRotator)
+	if !ok {
+		writeError(writer, http.StatusConflict, errors.New("deployer: Headscale API key rotation is unavailable"))
+		return
+	}
+	var input deployapi.HeadscaleAPIKeyCommitRequest
+	if !decodeRequest(writer, request, &input) {
+		return
+	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
+	if err := rotator.CommitHeadscaleAPIKeyRotation(request.Context(), input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (server *Server) applyCenterRemoteAccess(writer http.ResponseWriter, request *http.Request) {
@@ -128,6 +191,8 @@ func (server *Server) reconcileHeadscale(writer http.ResponseWriter, request *ht
 	if !ok {
 		return
 	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
 	if err := server.installer.ReconcileHeadscale(request.Context(), input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
@@ -140,6 +205,8 @@ func (server *Server) installHeadscale(writer http.ResponseWriter, request *http
 	if !ok {
 		return
 	}
+	server.headscaleMu.Lock()
+	defer server.headscaleMu.Unlock()
 	result, err := server.installer.InstallHeadscale(request.Context(), input)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)

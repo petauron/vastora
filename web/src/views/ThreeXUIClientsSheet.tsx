@@ -14,11 +14,12 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
+import { clearSecretOperation, commandSecretOperations, commandSecretScope, secretOperation } from "../secret-delivery";
 import { bytesFromGB, dateInputValueInTimeZone, endOfDayEpochInTimeZone, formatBytes, gigabytesFromBytes, nextRenewalDateInTimeZone, SubscriptionTrafficPlanFields } from "./TrafficPlanFields";
 import { hasObservedThreeXUIState, mergeCachedCommand, mergeCommandUpdate } from "./threeXUICommandState";
 
 type Editor = { client?: ThreeXUIClient } | null;
-type RevealedLink = { title: string; value: string } | null;
+type RevealedLink = { title: string; value: string; commandId: string; operationKey: string; scope: string } | null;
 
 export function ThreeXUIClientsSheet({ application, advancedURL, language, onClose, siteTimezone }: { application: Application | null; advancedURL?: string; language: Language; onClose: () => void; siteTimezone?: string }) {
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
@@ -86,13 +87,37 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
     return () => { cancelled = true; };
   }, [application?.id, language, runCommand]);
 
+	useEffect(() => {
+		if (!application) return;
+		let cancelled = false;
+		void (async () => {
+			for (const pending of commandSecretOperations(application.id)) {
+				try {
+					const metadata = await api.applicationCommand(pending.commandId);
+					if (cancelled || metadata.applicationId !== application.id || metadata.kind !== "3xui.clients.manage" || metadata.action !== "reveal_link" && metadata.action !== "reveal_subscription") continue;
+					if (!metadata.resultAvailable) {
+						clearSecretOperation(pending.scope);
+						continue;
+					}
+					const result = await api.revealApplicationCommand(pending.commandId, pending.operationKey);
+					if (cancelled) return;
+					const title = metadata.action === "reveal_subscription" ? copy(language, "订阅地址", "Subscription URL") : copy(language, "VLESS 客户端链接", "VLESS client link");
+					setRevealed({ title, value: result.shareUri, commandId: pending.commandId, operationKey: pending.operationKey, scope: pending.scope });
+					return;
+				} catch {
+					// A stale or already acknowledged entry is harmless and can be retried or cleared by its owning flow.
+				}
+			}
+		})();
+		return () => { cancelled = true; };
+	}, [application?.id, language]);
+
   const refresh = () => {
     setRefreshError("");
     void runCommand({ action: "list" }).then(() => setShowingCached(false)).catch((loadError) => setRefreshError(readableError(language, loadError)));
   };
 
   const run = async (input: Omit<ThreeXUIClientCommandInput, "applicationId">) => {
-    setRevealed(null);
     setNotice("");
     try {
       const next = await runCommand(input);
@@ -108,16 +133,30 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
     try {
       const next = await runCommand({ action, email: client.email, inboundId: action === "reveal_link" ? publishedInbound?.id : undefined });
       if (!next) return;
-      const result = await api.revealApplicationCommand(next.id);
+		const scope = commandSecretScope(next.applicationId, next.id);
+		const operationKey = secretOperation(scope);
+		const result = await api.revealApplicationCommand(next.id, operationKey);
       const title = action === "reveal_link"
         ? copy(language, "VLESS 客户端链接", "VLESS client link")
         : copy(language, "订阅地址", "Subscription URL");
-      setRevealed({ title, value: result.shareUri });
+		setRevealed({ title, value: result.shareUri, commandId: next.id, operationKey, scope });
       await navigator.clipboard?.writeText(result.shareUri).catch(() => undefined);
     } catch (operationError) {
       setError(readableError(language, operationError));
     }
   };
+
+	const acknowledgeRevealed = async () => {
+		if (!revealed) return;
+		try {
+			await api.acknowledgeApplicationCommand(revealed.commandId, revealed.operationKey);
+			clearSecretOperation(revealed.scope);
+			setRevealed(null);
+			setCommand((current) => current?.id === revealed.commandId ? { ...current, resultAvailable: false } : current);
+		} catch (operationError) {
+			setError(readableError(language, operationError));
+		}
+	};
 
   return <Sheet onOpenChange={(open) => { if (!open) requestClose(); }} open={Boolean(application)}>
     <SheetContent className="w-full sm:max-w-3xl">
@@ -137,7 +176,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 
           {clients.length > 8 ? <div><label className="sr-only" htmlFor="three-xui-client-search">{copy(language, "搜索客户端", "Search clients")}</label><Input id="three-xui-client-search" onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder={copy(language, "搜索客户端", "Search clients")} type="search" value={search} /></div> : null}
 
-          {revealed ? <Alert><LinkIcon /><AlertTitle>{revealed.title}</AlertTitle><AlertDescription><p>{copy(language, "地址已尝试复制到剪贴板。请只发送给你信任的设备。", "The URL was copied when permitted. Share it only with devices you trust.")}</p><div className="mt-3 flex items-start gap-2 rounded-lg bg-muted p-3"><code className="min-w-0 flex-1 break-all text-xs">{revealed.value}</code><Button aria-label={copy(language, "复制地址", "Copy URL")} onClick={() => void navigator.clipboard?.writeText(revealed.value)} size="icon-sm" variant="outline"><CopyIcon /></Button></div></AlertDescription></Alert> : null}
+          {revealed ? <Alert><LinkIcon /><AlertTitle>{revealed.title}</AlertTitle><AlertDescription><p>{copy(language, "地址已尝试复制到剪贴板。确认保存前可在断线后重新领取。", "The URL was copied when permitted and remains recoverable after a disconnect until acknowledged.")}</p><div className="mt-3 flex items-start gap-2 rounded-lg bg-muted p-3"><code className="min-w-0 flex-1 break-all text-xs">{revealed.value}</code><Button aria-label={copy(language, "复制地址", "Copy URL")} onClick={() => void navigator.clipboard?.writeText(revealed.value)} size="icon-sm" variant="outline"><CopyIcon /></Button></div><Button className="mt-3" disabled={busy} onClick={() => void acknowledgeRevealed()} size="sm" variant="outline">{copy(language, "我已保存", "I saved it")}</Button></AlertDescription></Alert> : null}
           {notice ? <p aria-live="polite" className="text-sm text-muted-foreground">{notice}</p> : null}
           {error ? <Alert variant="destructive"><AlertTitle>{copy(language, "操作没有完成", "Operation did not complete")}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
           {refreshError && clients.length ? <Alert><RefreshCwIcon /><AlertTitle>{copy(language, "正在显示上次同步结果", "Showing the last synced result")}</AlertTitle><AlertDescription><p>{refreshError}</p><Button className="mt-3" disabled={busy} onClick={refresh} size="sm" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "重新读取", "Retry")}</Button></AlertDescription></Alert> : null}
@@ -158,7 +197,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
                 </div>
                 <div className="mt-4 grid gap-3 text-xs sm:grid-cols-4"><Metric label={copy(language, "全节点已用", "Used across all nodes")} value={`${formatBytes(client.usedBytes)}${client.totalBytes ? ` / ${formatBytes(client.totalBytes)}` : ""}`} /><Metric label={copy(language, "有效期", "Expires")} value={formatExpiry(client.expiryTime, language, siteTimezone)} /><Metric label={copy(language, "自动续期", "Auto-renewal")} value={client.resetDays ? copy(language, `每 ${client.resetDays} 天`, `Every ${client.resetDays} days`) : copy(language, "关闭", "Off")} /><Metric label={copy(language, "设备数限制", "IP limit")} value={client.limitIp ? String(client.limitIp) : copy(language, "不限", "Unlimited")} /></div>
 	                {resetClient?.email === client.email ? <Alert className="mt-4"><RotateCcwIcon /><AlertTitle>{copy(language, `重置“${client.email}”的订阅用量？`, `Reset subscription usage for “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "这会把该客户端在所有 VLESS 节点上的合计用量清零，相当于立即开始一个新套餐周期，且不能撤销。", "This clears the client's combined usage across every VLESS node, immediately starting a new allowance cycle. It cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setResetClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).then(() => setResetClient(null)).catch(() => undefined)} size="sm">{copy(language, "确认重置", "Reset usage")}</Button></div></AlertDescription></Alert> : null}
-                {deleteClient?.email === client.email ? <Alert className="mt-4" variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : <div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy || !publishedInbound} onClick={() => void reveal(client, "reveal_link")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制 VLESS", "Copy VLESS")}</Button><Button disabled={busy || !command?.subscriptionAvailable} onClick={() => void reveal(client, "reveal_subscription")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制订阅", "Copy subscription")}</Button><Button disabled={busy} onClick={() => openEditor({ client })} size="icon-sm" title={copy(language, "编辑", "Edit")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑", "Edit")}</span></Button><Button disabled={busy} onClick={() => { setDeleteClient(null); setResetClient(client); }} size="icon-sm" title={copy(language, "重置流量", "Reset traffic")} variant="ghost"><RotateCcwIcon /><span className="sr-only">{copy(language, "重置流量", "Reset traffic")}</span></Button><Button disabled={busy} onClick={() => { setResetClient(null); setDeleteClient(client); }} size="icon-sm" title={copy(language, "删除", "Delete")} variant="ghost"><Trash2Icon /><span className="sr-only">{copy(language, "删除", "Delete")}</span></Button></div>}
+				{deleteClient?.email === client.email ? <Alert className="mt-4" variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : <div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy || Boolean(revealed) || !publishedInbound} onClick={() => void reveal(client, "reveal_link")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制 VLESS", "Copy VLESS")}</Button><Button disabled={busy || Boolean(revealed) || !command?.subscriptionAvailable} onClick={() => void reveal(client, "reveal_subscription")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制订阅", "Copy subscription")}</Button><Button disabled={busy} onClick={() => openEditor({ client })} size="icon-sm" title={copy(language, "编辑", "Edit")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑", "Edit")}</span></Button><Button disabled={busy} onClick={() => { setDeleteClient(null); setResetClient(client); }} size="icon-sm" title={copy(language, "重置流量", "Reset traffic")} variant="ghost"><RotateCcwIcon /><span className="sr-only">{copy(language, "重置流量", "Reset traffic")}</span></Button><Button disabled={busy} onClick={() => { setResetClient(null); setDeleteClient(client); }} size="icon-sm" title={copy(language, "删除", "Delete")} variant="ghost"><Trash2Icon /><span className="sr-only">{copy(language, "删除", "Delete")}</span></Button></div>}
                 {!publishedInbound ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "为入站完成公网发布后才能导出 VLESS 链接。", "Publish the inbound before exporting a VLESS URL.")}</p> : null}
                 {!command?.subscriptionAvailable ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, "开启公网订阅后才能复制订阅地址。", "Enable public subscription before copying a subscription URL.")}</p> : null}
                 {command?.subscriptionAvailable ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, "同一地址会自动适配 OpenClash、Mihomo 和其他客户端。", "The same URL automatically adapts to OpenClash, Mihomo, and other clients.")}</p> : null}

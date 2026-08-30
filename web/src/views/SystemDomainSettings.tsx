@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRightIcon, CheckCircle2Icon, CircleAlertIcon, CloudIcon, Globe2Icon, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
+import { ArrowRightIcon, CheckCircle2Icon, CircleAlertIcon, Clock3Icon, CloudIcon, Globe2Icon, RefreshCwIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { CloudflareZone, SystemDomain } from "../types";
 import type { Language } from "../translations";
@@ -15,7 +15,27 @@ import { copy, userError } from "./shared";
 
 export function SystemDomainSettings({ domain, language }: { domain: SystemDomain; language: Language }) {
   const [open, setOpen] = useState(false);
-  const blocked = !domain.builtinHeadscale || domain.activePublications > 0 || domain.pendingCleanup > 0;
+  const [currentDomain, setCurrentDomain] = useState(domain);
+  const [retiring, setRetiring] = useState("");
+  const [retireError, setRetireError] = useState("");
+  useEffect(() => setCurrentDomain(domain), [domain]);
+  const blocked = !currentDomain.builtinHeadscale || currentDomain.activePublications > 0 || currentDomain.pendingCleanup > 0;
+  const transitions = Array.from(currentDomain.aliases.reduce((values, alias) => {
+    const current = values.get(alias.transitionId) ?? [];
+    current.push(alias);
+    values.set(alias.transitionId, current);
+    return values;
+  }, new Map<string, SystemDomain["aliases"]>()).entries());
+  const retire = async (transitionID: string) => {
+    setRetiring(transitionID); setRetireError("");
+    try {
+      setCurrentDomain(await api.retireSystemDomainAliases(transitionID));
+    } catch (error) {
+      setRetireError(userError(language, error));
+    } finally {
+      setRetiring("");
+    }
+  };
   return <>
     <Card>
       <CardHeader>
@@ -24,14 +44,26 @@ export function SystemDomainSettings({ domain, language }: { domain: SystemDomai
         <CardAction><Button disabled={blocked} onClick={() => setOpen(true)} size="sm" variant="outline">{copy(language, "切换域名", "Switch domain")}</Button></CardAction>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm sm:grid-cols-3">
-        <DomainValue label={copy(language, "域名空间", "Namespace")} value={domain.namespace || "—"} />
-        <DomainValue label="Center" value={domain.centerUrl} />
-        <DomainValue label="Headscale" value={domain.headscaleUrl || "—"} />
-        {blocked ? <p className="sm:col-span-3 text-sm text-amber-600 dark:text-amber-400">{!domain.builtinHeadscale ? copy(language, "外部 Headscale 暂不支持自动迁移域名。", "Automatic domain migration is not available with external Headscale.") : domain.activePublications > 0 ? copy(language, `请先停止 ${domain.activePublications} 个访问入口。`, `Stop ${domain.activePublications} access point(s) first.`) : copy(language, `请等待 ${domain.pendingCleanup} 个入口完成清理。`, `Wait for ${domain.pendingCleanup} access point cleanup(s).`)}</p> : null}
-        {domain.aliases.length > 0 ? <p className="sm:col-span-3 text-xs text-muted-foreground">{copy(language, `仍保留 ${domain.aliases.length} 个旧系统地址作为迁移过渡。`, `${domain.aliases.length} previous system address(es) remain available during transition.`)}</p> : null}
+        <DomainValue label={copy(language, "域名空间", "Namespace")} value={currentDomain.namespace || "—"} />
+        <DomainValue label="Center" value={currentDomain.centerUrl} />
+        <DomainValue label="Headscale" value={currentDomain.headscaleUrl || "—"} />
+        {blocked ? <p className="sm:col-span-3 text-sm text-amber-600 dark:text-amber-400">{!currentDomain.builtinHeadscale ? copy(language, "外部 Headscale 暂不支持自动迁移域名。", "Automatic domain migration is not available with external Headscale.") : currentDomain.activePublications > 0 ? copy(language, `请先停止 ${currentDomain.activePublications} 个访问入口。`, `Stop ${currentDomain.activePublications} access point(s) first.`) : copy(language, `请等待 ${currentDomain.pendingCleanup} 个入口完成清理。`, `Wait for ${currentDomain.pendingCleanup} access point cleanup(s).`)}</p> : null}
+        {transitions.length > 0 ? <div className="grid gap-3 sm:col-span-3">
+          <p className="text-xs text-muted-foreground">{copy(language, `仍有 ${transitions.length} 组旧系统地址处于迁移过渡期。`, `${transitions.length} previous system address group(s) remain in transition.`)}</p>
+          {transitions.map(([transitionID, aliases]) => {
+            const state = aliases[0]?.lifecycleState ?? "active";
+            const error = aliases.find((alias) => alias.lastError)?.lastError;
+            const deadline = aliases[0]?.retireAfter ? new Date(aliases[0].retireAfter).toLocaleString() : "—";
+            return <div className="flex flex-col gap-3 rounded-xl border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between" key={transitionID}>
+              <div className="min-w-0"><div className="flex items-center gap-2 font-medium"><Clock3Icon className="size-4" />{state === "active" ? copy(language, "等待自动停用", "Scheduled for retirement") : state === "retiring" ? copy(language, "正在安全停用", "Retirement in progress") : copy(language, "停用需要处理", "Retirement needs attention")}</div><p className="mt-1 truncate text-xs text-muted-foreground" title={aliases.map((alias) => alias.endpoint).join(" · ")}>{aliases.map((alias) => alias.endpoint).join(" · ")}</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, "最迟停用：", "Retire by: ")}{deadline}</p>{error ? <p className="mt-1 text-xs text-destructive">{error}</p> : null}</div>
+              <Button disabled={retiring === transitionID} onClick={() => void retire(transitionID)} size="sm" variant="outline">{retiring === transitionID ? <Spinner data-icon="inline-start" /> : null}{state === "active" ? copy(language, "立即停用", "Retire now") : copy(language, "继续清理", "Retry cleanup")}</Button>
+            </div>;
+          })}
+          {retireError ? <FieldError role="alert">{retireError}</FieldError> : null}
+        </div> : null}
       </CardContent>
     </Card>
-    <DomainSwitchSheet domain={domain} language={language} onClose={() => setOpen(false)} open={open} />
+    <DomainSwitchSheet domain={currentDomain} language={language} onClose={() => setOpen(false)} open={open} />
   </>;
 }
 

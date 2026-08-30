@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -26,7 +27,7 @@ type TaskCompletion struct {
 func (s *Store) UnresolvedApplicationTaskReceipt(ctx context.Context) (string, string, error) {
 	var taskID, taskKind string
 	err := s.db.QueryRowContext(ctx, `SELECT task_id, task_kind FROM task_receipts
-		WHERE state IN ('processing', 'reconciliation_required') AND task_kind IN ('application.apply', 'legacy')
+		WHERE state IN ('processing', 'reconciliation_required', 'reconciliation_acknowledged') AND task_kind IN ('application.apply', 'legacy')
 		ORDER BY created_at, task_id LIMIT 1`).Scan(&taskID, &taskKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", nil
@@ -35,6 +36,28 @@ func (s *Store) UnresolvedApplicationTaskReceipt(ctx context.Context) (string, s
 		return "", "", fmt.Errorf("agent: inspect unresolved application task receipts: %w", err)
 	}
 	return taskID, taskKind, nil
+}
+
+func (s *Store) PendingTaskCompletion(ctx context.Context) (*TaskCompletion, error) {
+	var taskID string
+	var sealed []byte
+	err := s.db.QueryRowContext(ctx, `SELECT task_id, sealed_completion FROM task_receipts
+		WHERE state IN ('completed', 'reconciliation_required') ORDER BY updated_at, task_id LIMIT 1`).Scan(&taskID, &sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agent: inspect pending task completions: %w", err)
+	}
+	plaintext, err := secret.Open(s.key, sealed, taskCompletionContext(taskID))
+	if err != nil {
+		return nil, errors.New("agent: pending task completion is invalid")
+	}
+	var completion TaskCompletion
+	if json.Unmarshal(plaintext, &completion) != nil || completion.TaskID != taskID || completion.Attempt <= 0 {
+		return nil, errors.New("agent: pending task completion is invalid")
+	}
+	return &completion, nil
 }
 
 func (s *Store) HasProcessingTaskReceipts(ctx context.Context) (bool, error) {
@@ -55,13 +78,17 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM task_receipts WHERE state = 'acknowledged' AND updated_at < ?`, s.now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano))
 	var attempt int64
+	var executorRuntimeGeneration int
 	var storedHash []byte
 	var state string
 	var sealed []byte
-	err = s.db.QueryRowContext(ctx, `SELECT attempt, task_hash, state, COALESCE(sealed_completion, X'') FROM task_receipts WHERE task_id = ?`, task.ID).Scan(&attempt, &storedHash, &state, &sealed)
+	err = s.db.QueryRowContext(ctx, `SELECT attempt, task_hash, state, COALESCE(sealed_completion, X''), runtime_generation FROM task_receipts WHERE task_id = ?`, task.ID).Scan(&attempt, &storedHash, &state, &sealed, &executorRuntimeGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
 		now := s.now().UTC().Format(time.RFC3339Nano)
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO task_receipts(task_id, task_kind, attempt, task_hash, state, created_at, updated_at) VALUES(?, ?, ?, ?, 'processing', ?, ?)`, task.ID, task.Kind, task.Attempt, hash, now, now); err != nil {
+		if task.Kind == "application.apply" {
+			executorRuntimeGeneration = platform.ApplicationRuntimeGeneration
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO task_receipts(task_id, task_kind, runtime_generation, attempt, task_hash, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, 'processing', ?, ?)`, task.ID, task.Kind, executorRuntimeGeneration, task.Attempt, hash, now, now); err != nil {
 			return nil, fmt.Errorf("agent: record task receipt: %w", err)
 		}
 		return nil, nil
@@ -75,7 +102,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	if task.Attempt < attempt {
 		return nil, errors.New("agent: stale duplicate task attempt")
 	}
-	if state == "completed" || state == "acknowledged" || state == "reconciliation_required" {
+	if state == "completed" || state == "acknowledged" || state == "reconciliation_required" || state == "reconciliation_acknowledged" {
 		plaintext, err := secret.Open(s.key, sealed, taskCompletionContext(task.ID))
 		if err != nil {
 			return nil, errors.New("agent: stored task completion is invalid")
@@ -84,8 +111,11 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		if json.Unmarshal(plaintext, &completion) != nil || completion.TaskID != task.ID {
 			return nil, errors.New("agent: stored task completion is invalid")
 		}
-		if state == "reconciliation_required" && task.Reconcile {
-			result, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, state = 'processing', sealed_completion = NULL, updated_at = ? WHERE task_id = ? AND state = 'reconciliation_required'`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID)
+		if task.Kind == "application.apply" && completion.ApplicationRuntimeGeneration != executorRuntimeGeneration {
+			return nil, errors.New("agent: stored task completion has invalid runtime generation evidence")
+		}
+		if (state == "reconciliation_required" || state == "reconciliation_acknowledged") && task.Reconcile {
+			result, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, state = 'processing', sealed_completion = NULL, updated_at = ? WHERE task_id = ? AND state IN ('reconciliation_required', 'reconciliation_acknowledged')`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID)
 			if err != nil {
 				return nil, fmt.Errorf("agent: begin explicit task reconciliation: %w", err)
 			}
@@ -95,7 +125,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 			return nil, nil
 		}
 		completion.Attempt = task.Attempt
-		if state == "reconciliation_required" {
+		if state == "reconciliation_required" || state == "reconciliation_acknowledged" {
 			return &completion, nil
 		}
 		if task.Attempt != attempt {
@@ -107,6 +137,20 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	}
 	if state != "processing" {
 		return nil, errors.New("agent: stored task receipt state is invalid")
+	}
+	if task.Kind == "agent.decommission" {
+		// The durable host helper makes this task resumable. Re-delivery after a
+		// lease recovery must re-arm that helper instead of manufacturing an
+		// unknown terminal outcome.
+		if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, updated_at = ? WHERE task_id = ? AND state = 'processing'`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID); err != nil {
+			return nil, fmt.Errorf("agent: resume host decommission receipt: %w", err)
+		}
+		return nil, nil
+	}
+	if resumable, err := s.resumableThreeXUIControllerPromotion(ctx, task); err != nil {
+		return nil, err
+	} else if resumable {
+		return nil, nil
 	}
 	// An existing processing receipt means the previous process may have
 	// committed the external effect before it could persist its completion.
@@ -120,7 +164,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		ReconciliationRequired: task.Kind == "application.apply",
 	}
 	if task.Kind == "application.apply" {
-		completion.ApplicationRuntimeGeneration = task.RequiredRuntimeGeneration
+		completion.ApplicationRuntimeGeneration = executorRuntimeGeneration
 	}
 	if err := s.storeTaskCompletion(ctx, completion, hash); err != nil {
 		return nil, err
@@ -130,8 +174,13 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 
 func (s *Store) RecordTaskCompletion(ctx context.Context, completion TaskCompletion) error {
 	var hash []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT task_hash FROM task_receipts WHERE task_id = ? AND attempt <= ?`, completion.TaskID, completion.Attempt).Scan(&hash); err != nil {
+	var taskKind string
+	var executorRuntimeGeneration int
+	if err := s.db.QueryRowContext(ctx, `SELECT task_hash, task_kind, runtime_generation FROM task_receipts WHERE task_id = ? AND attempt <= ?`, completion.TaskID, completion.Attempt).Scan(&hash, &taskKind, &executorRuntimeGeneration); err != nil {
 		return fmt.Errorf("agent: read task receipt for completion: %w", err)
+	}
+	if taskKind == "application.apply" && completion.ApplicationRuntimeGeneration != executorRuntimeGeneration {
+		return errors.New("agent: task completion runtime generation does not match its executor receipt")
 	}
 	return s.storeTaskCompletion(ctx, completion, hash)
 }
@@ -161,10 +210,18 @@ func (s *Store) storeTaskCompletion(ctx context.Context, completion TaskCompleti
 }
 
 func (s *Store) AcknowledgeTaskCompletion(ctx context.Context, taskID string) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET state = 'acknowledged', updated_at = ? WHERE task_id = ? AND state IN ('completed', 'acknowledged')`, s.now().UTC().Format(time.RFC3339Nano), taskID); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE task_receipts SET state = CASE WHEN state = 'reconciliation_required' THEN 'reconciliation_acknowledged' ELSE 'acknowledged' END, updated_at = ? WHERE task_id = ? AND state IN ('completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')`, s.now().UTC().Format(time.RFC3339Nano), taskID); err != nil {
 		return fmt.Errorf("agent: clear acknowledged task completion: %w", err)
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_controller_promotions WHERE task_id = ? AND phase = 'applied'`, taskID); err != nil {
+		return fmt.Errorf("agent: clear acknowledged 3x-ui controller promotion: %w", err)
+	}
+	return tx.Commit()
 }
 
 func deploymentTaskHash(task DeploymentTask) ([]byte, error) {

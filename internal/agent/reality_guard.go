@@ -274,7 +274,7 @@ func hardenThreeXUIRealityInbound(ctx context.Context, baseURL, token string, in
 		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, fmt.Errorf("agent: point REALITY fallback at guard companion: %w", err)
 	}
 	observed, err := getThreeXUIInbound(ctx, baseURL, token, inbound.ID)
-	if err != nil || !realityInboundUsesGuard(observed, guardPort, verification.ServerName) || observed.Enable {
+	if err != nil || !realityInboundUsesGuard(observed, guardPort, verification.ServerName) || !realityInboundAcceptsProxyProtocol(observed) || observed.Enable {
 		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, errors.New("agent: disabled REALITY guard configuration failed read-back")
 	}
 	update["enable"] = true
@@ -282,7 +282,7 @@ func hardenThreeXUIRealityInbound(ctx context.Context, baseURL, token string, in
 		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, fmt.Errorf("agent: enable hardened REALITY inbound: %w", err)
 	}
 	observed, err = getThreeXUIInbound(ctx, baseURL, token, inbound.ID)
-	if err != nil || !observed.Enable || !realityInboundUsesGuard(observed, guardPort, verification.ServerName) {
+	if err != nil || !observed.Enable || !realityInboundUsesGuard(observed, guardPort, verification.ServerName) || !realityInboundAcceptsProxyProtocol(observed) {
 		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, errors.New("agent: hardened REALITY inbound failed final read-back")
 	}
 	return observed, companion, nil
@@ -347,6 +347,7 @@ func guardedRealityResult(result RealityCommandResult, verification realityTarge
 	result.CompanionTag = companion.Tag
 	result.CompanionPort = companion.Port
 	result.GuardStatus = "ready"
+	result.ProxyProtocol = true
 	return result
 }
 

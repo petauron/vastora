@@ -168,6 +168,8 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 		rollbackDNS()
 		return SystemDomainSwitchResult{}, err
 	}
+	centerAliases = removeCenterEndpointAlias(centerAliases, centerURL)
+	headscaleAliases = removeEndpointAlias(headscaleAliases, headscaleURL)
 	centerAliases = append(centerAliases, deployapi.CenterEndpointAlias{URL: current.CenterURL, CertificatePEM: oldCertificate.CertificatePEM, CertificateKeyPEM: oldCertificate.PrivateKeyPEM})
 	headscaleAliases = append(headscaleAliases, current.HeadscaleURL)
 	if err := s.store.reconcileHeadscaleDNSForSystem(ctx, centerURL, []string{current.CenterURL}); err != nil {
@@ -204,6 +206,26 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 		return SystemDomainSwitchResult{}, err
 	}
 	return SystemDomainSwitchResult{SystemDomainView: updated, PreviousCenterURL: current.CenterURL, PreviousHeadscaleURL: current.HeadscaleURL, BackupCreated: true}, nil
+}
+
+func removeCenterEndpointAlias(values []deployapi.CenterEndpointAlias, endpoint string) []deployapi.CenterEndpointAlias {
+	result := values[:0]
+	for _, value := range values {
+		if value.URL != endpoint {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func removeEndpointAlias(values []string, endpoint string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if value != endpoint {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func (s *Store) cloudflareForZone(ctx context.Context, zoneID string) (cloudflareClient, CloudflareZone, error) {
@@ -272,6 +294,10 @@ func (s *Store) createSystemDomainBackup(ctx context.Context) (string, error) {
 }
 
 func (s *Store) commitSystemDomainSwitch(ctx context.Context, current SystemDomainView, selected CloudflareZone, zoneName, centerURL, headscaleURL string, certificate managedCertificate, dns SetupDNSRecord) error {
+	transitionID, err := randomToken(18)
+	if err != nil {
+		return err
+	}
 	encodedCertificate, err := json.Marshal(certificate)
 	if err != nil {
 		return err
@@ -292,7 +318,46 @@ func (s *Store) commitSystemDomainSwitch(ctx context.Context, current SystemDoma
 	if err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, systemCenterCertificateExpirySetting).Scan(&oldCertificateExpiry); err != nil {
 		return err
 	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
+	oldCertificateNotAfter, err := time.Parse(time.RFC3339Nano, oldCertificateExpiry)
+	if err != nil {
+		return errors.New("center: current system certificate expiry is invalid")
+	}
+	var oldAccountID, oldZoneID, trackedDNSJSON string
+	if err := tx.QueryRowContext(ctx, `SELECT account_id, zone_id FROM network_integrations WHERE kind = 'cloudflare' AND mode = 'oauth' AND status = 'configured'`).Scan(&oldAccountID, &oldZoneID); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'cloudflare_setup_dns_records'`).Scan(&trackedDNSJSON); err != nil {
+		return errors.New("center: current Headscale DNS ownership record is missing")
+	}
+	var trackedDNS []SetupDNSRecord
+	if err := json.Unmarshal([]byte(trackedDNSJSON), &trackedDNS); err != nil {
+		return errors.New("center: current Headscale DNS ownership record is invalid")
+	}
+	oldHeadscaleHostname, err := gatewayEndpointHostname(current.HeadscaleURL)
+	if err != nil {
+		return err
+	}
+	var oldDNS SetupDNSRecord
+	for _, record := range trackedDNS {
+		if strings.EqualFold(strings.TrimSuffix(record.Name, "."), oldHeadscaleHostname) {
+			oldDNS = record
+			break
+		}
+	}
+	if oldAccountID == "" || oldZoneID == "" || oldDNS.ID == "" || oldDNS.Type == "" || oldDNS.Content == "" {
+		return errors.New("center: current Headscale DNS ownership record is incomplete")
+	}
+	nowTime := s.now().UTC()
+	retireAfter := nowTime.Add(30 * 24 * time.Hour)
+	certificateRetirement := oldCertificateNotAfter.Add(-7 * 24 * time.Hour)
+	if certificateRetirement.Before(retireAfter) {
+		retireAfter = certificateRetirement
+	}
+	if retireAfter.Before(nowTime) {
+		retireAfter = nowTime
+	}
+	now := nowTime.Format(time.RFC3339Nano)
+	retireAt := retireAfter.Format(time.RFC3339Nano)
 	var replacedAliasSecretID string
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(certificate_secret_id, '') FROM system_endpoint_aliases WHERE kind = 'center' AND endpoint = ?`, centerURL).Scan(&replacedAliasSecretID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -306,12 +371,13 @@ func (s *Store) commitSystemDomainSwitch(ctx context.Context, current SystemDoma
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO system_endpoint_aliases(kind, endpoint, certificate_secret_id, certificate_not_after, created_at, updated_at)
-		VALUES('center', ?, ?, ?, ?, ?) ON CONFLICT(kind, endpoint) DO UPDATE SET certificate_secret_id = excluded.certificate_secret_id, certificate_not_after = excluded.certificate_not_after, updated_at = excluded.updated_at`, current.CenterURL, oldCertificateSecretID, oldCertificateExpiry, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO system_endpoint_aliases(kind, endpoint, certificate_secret_id, certificate_not_after, transition_id, lifecycle_state, retire_after, created_at, updated_at)
+		VALUES('center', ?, ?, ?, ?, 'active', ?, ?, ?) ON CONFLICT(kind, endpoint) DO UPDATE SET certificate_secret_id = excluded.certificate_secret_id, certificate_not_after = excluded.certificate_not_after, transition_id = excluded.transition_id, lifecycle_state = 'active', retire_after = excluded.retire_after, last_error = '', updated_at = excluded.updated_at`, current.CenterURL, oldCertificateSecretID, oldCertificateExpiry, transitionID, retireAt, now, now); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO system_endpoint_aliases(kind, endpoint, created_at, updated_at)
-		VALUES('headscale', ?, ?, ?) ON CONFLICT(kind, endpoint) DO UPDATE SET updated_at = excluded.updated_at`, current.HeadscaleURL, now, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO system_endpoint_aliases(kind, endpoint, transition_id, lifecycle_state, retire_after,
+		dns_account_id, dns_zone_id, dns_record_id, dns_record_type, dns_record_content, created_at, updated_at)
+		VALUES('headscale', ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(kind, endpoint) DO UPDATE SET transition_id = excluded.transition_id, lifecycle_state = 'active', retire_after = excluded.retire_after, dns_account_id = excluded.dns_account_id, dns_zone_id = excluded.dns_zone_id, dns_record_id = excluded.dns_record_id, dns_record_type = excluded.dns_record_type, dns_record_content = excluded.dns_record_content, last_error = '', updated_at = excluded.updated_at`, current.HeadscaleURL, transitionID, retireAt, oldAccountID, oldZoneID, oldDNS.ID, oldDNS.Type, oldDNS.Content, now, now); err != nil {
 		return err
 	}
 	newCertificateSecretID, err := s.putSecret(ctx, tx, encodedCertificate, systemCenterCertificateContext)

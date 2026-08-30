@@ -15,6 +15,46 @@ const (
 	maxActionLimit     = 100
 )
 
+var errStaleTaskLease = errors.New("center: task lease is stale or expired")
+
+func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64) (time.Time, error) {
+	if expectedAttempt <= 0 || strings.TrimSpace(taskID) == "" {
+		return time.Time{}, errStaleTaskLease
+	}
+	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
+		return time.Time{}, err
+	}
+	now := s.now().UTC()
+	expiresAt := now.Add(taskLeaseDuration)
+	values := []any{expiresAt.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)}
+	var result sql.Result
+	var err error
+	switch {
+	case strings.HasPrefix(taskID, "application-command-"):
+		result, err = s.db.ExecContext(ctx, `UPDATE application_commands SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case taskID == agentDecommissionTaskID(agentID):
+		result, err = s.db.ExecContext(ctx, `UPDATE agent_decommissions SET lease_expires_at = ?, updated_at = ? WHERE agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case func() bool { _, ok := gatewayTaskRevision(taskID); return ok }():
+		revision, _ := gatewayTaskRevision(taskID)
+		result, err = s.db.ExecContext(ctx, `UPDATE gateway_states SET lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, revision, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case func() bool { _, ok := tunnelTaskRevision(taskID); return ok }():
+		revision, _ := tunnelTaskRevision(taskID)
+		result, err = s.db.ExecContext(ctx, `UPDATE cloudflare_tunnels SET lease_expires_at = ?, updated_at = ? WHERE agent_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, revision, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case func() bool { _, ok := gatewayComponentTaskGeneration(taskID); return ok }():
+		generation, _ := gatewayComponentTaskGeneration(taskID)
+		result, err = s.db.ExecContext(ctx, `UPDATE gateway_components SET lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND generation = ? AND status = 'applying' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, generation, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	default:
+		result, err = s.db.ExecContext(ctx, `UPDATE deployments SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("center: renew task lease: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return time.Time{}, errStaleTaskLease
+	}
+	return expiresAt, nil
+}
+
 type ActionView struct {
 	ID        string    `json:"id"`
 	TaskID    string    `json:"taskId"`

@@ -1,9 +1,9 @@
-import { useRef, useState, type FormEvent } from "react";
-import { ChevronDownIcon, DatabaseBackupIcon, DatabaseIcon, DownloadIcon, KeyRoundIcon, PencilIcon, PlusIcon, PowerIcon, RefreshCwIcon, SettingsIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { BotIcon, ChevronDownIcon, DatabaseBackupIcon, DatabaseIcon, DownloadIcon, KeyRoundIcon, PencilIcon, PlusIcon, PowerIcon, RefreshCwIcon, SettingsIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { api } from "../api";
 import { SignOutButton, type AppData, type Mutate } from "../App";
 import { administratorPasswordMinLength } from "../lib/security";
-import type { CatalogSource, CenterUpdateStatus } from "../types";
+import type { AssistantProvider, CatalogSource, CenterUpdateStatus } from "../types";
 import type { Language } from "../translations";
 import { PageHeading, StateBadge, TechnicalError, copy, formatDate, userError } from "./shared";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
       </Card>
       <SystemDomainSettings domain={data.systemDomain} language={language} />
       <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} status={data.centerUpdate} />
+      <AssistantProviderSettings language={language} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "数据与故障排查", "Data & troubleshooting")}</CardTitle><CardDescription>{copy(language, "备份 Center 配置，或下载不含密钥的诊断信息。", "Back up Center configuration or download diagnostics that contain no secret values.")}</CardDescription></CardHeader>
         <CardContent>
@@ -43,11 +44,64 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
         </CardContent>
       </Card>
       <CatalogSettings data={data} language={language} mutate={mutate} onAdd={() => setAdding(true)} />
-      <SourceSheet language={language} onClose={() => setAdding(false)} onSubmit={async (source) => { await mutate(() => api.createSource(source), copy(language, "应用目录已添加。", "App catalog added.")); setAdding(false); }} open={adding} />
-      <BackupSheet language={language} onClose={() => setBackupOpen(false)} open={backupOpen} />
-      <PasswordSheet language={language} onClose={() => setPasswordOpen(false)} open={passwordOpen} />
+      {adding ? <SourceSheet language={language} onClose={() => setAdding(false)} onSubmit={async (source) => { await mutate(() => api.createSource(source), copy(language, "应用目录已添加。", "App catalog added.")); setAdding(false); }} open /> : null}
+      {backupOpen ? <BackupSheet language={language} onClose={() => setBackupOpen(false)} open /> : null}
+      {passwordOpen ? <PasswordSheet language={language} onClose={() => setPasswordOpen(false)} open /> : null}
     </section>
   );
+}
+
+function AssistantProviderSettings({ language }: { language: Language }) {
+  const [provider, setProvider] = useState<AssistantProvider | null>(null);
+  const [apiUrl, setAPIURL] = useState("");
+  const [apiKey, setAPIKey] = useState("");
+  const [model, setModel] = useState("");
+  const [allowPrivate, setAllowPrivate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void api.assistantProvider(controller.signal).then((value) => {
+      setProvider(value);
+      setAPIURL(value.apiUrl || "");
+      setModel(value.model || "");
+      setAllowPrivate(value.allowPrivate);
+    }).catch((loadError) => { if (!controller.signal.aborted) setError(userError(language, loadError)); });
+    return () => controller.abort();
+  }, [language]);
+
+  const save = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      const value = await api.saveAssistantProvider({ apiUrl, apiKey, model, allowPrivate });
+      setProvider(value); setAPIKey("");
+    } catch (saveError) {
+      setError(userError(language, saveError));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const validate = async () => {
+    setBusy(true); setError("");
+    try { setProvider(await api.validateAssistantProvider()); }
+    catch (validateError) { setError(userError(language, validateError)); }
+    finally { setBusy(false); }
+  };
+
+  const savedProviderSelected = Boolean(provider?.apiKeySet)
+    && !apiKey
+    && apiUrl.trim() === provider?.apiUrl
+    && model.trim() === provider?.model
+    && allowPrivate === provider?.allowPrivate;
+
+  return <Card>
+    <CardHeader><CardTitle className="flex items-center gap-2"><BotIcon />{copy(language, "集群助手模型", "Cluster assistant model")}</CardTitle><CardDescription>{copy(language, "连接 OpenAI 兼容服务。密钥加密保存且之后只显示是否已设置。", "Connect an OpenAI-compatible provider. The key is encrypted and only its configured state is returned later.")}</CardDescription><CardAction>{provider ? <StateBadge language={language} value={provider.status} /> : <Spinner />}</CardAction></CardHeader>
+    <form onSubmit={(event) => void save(event)}>
+      <CardContent><FieldGroup><Field><FieldLabel htmlFor="assistant-api-url">API URL</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="assistant-api-url" onChange={(event) => setAPIURL(event.target.value)} placeholder="https://api.example.com/v1" required spellCheck={false} type="url" value={apiUrl} /><FieldDescription>{copy(language, "必须是无凭据的固定 HTTP(S) 地址；公网服务必须使用 HTTPS。", "Use an exact credential-free HTTP(S) URL. Public providers require HTTPS.")}</FieldDescription></Field><Field><FieldLabel htmlFor="assistant-model">{copy(language, "模型标识", "Model identifier")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="assistant-model" onChange={(event) => setModel(event.target.value)} placeholder="gpt-5.4-mini" required spellCheck={false} value={model} /></Field><Field><FieldLabel htmlFor="assistant-api-key">API Key</FieldLabel><Input autoComplete="new-password" id="assistant-api-key" onChange={(event) => setAPIKey(event.target.value)} placeholder={provider?.apiKeySet ? copy(language, "留空以保留已保存的密钥", "Leave blank to keep the saved key") : copy(language, "输入 API Key", "Enter an API key")} required={!provider?.apiKeySet} type="password" value={apiKey} /><FieldDescription>{provider?.apiKeySet ? copy(language, "已保存密钥；浏览器和诊断报告无法读取。", "A key is stored; browsers and diagnostics cannot read it.") : copy(language, "密钥只发送给 Center，不会进入模型消息或工具参数。", "The key is sent only to Center and never enters model messages or tool arguments.")}</FieldDescription></Field><Field orientation="horizontal"><div className="flex-1"><FieldLabel htmlFor="assistant-private-provider">{copy(language, "信任私有模型地址", "Trust a private model endpoint")}</FieldLabel><FieldDescription>{copy(language, "仅为自己控制的内网或本机模型开启。开启后允许私有 IP 和私有 HTTP。", "Enable only for a private or local model gateway you control. This permits private IPs and private HTTP.")}</FieldDescription></div><Switch checked={allowPrivate} id="assistant-private-provider" onCheckedChange={setAllowPrivate} /></Field>{provider?.lastError ? <TechnicalError error={provider.lastError} language={language} /> : null}{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></CardContent>
+      <CardFooter className="flex-wrap justify-end gap-2"><Button disabled={busy || !savedProviderSelected} onClick={() => void validate()} title={savedProviderSelected ? undefined : copy(language, "先保存当前配置，再测试连接", "Save the current configuration before testing it")} type="button" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "测试连接", "Test connection")}</Button><Button disabled={busy || !apiUrl.trim() || !model.trim() || !provider?.apiKeySet && !apiKey} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存模型配置", "Save model settings")}</Button></CardFooter>
+    </form>
+  </Card>;
 }
 
 function CatalogSettings({ data, language, mutate, onAdd }: { data: AppData; language: Language; mutate: Mutate; onAdd: () => void }) {

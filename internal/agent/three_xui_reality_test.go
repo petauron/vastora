@@ -44,11 +44,11 @@ func installRealityGuardTestSeams(t *testing.T) {
 	})
 }
 
-func TestThreeXUIRealityStreamSettingsUsesMinimumClientVersion(t *testing.T) {
+func TestThreeXUIRealityStreamSettingsUsesMinimumClientVersionAndProxyProtocol(t *testing.T) {
 	stream := threeXUIRealityStreamSettings("www.example.test:443", "www.example.test", "private-key", "public-key", "deadbeef")
 	reality, ok := stream["realitySettings"].(map[string]any)
 	settings, _ := reality["settings"].(map[string]any)
-	if !ok || reality["minClientVer"] != threeXUIRealityMinClientVersion || reality["maxClientVer"] != "" || reality["maxTimediff"] != 0 || settings["spiderX"] != "/" {
+	if !ok || reality["minClientVer"] != threeXUIRealityMinClientVersion || reality["maxClientVer"] != "" || reality["maxTimediff"] != 0 || settings["spiderX"] != "/" || !realityStreamAcceptsProxyProtocol(stream) {
 		t.Fatalf("REALITY anti-fingerprinting settings = %#v", reality)
 	}
 }
@@ -78,7 +78,7 @@ func TestFindRealityInboundNeverMatchesAnotherTagByClientName(t *testing.T) {
 	}
 }
 
-func TestEnsureThreeXUIRealityMinimumClientVersionRepairsOnceAndPreservesPayload(t *testing.T) {
+func TestEnsureThreeXUIRealityRuntimeRequirementsRepairsOnceAndPreservesPayload(t *testing.T) {
 	minimumApplied := false
 	updates := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -89,7 +89,11 @@ func TestEnsureThreeXUIRealityMinimumClientVersionRepairsOnceAndPreservesPayload
 			if minimumApplied {
 				minClientVersion = threeXUIRealityMinClientVersion
 			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"keep-me","protocol":"vless","listen":"100.64.0.1","port":39871,"settings":{"clients":[{"id":"client-id","email":"MacBook"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"privateKey":"private-key","minClientVer":"` + minClientVersion + `","maxClientVer":"keep-max","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}},"sniffing":{"enabled":true},"clientStats":[{"email":"MacBook"}],"customField":"preserve-me"}}`))
+			proxySettings := ""
+			if minimumApplied {
+				proxySettings = `,"tcpSettings":{"acceptProxyProtocol":true,"header":{"type":"none"}},"sockopt":{"acceptProxyProtocol":true}`
+			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"keep-me","protocol":"vless","listen":"100.64.0.1","port":39871,"settings":{"clients":[{"id":"client-id","email":"MacBook"}]},"streamSettings":{"network":"tcp","security":"reality"` + proxySettings + `,"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"privateKey":"private-key","minClientVer":"` + minClientVersion + `","maxClientVer":"keep-max","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}},"sniffing":{"enabled":true},"clientStats":[{"email":"MacBook"}],"customField":"preserve-me"}}`))
 		case "POST /panel/api/inbounds/update/9":
 			updates++
 			var payload map[string]any
@@ -98,7 +102,7 @@ func TestEnsureThreeXUIRealityMinimumClientVersionRepairsOnceAndPreservesPayload
 			}
 			streamSettings, _ := payload["streamSettings"].(map[string]any)
 			realitySettings, _ := streamSettings["realitySettings"].(map[string]any)
-			if realitySettings["minClientVer"] != threeXUIRealityMinClientVersion || realitySettings["maxClientVer"] != "keep-max" || payload["remark"] != "keep-me" || payload["customField"] != "preserve-me" || payload["id"] != nil || payload["clientStats"] != nil {
+			if realitySettings["minClientVer"] != threeXUIRealityMinClientVersion || realitySettings["maxClientVer"] != "keep-max" || payload["remark"] != "keep-me" || payload["customField"] != "preserve-me" || payload["id"] != nil || payload["clientStats"] != nil || !realityStreamAcceptsProxyProtocol(streamSettings) {
 				t.Fatalf("unexpected minimum-version inbound update: %#v", payload)
 			}
 			minimumApplied = true
@@ -110,7 +114,7 @@ func TestEnsureThreeXUIRealityMinimumClientVersionRepairsOnceAndPreservesPayload
 	defer server.Close()
 
 	for range 2 {
-		inbound, err := ensureThreeXUIRealityMinimumClientVersion(context.Background(), server.URL, "token", 9)
+		inbound, err := ensureThreeXUIRealityRuntimeRequirements(context.Background(), server.URL, "token", 9)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -119,7 +123,7 @@ func TestEnsureThreeXUIRealityMinimumClientVersionRepairsOnceAndPreservesPayload
 				MinClientVersion string `json:"minClientVer"`
 			} `json:"realitySettings"`
 		}
-		if json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Reality.MinClientVersion != threeXUIRealityMinClientVersion {
+		if json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Reality.MinClientVersion != threeXUIRealityMinClientVersion || !realityInboundAcceptsProxyProtocol(inbound) {
 			t.Fatalf("returned minimum client version = %q", stream.Reality.MinClientVersion)
 		}
 	}
@@ -374,7 +378,7 @@ func TestApplyRealityCommandRecoversLostAddResponse(t *testing.T) {
 				_, _ = response.Write([]byte(`{"success":true,"obj":[]}`))
 				return
 			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}]}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}]}`))
 		case "POST /panel/api/server/scanRealityTargets":
 			_, _ = response.Write([]byte(`{"success":true,"obj":[{"target":"www.example.test:443","host":"www.example.test","feasible":true,"serverNames":["www.example.test"]}]}`))
 		case "GET /panel/api/server/getNewX25519Cert":
@@ -426,7 +430,7 @@ func TestApplyRealityCommandRecreatesLostAddHalfStateWithInitialClient(t *testin
 	deleteCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		inbound := `{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
+		inbound := `{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
 		if clientIncluded {
 			inbound = strings.Replace(inbound, `"clients":[]`, `"clients":[{"id":"client-id","email":"`+clientEmail+`"}]`, 1)
 		}
@@ -499,7 +503,7 @@ func TestApplyRealityCommandRollsBackExpiredExistingInbound(t *testing.T) {
 	commandID := "application-command-expired-replay"
 	tag := threeXUIRealityTag(commandID)
 	clientEmail := threeXUIClientEmail("Phone", commandID)
-	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"` + clientEmail + `"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
+	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"` + clientEmail + `"}]},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
 	deleted := false
 	clientExists := true
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -553,7 +557,7 @@ func TestApplyRealityCommandRollsBackKnownFailureAtRetryLimit(t *testing.T) {
 	commandID := "application-command-rollback-limit"
 	tag := threeXUIRealityTag(commandID)
 	deleted := false
-	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
+	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[]},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {

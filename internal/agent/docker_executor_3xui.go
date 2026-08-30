@@ -43,6 +43,9 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 	}
 	// Recover a previously interrupted replacement before any registry access.
 	// An image pull failure must never leave the last known-good instance down.
+	if err := validateThreeXUIOwnership(ctx, docker, task.ApplicationID); err != nil {
+		return "", err
+	}
 	if err := recoverInterruptedThreeXUIDeploy(ctx, docker); err != nil {
 		// Cleanup of a stale candidate/rollback marker can fail after this exact
 		// deployment was already promoted. Do not false-fail the committed task:
@@ -82,9 +85,7 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 			Image:        imageRef,
 			Tty:          true,
 			ExposedPorts: exposedPorts,
-			Labels: map[string]string{
-				threeXUIDeploymentIDLabel: task.ID,
-			},
+			Labels:       applicationResourceLabels(threeXUIKey, "3x-ui", task.ApplicationID, task.ID),
 			Env: []string{
 				"TZ=" + settings.Timezone,
 				"XUI_INIT_WEB_BASE_PATH=/",
@@ -106,6 +107,9 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 		},
 		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias),
 		Name:             threeXUICandidateContainer,
+	}
+	if err := ensureOwnedApplicationVolumes(ctx, docker, applicationVolumes[threeXUIKey][1:], threeXUIKey, task.ApplicationID); err != nil {
+		return "", err
 	}
 	return replaceThreeXUIContainer(ctx, docker, createOptions, !task.OfflineRestore, func(containerID string) (string, error) {
 		if err := configureThreeXUI(ctx, docker, containerID, bindAddress, settings.PanelPort, credentials); err != nil {

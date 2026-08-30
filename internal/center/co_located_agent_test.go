@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -185,6 +186,56 @@ func TestUnhealthyGatewayRequeuesFullStateWithoutComponentRace(t *testing.T) {
 	}
 	if unchangedRevision != nextRevision {
 		t.Fatalf("pending gateway recovery queued again: revision %d to %d", nextRevision, unchangedRevision)
+	}
+}
+
+func TestLiveGatewayRevisionMismatchRequeuesCenterState(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "gateway-live-state", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_components SET status = 'ready', applied_generation = generation WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	var revision int64
+	var encoded []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision, desired_json FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&revision, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_states SET applied_revision = desired_revision, status = 'ready' WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	var desired gateway.DesiredState
+	if json.Unmarshal(encoded, &desired) != nil {
+		t.Fatal("decode desired Gateway state")
+	}
+	hash, err := gateway.ConfigurationHash(desired, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := NodeHeartbeat{
+		Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true},
+		GatewayHealthy: true, GatewayRevision: revision, GatewayConfigHash: hash,
+		NetworkCandidates: []networking.Candidate{{Address: "10.0.0.10", Interface: "ens3", Kind: networking.KindLAN}},
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var unchanged int64
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&unchanged); err != nil || unchanged != revision {
+		t.Fatalf("matching live Gateway changed revision from %d to %d: %v", revision, unchanged, err)
+	}
+	heartbeat.GatewayConfigHash = strings.Repeat("0", 64)
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var nextRevision int64
+	var status string
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision, status FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&nextRevision, &status); err != nil {
+		t.Fatal(err)
+	}
+	if nextRevision != revision+1 || status != "pending" {
+		t.Fatalf("mismatched live Gateway = revision %d status %q, want revision %d pending", nextRevision, status, revision+1)
 	}
 }
 

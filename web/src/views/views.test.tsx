@@ -18,6 +18,7 @@ import { CenterUpdateCard } from "./CenterUpdateCard";
 import { ThemeProvider } from "../components/theme";
 import { defaultPublicationHostname, defaultRealityHostname } from "./appAccess";
 import { CopyButton, userError } from "./shared";
+import { commandSecretScope, secretOperation } from "../secret-delivery";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -489,7 +490,7 @@ describe("network and app views", () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("开始安装"))?.click();
       await Promise.resolve();
     });
-    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "");
+    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "", undefined);
   });
 
 	it("shows one Site controller and keeps worker controls focused on VLESS", () => {
@@ -559,6 +560,7 @@ describe("network and app views", () => {
     const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, resetDays: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDays: 30, nextResetAt: "2026-09-22T00:00:00Z" }, { id: 10, serviceId: "reality-service-2", name: "inbound-10", nodeName: "oracle-worker", connectHostname: "reality.oracle.example.test", totalBytes: 0, usedBytes: 0, resetDays: 0 }], inboundsObserved: true, subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
     const create = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action.startsWith("reveal_") ? { ...baseCommand, id: `client-command-${input.action}`, action: input.action, resultAvailable: true } : baseCommand);
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockImplementation(async (id) => ({ shareUri: id.includes("subscription") ? "https://subscription.example.test/sub/client-id" : "vless://one-time-client-link" }));
+    const acknowledge = vi.spyOn(api, "acknowledgeApplicationCommand").mockResolvedValue({ acknowledged: true });
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -594,9 +596,14 @@ describe("network and app views", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(reveal).toHaveBeenCalledWith("client-command-reveal_link");
+    expect(reveal).toHaveBeenCalledWith("client-command-reveal_link", expect.any(String));
     expect(writeText).toHaveBeenCalledWith("vless://one-time-client-link");
     expect(document.body.textContent).toContain("vless://one-time-client-link");
+    await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("我已保存"))?.click();
+      await Promise.resolve();
+    });
+    expect(acknowledge).toHaveBeenCalledWith("client-command-reveal_link", expect.any(String));
     await act(async () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("复制订阅"))?.click();
       await Promise.resolve();
@@ -644,6 +651,28 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("2026年8月24日");
   });
 
+	it("recovers an unacknowledged client link even after a newer list command", async () => {
+		const data = realityDashboard();
+		const listCommand: ApplicationCommand = { id: "newer-client-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 0, usedBytes: 0, expiryTime: 0, resetDays: 0, limitIp: 0, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test" }], inboundsObserved: true, subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-23T00:00:02Z", updatedAt: "2026-08-23T00:00:03Z" };
+		const secretCommand: ApplicationCommand = { ...listCommand, id: "unacknowledged-client-link", action: "reveal_link", resultAvailable: true, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+		const operationKey = secretOperation(commandSecretScope("three-x-ui", secretCommand.id));
+		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(listCommand);
+		vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue(listCommand);
+		vi.spyOn(api, "applicationCommand").mockResolvedValue(secretCommand);
+		const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://recovered-after-refresh" });
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+		await act(async () => {
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理客户端"))?.click();
+			await Promise.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(reveal).toHaveBeenCalledWith(secretCommand.id, operationKey);
+		expect(document.body.textContent).toContain("vless://recovered-after-refresh");
+	});
+
   it("offers browser-trusted HTTPS only when Cloudflare is connected", () => {
     const data = dashboard();
     data.sites[0].domainSuffix = "vastora.example.com";
@@ -683,20 +712,29 @@ describe("network and app views", () => {
 	it("reveals a REALITY client link only after explicit confirmation", async () => {
     const data = realityDashboard();
 	    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", targetAsn: 64500, guardStatus: "ready", clientCreated: true, resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
-    const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
+	    const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
+	    const acknowledge = vi.spyOn(api, "acknowledgeApplicationCommand").mockResolvedValue({ acknowledged: true });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
     expect(reveal).not.toHaveBeenCalled();
-    const revealButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("显示一次性链接"));
+    const revealButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("显示客户端链接"));
     await act(async () => {
       revealButton?.click();
       await Promise.resolve();
     });
-    expect(reveal).toHaveBeenCalledWith("application-command-1");
+	const operationKey = reveal.mock.calls[0]?.[1];
+	expect(operationKey).toEqual(expect.any(String));
+	expect(reveal).toHaveBeenCalledWith("application-command-1", operationKey);
 		expect(document.body.textContent).toContain("vless://one-time-client-link");
+	await act(async () => {
+		[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("我已保存"))?.click();
+		await Promise.resolve();
+	});
+	expect(acknowledge).toHaveBeenCalledWith("application-command-1", operationKey);
+	expect(document.body.textContent).not.toContain("vless://one-time-client-link");
 	});
 
 	it("keeps the one-time REALITY link available when only public access fails", async () => {
@@ -709,7 +747,7 @@ describe("network and app views", () => {
 		});
 		expect(document.body.textContent).toContain("REALITY 已创建，公网入口待处理");
 		expect(document.body.textContent).toContain("客户端凭据已安全保留");
-		expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("显示一次性链接"))).toBe(true);
+		expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("显示客户端链接"))).toBe(true);
 	});
 
 	it("returns to the REALITY form after a previous creation failed", async () => {
@@ -1396,30 +1434,113 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("至少 10 个字符。");
   });
 
-  it("clears backup and catalog secrets whenever their sheets close", () => {
-    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+  it("clears backup secrets after every close path and successful download", async () => {
+    vi.spyOn(api, "downloadBackup").mockResolvedValue(undefined);
+    render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
     const enter = (selector: string, value: string) => act(() => {
       const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
       if (!input) throw new Error(`missing input ${selector}`);
-      input.value = value;
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    const openAndFill = () => {
+      clickButton("下载加密备份");
+      enter("#backup-password", "secret-backup-password");
+      enter("#backup-confirmation", "secret-backup-password");
+    };
+    const expectReopenedEmpty = () => {
+      clickButton("下载加密备份");
+      expect(document.querySelector<HTMLInputElement>("#backup-password")?.value).toBe("");
+      expect(document.querySelector<HTMLInputElement>("#backup-confirmation")?.value).toBe("");
+      clickButton("取消");
+    };
+    const dismissOutside = () => act(() => {
+      const overlay = document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) overlay?.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+    });
 
-    clickButton("下载加密备份");
-    enter("#backup-password", "secret-backup-password");
-    enter("#backup-confirmation", "secret-backup-password");
-    clickButton("取消");
-    clickButton("下载加密备份");
-    expect(document.querySelector<HTMLInputElement>("#backup-password")?.value).toBe("");
-    expect(document.querySelector<HTMLInputElement>("#backup-confirmation")?.value).toBe("");
-    clickButton("取消");
+    openAndFill(); clickButton("取消"); expectReopenedEmpty();
+    openAndFill(); act(() => document.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.click()); expectReopenedEmpty();
+    openAndFill(); act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expectReopenedEmpty();
+    openAndFill(); dismissOutside(); expectReopenedEmpty();
+    openAndFill();
+    await act(async () => {
+      document.querySelector<HTMLFormElement>("#backup-password")?.closest("form")?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(api.downloadBackup).toHaveBeenCalledWith("secret-backup-password");
+    expectReopenedEmpty();
+  });
 
+  it("retains failed catalog input only while open and clears it on every close path", async () => {
+    const mutate = vi.fn().mockRejectedValue(new Error("catalog rejected"));
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={mutate} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
+    const enter = (selector: string, value: string) => act(() => {
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+      if (!input) throw new Error(`missing input ${selector}`);
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const openAndFill = () => {
+      clickButton("添加目录");
+      enter("#source-token", "secret-bearer-token");
+      enter("#source-ca", "secret-custom-ca");
+    };
+    const expectReopenedEmpty = () => {
+      clickButton("添加目录");
+      expect(document.querySelector<HTMLInputElement>("#source-token")?.value).toBe("");
+      expect(document.querySelector<HTMLTextAreaElement>("#source-ca")?.value).toBe("");
+      clickButton("取消");
+    };
+    const dismissOutside = () => act(() => {
+      const overlay = document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) overlay?.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+    });
+    act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"))?.click());
+    openAndFill(); clickButton("取消"); expectReopenedEmpty();
+    openAndFill(); act(() => document.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.click()); expectReopenedEmpty();
+    openAndFill(); act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expectReopenedEmpty();
+    openAndFill(); dismissOutside(); expectReopenedEmpty();
+
+    openAndFill();
+    enter("#source-id", "private-source");
+    enter("#source-name", "Private source");
+    enter("#source-url", "https://private.example/catalog");
+    enter("#source-key", "public-key");
+    await act(async () => {
+      document.querySelector<HTMLFormElement>("#source-id")?.closest("form")?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(document.querySelector<HTMLInputElement>("#source-token")?.value).toBe("secret-bearer-token");
+    expect(document.querySelector<HTMLTextAreaElement>("#source-ca")?.value).toBe("secret-custom-ca");
+    expect(document.body.textContent).toContain("操作未完成");
+    clickButton("取消");
+    expectReopenedEmpty();
+  });
+
+  it("unmounts catalog secrets when a successful submit closes the sheet programmatically", async () => {
+    const mutate = vi.fn().mockResolvedValue(undefined);
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={mutate} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
+    const enter = (selector: string, value: string) => act(() => {
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+      if (!input) throw new Error(`missing input ${selector}`);
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"))?.click());
     clickButton("添加目录");
-    enter("#source-token", "secret-bearer-token");
-    enter("#source-ca", "secret-custom-ca");
-    clickButton("取消");
+    enter("#source-id", "private-source"); enter("#source-name", "Private source"); enter("#source-url", "https://private.example/catalog"); enter("#source-key", "public-key"); enter("#source-token", "secret-bearer-token"); enter("#source-ca", "secret-custom-ca");
+    await act(async () => {
+      document.querySelector<HTMLFormElement>("#source-id")?.closest("form")?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(document.querySelector("#source-token")).toBeNull();
     clickButton("添加目录");
     expect(document.querySelector<HTMLInputElement>("#source-token")?.value).toBe("");
     expect(document.querySelector<HTMLTextAreaElement>("#source-ca")?.value).toBe("");

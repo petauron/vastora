@@ -73,6 +73,29 @@ if FAKE_RELEASE_ARCHIVE="$archive" \
 fi
 test ! -e "$temporary_dir/version-mismatch"
 
+"$project_dir/scripts/package-center-install.sh" \
+  --version 0.1.0-alpha.9 \
+  --image "$image" \
+  --output-dir "$temporary_dir/downgrade-output" >/dev/null
+downgrade_archive="$temporary_dir/downgrade-output/vastora-center-install.tar.gz"
+downgrade_install="$temporary_dir/downgrade-install"
+mkdir -p "$downgrade_install"
+printf '%s\n' 'VASTORA_CENTER_IMAGE=unchanged' > "$downgrade_install/.env"
+printf '%s\n' 'VASTORA_VERSION=0.1.0-alpha.10' 'VASTORA_CENTER_IMAGE=unchanged' > "$downgrade_install/release.env"
+printf '%s\n' unchanged > "$downgrade_install/operator-file"
+if FAKE_RELEASE_ARCHIVE="$downgrade_archive" \
+   FAKE_RELEASE_CHECKSUM="$downgrade_archive.sha256" \
+   PATH="$validation_bin:$PATH" \
+   "$project_dir/install.sh" center \
+     --release-url https://vastora.petauron.com/releases/v0.1.0-alpha.9/vastora-center-install.tar.gz \
+     --install-dir "$downgrade_install" >/dev/null 2>&1; then
+  echo "Center installer accepted a prerelease downgrade." >&2
+  exit 1
+fi
+grep -Fqx 'VASTORA_VERSION=0.1.0-alpha.10' "$downgrade_install/release.env"
+grep -Fqx unchanged "$downgrade_install/operator-file"
+test ! -e "$downgrade_install/install.sh"
+
 tar -xzf "$archive" -C "$temporary_dir"
 grep -Fqx 'VASTORA_VERSION=0.1.0-test' "$temporary_dir/release.env"
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$temporary_dir/release.env"
@@ -83,6 +106,7 @@ test -x "$temporary_dir/uninstall.sh"
 test -x "$temporary_dir/install-host-cli.sh"
 test -x "$temporary_dir/install-update-service.sh"
 test -x "$temporary_dir/update-center.sh"
+test -f "$temporary_dir/compare-semver.awk"
 test -f "$temporary_dir/runtime-network.sh"
 test -f "$temporary_dir/compose.yaml"
 grep -Fq 'docker cp "$agent_container:/usr/local/bin/vastora"' "$temporary_dir/upgrade.sh"
@@ -124,7 +148,7 @@ existing="$temporary_dir/existing"
 install -d "$fake_bin" "$existing"
 install -m 0644 "$temporary_dir/compose.yaml" "$existing/compose.yaml"
 printf '%s\n' 'old setup' > "$existing/setup.sh"
-printf '%s\n' 'VASTORA_VERSION=old' 'VASTORA_CENTER_IMAGE=old-image' > "$existing/release.env"
+printf '%s\n' 'VASTORA_VERSION=0.1.0-test' 'VASTORA_CENTER_IMAGE=old-image' > "$existing/release.env"
 printf '%s\n' 'VASTORA_CENTER_IMAGE=old-image' 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' 'VASTORA_CUSTOM_VALUE=preserved' > "$existing/.env"
 cat > "$fake_bin/docker" <<'EOF'
 #!/bin/sh
@@ -151,6 +175,20 @@ cat > "$fake_bin/ip" <<'EOF'
 printf '%s\n' '2: enp0s6    inet 10.0.0.157/24 brd 10.0.0.255 scope global enp0s6'
 EOF
 chmod 0755 "$fake_bin/docker" "$fake_bin/curl" "$fake_bin/systemctl" "$fake_bin/id" "$fake_bin/ip"
+downgrade_bundle="$temporary_dir/downgrade-bundle"
+direct_downgrade_install="$temporary_dir/direct-downgrade-install"
+mkdir -p "$downgrade_bundle" "$direct_downgrade_install"
+tar -xzf "$downgrade_archive" -C "$downgrade_bundle"
+install -m 0644 "$temporary_dir/compose.yaml" "$direct_downgrade_install/compose.yaml"
+printf '%s\n' 'VASTORA_CENTER_IMAGE=unchanged' > "$direct_downgrade_install/.env"
+printf '%s\n' 'VASTORA_VERSION=0.1.0-alpha.10' 'VASTORA_CENTER_IMAGE=unchanged' > "$direct_downgrade_install/release.env"
+if PATH="$fake_bin:$PATH" "$downgrade_bundle/upgrade.sh" --install-dir "$direct_downgrade_install" >/dev/null 2>&1; then
+  echo "Center upgrade script accepted a prerelease downgrade." >&2
+  exit 1
+fi
+grep -Fqx 'VASTORA_VERSION=0.1.0-alpha.10' "$direct_downgrade_install/release.env"
+test ! -e "$direct_downgrade_install/install.sh"
+
 cat > "$temporary_dir/fake-vastora" <<'EOF'
 #!/bin/sh
 case "${1:-}" in
@@ -192,6 +230,7 @@ test -x "$existing/upgrade.sh"
 test -x "$existing/uninstall.sh"
 test -x "$existing/install-host-cli.sh"
 test -x "$existing/update-center.sh"
+test -f "$existing/compare-semver.awk"
 test -x "$agent_executable"
 test -f "$existing/.host-cli-installed"
 test -f "$temporary_dir/systemd/vastora-center-update.service"

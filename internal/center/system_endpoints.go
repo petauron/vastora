@@ -13,7 +13,11 @@ import (
 type SystemEndpointAliasView struct {
 	Kind                string     `json:"kind"`
 	Endpoint            string     `json:"endpoint"`
+	TransitionID        string     `json:"transitionId"`
+	LifecycleState      string     `json:"lifecycleState"`
+	RetireAfter         time.Time  `json:"retireAfter"`
 	CertificateNotAfter *time.Time `json:"certificateNotAfter,omitempty"`
+	LastError           string     `json:"lastError,omitempty"`
 }
 
 type systemEndpointAlias struct {
@@ -21,6 +25,15 @@ type systemEndpointAlias struct {
 	Endpoint            string
 	CertificateSecretID string
 	CertificateNotAfter time.Time
+	TransitionID        string
+	LifecycleState      string
+	RetireAfter         time.Time
+	DNSAccountID        string
+	DNSZoneID           string
+	DNSRecordID         string
+	DNSRecordType       string
+	DNSRecordContent    string
+	LastError           string
 }
 
 type systemEndpointAliasQuerier interface {
@@ -28,8 +41,23 @@ type systemEndpointAliasQuerier interface {
 }
 
 func readSystemEndpointAliases(ctx context.Context, queryer systemEndpointAliasQuerier, kind string) ([]systemEndpointAlias, error) {
-	rows, err := queryer.QueryContext(ctx, `SELECT kind, endpoint, COALESCE(certificate_secret_id, ''), certificate_not_after
-		FROM system_endpoint_aliases WHERE kind = ? ORDER BY created_at, endpoint`, kind)
+	return querySystemEndpointAliases(ctx, queryer, kind, false)
+}
+
+func readActiveSystemEndpointAliases(ctx context.Context, queryer systemEndpointAliasQuerier, kind string) ([]systemEndpointAlias, error) {
+	return querySystemEndpointAliases(ctx, queryer, kind, true)
+}
+
+func querySystemEndpointAliases(ctx context.Context, queryer systemEndpointAliasQuerier, kind string, activeOnly bool) ([]systemEndpointAlias, error) {
+	query := `SELECT kind, endpoint, COALESCE(certificate_secret_id, ''), certificate_not_after,
+		transition_id, lifecycle_state, retire_after, dns_account_id, dns_zone_id, dns_record_id, dns_record_type, dns_record_content, last_error
+		FROM system_endpoint_aliases WHERE kind = ? ORDER BY created_at, endpoint`
+	if activeOnly {
+		query = `SELECT kind, endpoint, COALESCE(certificate_secret_id, ''), certificate_not_after,
+			transition_id, lifecycle_state, retire_after, dns_account_id, dns_zone_id, dns_record_id, dns_record_type, dns_record_content, last_error
+			FROM system_endpoint_aliases WHERE kind = ? AND lifecycle_state = 'active' ORDER BY created_at, endpoint`
+	}
+	rows, err := queryer.QueryContext(ctx, query, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -37,14 +65,22 @@ func readSystemEndpointAliases(ctx context.Context, queryer systemEndpointAliasQ
 	result := []systemEndpointAlias{}
 	for rows.Next() {
 		var value systemEndpointAlias
-		var notAfter string
-		if err := rows.Scan(&value.Kind, &value.Endpoint, &value.CertificateSecretID, &notAfter); err != nil {
+		var notAfter, retireAfter string
+		if err := rows.Scan(&value.Kind, &value.Endpoint, &value.CertificateSecretID, &notAfter,
+			&value.TransitionID, &value.LifecycleState, &retireAfter, &value.DNSAccountID, &value.DNSZoneID,
+			&value.DNSRecordID, &value.DNSRecordType, &value.DNSRecordContent, &value.LastError); err != nil {
 			return nil, err
 		}
 		if notAfter != "" {
 			value.CertificateNotAfter, err = time.Parse(time.RFC3339Nano, notAfter)
 			if err != nil {
 				return nil, errors.New("center: stored system endpoint certificate expiry is invalid")
+			}
+		}
+		if retireAfter != "" {
+			value.RetireAfter, err = time.Parse(time.RFC3339Nano, retireAfter)
+			if err != nil {
+				return nil, errors.New("center: stored system endpoint retirement deadline is invalid")
 			}
 		}
 		result = append(result, value)
@@ -60,7 +96,10 @@ func (s *Store) ListSystemEndpointAliases(ctx context.Context) ([]SystemEndpoint
 			return nil, fmt.Errorf("center: list %s endpoint aliases: %w", kind, err)
 		}
 		for _, alias := range aliases {
-			value := SystemEndpointAliasView{Kind: alias.Kind, Endpoint: alias.Endpoint}
+			value := SystemEndpointAliasView{
+				Kind: alias.Kind, Endpoint: alias.Endpoint, TransitionID: alias.TransitionID,
+				LifecycleState: alias.LifecycleState, RetireAfter: alias.RetireAfter, LastError: alias.LastError,
+			}
 			if !alias.CertificateNotAfter.IsZero() {
 				notAfter := alias.CertificateNotAfter
 				value.CertificateNotAfter = &notAfter
@@ -72,7 +111,7 @@ func (s *Store) ListSystemEndpointAliases(ctx context.Context) ([]SystemEndpoint
 }
 
 func (s *Store) deploymentEndpointAliases(ctx context.Context) ([]deployapi.CenterEndpointAlias, []string, error) {
-	centerValues, err := readSystemEndpointAliases(ctx, s.db, "center")
+	centerValues, err := readActiveSystemEndpointAliases(ctx, s.db, "center")
 	if err != nil {
 		return nil, nil, fmt.Errorf("center: read Center endpoint aliases: %w", err)
 	}
@@ -92,7 +131,7 @@ func (s *Store) deploymentEndpointAliases(ctx context.Context) ([]deployapi.Cent
 			CertificateKeyPEM: certificate.PrivateKeyPEM,
 		})
 	}
-	headscaleValues, err := readSystemEndpointAliases(ctx, s.db, "headscale")
+	headscaleValues, err := readActiveSystemEndpointAliases(ctx, s.db, "headscale")
 	if err != nil {
 		return nil, nil, fmt.Errorf("center: read Headscale endpoint aliases: %w", err)
 	}

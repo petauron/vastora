@@ -24,20 +24,15 @@ func PurgeManagedRuntime(ctx context.Context, deleteApplicationData bool) error 
 		return fmt.Errorf("agent: connect Docker to inspect gateway data: %w", err)
 	}
 	defer docker.Close()
-	existingGateway, err := inspectManagedCaddy(ctx, docker, gatewaySettings.Container)
-	if err != nil {
-		return err
-	}
 	for _, volume := range []string{gatewaySettings.DataVolume, gatewaySettings.ConfigVolume} {
-		if err := verifyManagedGatewayVolume(ctx, docker, existingGateway, volume); err != nil {
+		if err := verifyManagedGatewayVolume(ctx, docker, volume); err != nil {
 			return err
 		}
 	}
-	executor := ApplicationExecutor{Host: SystemdHostApplicationManager{}}
-	for _, appKey := range []string{keeperKey, komariKey, cpaKey, threeXUIKey} {
-		_, err := executor.Deploy(ctx, DeploymentTask{AppKey: appKey, Operation: "uninstall", DeleteData: deleteApplicationData})
-		result = errors.Join(result, err)
+	for _, appKey := range []string{keeperKey, cpaKey, threeXUIKey} {
+		result = errors.Join(result, uninstallDockerApp(ctx, docker, appKey, "", deleteApplicationData))
 	}
+	result = errors.Join(result, (SystemdHostApplicationManager{}).RemoveKomari(ctx))
 	result = errors.Join(result, (DockerTunnelProvisioner{}).Apply(ctx, TunnelDesiredState{Revision: 1, Status: "stopped"}))
 	result = errors.Join(result, (ManagedGatewayProvisioner{Caddy: DockerGatewayProvisioner{}, Layer4: DockerLayer4Provisioner{}}).Remove(ctx))
 	if result != nil {
@@ -51,7 +46,7 @@ func PurgeManagedRuntime(ctx context.Context, deleteApplicationData bool) error 
 	return nil
 }
 
-func verifyManagedGatewayVolume(ctx context.Context, docker *client.Client, gateway *client.ContainerInspectResult, name string) error {
+func verifyManagedGatewayVolume(ctx context.Context, docker *client.Client, name string) error {
 	volume, err := docker.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
 	if errdefs.IsNotFound(err) {
 		return nil
@@ -61,13 +56,6 @@ func verifyManagedGatewayVolume(ctx context.Context, docker *client.Client, gate
 	}
 	if volume.Volume.Labels[gatewayruntime.ManagedLabel] == "true" && volume.Volume.Labels[gatewayruntime.ComponentLabel] == "gateway-storage" {
 		return nil
-	}
-	if gateway != nil {
-		for _, mount := range gateway.Container.Mounts {
-			if mount.Name == name {
-				return nil
-			}
-		}
 	}
 	return fmt.Errorf("agent: refusing to remove unowned gateway volume %s", name)
 }
