@@ -173,6 +173,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.BackfillCatalogManifestHistory(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.ensureHeadscaleDNSFile(); err != nil {
 		backgroundCancel()
 		_ = db.Close()

@@ -17,7 +17,9 @@ A source has one stable lowercase `source-id`. An app has one lowercase
 `app-id` and one semantic `version`; the deployable identity is therefore
 `source-id/app-id + version`. A source must never publish different content for
 an identity it has already published. Center-side immutable-version enforcement
-is tracked separately from this portable format.
+persists a canonical manifest digest for every observed identity. That history
+survives source deletion and signing-key rotation, so deleting and recreating a
+source cannot republish different content under an old identity.
 
 The manifest describes typed configuration, digest-pinned OCI images,
 SHA-256-pinned native artifacts, addressable services, health paths, and whether
@@ -110,7 +112,20 @@ an optional private CA, and an optional Bearer token in Center. Catalog
 authentication and OCI registry credentials are intentionally separate. The
 Catalog never contains registry passwords, cloud keys, or application secrets.
 
-Center limits an envelope to 5 MiB, sends conditional HTTP requests, and removes
-the Bearer header on cross-origin redirects. It verifies the signature and
-validates the payload before replacing the cache. A failed refresh leaves the
-last verified Catalog available and reports the error to the administrator.
+Center limits an envelope to 5 MiB, sends conditional HTTP requests, and permits
+only bounded redirects to credential-free HTTPS targets. It removes the Bearer
+header on cross-origin redirects. It verifies the signature, validates the
+payload, and checks immutable identity history in one transaction before
+replacing the cache. A failed refresh leaves the exact last verified Catalog
+available and reports the source as stale; a source with no verified cache is
+failed instead. `304 Not Modified` advances the successful validation time.
+Changing the source URL, Bearer credential, or custom CA clears the previous
+HTTP validators, so the new fetch identity must return and verify a complete
+`200` response before it can become healthy. An unsolicited `304` is rejected.
+
+Private sources can be created, edited, enabled or disabled, refreshed, and
+deleted through the authenticated Center API and Settings UI. The official
+`vastora-official` namespace is reserved and read-only. Enabled private sources
+are refreshed on their configured schedule; this never upgrades installed
+applications automatically. Bearer tokens are write-only and can be preserved,
+replaced, or explicitly cleared without being returned by a read API.

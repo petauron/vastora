@@ -8,8 +8,10 @@ export type CatalogSource = {
   customCASet: boolean;
   bearerTokenSet: boolean;
   enabled: boolean;
+  status: "pending" | "healthy" | "stale" | "failed" | "disabled";
   refreshIntervalSeconds: number;
   fetchedAt?: string;
+  checkedAt?: string;
   lastError?: string;
 };
 

@@ -699,18 +699,27 @@ func TestCatalogSourceListRedactsBearerToken(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	sources, err := store.ListSources(context.Background())
+	session, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(sources)
-	if err != nil {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/sources", nil)
+	request.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+	response := httptest.NewRecorder()
+	NewServer(store, "", false).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("catalog source API status = %d body=%s", response.Code, response.Body.String())
+	}
+	if bytes.Contains(response.Body.Bytes(), []byte("never-return-this-value")) {
+		t.Fatal("bearer token leaked from the authenticated API")
+	}
+	var payload struct {
+		Sources []CatalogSource `json:"sources"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(encoded, []byte("never-return-this-value")) {
-		t.Fatal("bearer token leaked from metadata")
-	}
-	if !sources[0].BearerTokenSet {
+	if len(payload.Sources) != 1 || !payload.Sources[0].BearerTokenSet {
 		t.Fatal("expected token metadata")
 	}
 }

@@ -1395,6 +1395,48 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("至少 10 个字符。");
   });
 
+  it("distinguishes verified, cached, failed, pending, and disabled catalog states in Chinese", () => {
+    const data = dashboard();
+    data.sources = [
+      { id: "healthy", displayName: "Healthy source", url: "https://healthy.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: false, enabled: true, status: "healthy", refreshIntervalSeconds: 3600, fetchedAt: "2026-08-30T00:00:00Z", checkedAt: "2026-08-30T00:00:00Z" },
+      { id: "stale", displayName: "Stale source", url: "https://stale.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: true, enabled: true, status: "stale", refreshIntervalSeconds: 3600, fetchedAt: "2026-08-29T00:00:00Z", checkedAt: "2026-08-30T00:00:00Z", lastError: "temporary failure" },
+      { id: "failed", displayName: "Failed source", url: "https://failed.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: false, enabled: true, status: "failed", refreshIntervalSeconds: 3600, checkedAt: "2026-08-30T00:00:00Z", lastError: "signature failure" },
+      { id: "pending", displayName: "Pending source", url: "https://pending.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: false, enabled: true, status: "pending", refreshIntervalSeconds: 3600 },
+      { id: "disabled", displayName: "Disabled source", url: "https://disabled.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: false, enabled: false, status: "disabled", refreshIntervalSeconds: 3600 }
+    ];
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const catalogs = [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"));
+    act(() => catalogs?.click());
+    for (const expected of ["健康", "使用缓存", "失败", "等待中", "未启用", "正在继续使用最后一次验证通过的缓存", "尚无可用的已验证缓存"]) {
+      expect(container.textContent).toContain(expected);
+    }
+  });
+
+  it("edits, disables, and confirms deletion of a private catalog in English", async () => {
+    const data = dashboard();
+    data.sources = [{ id: "private-source", displayName: "Private source", url: "https://private.example/catalog", publicKey: "public-key", customCASet: true, bearerTokenSet: true, enabled: true, status: "healthy", refreshIntervalSeconds: 3600, fetchedAt: "2026-08-30T00:00:00Z", checkedAt: "2026-08-30T00:00:00Z" }];
+    const update = vi.spyOn(api, "updateSource").mockResolvedValue({ id: "private-source" });
+    const remove = vi.spyOn(api, "deleteSource").mockResolvedValue(undefined);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
+    const container = render(<SettingsView data={data} language="en" mutate={mutate} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("app catalogs"))?.click());
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Edit"))?.click());
+    expect(document.body.textContent).toContain("Blank credential fields preserve the stored values");
+    expect(document.querySelector<HTMLInputElement>("#source-token-private-source")?.placeholder).toContain("keep the stored token");
+    await act(async () => {
+      document.querySelector<HTMLFormElement>("#source-name-private-source")?.closest("form")?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(update).toHaveBeenCalledWith("private-source", expect.objectContaining({ displayName: "Private source" }));
+    expect(update.mock.calls[0]?.[1]).not.toHaveProperty("bearerToken");
+    await act(async () => { await [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Disable"))?.click(); });
+    expect(update).toHaveBeenCalledWith("private-source", { enabled: false });
+    await act(async () => { await [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Delete"))?.click(); });
+    expect(window.confirm).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledWith("private-source");
+  });
+
   it("offers one safe workflow for switching the Vastora domain", async () => {
     const startOAuth = vi.spyOn(api, "startCloudflareOAuth");
     const listZones = vi.spyOn(api, "cloudflareZones").mockResolvedValue({ zones: [

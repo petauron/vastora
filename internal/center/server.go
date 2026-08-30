@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +30,7 @@ type Server struct {
 	infrastructure       deployapi.InfrastructureManager
 	updates              deployapi.CenterUpdater
 	releaseChecker       CenterReleaseChecker
+	catalogRefreshMu     sync.Mutex
 	startupReady         atomic.Bool
 }
 
@@ -153,6 +155,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/catalog/official", s.handleOfficialCatalog)
 	mux.HandleFunc("GET /api/v1/catalog/sources", s.requireAuth(false, s.handleListSources))
 	mux.HandleFunc("POST /api/v1/catalog/sources", s.requireAuth(true, s.handleCreateSource))
+	mux.HandleFunc("PATCH /api/v1/catalog/sources/{id}", s.requireAuth(true, s.handleUpdateSource))
+	mux.HandleFunc("DELETE /api/v1/catalog/sources/{id}", s.requireAuth(true, s.handleDeleteSource))
 	mux.HandleFunc("POST /api/v1/catalog/sources/{id}/refresh", s.requireAuth(true, s.handleRefreshSource))
 	mux.HandleFunc("GET /api/v1/catalog/apps", s.requireAuth(false, s.handleListApps))
 	mux.HandleFunc("POST /api/v1/registry-credentials", s.requireAuth(true, s.handleCreateRegistryCredential))

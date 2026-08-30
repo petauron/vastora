@@ -62,6 +62,9 @@ func Fetch(ctx context.Context, config FetchConfig) (FetchResult, error) {
 			if len(via) >= 3 {
 				return errors.New("catalog: too many redirects")
 			}
+			if request.URL == nil || request.URL.Scheme != "https" || request.URL.Host == "" || request.URL.User != nil {
+				return errors.New("catalog: redirect target must be absolute HTTPS without credentials")
+			}
 			if len(via) > 0 && !sameOrigin(request.URL, via[len(via)-1].URL) {
 				request.Header.Del("Authorization")
 			}
@@ -88,7 +91,18 @@ func Fetch(ctx context.Context, config FetchConfig) (FetchResult, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotModified {
-		return FetchResult{NotModified: true, ETag: config.ETag, LastModified: config.LastModified}, nil
+		if config.ETag == "" && config.LastModified == "" {
+			return FetchResult{}, errors.New("catalog: source returned 304 without a conditional request")
+		}
+		etag := strings.TrimSpace(response.Header.Get("ETag"))
+		if etag == "" {
+			etag = config.ETag
+		}
+		lastModified := strings.TrimSpace(response.Header.Get("Last-Modified"))
+		if lastModified == "" {
+			lastModified = config.LastModified
+		}
+		return FetchResult{NotModified: true, ETag: etag, LastModified: lastModified}, nil
 	}
 	if response.StatusCode != http.StatusOK {
 		return FetchResult{}, fmt.Errorf("catalog: source returned HTTP %d", response.StatusCode)

@@ -137,5 +137,15 @@ export const api = {
     customCA: string;
     refreshIntervalSeconds: number;
   }) => request<{ id: string }>("/api/v1/catalog/sources", { method: "POST", body: JSON.stringify(source) }),
+  updateSource: (id: string, source: Partial<{
+    displayName: string;
+    url: string;
+    publicKey: string;
+    bearerToken: string;
+    customCA: string;
+    refreshIntervalSeconds: number;
+    enabled: boolean;
+  }>) => request<{ id: string }>(`/api/v1/catalog/sources/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(source) }),
+  deleteSource: (id: string) => request<void>(`/api/v1/catalog/sources/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
   refreshSource: (id: string) => request<{ sourceID: string; apps?: number; notModified: boolean }>(`/api/v1/catalog/sources/${encodeURIComponent(id)}/refresh`, { method: "POST", body: "{}" })
 };

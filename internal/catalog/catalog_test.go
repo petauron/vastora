@@ -192,6 +192,38 @@ func TestPortableIntegerDefaults(t *testing.T) {
 	}
 }
 
+func TestCanonicalAppManifestNormalizesEquivalentEncodings(t *testing.T) {
+	t.Parallel()
+	value := validCatalog().Apps[0]
+	value.Version = "v1.0.0"
+	value.Config[0].Secret = false
+	value.Config[0].Type = "integer"
+	integerDefault := json.RawMessage(`1e0`)
+	value.Config[0].Default = &integerDefault
+
+	canonical, err := CanonicalAppManifest(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Version != "1.0.0" || canonical.Config[0].Default == nil || string(*canonical.Config[0].Default) != "1" {
+		t.Fatalf("canonical manifest version=%q default=%s", canonical.Version, canonical.Config[0].Default)
+	}
+	if value.Version != "v1.0.0" || string(*value.Config[0].Default) != "1e0" {
+		t.Fatalf("canonicalization mutated input: version=%q default=%s", value.Version, value.Config[0].Default)
+	}
+
+	value.Config[0].Type = "string"
+	stringDefault := json.RawMessage(`"\u0061"`)
+	value.Config[0].Default = &stringDefault
+	canonical, err = CanonicalAppManifest(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(*canonical.Config[0].Default); got != `"a"` {
+		t.Fatalf("canonical string default = %s", got)
+	}
+}
+
 func TestAppAndImageIDsMayStartWithDigits(t *testing.T) {
 	t.Parallel()
 	catalog := validCatalog()
