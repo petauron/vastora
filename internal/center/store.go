@@ -38,6 +38,7 @@ type Store struct {
 	cloudflareOAuthMu              sync.Mutex
 	cloudflareOAuthSessions        map[string]*cloudflareOAuthSession
 	cloudflareTokenMu              sync.Mutex
+	cloudflareTunnelMu             sync.Mutex
 	certificateMu                  sync.Mutex
 	domainSwitchMu                 sync.Mutex
 	initialSetupMu                 sync.Mutex

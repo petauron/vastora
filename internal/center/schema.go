@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 33
+const centerSchemaVersion = 34
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -426,6 +426,18 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'failed', 'stopped')),
 			attempt INTEGER NOT NULL DEFAULT 0,
 			lease_expires_at TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE cloudflare_tunnel_operations (
+			agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE RESTRICT,
+			account_id TEXT NOT NULL,
+			operation_id TEXT NOT NULL UNIQUE,
+			tunnel_name TEXT NOT NULL UNIQUE,
+			tunnel_secret_id TEXT NOT NULL REFERENCES secrets(id) ON DELETE RESTRICT,
+			tunnel_id TEXT NOT NULL DEFAULT '',
+			phase TEXT NOT NULL CHECK(phase IN ('intent', 'creating', 'created')),
 			last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL

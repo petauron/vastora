@@ -202,47 +202,6 @@ func (s *Store) CloudflareZones(ctx context.Context) ([]CloudflareZone, error) {
 	return zones, nil
 }
 
-func (s *Store) ensureCloudflareTunnel(ctx context.Context, agentID string) error {
-	var existing int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cloudflare_tunnels WHERE agent_id = ?`, agentID).Scan(&existing); err != nil {
-		return err
-	}
-	if existing != 0 {
-		return nil
-	}
-	client, err := s.cloudflare(ctx)
-	if err != nil {
-		return err
-	}
-	var nodeName string
-	if err := s.db.QueryRowContext(ctx, `SELECT name FROM agents WHERE id = ?`, agentID).Scan(&nodeName); err != nil {
-		return errors.New("center: Tunnel node not found")
-	}
-	tunnelName := "vastora-" + sanitizeCloudflareName(nodeName) + "-" + agentID[:min(8, len(agentID))]
-	tunnelID, err := client.createTunnel(ctx, tunnelName)
-	if err != nil {
-		return err
-	}
-	token, err := client.tunnelToken(ctx, tunnelID)
-	if err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	secretID, err := s.putSecret(ctx, tx, []byte(token), "cloudflare-tunnel:"+agentID)
-	if err != nil {
-		return err
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO cloudflare_tunnels(agent_id, tunnel_id, tunnel_name, token_secret_id, desired_json, status, created_at, updated_at) VALUES(?, ?, ?, ?, '{}', 'stopped', ?, ?)`, agentID, tunnelID, tunnelName, secretID, now, now); err != nil {
-		return fmt.Errorf("center: save Cloudflare Tunnel: %w", err)
-	}
-	return tx.Commit()
-}
-
 func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationID string, revision int64) error {
 	var kind, gatewayID, hostname, dnsRecordID string
 	if err := s.db.QueryRowContext(ctx, `SELECT kind, COALESCE(gateway_node_id, ''), hostname, dns_record_id FROM publications WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, publicationID, revision).Scan(&kind, &gatewayID, &hostname, &dnsRecordID); errors.Is(err, sql.ErrNoRows) {
@@ -420,18 +379,45 @@ func (client cloudflareClient) verify(ctx context.Context) (string, error) {
 	return zone.Name, nil
 }
 
-func (client cloudflareClient) createTunnel(ctx context.Context, name string) (string, error) {
-	var result struct {
-		ID string `json:"id"`
+type cloudflareTunnelRecord struct {
+	ID         string `json:"id"`
+	AccountTag string `json:"account_tag"`
+	Name       string `json:"name"`
+	ConfigSrc  string `json:"config_src"`
+}
+
+func (client cloudflareClient) createTunnel(ctx context.Context, name, tunnelSecret string) (cloudflareTunnelRecord, error) {
+	body := map[string]any{"name": name, "config_src": "cloudflare"}
+	if tunnelSecret != "" {
+		body["tunnel_secret"] = tunnelSecret
 	}
-	err := client.do(ctx, http.MethodPost, "/accounts/"+url.PathEscape(client.accountID)+"/cfd_tunnel", map[string]any{"name": name, "config_src": "cloudflare"}, &result)
+	var result cloudflareTunnelRecord
+	err := client.do(ctx, http.MethodPost, "/accounts/"+url.PathEscape(client.accountID)+"/cfd_tunnel", body, &result)
 	if err != nil {
-		return "", fmt.Errorf("center: create Cloudflare Tunnel: %w", err)
+		return cloudflareTunnelRecord{}, fmt.Errorf("center: create Cloudflare Tunnel: %w", err)
 	}
 	if result.ID == "" {
-		return "", errors.New("center: Cloudflare did not return a Tunnel ID")
+		return cloudflareTunnelRecord{}, errors.New("center: Cloudflare did not return a Tunnel ID")
 	}
-	return result.ID, nil
+	return result, nil
+}
+
+func (client cloudflareClient) listTunnelsByName(ctx context.Context, name string) ([]cloudflareTunnelRecord, error) {
+	query := url.Values{}
+	query.Set("is_deleted", "false")
+	query.Set("name", name)
+	query.Set("per_page", "100")
+	var result []cloudflareTunnelRecord
+	if err := client.do(ctx, http.MethodGet, "/accounts/"+url.PathEscape(client.accountID)+"/cfd_tunnel?"+query.Encode(), nil, &result); err != nil {
+		return nil, err
+	}
+	filtered := make([]cloudflareTunnelRecord, 0, len(result))
+	for _, tunnel := range result {
+		if tunnel.Name == name {
+			filtered = append(filtered, tunnel)
+		}
+	}
+	return filtered, nil
 }
 
 func (client cloudflareClient) tunnelToken(ctx context.Context, tunnelID string) (string, error) {

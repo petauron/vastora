@@ -129,7 +129,7 @@ func (s *Store) ConfigureTailscaleFixedEndpoint(ctx context.Context, input Tails
 	if builtin != 1 {
 		return TailscaleFixedEndpointView{}, errors.New("center: a managed fixed endpoint is available only with built-in Headscale")
 	}
-	input, config, err := s.validateTailscaleFixedEndpointInput(ctx, input)
+	_, config, err := s.validateTailscaleFixedEndpointInput(ctx, input)
 	if err != nil {
 		return TailscaleFixedEndpointView{}, err
 	}

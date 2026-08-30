@@ -840,6 +840,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE three_x_ui_nodes`,
 		`DROP TABLE headscale_api_keys`,
 		`DROP TABLE initial_setup_operations`,
+		`DROP TABLE cloudflare_tunnel_operations`,
 		`DROP TABLE system_endpoint_aliases`,
 		`DROP TABLE center_remote_access`,
 		`DROP TABLE catalog_manifest_history`,
