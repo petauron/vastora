@@ -94,6 +94,19 @@ func (s *Server) handleSwitchSystemDomain(writer http.ResponseWriter, request *h
 	writeJSON(writer, http.StatusOK, value)
 }
 
+func (s *Server) handleRetireSystemEndpointAliases(writer http.ResponseWriter, request *http.Request) {
+	if err := s.RetireSystemEndpointAliases(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.SystemDomain(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
 func (s *Server) handleConfigureSetupDNS(writer http.ResponseWriter, request *http.Request) {
 	var input SetupDNSInput
 	if err := decodeJSON(request, &input); err != nil {

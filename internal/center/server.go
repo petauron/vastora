@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/system/update", s.requireAuth(true, s.handleStartCenterUpdate))
 	mux.HandleFunc("GET /api/v1/system/domain", s.requireAuth(false, s.handleSystemDomain))
 	mux.HandleFunc("POST /api/v1/system/domain", s.requireAuth(true, s.handleSwitchSystemDomain))
+	mux.HandleFunc("POST /api/v1/system/domain/aliases/{id}/retire", s.requireAuth(true, s.handleRetireSystemEndpointAliases))
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
 	mux.HandleFunc("POST /api/v1/deployments", s.requireAuth(true, s.handleCreateDeployment))

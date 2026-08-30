@@ -318,7 +318,7 @@ func (s *Store) gatewayCertificates(ctx context.Context, tx *sql.Tx, gatewayID s
 			return nil, err
 		}
 		values = append(values, gateway.Certificate{Hostname: hostname, CertificatePEM: certificate.CertificatePEM, PrivateKeyPEM: certificate.PrivateKeyPEM})
-		aliases, err := readSystemEndpointAliases(ctx, tx, "center")
+		aliases, err := readActiveSystemEndpointAliases(ctx, tx, "center")
 		if err != nil {
 			return nil, err
 		}

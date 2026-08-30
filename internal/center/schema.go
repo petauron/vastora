@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 30
+const centerSchemaVersion = 31
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -377,6 +377,15 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			endpoint TEXT NOT NULL,
 			certificate_secret_id TEXT REFERENCES secrets(id) ON DELETE RESTRICT,
 			certificate_not_after TEXT NOT NULL DEFAULT '',
+			transition_id TEXT NOT NULL DEFAULT '',
+			lifecycle_state TEXT NOT NULL DEFAULT 'active' CHECK(lifecycle_state IN ('active', 'retiring', 'failed')),
+			retire_after TEXT NOT NULL DEFAULT '',
+			dns_account_id TEXT NOT NULL DEFAULT '',
+			dns_zone_id TEXT NOT NULL DEFAULT '',
+			dns_record_id TEXT NOT NULL DEFAULT '',
+			dns_record_type TEXT NOT NULL DEFAULT '',
+			dns_record_content TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			PRIMARY KEY(kind, endpoint)

@@ -245,7 +245,7 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 	if mode != "builtin" {
 		return state, nil
 	}
-	aliases, err := readSystemEndpointAliases(ctx, s.db, "headscale")
+	aliases, err := readActiveSystemEndpointAliases(ctx, s.db, "headscale")
 	if err != nil {
 		return nil, fmt.Errorf("center: read Headscale endpoint aliases: %w", err)
 	}
@@ -414,7 +414,7 @@ func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCente
 				return errors.New("center: Headscale DNS address must be IPv4")
 			}
 			endpoints := []string{centerEndpoint}
-			aliases, err := readSystemEndpointAliases(ctx, s.db, "center")
+			aliases, err := readActiveSystemEndpointAliases(ctx, s.db, "center")
 			if err != nil {
 				return err
 			}

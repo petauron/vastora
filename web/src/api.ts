@@ -74,6 +74,7 @@ export const api = {
   startCenterUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update", { method: "POST", body: "{}" }),
   systemDomain: () => request<SystemDomain>("/api/v1/system/domain"),
   switchSystemDomain: (zoneId: string) => request<SystemDomainSwitchResult>("/api/v1/system/domain", { method: "POST", body: JSON.stringify({ zoneId, confirm: true }) }),
+  retireSystemDomainAliases: (transitionId: string) => request<SystemDomain>(`/api/v1/system/domain/aliases/${encodeURIComponent(transitionId)}/retire`, { method: "POST", body: "{}" }),
   diagnostics: () => request<Diagnostics>("/api/v1/diagnostics"),
   downloadDiagnostics: () => download("/api/v1/diagnostics", `vastora-diagnostics-${new Date().toISOString().slice(0, 10)}.json`),
   downloadBackup: (password: string) => download("/api/v1/backups", "vastora-center.vastora", { method: "POST", body: JSON.stringify({ password }) }),

@@ -54,7 +54,15 @@ export type RegistryCredential = {
   createdAt: string;
 };
 
-export type SystemEndpointAlias = { kind: "center" | "headscale"; endpoint: string; certificateNotAfter?: string };
+export type SystemEndpointAlias = {
+  kind: "center" | "headscale";
+  endpoint: string;
+  transitionId: string;
+  lifecycleState: "active" | "retiring" | "failed";
+  retireAfter: string;
+  certificateNotAfter?: string;
+  lastError?: string;
+};
 export type SystemDomain = {
   namespace: string;
   centerUrl: string;

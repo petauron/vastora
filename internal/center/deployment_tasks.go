@@ -68,6 +68,12 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
+	s.domainSwitchMu.Lock()
+	_, aliasErr := s.beginDueSystemEndpointAliasRetirements(ctx)
+	s.domainSwitchMu.Unlock()
+	if aliasErr != nil {
+		return nil, aliasErr
+	}
 	var publicKey []byte
 	var agentRuntimeGeneration int
 	if err := s.db.QueryRowContext(ctx, `SELECT x25519_public_key, runtime_generation FROM agents WHERE id = ?`, agentID).Scan(&publicKey, &agentRuntimeGeneration); err != nil || controlplane.ValidatePublicKey(publicKey) != nil {
