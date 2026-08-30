@@ -272,6 +272,31 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, http.StatusOK, map[string]bool{"completed": true})
 }
 
+func (s *Server) handleRenewTaskLease(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input struct {
+		Attempt int64 `json:"attempt"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	expiresAt, err := s.store.RenewTaskLease(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt)
+	if err != nil {
+		if errors.Is(err, errStaleTaskLease) {
+			writeError(writer, http.StatusConflict, err)
+			return
+		}
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"leaseExpiresAt": expiresAt.Format(time.RFC3339Nano)})
+}
+
 func agentCredential(request *http.Request) (string, error) {
 	credential := strings.TrimSpace(strings.TrimPrefix(request.Header.Get("Authorization"), "Bearer "))
 	if credential == "" || !strings.HasPrefix(request.Header.Get("Authorization"), "Bearer ") {

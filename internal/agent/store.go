@@ -73,7 +73,7 @@ type Connection struct {
 	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 9
+const agentSchemaVersion = 10
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -344,6 +344,35 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 9
 		}
+		if version == 9 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE task_receipts_v10 (
+					task_id TEXT PRIMARY KEY,
+					task_kind TEXT NOT NULL,
+					attempt INTEGER NOT NULL CHECK(attempt > 0),
+					task_hash BLOB NOT NULL,
+					state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')),
+					sealed_completion BLOB,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				INSERT INTO task_receipts_v10 SELECT * FROM task_receipts;
+				DROP TABLE task_receipts;
+				ALTER TABLE task_receipts_v10 RENAME TO task_receipts;
+				PRAGMA user_version = 10`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 9 to 10: %w", migrateErr)
+			}
+			version = 10
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -390,7 +419,7 @@ func Open(dataDir string) (*Store, error) {
 			task_kind TEXT NOT NULL,
 			attempt INTEGER NOT NULL CHECK(attempt > 0),
 			task_hash BLOB NOT NULL,
-			state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required')),
+			state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')),
 			sealed_completion BLOB,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL

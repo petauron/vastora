@@ -197,3 +197,46 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 		t.Fatalf("restorable applications after migration = %#v, err=%v", restored, err)
 	}
 }
+
+func TestAgentSchemaV10PreservesPendingCompletionOutbox(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: "application.apply", ID: "schema-v10-outbox", Attempt: 1, AppKey: cpaKey, Operation: "uninstall"}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "stored failure"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`CREATE TABLE task_receipts_v9 (
+		task_id TEXT PRIMARY KEY,
+		task_kind TEXT NOT NULL,
+		attempt INTEGER NOT NULL CHECK(attempt > 0),
+		task_hash BLOB NOT NULL,
+		state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required')),
+		sealed_completion BLOB,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	INSERT INTO task_receipts_v9 SELECT * FROM task_receipts;
+	DROP TABLE task_receipts;
+	ALTER TABLE task_receipts_v9 RENAME TO task_receipts;
+	PRAGMA user_version = 9`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	pending, err := store.PendingTaskCompletion(context.Background())
+	if err != nil || pending == nil || pending.TaskID != task.ID || pending.Error != "stored failure" {
+		t.Fatalf("migrated completion = %#v, err=%v", pending, err)
+	}
+}

@@ -17,6 +17,12 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 )
 
+type executorFunc func(context.Context, DeploymentTask) (ApplicationTaskResult, error)
+
+func (execute executorFunc) Deploy(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
+	return execute(ctx, task)
+}
+
 func testConnection(t *testing.T, agentID, name, centerURL, credential string) Connection {
 	t.Helper()
 	privateKey, _, err := controlplane.GenerateKeyPair()
@@ -567,6 +573,86 @@ func TestAgentDecommissionSchedulesFinalRemovalBeforeAcknowledgement(t *testing.
 	}
 }
 
+func TestTaskCompletionUsesFreshContextsAfterExecutionCancellation(t *testing.T) {
+	resultReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/tasks/deadline-task/result" {
+			t.Fatalf("unexpected request: %s", request.URL.Path)
+		}
+		resultReceived = true
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"completed":true}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	executionContext, cancelExecution := context.WithCancel(context.Background())
+	cancelExecution()
+	task := DeploymentTask{Kind: "application.apply", ID: "deadline-task", Attempt: 1, ApplicationID: "application-1", AppKey: cpaKey, Operation: "install", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}
+	task.Manifest.Version = "1.0.0"
+	client := Client{HTTPClient: server.Client(), Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
+		if ctx.Err() == nil {
+			t.Fatal("executor did not receive the canceled execution context")
+		}
+		return ApplicationTaskResult{}, nil
+	})}
+	client.processTask(executionContext, store, task, func(err error) { t.Errorf("task error: %v", err) })
+	if !resultReceived {
+		t.Fatal("task result was not delivered after execution cancellation")
+	}
+	installation, err := store.AppliedInstallation(context.Background(), cpaKey)
+	if err != nil || installation.InstanceID != task.ID || installation.ApplicationID != task.ApplicationID {
+		t.Fatalf("applied state = %#v, err=%v", installation, err)
+	}
+}
+
+func TestLeaseRenewalFailureCancelsExecutionBeforeReporting(t *testing.T) {
+	resultReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/agents/agent-1/tasks/lease-failure/lease":
+			http.Error(response, `{"error":"lease unavailable"}`, http.StatusConflict)
+		case "/api/v1/agents/agent-1/tasks/lease-failure/result":
+			resultReceived = true
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"completed":true}`))
+		default:
+			t.Fatalf("unexpected request: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	executionCanceled := false
+	reportedRenewalFailure := false
+	client := Client{HTTPClient: server.Client(), Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
+		<-ctx.Done()
+		executionCanceled = true
+		return ApplicationTaskResult{}, ctx.Err()
+	})}
+	task := DeploymentTask{Kind: "application.apply", ID: "lease-failure", Attempt: 1, ApplicationID: "application-1", AppKey: cpaKey, Operation: "install", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}
+	client.processTaskWithLeaseInterval(context.Background(), store, task, func(err error) {
+		if strings.Contains(err.Error(), "renew task lease") {
+			reportedRenewalFailure = true
+		}
+	}, time.Millisecond)
+	if !executionCanceled || !reportedRenewalFailure || !resultReceived {
+		t.Fatalf("lease failure ordering: canceled=%t reported=%t result=%t", executionCanceled, reportedRenewalFailure, resultReceived)
+	}
+}
+
 func TestProcessingReceiptAfterRestartFailsClosedWithoutRepeatingEffect(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -649,5 +735,54 @@ func TestStoredApplicationCompletionKeepsExecutedRuntimeGeneration(t *testing.T)
 	}
 	if received.ApplicationRuntimeGeneration != 1 {
 		t.Fatalf("replayed runtime generation = %d, want 1", received.ApplicationRuntimeGeneration)
+	}
+}
+
+func TestPendingTaskCompletionReplaysAfterRestartAndAcknowledgesOnce(t *testing.T) {
+	deliveries := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/tasks/restart-outbox/result" {
+			t.Fatalf("unexpected outbox request: %s", request.URL.Path)
+		}
+		deliveries++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"completed":true}`))
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: "application.apply", ID: "restart-outbox", Attempt: 1, AppKey: cpaKey, Operation: "uninstall"}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "operation failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	pending, err := store.PendingTaskCompletion(context.Background())
+	if err != nil || pending == nil || pending.TaskID != task.ID || pending.Attempt != task.Attempt {
+		t.Fatalf("pending completion = %#v, err=%v", pending, err)
+	}
+	if err := (Client{HTTPClient: server.Client()}).deliverTaskCompletion(context.Background(), store, *pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := store.PendingTaskCompletion(context.Background()); err != nil || pending != nil {
+		t.Fatalf("acknowledged completion replayed again: %#v err=%v", pending, err)
+	}
+	if deliveries != 1 {
+		t.Fatalf("outbox deliveries = %d, want 1", deliveries)
 	}
 }

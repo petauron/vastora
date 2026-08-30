@@ -289,6 +289,47 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	}
 }
 
+func TestTaskLeaseRenewalKeepsAttemptActiveAndNeverResurrectsExpiredLease(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return clock }
+	node := enrollOrchestrationNode(t, store, "lease-renewal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
+	config := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	first := claimTask(t, store, node)
+	clock = clock.Add(4 * time.Minute)
+	expiresAt, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt)
+	if err != nil || !expiresAt.Equal(clock.Add(taskLeaseDuration)) {
+		t.Fatalf("renewed lease = %s, err=%v", expiresAt, err)
+	}
+	clock = clock.Add(2 * time.Minute)
+	if err := store.recoverExpiredTasks(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM deployments WHERE id = ?`, first.ID).Scan(&state); err != nil || state != "running" {
+		t.Fatalf("renewed task state = %q, err=%v", state, err)
+	}
+	clock = expiresAt.Add(time.Second)
+	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt); !errors.Is(err, errStaleTaskLease) {
+		t.Fatalf("expired lease was resurrected: %v", err)
+	}
+	second := claimTask(t, store, node)
+	if second.ID != first.ID || second.Attempt != first.Attempt+1 {
+		t.Fatalf("expired task retry = %#v, first=%#v", second, first)
+	}
+	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt); !errors.Is(err, errStaleTaskLease) {
+		t.Fatalf("stale attempt renewed the newer lease: %v", err)
+	}
+	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, second.ID, second.Attempt); err != nil {
+		t.Fatalf("current attempt could not renew: %v", err)
+	}
+}
+
 func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

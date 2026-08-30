@@ -24,7 +24,11 @@ import (
 
 var Version = "0.1.0-dev"
 
-const maxDeferredTaskAttempts int64 = 4
+const (
+	maxDeferredTaskAttempts int64 = 4
+	taskLeaseRenewInterval        = time.Minute
+	taskControlTimeout            = 15 * time.Second
+)
 
 type Client struct {
 	HTTPClient         *http.Client
@@ -721,6 +725,29 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 	var lastRestore time.Time
 	restorePending := true
 	for {
+		completionContext, completionCancel := freshTaskControlContext(ctx)
+		pendingCompletion, completionErr := store.PendingTaskCompletion(completionContext)
+		completionCancel()
+		if completionErr != nil {
+			if report != nil && ctx.Err() == nil {
+				report(completionErr)
+			}
+			if !waitForTaskRetry(ctx) {
+				return
+			}
+			continue
+		}
+		if pendingCompletion != nil {
+			if err := c.deliverTaskCompletion(ctx, store, *pendingCompletion); err != nil {
+				if report != nil && ctx.Err() == nil {
+					report(err)
+				}
+				if !waitForTaskRetry(ctx) {
+					return
+				}
+			}
+			continue
+		}
 		if restorePending {
 			receiptTaskID, receiptKind, receiptErr := store.UnresolvedApplicationTaskReceipt(ctx)
 			if receiptErr != nil {
@@ -750,9 +777,7 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 						report(err)
 					}
 				} else if task != nil {
-					requestContext, requestCancel := context.WithTimeout(ctx, 5*time.Minute)
-					c.processTask(requestContext, store, *task, report)
-					requestCancel()
+					c.processTaskWithLease(ctx, store, *task, report)
 				}
 				continue
 			}
@@ -809,9 +834,66 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		if task == nil {
 			continue
 		}
-		requestContext, requestCancel := context.WithTimeout(ctx, 5*time.Minute)
-		c.processTask(requestContext, store, *task, report)
-		requestCancel()
+		c.processTaskWithLease(ctx, store, *task, report)
+	}
+}
+
+func freshTaskControlContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), taskControlTimeout)
+}
+
+func (c Client) deliverTaskCompletion(parent context.Context, store *Store, completion TaskCompletion) error {
+	deliveryContext, deliveryCancel := freshTaskControlContext(parent)
+	err := c.sendTaskCompletion(deliveryContext, store, completion)
+	deliveryCancel()
+	if err != nil {
+		return err
+	}
+	acknowledgeContext, acknowledgeCancel := freshTaskControlContext(parent)
+	err = store.AcknowledgeTaskCompletion(acknowledgeContext, completion.TaskID)
+	acknowledgeCancel()
+	return err
+}
+
+func (c Client) processTaskWithLease(parent context.Context, store *Store, task DeploymentTask, report func(error)) {
+	c.processTaskWithLeaseInterval(parent, store, task, report, taskLeaseRenewInterval)
+}
+
+func (c Client) processTaskWithLeaseInterval(parent context.Context, store *Store, task DeploymentTask, report func(error), interval time.Duration) {
+	executionContext, cancelExecution := context.WithCancel(parent)
+	renewalResult := make(chan error, 1)
+	go func() {
+		err := c.renewTaskLeaseLoop(executionContext, store, task, interval)
+		if err != nil {
+			cancelExecution()
+		}
+		renewalResult <- err
+	}()
+	c.processTask(executionContext, store, task, report)
+	cancelExecution()
+	if err := <-renewalResult; err != nil && parent.Err() == nil && report != nil {
+		report(err)
+	}
+}
+
+func (c Client) renewTaskLeaseLoop(ctx context.Context, store *Store, task DeploymentTask, interval time.Duration) error {
+	if interval <= 0 {
+		return errors.New("agent: task lease renewal interval must be positive")
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			requestContext, cancel := context.WithTimeout(ctx, taskControlTimeout)
+			err := c.renewTaskLease(requestContext, store, task.ID, task.Attempt)
+			cancel()
+			if err != nil {
+				return fmt.Errorf("agent: renew task lease: %w", err)
+			}
+		}
 	}
 }
 
@@ -825,7 +907,9 @@ func waitForTaskRetry(ctx context.Context) bool {
 }
 
 func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTask, report func(error)) {
-	storedCompletion, receiptErr := store.PrepareTaskReceipt(ctx, task)
+	receiptContext, receiptCancel := freshTaskControlContext(ctx)
+	storedCompletion, receiptErr := store.PrepareTaskReceipt(receiptContext, task)
+	receiptCancel()
 	if receiptErr != nil {
 		if report != nil {
 			report(receiptErr)
@@ -833,14 +917,10 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		return
 	}
 	if storedCompletion != nil {
-		if err := c.sendTaskCompletion(ctx, store, *storedCompletion); err != nil {
+		if err := c.deliverTaskCompletion(ctx, store, *storedCompletion); err != nil {
 			if report != nil {
 				report(err)
 			}
-			return
-		}
-		if err := store.AcknowledgeTaskCompletion(ctx, task.ID); err != nil && report != nil {
-			report(err)
 		}
 		return
 	}
@@ -957,13 +1037,17 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		err = deferTaskUntilReconciled(err)
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+		persistContext, persistCancel := freshTaskControlContext(ctx)
+		_, err = store.RecordApplied(persistContext, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+		persistCancel()
 		if err != nil && committedThreeXUI {
 			err = deferTaskUntilReconciled(err)
 		}
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation == "uninstall" {
-		err = store.RemoveApplied(ctx, task.AppKey)
+		persistContext, persistCancel := freshTaskControlContext(ctx)
+		err = store.RemoveApplied(persistContext, task.AppKey)
+		persistCancel()
 	}
 	if taskCompletionShouldBeDeferred(err, task.Attempt) {
 		// Do not turn an uncertain compensation into a terminal failure. Center's
@@ -979,18 +1063,19 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if task.Kind == "application.apply" {
 		completion.ApplicationRuntimeGeneration = platform.ApplicationRuntimeGeneration
 	}
-	if completionErr := store.RecordTaskCompletion(ctx, completion); completionErr != nil {
+	completionContext, completionCancel := freshTaskControlContext(ctx)
+	completionErr := store.RecordTaskCompletion(completionContext, completion)
+	completionCancel()
+	if completionErr != nil {
 		if report != nil {
 			report(completionErr)
 		}
 		return
 	}
-	if completeErr := c.sendTaskCompletion(ctx, store, completion); completeErr != nil {
+	if completeErr := c.deliverTaskCompletion(ctx, store, completion); completeErr != nil {
 		if report != nil {
 			report(completeErr)
 		}
-	} else if acknowledgeErr := store.AcknowledgeTaskCompletion(ctx, task.ID); acknowledgeErr != nil && report != nil {
-		report(acknowledgeErr)
 	}
 	if err != nil && report != nil {
 		report(errors.New(safeTaskError(err)))
@@ -1100,6 +1185,19 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 		payload["error"] = deploymentErr.Error()
 	}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string, attempt int64) error {
+	connection, err := store.Connection(ctx)
+	if err != nil {
+		return err
+	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"attempt": attempt}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/lease", payload, connection.Credential, connection.CAFingerprint, nil)
 }
 
 func (c Client) post(ctx context.Context, endpoint string, payload any, credential, caFingerprint string, target any) error {

@@ -26,7 +26,7 @@ type TaskCompletion struct {
 func (s *Store) UnresolvedApplicationTaskReceipt(ctx context.Context) (string, string, error) {
 	var taskID, taskKind string
 	err := s.db.QueryRowContext(ctx, `SELECT task_id, task_kind FROM task_receipts
-		WHERE state IN ('processing', 'reconciliation_required') AND task_kind IN ('application.apply', 'legacy')
+		WHERE state IN ('processing', 'reconciliation_required', 'reconciliation_acknowledged') AND task_kind IN ('application.apply', 'legacy')
 		ORDER BY created_at, task_id LIMIT 1`).Scan(&taskID, &taskKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", nil
@@ -35,6 +35,28 @@ func (s *Store) UnresolvedApplicationTaskReceipt(ctx context.Context) (string, s
 		return "", "", fmt.Errorf("agent: inspect unresolved application task receipts: %w", err)
 	}
 	return taskID, taskKind, nil
+}
+
+func (s *Store) PendingTaskCompletion(ctx context.Context) (*TaskCompletion, error) {
+	var taskID string
+	var sealed []byte
+	err := s.db.QueryRowContext(ctx, `SELECT task_id, sealed_completion FROM task_receipts
+		WHERE state IN ('completed', 'reconciliation_required') ORDER BY updated_at, task_id LIMIT 1`).Scan(&taskID, &sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agent: inspect pending task completions: %w", err)
+	}
+	plaintext, err := secret.Open(s.key, sealed, taskCompletionContext(taskID))
+	if err != nil {
+		return nil, errors.New("agent: pending task completion is invalid")
+	}
+	var completion TaskCompletion
+	if json.Unmarshal(plaintext, &completion) != nil || completion.TaskID != taskID || completion.Attempt <= 0 {
+		return nil, errors.New("agent: pending task completion is invalid")
+	}
+	return &completion, nil
 }
 
 func (s *Store) HasProcessingTaskReceipts(ctx context.Context) (bool, error) {
@@ -75,7 +97,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	if task.Attempt < attempt {
 		return nil, errors.New("agent: stale duplicate task attempt")
 	}
-	if state == "completed" || state == "acknowledged" || state == "reconciliation_required" {
+	if state == "completed" || state == "acknowledged" || state == "reconciliation_required" || state == "reconciliation_acknowledged" {
 		plaintext, err := secret.Open(s.key, sealed, taskCompletionContext(task.ID))
 		if err != nil {
 			return nil, errors.New("agent: stored task completion is invalid")
@@ -84,8 +106,8 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		if json.Unmarshal(plaintext, &completion) != nil || completion.TaskID != task.ID {
 			return nil, errors.New("agent: stored task completion is invalid")
 		}
-		if state == "reconciliation_required" && task.Reconcile {
-			result, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, state = 'processing', sealed_completion = NULL, updated_at = ? WHERE task_id = ? AND state = 'reconciliation_required'`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID)
+		if (state == "reconciliation_required" || state == "reconciliation_acknowledged") && task.Reconcile {
+			result, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, state = 'processing', sealed_completion = NULL, updated_at = ? WHERE task_id = ? AND state IN ('reconciliation_required', 'reconciliation_acknowledged')`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID)
 			if err != nil {
 				return nil, fmt.Errorf("agent: begin explicit task reconciliation: %w", err)
 			}
@@ -95,7 +117,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 			return nil, nil
 		}
 		completion.Attempt = task.Attempt
-		if state == "reconciliation_required" {
+		if state == "reconciliation_required" || state == "reconciliation_acknowledged" {
 			return &completion, nil
 		}
 		if task.Attempt != attempt {
@@ -161,7 +183,7 @@ func (s *Store) storeTaskCompletion(ctx context.Context, completion TaskCompleti
 }
 
 func (s *Store) AcknowledgeTaskCompletion(ctx context.Context, taskID string) error {
-	if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET state = 'acknowledged', updated_at = ? WHERE task_id = ? AND state IN ('completed', 'acknowledged')`, s.now().UTC().Format(time.RFC3339Nano), taskID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET state = CASE WHEN state = 'reconciliation_required' THEN 'reconciliation_acknowledged' ELSE 'acknowledged' END, updated_at = ? WHERE task_id = ? AND state IN ('completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')`, s.now().UTC().Format(time.RFC3339Nano), taskID); err != nil {
 		return fmt.Errorf("agent: clear acknowledged task completion: %w", err)
 	}
 	return nil
