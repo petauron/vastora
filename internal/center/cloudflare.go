@@ -18,16 +18,18 @@ import (
 const cloudflareAPIURL = "https://api.cloudflare.com/client/v4"
 
 type IntegrationView struct {
-	Kind             string    `json:"kind"`
-	Mode             string    `json:"mode,omitempty"`
-	Endpoint         string    `json:"endpoint,omitempty"`
-	AccountID        string    `json:"accountId,omitempty"`
-	ZoneID           string    `json:"zoneId,omitempty"`
-	SecretSet        bool      `json:"secretSet"`
-	AccessManagement bool      `json:"accessManagement,omitempty"`
-	Status           string    `json:"status"`
-	LastError        string    `json:"lastError,omitempty"`
-	UpdatedAt        time.Time `json:"updatedAt"`
+	Kind                string     `json:"kind"`
+	Mode                string     `json:"mode,omitempty"`
+	Endpoint            string     `json:"endpoint,omitempty"`
+	AccountID           string     `json:"accountId,omitempty"`
+	ZoneID              string     `json:"zoneId,omitempty"`
+	SecretSet           bool       `json:"secretSet"`
+	AccessManagement    bool       `json:"accessManagement,omitempty"`
+	Status              string     `json:"status"`
+	LastError           string     `json:"lastError,omitempty"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
+	CredentialStatus    string     `json:"credentialStatus,omitempty"`
+	CredentialExpiresAt *time.Time `json:"credentialExpiresAt,omitempty"`
 }
 
 type cloudflareClient struct {
@@ -94,6 +96,20 @@ func (s *Store) Integration(ctx context.Context, kind string) (IntegrationView, 
 			var token cloudflareOAuthToken
 			if json.Unmarshal(encoded, &token) == nil {
 				value.AccessManagement = oauthScopesGranted(token.Scope, cloudflareAccessScopes...)
+			}
+		}
+	}
+	if kind == "headscale" && value.Mode == "builtin" {
+		if key, exists, keyErr := s.headscaleAPIKeyState(ctx); keyErr != nil {
+			return IntegrationView{}, keyErr
+		} else if exists {
+			value.CredentialStatus = key.State
+			if !key.ExpiresAt.IsZero() {
+				expiresAt := key.ExpiresAt
+				value.CredentialExpiresAt = &expiresAt
+			}
+			if key.LastError != "" {
+				value.LastError = key.LastError
 			}
 		}
 	}

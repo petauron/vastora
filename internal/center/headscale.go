@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -53,11 +54,14 @@ type headscaleClient struct {
 }
 
 func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (IntegrationView, error) {
-	return s.configureHeadscale(ctx, input, false)
+	return s.configureHeadscale(ctx, input, false, nil)
 }
 
-func (s *Store) ConfigureBuiltinHeadscale(ctx context.Context, endpoint, apiKey string) (IntegrationView, error) {
-	return s.configureHeadscale(ctx, HeadscaleInput{Mode: "builtin", URL: endpoint, APIKey: apiKey}, true)
+func (s *Store) ConfigureBuiltinHeadscale(ctx context.Context, result deployapi.HeadscaleInstallResult) (IntegrationView, error) {
+	if result.APIKeyID == 0 || strings.TrimSpace(result.APIKeyPrefix) == "" || !result.APIKeyExpiresAt.After(s.now().UTC()) {
+		return IntegrationView{}, errors.New("center: deployment helper returned invalid Headscale API key metadata")
+	}
+	return s.configureHeadscale(ctx, HeadscaleInput{Mode: "builtin", URL: result.Endpoint, APIKey: result.APIKey}, true, &result)
 }
 
 func (s *Store) builtinHeadscaleRuntime(ctx context.Context) (string, string, bool, error) {
@@ -83,7 +87,7 @@ func (s *Store) markBuiltinHeadscaleRuntime(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, trustedBuiltin bool) (IntegrationView, error) {
+func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, trustedBuiltin bool, builtinKey *deployapi.HeadscaleInstallResult) (IntegrationView, error) {
 	input.Mode = strings.TrimSpace(input.Mode)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	if input.Mode != "builtin" && input.Mode != "external" {
@@ -141,6 +145,16 @@ func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, tr
 		VALUES('headscale', ?, ?, ?, 'configured', ?, ?)
 		ON CONFLICT(kind) DO UPDATE SET mode = excluded.mode, endpoint = excluded.endpoint, secret_id = excluded.secret_id, status = 'configured', last_error = '', updated_at = excluded.updated_at`, input.Mode, endpoint, secretID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: save Headscale integration: %w", err)
+	}
+	if trustedBuiltin {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO headscale_api_keys(id, key_id, key_prefix, expires_at, state, previous_prefix, last_error, updated_at)
+			VALUES(1, ?, ?, ?, 'ready', '', '', ?)
+			ON CONFLICT(id) DO UPDATE SET key_id = excluded.key_id, key_prefix = excluded.key_prefix, expires_at = excluded.expires_at,
+			state = 'ready', previous_prefix = '', last_error = '', updated_at = excluded.updated_at`, builtinKey.APIKeyID, builtinKey.APIKeyPrefix, builtinKey.APIKeyExpiresAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+			return IntegrationView{}, fmt.Errorf("center: save Headscale API key lifecycle: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx, `DELETE FROM headscale_api_keys`); err != nil {
+		return IntegrationView{}, fmt.Errorf("center: disable bundled Headscale API key lifecycle: %w", err)
 	}
 	if replacingSecret && existingSecretID != "" && existingSecretID != secretID {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, existingSecretID); err != nil {

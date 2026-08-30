@@ -25,7 +25,7 @@ type blockingInstaller struct {
 func (installer *blockingInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
 	installer.started <- "install"
 	<-installer.release
-	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"}, nil
+	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz", APIKeyID: 1, APIKeyPrefix: "abcdefghijkl", APIKeyExpiresAt: time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 
 func (installer *blockingInstaller) ReconcileHeadscale(_ context.Context, _ deployapi.HeadscaleInstallRequest) error {
@@ -59,7 +59,7 @@ func (prober *fakePublicEntryProber) StopPublicEntryProbe(_ context.Context, id 
 
 func (installer *fakeInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
 	installer.input = input
-	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"}, nil
+	return deployapi.HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz", APIKeyID: 1, APIKeyPrefix: "abcdefghijkl", APIKeyExpiresAt: time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 
 func (installer *fakeInstaller) ReconcileHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) error {

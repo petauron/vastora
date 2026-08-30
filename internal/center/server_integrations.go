@@ -188,7 +188,7 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	value, err := s.store.ConfigureBuiltinHeadscale(ctx, result.Endpoint, result.APIKey)
+	value, err := s.store.ConfigureBuiltinHeadscale(ctx, result)
 	if err != nil {
 		return IntegrationView{}, err
 	}

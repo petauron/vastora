@@ -48,7 +48,7 @@ func (installer *fakeBuiltinHeadscaleInstaller) ApplyCenterRemoteAccess(_ contex
 
 func (installer *fakeBuiltinHeadscaleInstaller) InstallHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
 	installer.input = input
-	return deployapi.HeadscaleInstallResult{Endpoint: installer.endpoint, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"}, nil
+	return deployapi.HeadscaleInstallResult{Endpoint: installer.endpoint, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz", APIKeyID: 1, APIKeyPrefix: "abcdefghijkl", APIKeyExpiresAt: time.Now().Add(365 * 24 * time.Hour)}, nil
 }
 
 func (installer *fakeBuiltinHeadscaleInstaller) ReconcileHeadscale(_ context.Context, input deployapi.HeadscaleInstallRequest) error {
@@ -177,6 +177,10 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	}
 	if integration.Mode != "builtin" || integration.Endpoint != headscaleEndpoint || !integration.SecretSet {
 		t.Fatalf("unexpected saved integration: %#v", integration)
+	}
+	keyState, exists, err := store.headscaleAPIKeyState(context.Background())
+	if err != nil || !exists || keyState.State != "ready" || keyState.KeyID != 1 || keyState.KeyPrefix != "abcdefghijkl" || keyState.ExpiresAt.IsZero() {
+		t.Fatalf("unexpected Headscale API key lifecycle: state=%#v exists=%v err=%v", keyState, exists, err)
 	}
 	_, runtime, configured, err := store.builtinHeadscaleRuntime(context.Background())
 	if err != nil || !configured || runtime != builtinHeadscaleRuntimeVersion {
