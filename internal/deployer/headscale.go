@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -58,11 +60,103 @@ type DockerHeadscaleInstaller struct {
 }
 
 func (installer DockerHeadscaleInstaller) InstallHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest) (deployapi.HeadscaleInstallResult, error) {
+	settings, err := installer.apiKeyRotationSettings()
+	if err != nil {
+		return deployapi.HeadscaleInstallResult{}, err
+	}
+	if !validHeadscaleOperationID(input.OperationID) {
+		return deployapi.HeadscaleInstallResult{}, errors.New("deployer: a valid Headscale install operation ID is required")
+	}
+	encodedRequest, err := json.Marshal(input)
+	if err != nil {
+		return deployapi.HeadscaleInstallResult{}, err
+	}
+	requestHash := fmt.Sprintf("%x", sha256.Sum256(encodedRequest))
+	pendingPath := filepath.Join(settings.ConfigDir, "headscale-install.json")
+	if pending, found, err := loadPendingHeadscaleInstall(pendingPath); err != nil {
+		return deployapi.HeadscaleInstallResult{}, err
+	} else if found {
+		if pending.OperationID != input.OperationID || pending.RequestHash != requestHash {
+			return deployapi.HeadscaleInstallResult{}, errors.New("deployer: another Headscale installation is awaiting Center commit")
+		}
+		docker, err := client.New(client.WithHost(settings.Socket))
+		if err != nil {
+			return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: connect Docker: %w", err)
+		}
+		defer docker.Close()
+		if managed, err := inspectManagedContainer(ctx, docker, DefaultHeadscaleContainer, "center-headscale"); err != nil {
+			return deployapi.HeadscaleInstallResult{}, err
+		} else if managed == nil {
+			return deployapi.HeadscaleInstallResult{}, errors.New("deployer: pending Headscale installation lost its managed container")
+		}
+		records, err := listHeadscaleAPIKeys(ctx, docker, DefaultHeadscaleContainer)
+		if err != nil {
+			return deployapi.HeadscaleInstallResult{}, err
+		}
+		record, found, err := findHeadscaleAPIKeyRecord(records, pending.Result.APIKeyPrefix)
+		if err != nil {
+			return deployapi.HeadscaleInstallResult{}, err
+		}
+		if found && record.APIKeyID == pending.Result.APIKeyID && record.APIKeyExpiresAt.After(time.Now()) {
+			pending.Result.APIKeyExpiresAt = record.APIKeyExpiresAt
+			return pending.Result, nil
+		}
+		if found && record.APIKeyID != pending.Result.APIKeyID {
+			return deployapi.HeadscaleInstallResult{}, errors.New("deployer: pending Headscale installation key identity changed")
+		}
+		if found {
+			if _, err := runHeadscaleCommand(ctx, docker, DefaultHeadscaleContainer, "headscale", "apikeys", "delete", "--prefix", pending.Result.APIKeyPrefix); err != nil {
+				return deployapi.HeadscaleInstallResult{}, err
+			}
+		}
+		if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return deployapi.HeadscaleInstallResult{}, fmt.Errorf("deployer: clear unusable pending Headscale installation: %w", err)
+		}
+	}
 	endpoint, apiKey, err := installer.applyHeadscale(ctx, input, true)
 	if err != nil {
 		return deployapi.HeadscaleInstallResult{}, err
 	}
-	return deployapi.HeadscaleInstallResult{Endpoint: endpoint, APIKey: apiKey}, nil
+	result := deployapi.HeadscaleInstallResult{
+		Endpoint: endpoint, APIKey: apiKey.APIKey, APIKeyID: apiKey.APIKeyID,
+		APIKeyPrefix: apiKey.APIKeyPrefix, APIKeyExpiresAt: apiKey.APIKeyExpiresAt,
+	}
+	encodedPending, err := json.Marshal(pendingHeadscaleInstall{OperationID: input.OperationID, RequestHash: requestHash, Result: result})
+	if err == nil {
+		err = writeAtomic(pendingPath, encodedPending, 0o600)
+	}
+	if err != nil {
+		docker, connectErr := client.New(client.WithHost(settings.Socket))
+		if connectErr != nil {
+			return deployapi.HeadscaleInstallResult{}, errors.Join(fmt.Errorf("deployer: persist pending Headscale installation: %w", err), connectErr)
+		}
+		defer docker.Close()
+		_, cleanupErr := runHeadscaleCommand(context.WithoutCancel(ctx), docker, DefaultHeadscaleContainer, "headscale", "apikeys", "delete", "--prefix", result.APIKeyPrefix)
+		return deployapi.HeadscaleInstallResult{}, errors.Join(fmt.Errorf("deployer: persist pending Headscale installation: %w", err), cleanupErr)
+	}
+	return result, nil
+}
+
+func (installer DockerHeadscaleInstaller) CommitHeadscaleInstall(_ context.Context, input deployapi.HeadscaleInstallCommitRequest) error {
+	settings, err := installer.apiKeyRotationSettings()
+	if err != nil {
+		return err
+	}
+	if !validHeadscaleOperationID(input.OperationID) {
+		return errors.New("deployer: a valid Headscale install operation ID is required")
+	}
+	pendingPath := filepath.Join(settings.ConfigDir, "headscale-install.json")
+	pending, found, err := loadPendingHeadscaleInstall(pendingPath)
+	if err != nil || !found {
+		return err
+	}
+	if pending.OperationID != input.OperationID {
+		return errors.New("deployer: pending Headscale installation does not match the commit")
+	}
+	if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("deployer: commit pending Headscale installation: %w", err)
+	}
+	return nil
 }
 
 func (installer DockerHeadscaleInstaller) ReconcileHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest) error {
@@ -70,27 +164,27 @@ func (installer DockerHeadscaleInstaller) ReconcileHeadscale(ctx context.Context
 	return err
 }
 
-func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest, createAPIKey bool) (string, string, error) {
+func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest, createAPIKey bool) (string, deployapi.HeadscaleAPIKeyRotation, error) {
 	settings, centerURL, headscaleURL, err := installer.settings(input)
 	if err != nil {
-		return "", "", err
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
 	}
 	publicEndpoints := append([]string{headscaleURL}, settings.HeadscaleAliases...)
 	bindAddresses, err := gatewayBindAddresses(ctx, input.PublicAddress, input.GatewayBindAddress, publicEndpoints...)
 	if err != nil {
-		return "", "", err
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
 	}
 	centerBindAddresses, err := centerPrivateBindAddresses(input.CenterPrivateBindAddress)
 	if err != nil {
-		return "", "", err
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
 	}
 	docker, err := client.New(client.WithHost(settings.Socket))
 	if err != nil {
-		return "", "", fmt.Errorf("deployer: connect Docker: %w", err)
+		return "", deployapi.HeadscaleAPIKeyRotation{}, fmt.Errorf("deployer: connect Docker: %w", err)
 	}
 	defer docker.Close()
 	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
-		return "", "", err
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
 	}
 	headscaleFiles := map[string][]byte{
 		"config.yaml":   renderHeadscaleConfig(headscaleURL),
@@ -100,7 +194,7 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	for _, image := range []string{settings.HeadscaleImage, settings.CaddyImage} {
 		pull, err := docker.ImagePull(ctx, image, client.ImagePullOptions{})
 		if err != nil {
-			return "", "", fmt.Errorf("deployer: pull fixed infrastructure image: %w", err)
+			return "", deployapi.HeadscaleAPIKeyRotation{}, fmt.Errorf("deployer: pull fixed infrastructure image: %w", err)
 		}
 		_, _ = io.Copy(io.Discard, pull)
 		_ = pull.Close()
@@ -110,29 +204,35 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 			gatewayruntime.ManagedLabel:   "true",
 			gatewayruntime.ComponentLabel: "center-headscale-storage",
 		}}); err != nil {
-			return "", "", fmt.Errorf("deployer: create volume %s: %w", name, err)
+			return "", deployapi.HeadscaleAPIKeyRotation{}, fmt.Errorf("deployer: create volume %s: %w", name, err)
 		}
 	}
 	headscaleReplacement, err := settings.replaceHeadscale(ctx, docker, headscaleFiles)
 	if err != nil {
-		return "", "", err
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
 	}
 	if err := waitForURL(ctx, settings.HTTPClient, "http://"+DefaultHeadscaleContainer+":8081/health", 90*time.Second); err != nil {
 		rollbackErr := headscaleReplacement.rollback(ctx, docker)
-		return "", "", errors.Join(fmt.Errorf("deployer: Headscale did not become healthy: %w", err), rollbackErr)
+		return "", deployapi.HeadscaleAPIKeyRotation{}, errors.Join(fmt.Errorf("deployer: Headscale did not become healthy: %w", err), rollbackErr)
 	}
-	apiKey := ""
+	apiKey := deployapi.HeadscaleAPIKeyRotation{}
+	keepAPIKey := false
 	if createAPIKey {
 		apiKey, err = createHeadscaleAPIKey(ctx, docker, DefaultHeadscaleContainer)
 		if err != nil {
 			rollbackErr := headscaleReplacement.rollback(ctx, docker)
-			return "", "", errors.Join(err, rollbackErr)
+			return "", deployapi.HeadscaleAPIKeyRotation{}, errors.Join(err, rollbackErr)
 		}
+		defer func() {
+			if !keepAPIKey {
+				_, _ = runHeadscaleCommand(context.WithoutCancel(ctx), docker, DefaultHeadscaleContainer, "headscale", "apikeys", "delete", "--prefix", apiKey.APIKeyPrefix)
+			}
+		}()
 	}
 	replacement, err := settings.replaceGateway(ctx, docker, renderCaddyfile(centerURL, settings.CenterOrigin, headscaleURL, centerBindAddresses, bindAddresses, settings.CenterAliases, settings.HeadscaleAliases), centerBindAddresses, bindAddresses)
 	if err != nil {
 		rollbackErr := headscaleReplacement.rollback(ctx, docker)
-		return "", "", errors.Join(err, rollbackErr)
+		return "", deployapi.HeadscaleAPIKeyRotation{}, errors.Join(err, rollbackErr)
 	}
 	for _, health := range []struct {
 		endpoint string
@@ -141,15 +241,16 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 	}{{centerURL, "/healthz", 12443}, {headscaleURL, "/health", 443}} {
 		if err := waitForLocalGateway(ctx, health.endpoint, health.path, health.port, 3*time.Minute); err != nil {
 			rollbackErr := errors.Join(replacement.rollback(ctx, docker), headscaleReplacement.rollback(ctx, docker))
-			return "", "", errors.Join(fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err), rollbackErr)
+			return "", deployapi.HeadscaleAPIKeyRotation{}, errors.Join(fmt.Errorf("deployer: HTTPS gateway did not make %s%s healthy: %w", health.endpoint, health.path, err), rollbackErr)
 		}
 	}
 	if err := replacement.commit(ctx, docker); err != nil {
-		return "", "", err
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
 	}
 	if err := headscaleReplacement.commit(ctx, docker); err != nil {
-		return "", "", err
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
 	}
+	keepAPIKey = true
 	return headscaleURL, apiKey, nil
 }
 
@@ -294,11 +395,319 @@ func inspectManagedContainer(ctx context.Context, docker *client.Client, name, c
 	return &inspected, nil
 }
 
-func createHeadscaleAPIKey(ctx context.Context, docker *client.Client, containerName string) (string, error) {
+type headscaleAPIKeyRecord struct {
+	ID         json.RawMessage `json:"id"`
+	Prefix     string          `json:"prefix"`
+	Expiration json.RawMessage `json:"expiration"`
+}
+
+type pendingHeadscaleAPIKeyRotation struct {
+	PreviousPrefix string                            `json:"previousPrefix"`
+	Rotation       deployapi.HeadscaleAPIKeyRotation `json:"rotation"`
+}
+
+type pendingHeadscaleInstall struct {
+	OperationID string                           `json:"operationId"`
+	RequestHash string                           `json:"requestHash"`
+	Result      deployapi.HeadscaleInstallResult `json:"result"`
+}
+
+func createHeadscaleAPIKey(ctx context.Context, docker *client.Client, containerName string) (deployapi.HeadscaleAPIKeyRotation, error) {
+	key, err := runHeadscaleCommand(ctx, docker, containerName, "headscale", "apikeys", "create", "--expiration", "365d")
+	if err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, err
+	}
+	key = strings.TrimSpace(key)
+	prefix, err := headscaleAPIKeyPrefix(key)
+	if err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, err
+	}
+	cleanup := func(cause error) error {
+		_, cleanupErr := runHeadscaleCommand(context.WithoutCancel(ctx), docker, containerName, "headscale", "apikeys", "delete", "--prefix", prefix)
+		return errors.Join(cause, cleanupErr)
+	}
+	records, err := listHeadscaleAPIKeys(ctx, docker, containerName)
+	if err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, cleanup(err)
+	}
+	for _, record := range records {
+		if record.Prefix != prefix {
+			continue
+		}
+		id, err := parseHeadscaleAPIKeyID(record.ID)
+		if err != nil {
+			return deployapi.HeadscaleAPIKeyRotation{}, cleanup(err)
+		}
+		expiresAt, err := parseHeadscaleAPIKeyExpiration(record.Expiration)
+		if err != nil || !expiresAt.After(time.Now()) {
+			return deployapi.HeadscaleAPIKeyRotation{}, cleanup(errors.New("deployer: Headscale returned an invalid API key expiry"))
+		}
+		return deployapi.HeadscaleAPIKeyRotation{APIKey: key, APIKeyID: id, APIKeyPrefix: prefix, APIKeyExpiresAt: expiresAt}, nil
+	}
+	return deployapi.HeadscaleAPIKeyRotation{}, cleanup(errors.New("deployer: created Headscale API key was not present in the authoritative key list"))
+}
+
+func (installer DockerHeadscaleInstaller) PrepareHeadscaleAPIKeyRotation(ctx context.Context, input deployapi.HeadscaleAPIKeyRotationRequest) (deployapi.HeadscaleAPIKeyRotation, error) {
+	settings, err := installer.apiKeyRotationSettings()
+	if err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, err
+	}
+	input.CurrentPrefix = strings.TrimSpace(input.CurrentPrefix)
+	if input.CurrentPrefix == "" {
+		return deployapi.HeadscaleAPIKeyRotation{}, errors.New("deployer: current Headscale API key prefix is required")
+	}
+	docker, err := client.New(client.WithHost(settings.Socket))
+	if err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, fmt.Errorf("deployer: connect Docker: %w", err)
+	}
+	defer docker.Close()
+	if managed, err := inspectManagedContainer(ctx, docker, DefaultHeadscaleContainer, "center-headscale"); err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, err
+	} else if managed == nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, errors.New("deployer: managed Headscale container is not installed")
+	}
+	pendingPath := filepath.Join(settings.ConfigDir, "api-key-rotation.json")
+	if pending, found, err := loadPendingHeadscaleAPIKeyRotation(pendingPath); err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, err
+	} else if found {
+		if pending.PreviousPrefix != input.CurrentPrefix {
+			return deployapi.HeadscaleAPIKeyRotation{}, errors.New("deployer: another Headscale API key rotation is pending")
+		}
+		records, err := listHeadscaleAPIKeys(ctx, docker, DefaultHeadscaleContainer)
+		if err != nil {
+			return deployapi.HeadscaleAPIKeyRotation{}, err
+		}
+		record, found, err := findHeadscaleAPIKeyRecord(records, pending.Rotation.APIKeyPrefix)
+		if err != nil {
+			return deployapi.HeadscaleAPIKeyRotation{}, err
+		}
+		if found && record.APIKeyID == pending.Rotation.APIKeyID && record.APIKeyExpiresAt.After(time.Now()) {
+			pending.Rotation.APIKeyExpiresAt = record.APIKeyExpiresAt
+			return pending.Rotation, nil
+		}
+		if found && record.APIKeyID != pending.Rotation.APIKeyID {
+			return deployapi.HeadscaleAPIKeyRotation{}, errors.New("deployer: pending Headscale API key identity no longer matches the authoritative key list")
+		}
+		if found {
+			if _, err := runHeadscaleCommand(ctx, docker, DefaultHeadscaleContainer, "headscale", "apikeys", "delete", "--prefix", pending.Rotation.APIKeyPrefix); err != nil {
+				return deployapi.HeadscaleAPIKeyRotation{}, err
+			}
+		}
+		if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return deployapi.HeadscaleAPIKeyRotation{}, fmt.Errorf("deployer: clear unusable pending Headscale API key rotation: %w", err)
+		}
+	}
+	rotation, err := createHeadscaleAPIKey(ctx, docker, DefaultHeadscaleContainer)
+	if err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, err
+	}
+	encoded, err := json.Marshal(pendingHeadscaleAPIKeyRotation{PreviousPrefix: input.CurrentPrefix, Rotation: rotation})
+	if err != nil {
+		return deployapi.HeadscaleAPIKeyRotation{}, err
+	}
+	if err := writeAtomic(pendingPath, encoded, 0o600); err != nil {
+		_, cleanupErr := runHeadscaleCommand(context.WithoutCancel(ctx), docker, DefaultHeadscaleContainer, "headscale", "apikeys", "delete", "--prefix", rotation.APIKeyPrefix)
+		return deployapi.HeadscaleAPIKeyRotation{}, errors.Join(fmt.Errorf("deployer: persist pending Headscale API key rotation: %w", err), cleanupErr)
+	}
+	return rotation, nil
+}
+
+func (installer DockerHeadscaleInstaller) CommitHeadscaleAPIKeyRotation(ctx context.Context, input deployapi.HeadscaleAPIKeyCommitRequest) error {
+	settings, err := installer.apiKeyRotationSettings()
+	if err != nil {
+		return err
+	}
+	input.PreviousPrefix = strings.TrimSpace(input.PreviousPrefix)
+	input.CurrentPrefix = strings.TrimSpace(input.CurrentPrefix)
+	if input.PreviousPrefix == "" || input.CurrentPrefix == "" || input.PreviousPrefix == input.CurrentPrefix {
+		return errors.New("deployer: distinct previous and current Headscale API key prefixes are required")
+	}
+	pendingPath := filepath.Join(settings.ConfigDir, "api-key-rotation.json")
+	if pending, found, err := loadPendingHeadscaleAPIKeyRotation(pendingPath); err != nil {
+		return err
+	} else if found && (pending.PreviousPrefix != input.PreviousPrefix || pending.Rotation.APIKeyPrefix != input.CurrentPrefix) {
+		return errors.New("deployer: pending Headscale API key rotation does not match the commit")
+	}
+	docker, err := client.New(client.WithHost(settings.Socket))
+	if err != nil {
+		return fmt.Errorf("deployer: connect Docker: %w", err)
+	}
+	defer docker.Close()
+	records, err := listHeadscaleAPIKeys(ctx, docker, DefaultHeadscaleContainer)
+	if err != nil {
+		return err
+	}
+	currentFound := false
+	previousFound := false
+	for _, record := range records {
+		if record.Prefix == input.CurrentPrefix {
+			expiresAt, parseErr := parseHeadscaleAPIKeyExpiration(record.Expiration)
+			if parseErr != nil || !expiresAt.After(time.Now()) {
+				return errors.New("deployer: replacement Headscale API key is expired")
+			}
+			currentFound = true
+		}
+		previousFound = previousFound || record.Prefix == input.PreviousPrefix
+	}
+	if !currentFound {
+		return errors.New("deployer: replacement Headscale API key is not present")
+	}
+	if previousFound {
+		if _, err := runHeadscaleCommand(ctx, docker, DefaultHeadscaleContainer, "headscale", "apikeys", "delete", "--prefix", input.PreviousPrefix); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(pendingPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("deployer: clear pending Headscale API key rotation: %w", err)
+	}
+	return nil
+}
+
+func (installer DockerHeadscaleInstaller) apiKeyRotationSettings() (DockerHeadscaleInstaller, error) {
+	if installer.Socket == "" {
+		installer.Socket = "unix:///var/run/docker.sock"
+	}
+	if installer.ConfigDir == "" || !filepath.IsAbs(installer.ConfigDir) {
+		return DockerHeadscaleInstaller{}, errors.New("deployer: absolute Headscale config directory is required")
+	}
+	return installer, nil
+}
+
+func loadPendingHeadscaleAPIKeyRotation(path string) (pendingHeadscaleAPIKeyRotation, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return pendingHeadscaleAPIKeyRotation{}, false, nil
+	}
+	if err != nil {
+		return pendingHeadscaleAPIKeyRotation{}, false, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&0o077 != 0 {
+		return pendingHeadscaleAPIKeyRotation{}, false, errors.New("deployer: pending Headscale API key rotation file is not a protected regular file")
+	}
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return pendingHeadscaleAPIKeyRotation{}, false, err
+	}
+	var pending pendingHeadscaleAPIKeyRotation
+	if json.Unmarshal(encoded, &pending) != nil || pending.PreviousPrefix == "" || len(pending.Rotation.APIKey) < 20 || pending.Rotation.APIKeyID == 0 || pending.Rotation.APIKeyPrefix == "" || pending.Rotation.APIKeyExpiresAt.IsZero() {
+		return pendingHeadscaleAPIKeyRotation{}, false, errors.New("deployer: pending Headscale API key rotation file is invalid")
+	}
+	return pending, true, nil
+}
+
+func loadPendingHeadscaleInstall(path string) (pendingHeadscaleInstall, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return pendingHeadscaleInstall{}, false, nil
+	}
+	if err != nil {
+		return pendingHeadscaleInstall{}, false, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&0o077 != 0 {
+		return pendingHeadscaleInstall{}, false, errors.New("deployer: pending Headscale installation file is not a protected regular file")
+	}
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return pendingHeadscaleInstall{}, false, err
+	}
+	var pending pendingHeadscaleInstall
+	if json.Unmarshal(encoded, &pending) != nil || !validHeadscaleOperationID(pending.OperationID) || len(pending.RequestHash) != sha256.Size*2 || pending.Result.Endpoint == "" || len(pending.Result.APIKey) < 20 || pending.Result.APIKeyID == 0 || pending.Result.APIKeyPrefix == "" || pending.Result.APIKeyExpiresAt.IsZero() {
+		return pendingHeadscaleInstall{}, false, errors.New("deployer: pending Headscale installation file is invalid")
+	}
+	return pending, true, nil
+}
+
+func validHeadscaleOperationID(value string) bool {
+	if len(value) < 16 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func listHeadscaleAPIKeys(ctx context.Context, docker *client.Client, containerName string) ([]headscaleAPIKeyRecord, error) {
+	output, err := runHeadscaleCommand(ctx, docker, containerName, "headscale", "apikeys", "list", "--output", "json")
+	if err != nil {
+		return nil, err
+	}
+	var records []headscaleAPIKeyRecord
+	if err := json.Unmarshal([]byte(output), &records); err != nil {
+		return nil, fmt.Errorf("deployer: decode Headscale API key list: %w", err)
+	}
+	return records, nil
+}
+
+func headscaleAPIKeyPrefix(key string) (string, error) {
+	const marker = "hskey-api-"
+	if strings.HasPrefix(key, marker) && len(key) > len(marker)+12 && key[len(marker)+12] == '-' {
+		return key[len(marker) : len(marker)+12], nil
+	}
+	if prefix, _, found := strings.Cut(key, "."); found && len(prefix) == 7 {
+		return prefix, nil
+	}
+	return "", errors.New("deployer: Headscale returned an invalid API key")
+}
+
+func parseHeadscaleAPIKeyID(encoded json.RawMessage) (uint64, error) {
+	value := strings.Trim(string(encoded), `"`)
+	id, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || id == 0 {
+		return 0, errors.New("deployer: Headscale returned an invalid API key ID")
+	}
+	return id, nil
+}
+
+func parseHeadscaleAPIKeyExpiration(encoded json.RawMessage) (time.Time, error) {
+	var timestamp string
+	if err := json.Unmarshal(encoded, &timestamp); err == nil {
+		expiresAt, parseErr := time.Parse(time.RFC3339Nano, timestamp)
+		if parseErr != nil {
+			return time.Time{}, errors.New("deployer: Headscale returned an invalid API key expiry")
+		}
+		return expiresAt.UTC(), nil
+	}
+	var protobufTimestamp struct {
+		Seconds json.RawMessage `json:"seconds"`
+		Nanos   int64           `json:"nanos"`
+	}
+	if err := json.Unmarshal(encoded, &protobufTimestamp); err != nil || len(protobufTimestamp.Seconds) == 0 || protobufTimestamp.Nanos < 0 || protobufTimestamp.Nanos >= int64(time.Second) {
+		return time.Time{}, errors.New("deployer: Headscale returned an invalid API key expiry")
+	}
+	seconds, err := strconv.ParseInt(strings.Trim(string(protobufTimestamp.Seconds), `"`), 10, 64)
+	if err != nil {
+		return time.Time{}, errors.New("deployer: Headscale returned an invalid API key expiry")
+	}
+	return time.Unix(seconds, protobufTimestamp.Nanos).UTC(), nil
+}
+
+func findHeadscaleAPIKeyRecord(records []headscaleAPIKeyRecord, prefix string) (deployapi.HeadscaleAPIKeyRotation, bool, error) {
+	for _, record := range records {
+		if record.Prefix != prefix {
+			continue
+		}
+		id, err := parseHeadscaleAPIKeyID(record.ID)
+		if err != nil {
+			return deployapi.HeadscaleAPIKeyRotation{}, false, err
+		}
+		expiresAt, err := parseHeadscaleAPIKeyExpiration(record.Expiration)
+		if err != nil {
+			return deployapi.HeadscaleAPIKeyRotation{}, false, err
+		}
+		return deployapi.HeadscaleAPIKeyRotation{APIKeyID: id, APIKeyPrefix: prefix, APIKeyExpiresAt: expiresAt}, true, nil
+	}
+	return deployapi.HeadscaleAPIKeyRotation{}, false, nil
+}
+
+func runHeadscaleCommand(ctx context.Context, docker *client.Client, containerName string, command ...string) (string, error) {
 	exec, err := docker.ExecCreate(ctx, containerName, client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
-		Cmd:          []string{"headscale", "apikeys", "create", "--expiration", "365d"},
+		Cmd:          command,
 	})
 	if err != nil {
 		return "", fmt.Errorf("deployer: create Headscale API key command: %w", err)
@@ -319,11 +728,7 @@ func createHeadscaleAPIKey(ctx context.Context, docker *client.Client, container
 	if status.ExitCode != 0 {
 		return "", fmt.Errorf("deployer: Headscale API key command failed: %s", strings.TrimSpace(stderr.String()))
 	}
-	key := strings.TrimSpace(stdout.String())
-	if len(key) < 20 || strings.ContainsAny(key, "\r\n \t") {
-		return "", errors.New("deployer: Headscale returned an invalid API key")
-	}
-	return key, nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 func copyFile(ctx context.Context, docker *client.Client, containerID, destination, name string, content []byte) error {

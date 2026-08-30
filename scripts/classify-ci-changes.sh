@@ -39,7 +39,7 @@ while IFS= read -r path; do
   [ -n "$path" ] || continue
 
   case "$path" in
-    cmd/*|internal/*|go.mod|go.sum) go=true ;;
+    cmd/*|internal/*|go.mod|go.sum|docs/openapi.json|scripts/generate-openapi.mjs) go=true ;;
   esac
   case "$path" in
     web/*) web=true ;;

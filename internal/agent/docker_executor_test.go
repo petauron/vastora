@@ -77,7 +77,7 @@ func TestPullDeclaredImageReportsRegistryStreamErrorWithoutSecret(t *testing.T) 
 
 func TestApplicationExecutorRejectsManifestBeforeDocker(t *testing.T) {
 	executor := ApplicationExecutor{DockerSocket: "not-a-docker-socket"}
-	_, err := executor.Deploy(context.Background(), DeploymentTask{ID: "invalid-task", AppKey: cpaKey, Operation: "install"})
+	_, err := executor.Deploy(context.Background(), DeploymentTask{ID: "invalid-task", ApplicationID: "application-1", AppKey: cpaKey, Operation: "install"})
 	if err == nil || !strings.Contains(err.Error(), "invalid signed application manifest") {
 		t.Fatalf("invalid task reached Docker validation: %v", err)
 	}
@@ -100,13 +100,13 @@ func TestApplicationExecutorRejectsTypedConfigurationBeforeDocker(t *testing.T) 
 	}
 	executor := ApplicationExecutor{DockerSocket: "not-a-docker-socket"}
 	_, err = executor.Deploy(context.Background(), DeploymentTask{
-		ID: "invalid-config", AppKey: cpaKey, Operation: "install", Manifest: manifest,
+		ID: "invalid-config", ApplicationID: "application-1", AppKey: cpaKey, Operation: "install", Manifest: manifest,
 		Config: json.RawMessage(`[]`), Secrets: json.RawMessage(`{"management_key":"management","api_key":"api"}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid CPA configuration") {
 		t.Fatalf("invalid typed configuration reached Docker: %v", err)
 	}
-	_, err = executor.Deploy(context.Background(), DeploymentTask{ID: "invalid-operation", AppKey: cpaKey, Operation: "replace", Manifest: manifest})
+	_, err = executor.Deploy(context.Background(), DeploymentTask{ID: "invalid-operation", ApplicationID: "application-1", AppKey: cpaKey, Operation: "replace", Manifest: manifest})
 	if err == nil || !strings.Contains(err.Error(), "unsupported application operation") {
 		t.Fatalf("unknown operation reached Docker: %v", err)
 	}

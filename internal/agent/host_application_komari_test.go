@@ -70,6 +70,87 @@ func TestSystemdKomariApplyAndRemove(t *testing.T) {
 	}
 }
 
+func TestSystemdKomariRemoveResumesFromOwnershipJournal(t *testing.T) {
+	t.Parallel()
+	manager := SystemdHostApplicationManager{RootDir: t.TempDir(), RunCommand: func(context.Context, string, ...string) error { return nil }}
+	for path, content := range map[string][]byte{
+		komariUnitPath:   []byte(komariUnitMarker + "[Service]\n"),
+		komariConfigPath: []byte(`{"token":"secret"}`),
+		komariBinaryPath: []byte("managed-binary"),
+	} {
+		if err := writeHostFileAtomic(manager.path(path), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := manager.prepareKomariRemoval(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(manager.path(komariUnitPath)); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.RemoveKomari(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{komariUnitPath, komariConfigPath, komariBinaryPath, komariRemovalJournalPath} {
+		if _, err := os.Stat(manager.path(path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("managed file remains after resumed uninstall: %s (%v)", path, err)
+		}
+	}
+}
+
+func TestSystemdKomariRemoveFailsClosedWithoutOwnershipEvidence(t *testing.T) {
+	t.Parallel()
+	manager := SystemdHostApplicationManager{RootDir: t.TempDir(), RunCommand: func(context.Context, string, ...string) error { return nil }}
+	if err := writeHostFileAtomic(manager.path(komariBinaryPath), []byte("unproven-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := manager.RemoveKomari(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "without Vastora ownership evidence") {
+		t.Fatalf("unproven residual file was not rejected: %v", err)
+	}
+	if _, err := os.Stat(manager.path(komariBinaryPath)); err != nil {
+		t.Fatalf("unproven binary was changed: %v", err)
+	}
+}
+
+func TestSystemdKomariRemoveRetriesDaemonReload(t *testing.T) {
+	t.Parallel()
+	reloads := 0
+	manager := SystemdHostApplicationManager{
+		RootDir: t.TempDir(),
+		RunCommand: func(_ context.Context, _ string, arguments ...string) error {
+			if len(arguments) != 0 && arguments[0] == "daemon-reload" {
+				reloads++
+				if reloads == 1 {
+					return errors.New("reload failed")
+				}
+			}
+			return nil
+		},
+	}
+	for path, content := range map[string][]byte{
+		komariUnitPath:   []byte(komariUnitMarker + "[Service]\n"),
+		komariConfigPath: []byte("config"),
+		komariBinaryPath: []byte("binary"),
+	} {
+		if err := writeHostFileAtomic(manager.path(path), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.RemoveKomari(context.Background()); err == nil {
+		t.Fatal("expected first daemon reload to fail")
+	}
+	if _, err := os.Stat(manager.path(komariRemovalJournalPath)); err != nil {
+		t.Fatalf("uninstall journal was not retained: %v", err)
+	}
+	if err := manager.RemoveKomari(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if reloads != 2 {
+		t.Fatalf("daemon reload calls = %d", reloads)
+	}
+}
+
 func TestSystemdKomariApplyRollsBackFiles(t *testing.T) {
 	t.Parallel()
 	binary := []byte("new-binary")
@@ -117,7 +198,7 @@ func TestApplicationExecutorUsesNativeKomariWithoutDocker(t *testing.T) {
 	if host.applied != 1 || host.removed != 0 {
 		t.Fatalf("native Komari calls after install = apply:%d remove:%d", host.applied, host.removed)
 	}
-	if _, err := executor.Deploy(context.Background(), DeploymentTask{ID: "komari-uninstall", AppKey: komariKey, Operation: "uninstall"}); err != nil {
+	if _, err := executor.Deploy(context.Background(), DeploymentTask{ID: "komari-uninstall", ApplicationID: "komari-application", AppKey: komariKey, Operation: "uninstall"}); err != nil {
 		t.Fatal(err)
 	}
 	if host.removed != 1 {
@@ -127,7 +208,7 @@ func TestApplicationExecutorUsesNativeKomariWithoutDocker(t *testing.T) {
 
 func komariTestTask(downloadURL, digest string) DeploymentTask {
 	return DeploymentTask{
-		ID: "komari-install", AppKey: komariKey, Operation: "install",
+		ID: "komari-install", ApplicationID: "komari-application", AppKey: komariKey, Operation: "install",
 		Manifest: catalog.AppManifest{
 			ID: "komari-agent", Version: "1.2.60", License: "MIT", HostAccess: true,
 			Name:        catalog.LocalizedText{English: "Komari Agent", SimplifiedChinese: "Komari 探针"},
@@ -178,7 +259,7 @@ func TestApplicationRestoreContinuesPastLegacyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
-	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
 		t.Fatal(err)
 	}
 	host := &fakeHostApplicationManager{}

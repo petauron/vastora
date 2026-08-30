@@ -34,7 +34,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	completeThreeXUIDeployment(t, store, worker, workerTask, "100.64.0.20", "worker-token")
 	nodeTask := claimTask(t, store, master)
 	nodeResult, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
-	if err := store.CompleteTask(ctx, master.ID, master.Credential, nodeTask.ID, nodeTask.Attempt, true, "", nodeResult); err != nil {
+	if err := store.CompleteTask(ctx, master.ID, master.Credential, nodeTask.ID, nodeTask.Attempt, true, "", nodeResult, nodeTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	remainingWorkerApplications := []string{}
@@ -49,7 +49,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 		completeThreeXUIDeployment(t, store, other, otherTask, address, fmt.Sprintf("worker-%d-token", index+1))
 		reconcile := claimTask(t, store, master)
 		result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 8 + index, Status: "ready"}})
-		if err := store.CompleteTask(ctx, master.ID, master.Credential, reconcile.ID, reconcile.Attempt, true, "", result); err != nil {
+		if err := store.CompleteTask(ctx, master.ID, master.Credential, reconcile.ID, reconcile.Attempt, true, "", result, reconcile.RequiredRuntimeGeneration); err != nil {
 			t.Fatal(err)
 		}
 		remainingWorkerApplications = append(remainingWorkerApplications, deployment.ApplicationID)
@@ -73,7 +73,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 		t.Fatalf("backup digest = %q", backup.SHA256)
 	}
 	backupResult, _ := json.Marshal(ApplicationTaskResult{ControllerCommand: &ThreeXUIControllerCommandResult{Action: "backup", BackupRevision: backup.Revision, BackupSHA256: backup.SHA256, BackupSize: backup.Size}})
-	if err := store.CompleteTask(ctx, master.ID, master.Credential, backupTask.ID, backupTask.Attempt, true, "", backupResult); err != nil {
+	if err := store.CompleteTask(ctx, master.ID, master.Credential, backupTask.ID, backupTask.Attempt, true, "", backupResult, backupTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +82,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 		t.Fatalf("promote task = %#v", promoteTask)
 	}
 	promoteResult, _ := json.Marshal(ApplicationTaskResult{ControllerCommand: &ThreeXUIControllerCommandResult{Action: "promote", BackupRevision: backup.Revision, SourceRemoteNodeID: 7}})
-	if err := store.CompleteTask(ctx, worker.ID, worker.Credential, promoteTask.ID, promoteTask.Attempt, true, "", promoteResult); err != nil {
+	if err := store.CompleteTask(ctx, worker.ID, worker.Credential, promoteTask.ID, promoteTask.Attempt, true, "", promoteResult, promoteTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ThreeXUIControllerMigration(ctx, migration.ID)
@@ -108,7 +108,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 		t.Fatalf("demote task = %#v", demoteTask)
 	}
 	demoteResult, _ := json.Marshal(ApplicationTaskResult{ControllerCommand: &ThreeXUIControllerCommandResult{Action: "demote"}})
-	if err := store.CompleteTask(ctx, master.ID, master.Credential, demoteTask.ID, demoteTask.Attempt, true, "", demoteResult); err != nil {
+	if err := store.CompleteTask(ctx, master.ID, master.Credential, demoteTask.ID, demoteTask.Attempt, true, "", demoteResult, demoteTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	wantReconciled := map[string]bool{masterDeployment.ApplicationID: true}
@@ -125,7 +125,7 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 			remoteNodeID = 20
 		}
 		reconnectResult, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: remoteNodeID, Status: "ready"}})
-		if err := store.CompleteTask(ctx, worker.ID, worker.Credential, reconnectTask.ID, reconnectTask.Attempt, true, "", reconnectResult); err != nil {
+		if err := store.CompleteTask(ctx, worker.ID, worker.Credential, reconnectTask.ID, reconnectTask.Attempt, true, "", reconnectResult, reconnectTask.RequiredRuntimeGeneration); err != nil {
 			t.Fatal(err)
 		}
 		delete(wantReconciled, reconnectTask.NodeCommand.WorkerApplicationID)

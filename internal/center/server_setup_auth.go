@@ -1,7 +1,6 @@
 package center
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -20,7 +19,9 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 	observedPublicAddress := ""
 	suggestedGatewayAddress := ""
 	publicAddressDetection := "unavailable"
+	authenticated := false
 	if cookie, cookieErr := request.Cookie("vastora_session"); cookieErr == nil && s.store.ValidateSession(request.Context(), cookie.Value, "", false) == nil {
+		authenticated = true
 		cloudflare, err = s.store.Integration(request.Context(), "cloudflare")
 		if err != nil {
 			writeError(writer, http.StatusInternalServerError, err)
@@ -68,6 +69,12 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 			}
 		}
 	}
+	setupOperationPhase := ""
+	setupLastError := ""
+	if authenticated {
+		setupOperationPhase = status.OperationPhase
+		setupLastError = status.LastError
+	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"administratorConfigured":    status.AdministratorConfigured,
 		"onboardingComplete":         status.OnboardingComplete,
@@ -82,6 +89,8 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 		"observedPublicAddress":      observedPublicAddress,
 		"suggestedGatewayAddress":    suggestedGatewayAddress,
 		"publicAddressDetection":     publicAddressDetection,
+		"setupOperationPhase":        setupOperationPhase,
+		"setupLastError":             setupLastError,
 	})
 }
 
@@ -109,36 +118,8 @@ func (s *Server) handleSetupComplete(writer http.ResponseWriter, request *http.R
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if input.CenterRemoteAccess != nil && input.CenterRemoteAccess.Enabled && input.Network.AgentConnectionMode != "headscale" {
-		writeError(writer, http.StatusBadRequest, errors.New("center: the remote fallback is available only with secure private networking"))
-		return
-	}
-	if input.Network.AgentConnectionMode == "headscale" && input.Headscale != nil {
-		if _, err := s.configureHeadscale(request.Context(), *input.Headscale, input.Network.AgentConnectURL); err != nil {
-			writeError(writer, http.StatusBadRequest, err)
-			return
-		}
-		if input.TailscaleFixedEndpoint != nil {
-			if _, err := s.store.ConfigureTailscaleFixedEndpoint(request.Context(), *input.TailscaleFixedEndpoint); err != nil {
-				writeError(writer, http.StatusBadRequest, err)
-				return
-			}
-		}
-	}
-	remoteAccessEnabled := false
-	if input.CenterRemoteAccess != nil {
-		if _, err := s.ConfigureCenterRemoteAccess(request.Context(), *input.CenterRemoteAccess, input.Network.AgentConnectURL); err != nil {
-			writeError(writer, http.StatusBadRequest, err)
-			return
-		}
-		remoteAccessEnabled = input.CenterRemoteAccess.Enabled
-	}
-	result, err := s.store.CompleteInitialSetup(request.Context(), input)
+	result, err := s.CompleteInitialSetup(request.Context(), input)
 	if err != nil {
-		if remoteAccessEnabled {
-			_, cleanupErr := s.ConfigureCenterRemoteAccess(context.WithoutCancel(request.Context()), CenterRemoteAccessInput{}, input.Network.AgentConnectURL)
-			err = errors.Join(err, cleanupErr)
-		}
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}

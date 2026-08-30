@@ -42,6 +42,8 @@ type NodeHeartbeat struct {
 	ApplicationEndpoints         []ApplicationEndpointObservation
 	ApplicationEndpointsObserved bool
 	GatewayHealthy               bool
+	GatewayRevision              int64
+	GatewayConfigHash            string
 	ApplicationRuntimeGeneration int
 	TailscaleOwnership           string
 	Startup                      bool

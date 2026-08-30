@@ -22,12 +22,32 @@ func (s *Server) handleCreateDeployment(writer http.ResponseWriter, request *htt
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
+	input.SecretOperationOwner = authenticatedSecretOwner(request)
+	input.SecretOperationKey = request.Header.Get("Idempotency-Key")
 	deployment, err := s.store.CreateDeployment(request.Context(), input)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(writer, http.StatusCreated, deployment)
+}
+
+func (s *Server) handleRevealDeploymentCredentials(writer http.ResponseWriter, request *http.Request) {
+	credentials, err := s.store.RevealDeploymentCredentials(request.Context(), request.PathValue("id"), authenticatedSecretOwner(request), request.Header.Get("Idempotency-Key"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, credentials)
+}
+
+func (s *Server) handleAcknowledgeDeploymentCredentials(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.AcknowledgeDeploymentCredentials(request.Context(), request.PathValue("id"), authenticatedSecretOwner(request), request.Header.Get("Idempotency-Key")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"acknowledged": true})
 }
 
 func (s *Server) handleRetryTaskReconciliation(writer http.ResponseWriter, request *http.Request) {
@@ -233,13 +253,21 @@ func (s *Server) handleLatestApplicationCommand(writer http.ResponseWriter, requ
 }
 
 func (s *Server) handleRevealApplicationCommand(writer http.ResponseWriter, request *http.Request) {
-	value, err := s.store.ConsumeApplicationCommandResult(request.Context(), request.PathValue("id"))
+	value, err := s.store.RevealApplicationCommandResult(request.Context(), request.PathValue("id"), authenticatedSecretOwner(request), request.Header.Get("Idempotency-Key"))
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, map[string]string{"shareUri": value})
+}
+
+func (s *Server) handleAcknowledgeApplicationCommand(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.AcknowledgeApplicationCommandResult(request.Context(), request.PathValue("id"), authenticatedSecretOwner(request), request.Header.Get("Idempotency-Key")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"acknowledged": true})
 }
 
 func (s *Server) handleListServices(writer http.ResponseWriter, request *http.Request) {

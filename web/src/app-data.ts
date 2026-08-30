@@ -25,19 +25,19 @@ export function emptyAppData(status: CenterStatus): AppData {
   };
 }
 
-export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
-  const statusPromise = api.status();
+export async function loadScreenData(screen: Screen, signal?: AbortSignal): Promise<AppDataPatch> {
+  const statusPromise = api.status(signal);
 
   switch (screen) {
     case "home": {
       const [status, centerUpdate, sites, agents, applications, publications, actions] = await Promise.all([
         statusPromise,
-        api.centerUpdate(),
-        api.sites(),
-        api.agents(),
-        api.applications(),
-        api.publications(),
-        api.actions(10)
+        api.centerUpdate(false, signal),
+        api.sites(signal),
+        api.agents(signal),
+        api.applications(signal),
+        api.publications(signal),
+        api.actions(10, signal)
       ]);
       return {
         status,
@@ -52,10 +52,10 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
     case "nodes": {
       const [status, sites, agents, integrations, publications] = await Promise.all([
         statusPromise,
-        api.sites(),
-        api.agents(),
-        api.integrations(),
-        api.publications()
+        api.sites(signal),
+        api.agents(signal),
+        api.integrations(signal),
+        api.publications(signal)
       ]);
       return {
         status,
@@ -68,16 +68,16 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
     case "apps": {
       const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations] = await Promise.all([
         statusPromise,
-        api.apps(),
-        api.registryCredentials(),
-        api.agents(),
-        api.deployments(),
-        api.applications(),
-        api.services(),
-        api.publications(),
-        api.integrations(),
-        api.sites(),
-        api.threeXUIControllerMigrations()
+        api.apps(signal),
+        api.registryCredentials(signal),
+        api.agents(signal),
+        api.deployments(signal),
+        api.applications(signal),
+        api.services(signal),
+        api.publications(signal),
+        api.integrations(signal),
+        api.sites(signal),
+        api.threeXUIControllerMigrations(signal)
       ]);
       return {
         status,
@@ -96,29 +96,33 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
     case "network": {
       const [status, agents, integrations, tailscaleFixedEndpoint, centerRemoteAccess] = await Promise.all([
         statusPromise,
-        api.agents(),
-        api.integrations(),
-        api.tailscaleFixedEndpoint(),
-        api.centerRemoteAccess()
+        api.agents(signal),
+        api.integrations(signal),
+        api.tailscaleFixedEndpoint(signal),
+        api.centerRemoteAccess(signal)
       ]);
       return { status, agents: agents.agents, integrations: integrations.integrations, tailscaleFixedEndpoint, centerRemoteAccess };
     }
     case "activity": {
       const [status, actions, agents] = await Promise.all([
         statusPromise,
-        api.actions(100),
-        api.agents()
+        api.actions(100, signal),
+        api.agents(signal)
       ]);
       return { status, actions: actions.actions, agents: agents.agents };
+    }
+    case "assistant": {
+      const status = await statusPromise;
+      return { status };
     }
     case "settings": {
       const [status, centerUpdate, sources, applications, agents, systemDomain] = await Promise.all([
         statusPromise,
-        api.centerUpdate(),
-        api.sources(),
-        api.applications(),
-        api.agents(),
-        api.systemDomain()
+        api.centerUpdate(false, signal),
+        api.sources(signal),
+        api.applications(signal),
+        api.agents(signal),
+        api.systemDomain(signal)
       ]);
       return {
         status,
@@ -138,6 +142,7 @@ const screenPaths: Record<Screen, string> = {
   apps: "/apps",
   network: "/network",
   activity: "/activity",
+  assistant: "/assistant",
   settings: "/settings"
 };
 

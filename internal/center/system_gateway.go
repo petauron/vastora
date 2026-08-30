@@ -85,7 +85,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 		gateway.Route{ID: "system-center-local", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
 		gateway.Route{ID: "system-headscale-local", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.HeadscaleAlias, Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
 	)
-	centerAliases, err := readSystemEndpointAliases(ctx, tx, "center")
+	centerAliases, err := readActiveSystemEndpointAliases(ctx, tx, "center")
 	if err != nil {
 		return fmt.Errorf("center: read Center endpoint aliases: %w", err)
 	}
@@ -103,7 +103,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 			gateway.Route{ID: "system-center-alias-local-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "system", System: true},
 		)
 	}
-	headscaleAliases, err := readSystemEndpointAliases(ctx, tx, "headscale")
+	headscaleAliases, err := readActiveSystemEndpointAliases(ctx, tx, "headscale")
 	if err != nil {
 		return fmt.Errorf("center: read Headscale endpoint aliases: %w", err)
 	}

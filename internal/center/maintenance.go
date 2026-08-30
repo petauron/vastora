@@ -19,15 +19,25 @@ type DiagnosticCount struct {
 	Disabled int `json:"disabled,omitempty"`
 }
 
+type PendingOperationView struct {
+	Kind       string    `json:"kind"`
+	ResourceID string    `json:"resourceId"`
+	Phase      string    `json:"phase"`
+	LastError  string    `json:"lastError,omitempty"`
+	Recovery   string    `json:"recovery"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
 type Diagnostics struct {
-	GeneratedAt  time.Time         `json:"generatedAt"`
-	Version      string            `json:"version"`
-	Schema       int               `json:"schema"`
-	Nodes        DiagnosticCount   `json:"nodes"`
-	Applications DiagnosticCount   `json:"applications"`
-	Publications DiagnosticCount   `json:"publications"`
-	Integrations []IntegrationView `json:"integrations"`
-	RecentErrors []ActionView      `json:"recentErrors"`
+	GeneratedAt       time.Time              `json:"generatedAt"`
+	Version           string                 `json:"version"`
+	Schema            int                    `json:"schema"`
+	Nodes             DiagnosticCount        `json:"nodes"`
+	Applications      DiagnosticCount        `json:"applications"`
+	Publications      DiagnosticCount        `json:"publications"`
+	Integrations      []IntegrationView      `json:"integrations"`
+	PendingOperations []PendingOperationView `json:"pendingOperations,omitempty"`
+	RecentErrors      []ActionView           `json:"recentErrors"`
 }
 
 func (s *Store) Diagnostics(ctx context.Context) (Diagnostics, error) {
@@ -57,6 +67,25 @@ func (s *Store) Diagnostics(ctx context.Context) (Diagnostics, error) {
 		Schema:       centerSchemaVersion,
 		Integrations: integrations,
 		RecentErrors: make([]ActionView, 0),
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT agent_id, phase, last_error, updated_at FROM cloudflare_tunnel_operations ORDER BY updated_at`)
+	if err != nil {
+		return Diagnostics{}, err
+	}
+	for rows.Next() {
+		var operation PendingOperationView
+		var updatedAt string
+		operation.Kind = "cloudflare_tunnel.create"
+		operation.Recovery = "Retry the affected publication; Vastora will reconcile the persisted Tunnel operation without issuing a blind duplicate create."
+		if err := rows.Scan(&operation.ResourceID, &operation.Phase, &operation.LastError, &updatedAt); err != nil {
+			rows.Close()
+			return Diagnostics{}, err
+		}
+		operation.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		result.PendingOperations = append(result.PendingOperations, operation)
+	}
+	if err := rows.Close(); err != nil {
+		return Diagnostics{}, err
 	}
 	for _, agent := range agents {
 		result.Nodes.Total++

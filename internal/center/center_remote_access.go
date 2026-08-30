@@ -198,10 +198,11 @@ func (s *Server) applyCenterRemoteAccess(ctx context.Context, client cloudflareC
 	if err := s.store.updateCenterRemoteAccessResource(ctx, "access_application_id", applicationID); err != nil {
 		return errors.Join(err, client.deleteAccessApplication(context.WithoutCancel(ctx), applicationID))
 	}
-	tunnelID, err := client.createTunnel(ctx, "vastora-center")
+	createdTunnel, err := client.createTunnel(ctx, "vastora-center", "")
 	if err != nil {
 		return err
 	}
+	tunnelID := createdTunnel.ID
 	if err := s.store.updateCenterRemoteAccessResource(ctx, "tunnel_id", tunnelID); err != nil {
 		return errors.Join(err, client.deleteTunnel(context.WithoutCancel(ctx), tunnelID))
 	}
