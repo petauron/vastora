@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.72](https://github.com/petauron/vastora/compare/v0.1.0-alpha.71...v0.1.0-alpha.72) (2026-08-30)
+
+
+### Bug Fixes
+
+* **upgrade:** migrate legacy runtime network ([ac5a3e3](https://github.com/petauron/vastora/commit/ac5a3e3cfb928b96b25b7b6b49c4933b9c5de109))
+
 ## [0.1.0-alpha.71](https://github.com/petauron/vastora/compare/v0.1.0-alpha.70...v0.1.0-alpha.71) (2026-08-30)
 
 
