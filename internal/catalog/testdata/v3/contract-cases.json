@@ -1,0 +1,50 @@
+{
+  "versions": [
+    { "value": "1.0.0", "valid": true },
+    { "value": "1.0.0-alpha.1", "valid": true },
+    { "value": "1.0.0+build.1", "valid": true },
+    { "value": "v1.0.0", "valid": false },
+    { "value": "1.0.0-01", "valid": false },
+    { "value": "1.0.0-alpha..1", "valid": false },
+    { "value": "1.0.0-.alpha", "valid": false },
+    { "value": "1.0", "valid": false }
+  ],
+  "imageReferences": [
+    { "value": "localhost:5000/team/service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": true },
+    { "value": "registry.example.invalid/team/platform/service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": true },
+    { "value": "registry.example.invalid/team/service:1.2.3@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": true },
+    { "value": "[2001:db8::1]:5000/team/service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false },
+    { "value": "not an OCI reference @sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false },
+    { "value": "@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false },
+    { "value": "registry.example.invalid/team//service@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false },
+    { "value": "registry.example.invalid/team/service@sha256:", "valid": false },
+    { "value": "registry.example.invalid/team/service:latest", "valid": false }
+  ],
+  "generatedAt": [
+    { "value": "2026-08-15T00:00:00Z", "valid": true },
+    { "value": "2026-08-15T00:00:00.123Z", "valid": true },
+    { "value": "2026-08-15T00:00:00.000000001Z", "valid": true },
+    { "value": "2026-08-15t00:00:00z", "valid": false },
+    { "value": "2026-08-15T08:00:00+08:00", "valid": false },
+    { "value": "2026-08-15T00:00:00+00:00", "valid": false },
+    { "value": "2026-08-15T00:00:00.100Z", "valid": false },
+    { "value": "2026-08-15T00:00:00.0000000001Z", "valid": false }
+  ],
+  "keyIds": [
+    { "value": "a", "valid": true },
+    { "value": "catalog-key_1.2026", "valid": true },
+    { "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": true },
+    { "value": "", "valid": false },
+    { "value": " catalog-key", "valid": false },
+    { "value": "catalog-key ", "valid": false },
+    { "value": "catalog-key\ninjected", "valid": false },
+    { "value": "catalog-key\rinjected", "valid": false },
+    { "value": "catalog-key\tinjected", "valid": false },
+    { "value": "catalog-key\u0000injected", "valid": false },
+    { "value": "catalog-key\u007finjected", "valid": false },
+    { "value": "Catalog-Key", "valid": false },
+    { "value": ".catalog-key", "valid": false },
+    { "value": "catalog/key", "valid": false },
+    { "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false }
+  ]
+}

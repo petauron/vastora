@@ -7,7 +7,11 @@
   "required": ["schemaVersion", "generatedAt", "apps"],
   "properties": {
     "schemaVersion": { "const": 3 },
-    "generatedAt": { "type": "string", "format": "date-time" },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{0,8}[1-9])?Z$"
+    },
     "apps": {
       "type": "array",
       "items": { "$ref": "app-manifest.schema.json" }

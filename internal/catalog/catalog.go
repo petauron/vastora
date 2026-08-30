@@ -3,6 +3,7 @@ package catalog
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,7 +16,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distribution/reference"
+	digest "github.com/opencontainers/go-digest"
 	"github.com/petauron/vastora/internal/platform"
+	"golang.org/x/mod/semver"
 )
 
 const SchemaVersion = 3
@@ -23,11 +27,13 @@ const SchemaVersion = 3
 const maxPortableInteger int64 = 9_007_199_254_740_991
 
 var (
-	identifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
-	fieldPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
-	semverPattern     = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
-	digestPattern     = regexp.MustCompile(`@sha256:[a-f0-9]{64}$`)
-	sha256Pattern     = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	identifierPattern   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
+	fieldPattern        = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+	semverPattern       = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+	digestPattern       = regexp.MustCompile(`@sha256:[a-f0-9]{64}$`)
+	ociReferencePattern = regexp.MustCompile(`^(?:(?:[a-z0-9]|[a-z0-9][a-z0-9-]*[a-z0-9])(?:\.(?:[a-z0-9]|[a-z0-9][a-z0-9-]*[a-z0-9]))*(?::[0-9]+)?/)?[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@sha256:[a-f0-9]{64}$`)
+	sha256Pattern       = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	keyIDPattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 )
 
 // LocalizedText deliberately requires both v0.1 interface languages.
@@ -121,6 +127,9 @@ func ValidateCatalog(c Catalog) error {
 	if c.GeneratedAt.IsZero() {
 		return errors.New("catalog: generatedAt is required")
 	}
+	if _, offset := c.GeneratedAt.Zone(); offset != 0 {
+		return errors.New("catalog: generatedAt must use canonical UTC")
+	}
 	seen := make(map[string]struct{}, len(c.Apps))
 	for _, app := range c.Apps {
 		if err := ValidateApp(app); err != nil {
@@ -138,7 +147,7 @@ func ValidateApp(app AppManifest) error {
 	if !identifierPattern.MatchString(app.ID) {
 		return fmt.Errorf("catalog: invalid app id %q", app.ID)
 	}
-	if !semverPattern.MatchString(app.Version) {
+	if !semverPattern.MatchString(app.Version) || !semver.IsValid("v"+app.Version) {
 		return fmt.Errorf("catalog: invalid version for %q", app.ID)
 	}
 	if err := validateLocalized("name", app.ID, app.Name); err != nil {
@@ -158,7 +167,9 @@ func ValidateApp(app AppManifest) error {
 		if !identifierPattern.MatchString(image.Name) {
 			return fmt.Errorf("catalog: invalid image name %q in %q", image.Name, app.ID)
 		}
-		if !digestPattern.MatchString(image.Reference) {
+		parsedReference, err := reference.Parse(image.Reference)
+		canonicalReference, canonical := parsedReference.(reference.Canonical)
+		if err != nil || !canonical || parsedReference.String() != image.Reference || !ociReferencePattern.MatchString(image.Reference) || !digestPattern.MatchString(image.Reference) || canonicalReference.Digest().Algorithm() != digest.SHA256 || len(canonicalReference.Digest().Encoded()) != sha256.Size*2 {
 			return fmt.Errorf("catalog: image %q in %q must be pinned by sha256 digest", image.Name, app.ID)
 		}
 		if _, exists := imageNames[image.Name]; exists {
@@ -329,15 +340,14 @@ func NormalizePortableInteger(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 // CanonicalAppManifest returns the semantic identity used by Center's
-// immutable catalog history. It collapses accepted alternate encodings that
-// have identical deployment behavior, such as v1.0.0 versus 1.0.0 and JSON
-// integer lexemes 1, 1.0, and 1e0.
+// immutable catalog history. It collapses accepted alternate JSON encodings
+// that have identical deployment behavior, such as integer lexemes 1, 1.0,
+// and 1e0. Versions already have one canonical external representation.
 func CanonicalAppManifest(app AppManifest) (AppManifest, error) {
 	if err := ValidateApp(app); err != nil {
 		return AppManifest{}, err
 	}
 	canonical := app
-	canonical.Version = strings.TrimPrefix(app.Version, "v")
 	canonical.Config = append([]ConfigField(nil), app.Config...)
 	for index := range canonical.Config {
 		field := &canonical.Config[index]
@@ -418,6 +428,14 @@ func validateCatalogJSONShape(payload []byte) error {
 	root, ok := value.(map[string]any)
 	if !ok {
 		return errors.New("catalog: payload must be an object")
+	}
+	generatedAt, ok := root["generatedAt"].(string)
+	if !ok {
+		return errors.New("catalog: generatedAt must be a canonical UTC timestamp")
+	}
+	parsedGeneratedAt, err := time.Parse(time.RFC3339Nano, generatedAt)
+	if err != nil || parsedGeneratedAt.UTC().Format(time.RFC3339Nano) != generatedAt {
+		return errors.New("catalog: generatedAt must be canonical RFC3339 UTC")
 	}
 	appsValue, exists := root["apps"]
 	if !exists {
@@ -511,8 +529,8 @@ func MarshalCatalog(c Catalog) ([]byte, error) {
 }
 
 func Sign(keyID string, privateKey ed25519.PrivateKey, payload []byte) (Envelope, error) {
-	if strings.TrimSpace(keyID) == "" {
-		return Envelope{}, errors.New("catalog: key id is required")
+	if err := validateKeyID(keyID); err != nil {
+		return Envelope{}, err
 	}
 	if len(privateKey) != ed25519.PrivateKeySize {
 		return Envelope{}, errors.New("catalog: invalid Ed25519 private key")
@@ -532,8 +550,8 @@ func Verify(envelope Envelope, publicKey ed25519.PublicKey) (Catalog, []byte, er
 	if envelope.SchemaVersion != SchemaVersion {
 		return Catalog{}, nil, fmt.Errorf("catalog: unsupported envelope schema version %d", envelope.SchemaVersion)
 	}
-	if strings.TrimSpace(envelope.KeyID) == "" {
-		return Catalog{}, nil, errors.New("catalog: envelope key id is required")
+	if err := validateKeyID(envelope.KeyID); err != nil {
+		return Catalog{}, nil, err
 	}
 	if len(publicKey) != ed25519.PublicKeySize {
 		return Catalog{}, nil, errors.New("catalog: invalid Ed25519 public key")
@@ -557,6 +575,9 @@ func Verify(envelope Envelope, publicKey ed25519.PublicKey) (Catalog, []byte, er
 }
 
 func MarshalEnvelope(envelope Envelope) ([]byte, error) {
+	if err := validateKeyID(envelope.KeyID); err != nil {
+		return nil, err
+	}
 	return json.MarshalIndent(envelope, "", "  ")
 }
 
@@ -570,7 +591,17 @@ func ParseEnvelope(raw []byte) (Envelope, error) {
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return Envelope{}, errors.New("catalog: envelope must contain one JSON value")
 	}
+	if err := validateKeyID(envelope.KeyID); err != nil {
+		return Envelope{}, err
+	}
 	return envelope, nil
+}
+
+func validateKeyID(value string) error {
+	if !keyIDPattern.MatchString(value) {
+		return errors.New("catalog: key id must be 1-64 lowercase letters, digits, dots, underscores, or hyphens")
+	}
+	return nil
 }
 
 // AppKeys sorts app identifiers for stable API output and tests.

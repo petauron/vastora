@@ -14,7 +14,7 @@ than adding aliases or a compatibility parser.
 ## Identity and executor boundary
 
 A source has one stable lowercase `source-id`. An app has one lowercase
-`app-id` and one semantic `version`; the deployable identity is therefore
+`app-id` and one canonical SemVer 2.0.0 `version`; the deployable identity is therefore
 `source-id/app-id + version`. A source must never publish different content for
 an identity it has already published. Center-side immutable-version enforcement
 persists a canonical manifest digest for every observed identity. That history
@@ -56,7 +56,11 @@ Public and private key files contain one unpadded base64url line. The decoded
 public key is the raw 32-byte Ed25519 public key and the decoded private key is
 the raw 64-byte Ed25519 private key. `keyId` selects an operator-configured
 public key; it is not a key or fingerprint itself. Center accepts public keys
-only and never accepts a catalog private key through its API.
+only and never accepts a catalog private key through its API. A `keyId` is 1–64
+characters, starts with a lowercase ASCII letter or digit, and uses only
+lowercase ASCII letters, digits, `.`, `_`, and `-`; whitespace, controls,
+uppercase aliases, path separators, and a leading punctuation character are
+invalid.
 
 ## CLI workflow
 
@@ -83,6 +87,7 @@ fingerprint, never private key material. Validation and verification success
 messages go to standard output. Flag usage and errors go to standard error. A
 successful command exits `0`; an invalid contract, bad key, failed signature,
 missing file, unsafe value, or invalid invocation exits non-zero.
+Verification quotes the validated `keyId` in its success line.
 
 ## Validation rules
 
@@ -92,6 +97,15 @@ image references, unsafe artifact URLs, invalid health/homepage paths, and
 unsupported permission or delivery fields. Semantic validation additionally
 rejects duplicate app, image, config, service, and platform-artifact identities
 and references to unknown fields or services.
+
+Versions use the full `MAJOR.MINOR.PATCH` SemVer 2.0.0 form without a `v`
+prefix; numeric prerelease identifiers cannot have leading zeroes. `generatedAt`
+uses canonical RFC 3339 UTC with uppercase `T` and `Z`. Fractional seconds are
+optional, limited to nanoseconds, and omit trailing zeroes; offsets and case
+aliases are rejected. OCI image values are complete named references accepted
+by the maintained distribution reference parser, optionally include a tag,
+and always end in a lowercase `sha256` digest. A digest suffix without a valid
+repository name is not an image reference.
 
 Integer defaults use JSON numeric semantics and must be within the portable safe
 range `-9007199254740991` through `9007199254740991`. Equivalent integral JSON

@@ -320,7 +320,7 @@ func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := catalogLifecycleManifest("v1.0.0", "Migrated manifest")
+	manifest := catalogLifecycleManifest("1.0.0", "Migrated manifest")
 	setCatalogIntegerDefault(&manifest, `1e0`)
 	rawEnvelope := signedCatalogEnvelope(t, privateKey, manifest)
 	fetchedAt := time.Date(2026, 8, 30, 4, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
