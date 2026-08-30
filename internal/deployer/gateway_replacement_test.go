@@ -11,7 +11,7 @@ import (
 )
 
 func TestCommittedGatewayReadyRequiresDurableCommitAndHealthyCandidate(t *testing.T) {
-	directory, err := os.MkdirTemp("/private/tmp", "vastora-gateway-")
+	directory, err := os.MkdirTemp("/tmp", "vgw-")
 	if err != nil {
 		t.Fatal(err)
 	}
