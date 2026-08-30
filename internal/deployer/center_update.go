@@ -66,14 +66,20 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, version 
 	if err != nil {
 		return deployapi.CenterUpdateExecution{}, err
 	}
-	if semver.Compare("v"+version, "v"+currentVersion) <= 0 {
-		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: Center update %s is not newer than installed version %s", version, currentVersion)
-	}
 	if status.State == "queued" || status.State == "applying" {
 		if status.TargetVersion == version {
+			requestPath := filepath.Join(updater.InstallDir, ".update-request")
+			if !regularFile(requestPath) {
+				if err := writeCenterUpdateFile(requestPath, []byte(version+"\n"), 0o600); err != nil {
+					return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: recover Center update request: %w", err)
+				}
+			}
 			return status, nil
 		}
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: another Center update is already running")
+	}
+	if semver.Compare("v"+version, "v"+currentVersion) <= 0 {
+		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: Center update %s is not newer than installed version %s", version, currentVersion)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	queued := deployapi.CenterUpdateExecution{Available: true, State: "queued", TargetVersion: version, Message: "Waiting for the host update service.", UpdatedAt: now}

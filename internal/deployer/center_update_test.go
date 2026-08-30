@@ -79,3 +79,29 @@ func TestFileCenterUpdaterDoesNotLeaveAStuckQueueWhenRequestWriteFails(t *testin
 		t.Fatalf("queue failure left an invalid status: %#v", status)
 	}
 }
+
+func TestFileCenterUpdaterRecreatesConsumedActiveRequest(t *testing.T) {
+	installDir := t.TempDir()
+	for _, name := range []string{".update-service-enabled", "update-center.sh"} {
+		if err := os.WriteFile(filepath.Join(installDir, name), []byte("ready\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.48\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status := []byte(`{"state":"applying","targetVersion":"0.1.0-alpha.48","message":"applying","updatedAt":"2026-08-30T00:00:00Z"}` + "\n")
+	if err := os.WriteFile(filepath.Join(installDir, ".update-status.json"), status, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	updater := FileCenterUpdater{InstallDir: installDir}
+	recovered, err := updater.StartCenterUpdate(context.Background(), "0.1.0-alpha.48")
+	if err != nil || recovered.State != "applying" {
+		t.Fatalf("active update was not recovered: %#v err=%v", recovered, err)
+	}
+	request, err := os.ReadFile(filepath.Join(installDir, ".update-request"))
+	if err != nil || string(request) != "0.1.0-alpha.48\n" {
+		t.Fatalf("recovered request = %q err=%v", request, err)
+	}
+}
