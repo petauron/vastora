@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 35
+const centerSchemaVersion = 36
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -31,6 +31,10 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		`CREATE TABLE storage_key_binding (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			sealed BLOB NOT NULL
+		)`,
 		`CREATE TABLE secrets (
 			id TEXT PRIMARY KEY,
 			sealed BLOB NOT NULL,

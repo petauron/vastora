@@ -73,15 +73,11 @@ type Connection struct {
 	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 10
+const agentSchemaVersion = 11
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agent: create data directory: %w", err)
-	}
-	key, err := secret.LoadOrCreateKey(filepath.Join(dataDir, "agent.key"))
-	if err != nil {
-		return nil, fmt.Errorf("agent: load local key: %w", err)
 	}
 	databasePath := filepath.Join(dataDir, "agent.db")
 	databaseInfo, statErr := os.Stat(databasePath)
@@ -89,12 +85,59 @@ func Open(dataDir string) (*Store, error) {
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("agent: inspect database: %w", statErr)
 	}
+	keyPath := filepath.Join(dataDir, "agent.key")
+	_, keyStatErr := os.Stat(keyPath)
+	keyExists := keyStatErr == nil
+	if keyStatErr != nil && !errors.Is(keyStatErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("agent: inspect local key: %w", keyStatErr)
+	}
+	if existingDatabase && !keyExists {
+		return nil, errors.New("agent: existing database requires its original local key")
+	}
+	if !existingDatabase && keyExists {
+		return nil, errors.New("agent: local key exists without its database")
+	}
+	var key []byte
+	var err error
+	if existingDatabase {
+		key, err = secret.LoadKey(keyPath)
+	} else {
+		key, err = secret.CreateKey(keyPath)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agent: load local key: %w", err)
+	}
+	freshComplete := existingDatabase
+	if !existingDatabase {
+		defer func() {
+			if freshComplete {
+				return
+			}
+			_ = os.Remove(keyPath)
+			_ = os.Remove(databasePath)
+			_ = os.Remove(databasePath + "-wal")
+			_ = os.Remove(databasePath + "-shm")
+		}()
+	}
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
 		return nil, fmt.Errorf("agent: open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, key: key, dataDir: dataDir, now: time.Now}
+	if existingDatabase {
+		bound, err := inspectAgentDatabaseKeyBinding(context.Background(), db, key)
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		if !bound {
+			if err := verifyAgentEncryptedState(context.Background(), db, key); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: verify legacy encrypted state before binding the database: %w", err)
+			}
+		}
+	}
 	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize database: %w", err)
@@ -373,13 +416,41 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 10
 		}
+		if version == 10 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE IF NOT EXISTS storage_key_binding (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					sealed BLOB NOT NULL
+				);
+				PRAGMA user_version = 11`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 10 to 11: %w", migrateErr)
+			}
+			version = 11
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
 		}
+		if err := store.initializeDatabaseKeyBinding(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 		return store, nil
 	}
-	if _, err := db.Exec(`CREATE TABLE applied_installations (
+	if _, err := db.Exec(`CREATE TABLE storage_key_binding (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			sealed BLOB NOT NULL
+		);
+		CREATE TABLE applied_installations (
 			instance_id TEXT PRIMARY KEY,
 			app_key TEXT NOT NULL,
 			version TEXT NOT NULL,
@@ -446,10 +517,15 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 9;`); err != nil {
+		PRAGMA user_version = 11;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
+	if err := store.initializeDatabaseKeyBinding(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	freshComplete = true
 	return store, nil
 }
 
