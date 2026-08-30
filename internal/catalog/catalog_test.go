@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -112,6 +114,113 @@ func TestPortableCatalogFixtures(t *testing.T) {
 	}
 }
 
+func TestPortableContractCaseMatrix(t *testing.T) {
+	t.Parallel()
+	type contractCase struct {
+		Value string `json:"value"`
+		Valid bool   `json:"valid"`
+	}
+	var cases struct {
+		Versions        []contractCase `json:"versions"`
+		ImageReferences []contractCase `json:"imageReferences"`
+		GeneratedAt     []contractCase `json:"generatedAt"`
+		KeyIDs          []contractCase `json:"keyIds"`
+	}
+	rawCases, err := os.ReadFile(filepath.Join("testdata", "v3", "contract-cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawCases, &cases); err != nil {
+		t.Fatal(err)
+	}
+	baseCatalog, err := os.ReadFile(filepath.Join("testdata", "v3", "valid-catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkCatalogCases := func(name string, values []contractCase, mutate func(map[string]any, string)) {
+		t.Helper()
+		for index, test := range values {
+			t.Run(fmt.Sprintf("%s-%02d", name, index), func(t *testing.T) {
+				var value map[string]any
+				if err := json.Unmarshal(baseCatalog, &value); err != nil {
+					t.Fatal(err)
+				}
+				mutate(value, test.Value)
+				raw, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, parseErr := ParseCatalog(raw)
+				if (parseErr == nil) != test.Valid {
+					t.Fatalf("value %q valid=%t error=%v", test.Value, test.Valid, parseErr)
+				}
+			})
+		}
+	}
+	checkCatalogCases("version", cases.Versions, func(value map[string]any, candidate string) {
+		value["apps"].([]any)[0].(map[string]any)["version"] = candidate
+	})
+	checkCatalogCases("image-reference", cases.ImageReferences, func(value map[string]any, candidate string) {
+		value["apps"].([]any)[0].(map[string]any)["images"].([]any)[0].(map[string]any)["reference"] = candidate
+	})
+	checkCatalogCases("generated-at", cases.GeneratedAt, func(value map[string]any, candidate string) {
+		value["generatedAt"] = candidate
+	})
+
+	baseEnvelope, err := os.ReadFile(filepath.Join("testdata", "v3", "valid-envelope.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKeyValue, err := os.ReadFile(filepath.Join("testdata", "v3", "catalog-signing-public.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(string(publicKeyValue)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, test := range cases.KeyIDs {
+		t.Run(fmt.Sprintf("key-id-%02d", index), func(t *testing.T) {
+			var value map[string]any
+			if err := json.Unmarshal(baseEnvelope, &value); err != nil {
+				t.Fatal(err)
+			}
+			value["keyId"] = test.Value
+			raw, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, parseErr := ParseEnvelope(raw)
+			if (parseErr == nil) != test.Valid {
+				t.Fatalf("ParseEnvelope keyId %q valid=%t error=%v", test.Value, test.Valid, parseErr)
+			}
+			var unchecked Envelope
+			if err := json.Unmarshal(raw, &unchecked); err != nil {
+				t.Fatal(err)
+			}
+			_, _, verifyErr := Verify(unchecked, ed25519.PublicKey(publicKey))
+			if (verifyErr == nil) != test.Valid {
+				t.Fatalf("Verify keyId %q valid=%t error=%v", test.Value, test.Valid, verifyErr)
+			}
+			if test.Valid {
+				if _, err := MarshalEnvelope(parsed); err != nil {
+					t.Fatalf("MarshalEnvelope rejected keyId %q: %v", test.Value, err)
+				}
+			} else if _, err := MarshalEnvelope(unchecked); err == nil {
+				t.Fatalf("MarshalEnvelope accepted keyId %q", test.Value)
+			}
+			_, signErr := Sign(test.Value, signingKey, baseCatalog)
+			if (signErr == nil) != test.Valid {
+				t.Fatalf("Sign keyId %q valid=%t error=%v", test.Value, test.Valid, signErr)
+			}
+		})
+	}
+}
+
 func TestOfficialCatalogMatchesCurrentContract(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "catalog", "catalog.json"))
@@ -192,10 +301,10 @@ func TestPortableIntegerDefaults(t *testing.T) {
 	}
 }
 
-func TestCanonicalAppManifestNormalizesEquivalentEncodings(t *testing.T) {
+func TestCanonicalAppManifestNormalizesEquivalentDefaults(t *testing.T) {
 	t.Parallel()
 	value := validCatalog().Apps[0]
-	value.Version = "v1.0.0"
+	value.Version = "1.0.0"
 	value.Config[0].Secret = false
 	value.Config[0].Type = "integer"
 	integerDefault := json.RawMessage(`1e0`)
@@ -208,7 +317,7 @@ func TestCanonicalAppManifestNormalizesEquivalentEncodings(t *testing.T) {
 	if canonical.Version != "1.0.0" || canonical.Config[0].Default == nil || string(*canonical.Config[0].Default) != "1" {
 		t.Fatalf("canonical manifest version=%q default=%s", canonical.Version, canonical.Config[0].Default)
 	}
-	if value.Version != "v1.0.0" || string(*value.Config[0].Default) != "1e0" {
+	if value.Version != "1.0.0" || string(*value.Config[0].Default) != "1e0" {
 		t.Fatalf("canonicalization mutated input: version=%q default=%s", value.Version, value.Config[0].Default)
 	}
 

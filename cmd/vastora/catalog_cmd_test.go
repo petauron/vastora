@@ -81,7 +81,7 @@ func TestCatalogCLIInteroperability(t *testing.T) {
 	if err := runCatalogWithIO([]string{"verify", "--envelope", envelopePath, "--public-key", publicPath}, &stdout, &stderr); err != nil {
 		t.Fatalf("verify failed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "verified catalog: 1 app(s), key id: integration-key") {
+	if !strings.Contains(stdout.String(), `verified catalog: 1 app(s), key id: "integration-key"`) {
 		t.Fatalf("verify output = %q", stdout.String())
 	}
 
@@ -92,6 +92,34 @@ func TestCatalogCLIInteroperability(t *testing.T) {
 	envelope, err := catalog.ParseEnvelope(rawEnvelope)
 	if err != nil {
 		t.Fatal(err)
+	}
+	unsafeEnvelope := envelope
+	unsafeEnvelope.KeyID = "catalog-key-1\ninjected-success-line"
+	unsafeRaw, err := json.Marshal(unsafeEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsafePath := filepath.Join(t.TempDir(), "unsafe-key-id-envelope.json")
+	if err := os.WriteFile(unsafePath, unsafeRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	if err := runCatalogWithIO([]string{"verify", "--envelope", unsafePath, "--public-key", publicPath}, &stdout, &stderr); err == nil {
+		t.Fatal("verify accepted an unsafe key id")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("failed verify wrote stdout: %q", stdout.String())
+	}
+	unsafeSignPath := filepath.Join(t.TempDir(), "unsafe-key-id-signed.json")
+	stdout.Reset()
+	if err := runCatalogWithIO([]string{"sign", "--catalog", catalogPath, "--private-key", privatePath, "--key-id", unsafeEnvelope.KeyID, "--output", unsafeSignPath}, &stdout, &stderr); err == nil {
+		t.Fatal("sign accepted an unsafe key id")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("failed sign wrote stdout: %q", stdout.String())
+	}
+	if _, err := os.Stat(unsafeSignPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed sign left an output file: %v", err)
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(envelope.Payload)
 	if err != nil {
@@ -110,6 +138,68 @@ func TestCatalogCLIInteroperability(t *testing.T) {
 	if err := runCatalogWithIO([]string{"verify", "--envelope", tamperedPath, "--public-key", publicPath}, &stdout, &stderr); err == nil || !strings.Contains(err.Error(), "signature verification failed") {
 		t.Fatalf("tampered payload verification error = %v", err)
 	}
+}
+
+func TestCatalogCLIRejectsSharedBoundaryCasesWithoutStdout(t *testing.T) {
+	type contractCase struct {
+		Value string `json:"value"`
+		Valid bool   `json:"valid"`
+	}
+	var cases struct {
+		Versions        []contractCase `json:"versions"`
+		ImageReferences []contractCase `json:"imageReferences"`
+		GeneratedAt     []contractCase `json:"generatedAt"`
+	}
+	rawCases, err := os.ReadFile(catalogFixturePath("contract-cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawCases, &cases); err != nil {
+		t.Fatal(err)
+	}
+	baseCatalog, err := os.ReadFile(catalogFixturePath("valid-catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(name string, values []contractCase, mutate func(map[string]any, string)) {
+		t.Helper()
+		for index, test := range values {
+			if test.Valid {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s-%02d", name, index), func(t *testing.T) {
+				var value map[string]any
+				if err := json.Unmarshal(baseCatalog, &value); err != nil {
+					t.Fatal(err)
+				}
+				mutate(value, test.Value)
+				raw, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(t.TempDir(), "invalid-catalog.json")
+				if err := os.WriteFile(path, raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				var stdout, stderr bytes.Buffer
+				if err := runCatalogWithIO([]string{"validate", "--catalog", path}, &stdout, &stderr); err == nil {
+					t.Fatalf("validate accepted %q", test.Value)
+				}
+				if stdout.Len() != 0 {
+					t.Fatalf("failed validate wrote stdout: %q", stdout.String())
+				}
+			})
+		}
+	}
+	check("version", cases.Versions, func(value map[string]any, candidate string) {
+		value["apps"].([]any)[0].(map[string]any)["version"] = candidate
+	})
+	check("image-reference", cases.ImageReferences, func(value map[string]any, candidate string) {
+		value["apps"].([]any)[0].(map[string]any)["images"].([]any)[0].(map[string]any)["reference"] = candidate
+	})
+	check("generated-at", cases.GeneratedAt, func(value map[string]any, candidate string) {
+		value["generatedAt"] = candidate
+	})
 }
 
 func TestCatalogKeygenDoesNotLeaveAPartialKeypair(t *testing.T) {
@@ -164,6 +254,23 @@ func TestCatalogCLIProcessExitBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rawEnvelope, err := os.ReadFile(validEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unsafeEnvelope map[string]any
+	if err := json.Unmarshal(rawEnvelope, &unsafeEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	unsafeEnvelope["keyId"] = "catalog-key-1\ninjected-success-line"
+	unsafeRaw, err := json.Marshal(unsafeEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsafeEnvelopePath := filepath.Join(t.TempDir(), "unsafe-key-id-envelope.json")
+	if err := os.WriteFile(unsafeEnvelopePath, unsafeRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
 		name string
 		args []string
@@ -171,6 +278,7 @@ func TestCatalogCLIProcessExitBehavior(t *testing.T) {
 	}{
 		{name: "verified", args: []string{"catalog", "verify", "--envelope", validEnvelope, "--public-key", publicKey}, want: 0},
 		{name: "invalid", args: []string{"catalog", "verify", "--envelope", catalogFixturePath("invalid", "unknown-field.json"), "--public-key", publicKey}, want: 1},
+		{name: "unsafe key id", args: []string{"catalog", "verify", "--envelope", unsafeEnvelopePath, "--public-key", publicKey}, want: 1},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {

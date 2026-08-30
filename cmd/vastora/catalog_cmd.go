@@ -170,7 +170,7 @@ func catalogVerify(envelopePath, publicKeyPath string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "verified catalog: %d app(s), key id: %s\n", len(parsed.Apps), envelope.KeyID)
+	fmt.Fprintf(stdout, "verified catalog: %d app(s), key id: %q\n", len(parsed.Apps), envelope.KeyID)
 	return nil
 }
 

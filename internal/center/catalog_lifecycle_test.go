@@ -106,7 +106,7 @@ func TestCatalogManifestIdentityRemainsImmutableAcrossVersionsKeysAndRecreation(
 	if err := store.CreateSource(ctx, SourceInput{ID: "immutable-source", DisplayName: "Immutable", URL: "https://catalog.example.invalid", PublicKey: publicKey, RefreshSeconds: 3600}); err != nil {
 		t.Fatal(err)
 	}
-	first := catalogLifecycleManifest("v1.0.0", "Original description")
+	first := catalogLifecycleManifest("1.0.0", "Original description")
 	setCatalogIntegerDefault(&first, `1e0`)
 	if err := commitCatalogForTest(ctx, store, "immutable-source", signedCatalogEnvelope(t, privateKey, first), `"first"`, ""); err != nil {
 		t.Fatal(err)
