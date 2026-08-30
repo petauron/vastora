@@ -55,6 +55,7 @@ set -eu
 center_url=@@CENTER_URL@@
 bootstrap_url=@@BOOTSTRAP_URL@@
 ca_fingerprint=@@CA_FINGERPRINT@@
+tailscale_enrolled=@@TAILSCALE_ENROLLED@@
 IFS= read -r token
 if [ -z "$token" ]; then
   echo "The one-time Agent token is required." >&2
@@ -85,7 +86,24 @@ esac
 
 temporary="$(mktemp -t vastora-agent.XXXXXX)"
 headers="$(mktemp -t vastora-agent-headers.XXXXXX)"
-trap 'rm -f "$temporary" "$headers"' EXIT HUP INT TERM
+switch_started=0
+cleanup() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$switch_started" -eq 1 ]; then
+    echo "The Center switch did not complete; restoring the previous Agent and private network..." >&2
+    if ! "$temporary" agent switch-control-plane rollback --data-dir /var/lib/vastora/agent; then
+      echo "Automatic rollback is incomplete. Rerun the installer to resume recovery." >&2
+      status=1
+    fi
+    if [ "$status" -eq 0 ]; then
+      status=1
+    fi
+  fi
+  rm -f "$temporary" "$headers"
+  exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
 case "$bootstrap_url" in
   https://*) curl_protocol="https" ;;
   http://127.0.0.1:*|http://127.0.0.1|http://localhost:*|http://localhost) curl_protocol="http" ;;
@@ -110,6 +128,7 @@ fi
 
 replace_existing=0
 resume_install=0
+tailscale_ownership=none
 if [ -s /var/lib/vastora/agent/agent.db ]; then
   if ! install_state="$("$temporary" agent install-state --data-dir /var/lib/vastora/agent 2>&1)"; then
     echo "An existing Vastora Agent was found, but its installation state could not be inspected." >&2
@@ -146,6 +165,19 @@ if [ "$resume_install" -eq 0 ] && { [ -s /var/lib/vastora/agent/agent.db ] || sy
   esac
 fi
 
+if [ "$replace_existing" -eq 1 ]; then
+  switch_status="$("$temporary" agent switch-control-plane begin --data-dir /var/lib/vastora/agent --target-center-url "$center_url")"
+  if [ "$switch_status" = complete ]; then
+    echo "The previous interrupted Center switch was already healthy and has now been finalized."
+    exit 0
+  fi
+  if [ "$switch_status" != pending ]; then
+    echo "The Center switch returned an invalid recovery status." >&2
+    exit 1
+  fi
+  switch_started=1
+fi
+
 if [ "$resume_install" -eq 0 ]; then
 @@HEADSCALE_BOOTSTRAP@@
 fi
@@ -176,6 +208,8 @@ install -m 0755 "$temporary" /usr/local/bin/vastora
 echo "Registering this node and starting the system service..."
 if [ "$replace_existing" -eq 1 ]; then
   printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint" --replace-existing
+  /usr/local/bin/vastora agent switch-control-plane commit --data-dir /var/lib/vastora/agent --tailscale-ownership auto --tailscale-enrolled="$tailscale_enrolled"
+  switch_started=0
 else
   printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint"
 fi
@@ -187,7 +221,9 @@ func renderAgentInstallLoader(centerURL string) string {
 
 func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, bootstrapURL string) string {
 	headscaleBootstrap := ":"
+	tailscaleEnrolled := "false"
 	if profile.HeadscaleCommand != "" {
+		tailscaleEnrolled = "true"
 		prepareArguments := "--control-url " + shellQuote(profile.HeadscaleURL)
 		for _, address := range profile.HeadscaleAddresses {
 			prepareArguments += " --control-address " + shellQuote(address)
@@ -229,9 +265,13 @@ if [ -f /var/lib/vastora/agent/host-install.env ]; then
   done </var/lib/vastora/agent/host-install.env
 fi
 host_state_temporary="$(mktemp /var/lib/vastora/agent/.host-install.XXXXXX)"
-printf '%s\n' 'HOST_STATE_VERSION=1' "TAILSCALE_OWNERSHIP=$tailscale_ownership" 'TAILSCALE_ENROLLED=1' >"$host_state_temporary"
-chmod 0600 "$host_state_temporary"
-mv "$host_state_temporary" /var/lib/vastora/agent/host-install.env
+if [ "$replace_existing" -eq 0 ]; then
+  printf '%s\n' 'HOST_STATE_VERSION=1' "TAILSCALE_OWNERSHIP=$tailscale_ownership" 'TAILSCALE_ENROLLED=1' >"$host_state_temporary"
+  chmod 0600 "$host_state_temporary"
+  mv "$host_state_temporary" /var/lib/vastora/agent/host-install.env
+else
+  rm -f "$host_state_temporary"
+fi
 `
 		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_VERSION@@", shellQuote(tailscalehost.SupportedVersion))
 		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_PREPARE_ARGUMENTS@@", prepareArguments)
@@ -248,6 +288,7 @@ fi`
 		"@@CENTER_URL@@", shellQuote(profile.CenterURL),
 		"@@BOOTSTRAP_URL@@", shellQuote(bootstrapURL),
 		"@@CA_FINGERPRINT@@", shellQuote(profile.CAFingerprint),
+		"@@TAILSCALE_ENROLLED@@", tailscaleEnrolled,
 		"@@HEADSCALE_BOOTSTRAP@@", headscaleBootstrap,
 	).Replace(agentInstallScript)
 }

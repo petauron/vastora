@@ -210,7 +210,10 @@ func (s *Store) createHeadscaleJoin(ctx context.Context, agentID string, gateway
 	if err != nil {
 		return HeadscaleJoin{}, err
 	}
-	command := "sudo tailscale up --login-server " + shellQuote(client.baseURL) + " --auth-key " + shellQuote(key) + " --reset"
+	// login creates a separate switchable profile. Reusing `up --reset` would
+	// overwrite the active profile and make an interrupted Center migration
+	// impossible to roll back without authenticating again.
+	command := "sudo tailscale login --login-server " + shellQuote(client.baseURL) + " --auth-key " + shellQuote(key)
 	return HeadscaleJoin{AgentID: agentID, Command: command, ExpiresAt: expiresAt}, nil
 }
 

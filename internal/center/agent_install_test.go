@@ -162,7 +162,7 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatalf("authenticated installer status = %d, body = %q", response.Code, response.Body.String())
 	}
 	script := response.Body.String()
-	for _, expected := range []string{"center_url='https://center.example.com'", "bootstrap_url='https://center.example.com'", "IFS= read -r token", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "aarch64|arm64", "supports Ubuntu 24.04 on x86_64 and ARM64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${bootstrap_url%/}/api/v1/agent-binaries/linux/$arch", "agent install-state --data-dir /var/lib/vastora/agent", "resume_install=1", "agent status --data-dir /var/lib/vastora/agent", "Switch this Agent to the requested Center? [y/N]", "Waiting for the requested Center to become reachable", "${center_url%/}/install/agent.sh", "--replace-existing", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
+	for _, expected := range []string{"center_url='https://center.example.com'", "bootstrap_url='https://center.example.com'", "IFS= read -r token", "command -v \"$required\"", "docker info", "sha256sum", "x86_64|amd64", "aarch64|arm64", "supports Ubuntu 24.04 on x86_64 and ARM64", "--proto \"=$curl_protocol\"", "--max-filesize 268435456", "Authorization: Bearer $token", "${bootstrap_url%/}/api/v1/agent-binaries/linux/$arch", "agent install-state --data-dir /var/lib/vastora/agent", "resume_install=1", "agent status --data-dir /var/lib/vastora/agent", "Switch this Agent to the requested Center? [y/N]", "switch-control-plane begin", "switch-control-plane rollback", "switch-control-plane commit", "Waiting for the requested Center to become reachable", "${center_url%/}/install/agent.sh", "--replace-existing", "x-vastora-sha256:", "failed its SHA-256 integrity check", "failed its version check", "install -m 0755", "agent install --center-url \"$center_url\" --token-file -"} {
 		if !strings.Contains(script, expected) {
 			t.Fatalf("installer is missing %q:\n%s", expected, script)
 		}
@@ -193,7 +193,7 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T) {
 	script := renderAgentInstallScript(AgentEnrollmentInstallProfile{
 		CenterURL:          "https://center.example.com",
-		HeadscaleCommand:   "sudo tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
+		HeadscaleCommand:   "sudo tailscale login --login-server 'https://headscale.example.com' --auth-key 'one-time-key'",
 		HeadscaleURL:       "https://headscale.example.com",
 		HeadscaleAddresses: []string{"203.0.113.10"},
 	}, "https://headscale.example.com")
@@ -208,7 +208,7 @@ func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T)
 		"agent prepare-tailscale --control-url 'https://headscale.example.com' --control-address '203.0.113.10' --configure-only",
 		"agent prepare-tailscale --control-url 'https://headscale.example.com' --control-address '203.0.113.10'",
 		"Joining the private network...",
-		"tailscale up --login-server 'https://headscale.example.com' --auth-key 'one-time-key' --reset",
+		"tailscale login --login-server 'https://headscale.example.com' --auth-key 'one-time-key'",
 		"TAILSCALE_OWNERSHIP=$tailscale_ownership",
 		"TAILSCALE_ENROLLED=1",
 	} {

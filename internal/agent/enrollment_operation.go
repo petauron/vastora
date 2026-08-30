@@ -53,15 +53,6 @@ func (s *Store) BeginEnrollmentOperation(ctx context.Context, centerURL, token, 
 		}
 		return operation, nil
 	}
-	hasConnection, err := s.HasConnection(ctx)
-	if err != nil {
-		return InstallOperation{}, err
-	}
-	if hasConnection && !replace {
-		return InstallOperation{}, errors.New("agent: already enrolled; use agent update or agent configure")
-	} else if !hasConnection && replace {
-		return InstallOperation{}, errors.New("agent: cannot replace a Center enrollment because no existing enrollment was found")
-	}
 	operationID, err := randomEnrollmentOperationID()
 	if err != nil {
 		return InstallOperation{}, err
@@ -79,11 +70,35 @@ func (s *Store) BeginEnrollmentOperation(ctx context.Context, centerURL, token, 
 		return InstallOperation{}, fmt.Errorf("agent: encrypt enrollment identity: %w", err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO agent_install_operations(
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InstallOperation{}, err
+	}
+	defer tx.Rollback()
+	var previous Connection
+	previousSealedCredential := []byte{}
+	previousSealedPrivateKey := []byte{}
+	connectionErr := tx.QueryRowContext(ctx, `SELECT agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint
+		FROM control_plane_connection WHERE id = 1`).Scan(&previous.AgentID, &previous.Name, &previous.CenterURL, &previousSealedCredential, &previousSealedPrivateKey, &previous.CAFingerprint)
+	if connectionErr != nil && !errors.Is(connectionErr, sql.ErrNoRows) {
+		return InstallOperation{}, fmt.Errorf("agent: inspect existing Center enrollment: %w", connectionErr)
+	}
+	hasConnection := connectionErr == nil
+	if hasConnection && !replace {
+		return InstallOperation{}, errors.New("agent: already enrolled; use agent update or agent configure")
+	} else if !hasConnection && replace {
+		return InstallOperation{}, errors.New("agent: cannot replace a Center enrollment because no existing enrollment was found")
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_install_operations(
 		id, operation_id, center_url, token_hash, sealed_token, sealed_private_key, ca_fingerprint,
-		replace_existing, phase, created_at, updated_at
-	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, 'enrollment_pending', ?, ?)`, operationID, centerURL, tokenDigest[:], sealedToken, sealedPrivateKey, caFingerprint, replace, now, now); err != nil {
+		replace_existing, phase, previous_agent_id, previous_name, previous_center_url,
+		previous_sealed_credential, previous_sealed_private_key, previous_ca_fingerprint, created_at, updated_at
+	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, 'enrollment_pending', ?, ?, ?, ?, ?, ?, ?, ?)`, operationID, centerURL, tokenDigest[:], sealedToken, sealedPrivateKey, caFingerprint, replace,
+		previous.AgentID, previous.Name, previous.CenterURL, previousSealedCredential, previousSealedPrivateKey, previous.CAFingerprint, now, now); err != nil {
 		return InstallOperation{}, fmt.Errorf("agent: persist enrollment operation before contacting Center: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return InstallOperation{}, fmt.Errorf("agent: commit enrollment operation: %w", err)
 	}
 	return InstallOperation{OperationID: operationID, CenterURL: centerURL, CAFingerprint: caFingerprint, ReplaceExisting: replace, Phase: "enrollment_pending", Token: token, PrivateKey: privateKey}, nil
 }
@@ -229,7 +244,7 @@ func (s *Store) RecordInstallOperationError(ctx context.Context, cause error) {
 }
 
 func (s *Store) CompleteInstallOperation(ctx context.Context) error {
-	result, err := s.db.ExecContext(ctx, `DELETE FROM agent_install_operations WHERE id = 1 AND phase = 'started'`)
+	result, err := s.db.ExecContext(ctx, `DELETE FROM agent_install_operations WHERE id = 1 AND phase = 'healthy'`)
 	if err != nil {
 		return fmt.Errorf("agent: complete installation operation: %w", err)
 	}
@@ -237,6 +252,62 @@ func (s *Store) CompleteInstallOperation(ctx context.Context) error {
 		return errors.New("agent: installation operation is not ready to complete")
 	}
 	return nil
+}
+
+// RollbackInstallOperation restores the previous Center identity after a
+// replacement fails. Fresh installations remove only the connection created
+// by their own operation. Host files and Tailscale profiles are restored by
+// the host-switch journal in cmd/vastora.
+func (s *Store) RollbackInstallOperation(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var operationID, phase, agentID string
+	var replace bool
+	var previous Connection
+	var previousSealedCredential, previousSealedPrivateKey []byte
+	err = tx.QueryRowContext(ctx, `SELECT operation_id, phase, agent_id, replace_existing,
+		previous_agent_id, previous_name, previous_center_url, previous_sealed_credential,
+		previous_sealed_private_key, previous_ca_fingerprint
+		FROM agent_install_operations WHERE id = 1`).Scan(&operationID, &phase, &agentID, &replace,
+		&previous.AgentID, &previous.Name, &previous.CenterURL, &previousSealedCredential,
+		&previousSealedPrivateKey, &previous.CAFingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("agent: read installation rollback state: %w", err)
+	}
+	if replace {
+		if previous.AgentID == "" || previous.Name == "" || previous.CenterURL == "" || len(previousSealedCredential) == 0 || len(previousSealedPrivateKey) == 0 {
+			return errors.New("agent: previous Center enrollment snapshot is incomplete; refusing destructive rollback")
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint)
+			VALUES(1, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url,
+			sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint`,
+			previous.AgentID, previous.Name, previous.CenterURL, previousSealedCredential, previousSealedPrivateKey, previous.CAFingerprint); err != nil {
+			return fmt.Errorf("agent: restore previous Center enrollment: %w", err)
+		}
+	} else if phase != "enrollment_pending" {
+		result, err := tx.ExecContext(ctx, `DELETE FROM control_plane_connection WHERE id = 1 AND agent_id = ?`, agentID)
+		if err != nil {
+			return fmt.Errorf("agent: remove incomplete Center enrollment: %w", err)
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return errors.New("agent: incomplete installation no longer owns the Center enrollment")
+		}
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM agent_install_operations WHERE id = 1 AND operation_id = ?`, operationID)
+	if err != nil {
+		return fmt.Errorf("agent: clear installation rollback state: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return errors.New("agent: installation operation changed during rollback")
+	}
+	return tx.Commit()
 }
 
 // CompleteEnrollmentOnlyOperation finishes the explicit `agent enroll`
@@ -260,7 +331,7 @@ func validInstallPhase(value string) bool {
 }
 
 func installPhaseIndex(value string) int {
-	for index, phase := range []string{"enrollment_pending", "enrolled", "unit_written", "reloaded", "enabled", "started"} {
+	for index, phase := range []string{"enrollment_pending", "enrolled", "unit_written", "reloaded", "enabled", "started", "healthy"} {
 		if value == phase {
 			return index
 		}

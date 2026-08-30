@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -124,5 +125,65 @@ func TestEnrollmentOperationRetriesLocalConnectionCommit(t *testing.T) {
 	}
 	if len(operationIDs) != 2 || operationIDs[0] == "" || operationIDs[0] != operationIDs[1] {
 		t.Fatalf("local retry changed operation IDs: %#v", operationIDs)
+	}
+}
+
+func TestReplacementEnrollmentRollbackRestoresPreviousConnection(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	previous := testConnection(t, "old-agent", "old-node", "https://old-center.example.com", "old-credential")
+	if err := store.SaveConnection(context.Background(), previous); err != nil {
+		t.Fatal(err)
+	}
+	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://new-center.example.com", "one-time-token", strings.Repeat("b", 64), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteEnrollmentOperation(context.Background(), operation, Enrollment{
+		ID: "new-agent", Credential: "new-credential", Name: "new-node", Roles: []string{"worker"}, Capabilities: Capabilities{Docker: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RollbackInstallOperation(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.Connection(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.AgentID != previous.AgentID || restored.Name != previous.Name || restored.CenterURL != previous.CenterURL || restored.Credential != previous.Credential || string(restored.PrivateKey) != string(previous.PrivateKey) {
+		t.Fatalf("previous connection was not restored: got=%#v want=%#v", restored, previous)
+	}
+	if _, exists, err := store.InstallOperation(context.Background()); err != nil || exists {
+		t.Fatalf("rollback operation remains: exists=%v err=%v", exists, err)
+	}
+	if err := store.RollbackInstallOperation(context.Background()); err != nil {
+		t.Fatalf("replayed rollback failed: %v", err)
+	}
+}
+
+func TestFreshEnrollmentRollbackRemovesOnlyOwnedConnection(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://center.example.com", "one-time-token", strings.Repeat("c", 64), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteEnrollmentOperation(context.Background(), operation, Enrollment{
+		ID: "agent-1", Credential: "credential", Name: "node", Roles: []string{"worker"}, Capabilities: Capabilities{Docker: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RollbackInstallOperation(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if hasConnection, err := store.HasConnection(context.Background()); err != nil || hasConnection {
+		t.Fatalf("fresh rollback left a connection: has=%v err=%v", hasConnection, err)
 	}
 }

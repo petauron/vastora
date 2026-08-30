@@ -317,6 +317,51 @@ func runAgent(arguments []string) error {
 		defer store.Close()
 		fmt.Printf("Agent state initialized at %s\n", *dataDir)
 		return nil
+	case "switch-control-plane":
+		if len(arguments) < 2 {
+			return errors.New("agent switch-control-plane action is required")
+		}
+		flags := flag.NewFlagSet("agent switch-control-plane "+arguments[1], flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		targetCenterURL := flags.String("target-center-url", "", "requested Center URL")
+		tailscaleOwnership := flags.String("tailscale-ownership", "", "Tailscale ownership after a successful switch")
+		tailscaleEnrolled := flags.Bool("tailscale-enrolled", false, "record a successful private-network enrollment")
+		if err := flags.Parse(arguments[2:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent switch-control-plane"); err != nil {
+			return err
+		}
+		environment := defaultControlPlaneSwitchEnvironment(*dataDir)
+		switch arguments[1] {
+		case "begin":
+			if *targetCenterURL == "" || flags.NArg() != 0 {
+				return errors.New("usage: vastora agent switch-control-plane begin --target-center-url URL")
+			}
+			complete, err := beginControlPlaneSwitch(context.Background(), *dataDir, *targetCenterURL, environment)
+			if err != nil {
+				return err
+			}
+			if complete {
+				fmt.Println("complete")
+			} else {
+				fmt.Println("pending")
+			}
+			return nil
+		case "rollback":
+			if flags.NArg() != 0 {
+				return errors.New("usage: vastora agent switch-control-plane rollback")
+			}
+			return rollbackControlPlaneSwitch(context.Background(), *dataDir, environment)
+		case "commit":
+			if *tailscaleOwnership == "" || flags.NArg() != 0 {
+				return errors.New("usage: vastora agent switch-control-plane commit --tailscale-ownership auto|managed|external|none")
+			}
+			return commitControlPlaneSwitch(*dataDir, *tailscaleOwnership, *tailscaleEnrolled, environment)
+		default:
+			return errors.New("agent switch-control-plane action must be begin, rollback, or commit")
+		}
 	case "prepare-tailscale":
 		flags := flag.NewFlagSet("agent prepare-tailscale", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -631,6 +676,7 @@ type agentSystemdInstallEnvironment struct {
 	writeFile    func(string, []byte, os.FileMode) error
 	rename       func(string, string) error
 	runSystemctl func(...string) ([]byte, error)
+	verify       func(context.Context, *agent.Store, string, string) error
 }
 
 func defaultAgentSystemdInstallEnvironment() agentSystemdInstallEnvironment {
@@ -641,6 +687,15 @@ func defaultAgentSystemdInstallEnvironment() agentSystemdInstallEnvironment {
 		rename:    os.Rename,
 		runSystemctl: func(arguments ...string) ([]byte, error) {
 			return exec.Command("systemctl", arguments...).CombinedOutput()
+		},
+		verify: func(ctx context.Context, store *agent.Store, rolesValue, capabilitiesValue string) error {
+			roles, capabilities, err := validatedNodeRuntime(rolesValue, capabilitiesValue)
+			if err != nil {
+				return err
+			}
+			verifyContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			return (agent.Client{Roles: roles, Capabilities: capabilities}).Heartbeat(verifyContext, store)
 		},
 	}
 }
@@ -710,6 +765,19 @@ func resumeSystemdAgentInstall(ctx context.Context, store *agent.Store, executab
 				return fail(err)
 			}
 		case "started":
+			if environment.verify == nil {
+				return fail(errors.New("verify Agent Center connection: verifier is required"))
+			}
+			if err := environment.verify(ctx, store, roles, capabilities); err != nil {
+				return fail(fmt.Errorf("verify Agent heartbeat with the requested Center: %w", err))
+			}
+			if err := store.AdvanceInstallOperation(ctx, "started", "healthy"); err != nil {
+				return fail(err)
+			}
+		case "healthy":
+			if replace {
+				return nil
+			}
 			return store.CompleteInstallOperation(ctx)
 		case "enrollment_pending":
 			return fail(errors.New("agent: enrollment must complete before systemd installation"))

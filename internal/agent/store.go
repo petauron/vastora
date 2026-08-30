@@ -73,7 +73,7 @@ type Connection struct {
 	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 11
+const agentSchemaVersion = 12
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -436,6 +436,54 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 11
 		}
+		if version == 11 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE agent_install_operations_v12 (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					operation_id TEXT NOT NULL UNIQUE,
+					center_url TEXT NOT NULL,
+					token_hash BLOB NOT NULL,
+					sealed_token BLOB NOT NULL,
+					sealed_private_key BLOB NOT NULL,
+					ca_fingerprint TEXT NOT NULL,
+					replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
+					phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started', 'healthy')),
+					agent_id TEXT NOT NULL DEFAULT '',
+					name TEXT NOT NULL DEFAULT '',
+					roles_json BLOB NOT NULL DEFAULT '[]',
+					capabilities_json BLOB NOT NULL DEFAULT '{}',
+					previous_agent_id TEXT NOT NULL DEFAULT '',
+					previous_name TEXT NOT NULL DEFAULT '',
+					previous_center_url TEXT NOT NULL DEFAULT '',
+					previous_sealed_credential BLOB NOT NULL DEFAULT X'',
+					previous_sealed_private_key BLOB NOT NULL DEFAULT X'',
+					previous_ca_fingerprint TEXT NOT NULL DEFAULT '',
+					last_error TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				INSERT INTO agent_install_operations_v12(
+					id, operation_id, center_url, token_hash, sealed_token, sealed_private_key, ca_fingerprint,
+					replace_existing, phase, agent_id, name, roles_json, capabilities_json, last_error, created_at, updated_at
+				) SELECT id, operation_id, center_url, token_hash, sealed_token, sealed_private_key, ca_fingerprint,
+					replace_existing, phase, agent_id, name, roles_json, capabilities_json, last_error, created_at, updated_at
+				FROM agent_install_operations;
+				DROP TABLE agent_install_operations;
+				ALTER TABLE agent_install_operations_v12 RENAME TO agent_install_operations;
+				PRAGMA user_version = 12`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 11 to 12: %w", migrateErr)
+			}
+			version = 12
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -476,11 +524,17 @@ func Open(dataDir string) (*Store, error) {
 			sealed_private_key BLOB NOT NULL,
 			ca_fingerprint TEXT NOT NULL,
 			replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
-			phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started')),
+			phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started', 'healthy')),
 			agent_id TEXT NOT NULL DEFAULT '',
 			name TEXT NOT NULL DEFAULT '',
 			roles_json BLOB NOT NULL DEFAULT '[]',
 			capabilities_json BLOB NOT NULL DEFAULT '{}',
+			previous_agent_id TEXT NOT NULL DEFAULT '',
+			previous_name TEXT NOT NULL DEFAULT '',
+			previous_center_url TEXT NOT NULL DEFAULT '',
+			previous_sealed_credential BLOB NOT NULL DEFAULT X'',
+			previous_sealed_private_key BLOB NOT NULL DEFAULT X'',
+			previous_ca_fingerprint TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
@@ -517,7 +571,7 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 11;`); err != nil {
+		PRAGMA user_version = 12;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
