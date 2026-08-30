@@ -87,6 +87,8 @@ export type CenterUpdateStatus = {
   automatic: boolean;
   state: "idle" | "queued" | "applying" | "succeeded" | "failed";
   targetVersion?: string;
+  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "completed";
+  progress?: number;
   message?: string;
   checkedAt?: string;
   updatedAt?: string;

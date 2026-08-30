@@ -168,10 +168,33 @@ bootstrap_port="$(awk -F= '$1 == "VASTORA_CENTER_BOOTSTRAP_PORT" {sub(/^[^=]*=/,
 if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
 local_center_url="http://127.0.0.1:$bootstrap_port"
 
+host_update_status_file="${VASTORA_UPDATE_STATUS_FILE:-}"
+host_update_target_version="${VASTORA_UPDATE_TARGET_VERSION:-}"
+if [ -n "$host_update_status_file" ] || [ -n "$host_update_target_version" ]; then
+  if [ "$host_update_status_file" != "$install_dir/.update-status.json" ] || [ "$host_update_target_version" != "$new_version" ]; then
+    echo "The host update status channel does not match this Center installation." >&2
+    exit 1
+  fi
+fi
+write_host_update_stage() {
+  if [ -z "$host_update_status_file" ]; then
+    return 0
+  fi
+  host_update_message="$1"
+  host_update_time="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  host_update_temporary="$(mktemp "$install_dir/.update-status.XXXXXX")"
+  chmod 0600 "$host_update_temporary"
+  printf '{"state":"applying","targetVersion":"%s","message":"%s","updatedAt":"%s"}\n' \
+    "$new_version" "$host_update_message" "$host_update_time" > "$host_update_temporary"
+  mv "$host_update_temporary" "$host_update_status_file"
+}
+
+write_host_update_stage "Validating the existing installation."
 echo "Validating the new deployment with the existing configuration..."
 migrate_legacy_vastora_runtime_network "$install_dir"
 ensure_vastora_runtime_network_for_upgrade "$install_dir"
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" config --quiet
+write_host_update_stage "Downloading the immutable Center image."
 echo "Downloading the immutable Center image..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center deployer
 
@@ -183,6 +206,7 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
     echo "systemctl is required to update the co-located Vastora Agent." >&2
     exit 1
   fi
+  write_host_update_stage "Preparing the co-located Agent."
   echo "Preparing the matching Agent from the immutable Center image..."
   agent_container="$(docker create "$new_image")"
   docker cp "$agent_container:/usr/local/bin/vastora" "$temporary_dir/vastora-agent"
@@ -241,12 +265,14 @@ install -m 0644 "$source_dir/release.env" "$install_dir/release.env"
 install -m 0600 "$candidate_env" "$install_dir/.env"
 files_changed=yes
 
+write_host_update_stage "Restarting Center."
 echo "Starting the updated Center..."
 cd "$install_dir"
 center_started=yes
 docker compose up -d --remove-orphans deployer center
 validate_vastora_runtime_network
 
+write_host_update_stage "Waiting for Center health checks."
 attempt=0
 until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
   attempt=$((attempt + 1))
@@ -259,6 +285,7 @@ until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
   sleep 2
 done
 
+write_host_update_stage "Finishing Center startup reconciliation."
 attempt=0
 until curl -fsS "http://127.0.0.1:$bootstrap_port/readyz" >/dev/null 2>&1; do
   attempt=$((attempt + 1))
@@ -271,6 +298,7 @@ until curl -fsS "http://127.0.0.1:$bootstrap_port/readyz" >/dev/null 2>&1; do
 done
 
 if [ "$agent_changed" = yes ]; then
+	write_host_update_stage "Verifying the co-located Agent."
 	if ! systemctl is-active --quiet vastora-agent.service; then
 	  echo "The co-located Agent stopped during Center reconciliation." >&2
 	  exit 1

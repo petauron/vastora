@@ -1646,16 +1646,16 @@ describe("network and app views", () => {
     expect(onStatusChange).not.toHaveBeenCalled();
   });
 
-  it("shows an accessible indeterminate progress bar while Center updates", () => {
-    const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.68", updateAvailable: true, state: "applying" as const, targetVersion: "0.1.0-alpha.68" };
+  it("shows the current verified update phase and progress", () => {
+    const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.68", updateAvailable: true, state: "applying" as const, targetVersion: "0.1.0-alpha.68", phase: "pulling" as const, progress: 50 };
     vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
     const progress = container.querySelector('[role="progressbar"]');
-    expect(progress?.getAttribute("aria-valuenow")).toBeNull();
-    expect(progress?.getAttribute("data-indeterminate")).not.toBeNull();
+    expect(progress?.getAttribute("aria-valuenow")).toBe("50");
+    expect(progress?.getAttribute("data-indeterminate")).toBeNull();
     expect(progress?.getAttribute("aria-labelledby")).not.toBeNull();
-    expect(container.textContent).toContain("正在下载、校验与安装");
-    expect(container.textContent).toContain("进行中");
+    expect(container.textContent).toContain("正在下载 Center 镜像");
+    expect(container.textContent).toContain("50%");
   });
 
   it("bypasses the official release cache when update checking is requested", async () => {

@@ -72,7 +72,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-write_status applying "$target_version" "Downloading and applying the verified release."
+write_status applying "$target_version" "Downloading the verified release metadata."
 release_base="https://vastora.petauron.com/releases/v$target_version"
 failure_message="The immutable Center installer could not be downloaded."
 if ! curl --proto '=https' --tlsv1.2 -fsS \
@@ -80,6 +80,7 @@ if ! curl --proto '=https' --tlsv1.2 -fsS \
   "$release_base/install.sh" -o "$installer"; then
   exit 1
 fi
+write_status applying "$target_version" "Verifying the immutable release."
 installer_version="$(awk '
   index($0, ":") > 0 && tolower(substr($0, 1, index($0, ":") - 1)) == "x-vastora-version" {
     value = substr($0, index($0, ":") + 1)
@@ -108,8 +109,11 @@ if ! printf '%s\n' "$expected_installer_digest" | grep -Eq '^[0-9a-f]{64}$' || \
   exit 1
 fi
 chmod 0700 "$installer"
+write_status applying "$target_version" "Installing the verified release."
 failure_message="The verified Center installer did not complete successfully."
-if ! /bin/sh "$installer" center \
+if ! VASTORA_UPDATE_STATUS_FILE="$status_file" \
+  VASTORA_UPDATE_TARGET_VERSION="$target_version" \
+  /bin/sh "$installer" center \
   --release-url "$release_base/vastora-center-install.tar.gz" \
   --install-dir "$install_dir" \
   --expected-version "$target_version"; then

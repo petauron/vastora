@@ -427,6 +427,67 @@ func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
 	}
 }
 
+func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	publicKey := make([]byte, ed25519.PublicKeySize)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO catalog_sources(
+		id, display_name, url, public_key, enabled, refresh_seconds, generation, revision, created_at, last_checked_at, last_error
+	) VALUES('legacy-catalog-v2', 'Legacy v2', 'https://catalog.example.invalid/v2', ?, 1, 3600, 'legacy-generation', 1, ?, ?, '')`, publicKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO catalog_cache(source_id, envelope, fetched_at)
+		VALUES('legacy-catalog-v2', '{"schemaVersion":2,"keyId":"legacy","payload":"","signature":""}', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO catalog_manifest_history(source_id, app_id, version, manifest_sha256, first_seen_at)
+		VALUES('legacy-catalog-v2', 'legacy-app', '1.0.0', ?, ?)`, strings.Repeat("a", 64), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 42`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 41`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var cacheCount, historyCount int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM catalog_cache WHERE source_id = 'legacy-catalog-v2'`).Scan(&cacheCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM catalog_manifest_history WHERE source_id = 'legacy-catalog-v2'`).Scan(&historyCount); err != nil {
+		t.Fatal(err)
+	}
+	if cacheCount != 0 || historyCount != 1 {
+		t.Fatalf("legacy cache=%d immutable history=%d", cacheCount, historyCount)
+	}
+	version, err := sqliteSchemaVersion(ctx, migrated.db)
+	if err != nil || version != 42 {
+		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}
+
 func TestVersion11MigrationSelectsOneRunningThreeXUIControllerPerSite(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
