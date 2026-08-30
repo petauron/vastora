@@ -29,6 +29,7 @@ export type AppData = {
   centerUpdate: CenterUpdateStatus;
   sources: CatalogSource[];
   apps: AppView[];
+  registryCredentials: RegistryCredential[];
   agents: AgentView[];
   deployments: Deployment[];
   organizations: Organization[];
@@ -43,6 +44,14 @@ export type AppData = {
   systemDomain: SystemDomain;
   tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
   centerRemoteAccess?: CenterRemoteAccess;
+};
+
+export type RegistryCredential = {
+  id: string;
+  host: string;
+  username: string;
+  tokenSet: boolean;
+  createdAt: string;
 };
 
 export type SystemEndpointAlias = { kind: "center" | "headscale"; endpoint: string; certificateNotAfter?: string };

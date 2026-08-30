@@ -61,7 +61,14 @@
   REALITY property; this control does not claim to prevent volumetric DDoS.
 - Cloudflare and Headscale credentials are encrypted; list APIs return only
   configuration metadata. Connector tokens are delivered only to the selected
-  Agent through authenticated, leased tasks.
+  Agent through authenticated, leased tasks. Enrollment registers an Agent
+  X25519 identity and pins the Center TLS trust anchor; every full task payload
+  is additionally encrypted to that Agent with a fresh ephemeral key. Envelope
+  authentication binds Agent, task, and attempt. Strict request/response limits
+  reject overlong bodies instead of accepting truncated JSON, persisted task
+  errors redact credential-shaped material, and an encrypted local result
+  outbox makes disconnect and restart acknowledgement replay safe. Immediate
+  credential revocation is separate from workload-aware node disable.
 - Headscale API requests can target only exact HTTPS origins authorized when
   Center starts. Browser administrators select from that operator-controlled
   boundary and cannot send the stored Bearer token to arbitrary network hosts.

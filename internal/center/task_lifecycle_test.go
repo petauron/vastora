@@ -66,7 +66,7 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 		t.Fatalf("unexpected retried deployment state: state=%q reconciliation=%d attempt=%d error=%q application=%q", state, reconciliationRequired, attempt, taskError, applicationStatus)
 	}
 	replayed := claimTask(t, store, node)
-	if replayed.ID != task.ID || replayed.Attempt != task.Attempt+1 {
+	if replayed.ID != task.ID || replayed.Attempt != task.Attempt+1 || !replayed.Reconcile {
 		t.Fatalf("reconciliation created a new task instead of replaying it: first=%#v replay=%#v", task, replayed)
 	}
 }

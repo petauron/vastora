@@ -228,3 +228,37 @@ func (s *Server) handleCreateRegistryCredential(writer http.ResponseWriter, requ
 	}
 	writeJSON(writer, http.StatusCreated, credential)
 }
+
+func (s *Server) handleListRegistryCredentials(writer http.ResponseWriter, request *http.Request) {
+	credentials, err := s.store.ListRegistryCredentials(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"credentials": credentials})
+}
+
+func (s *Server) handleRotateRegistryCredential(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		Username string `json:"username"`
+		Token    string `json:"token"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	credential, err := s.store.RotateRegistryCredential(request.Context(), request.PathValue("id"), input.Username, input.Token)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, credential)
+}
+
+func (s *Server) handleDeleteRegistryCredential(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.DeleteRegistryCredential(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"deleted": true})
+}

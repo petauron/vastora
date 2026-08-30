@@ -68,7 +68,7 @@ func TestAgentBinaryDownloadRequiresLiveEnrollmentAndDoesNotConsumeIt(t *testing
 	if response.Code != http.StatusOK || response.Body.String() != "binary-linux-arm64" {
 		t.Fatalf("arm64 binary download failed: status=%d body=%q", response.Code, response.Body.String())
 	}
-	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64"); err != nil {
+	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t)); err != nil {
 		t.Fatalf("binary download consumed enrollment token: %v", err)
 	}
 }
@@ -88,7 +88,7 @@ func TestEnrolledAgentCanDownloadAuthenticatedUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "old-version", "linux", "amd64")
+	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "old-version", "linux", "amd64", testAgentPublicKey(t))
 	if err != nil {
 		t.Fatal(err)
 	}

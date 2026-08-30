@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/secret"
 )
 
 func TestAppliedStatePersistsSecretsLocally(t *testing.T) {
@@ -16,8 +19,9 @@ func TestAppliedStatePersistsSecretsLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
 	status, err := store.RecordApplied(context.Background(), AppliedInstallation{
-		InstanceID: "cpa-main", AppKey: "official/cpa", Version: "1.0.0",
+		InstanceID: "komari-main", AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest,
 		Config: json.RawMessage(`{"timezone":"UTC"}`), Secrets: json.RawMessage(`{"apiKey":"not-in-status"}`),
 	})
 	if err != nil {
@@ -31,15 +35,28 @@ func TestAppliedStatePersistsSecretsLocally(t *testing.T) {
 		t.Fatalf("got %#v", states)
 	}
 	encoded, _ := json.Marshal(states)
-	if string(encoded) == "" || string(encoded) == `[{"instanceId":"cpa-main","appKey":"official/cpa","version":"1.0.0","configHash":"","appliedAt":""}]` {
+	if string(encoded) == "" {
 		t.Fatal("unexpected status serialization")
 	}
-	secrets, err := store.ReadAppliedSecrets(context.Background(), "cpa-main")
+	secrets, err := store.ReadAppliedSecrets(context.Background(), "komari-main")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(secrets) != `{"apiKey":"not-in-status"}` {
 		t.Fatalf("got %s", secrets)
+	}
+	var sealedState []byte
+	if err := store.db.QueryRow(`SELECT sealed_state FROM applied_installations WHERE instance_id = ?`, "komari-main").Scan(&sealedState); err != nil {
+		t.Fatal(err)
+	}
+	for _, privateValue := range []string{"UTC", "not-in-status", "komari-agent"} {
+		if strings.Contains(string(sealedState), privateValue) {
+			t.Fatalf("sealed application state leaked %q", privateValue)
+		}
+	}
+	restorable, err := store.RestorableInstallations(context.Background())
+	if err != nil || len(restorable) != 1 || restorable[0].Manifest.ID != "komari-agent" || string(restorable[0].Secrets) != `{"apiKey":"not-in-status"}` {
+		t.Fatalf("restorable state = %#v, err=%v", restorable, err)
 	}
 }
 
@@ -100,7 +117,32 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE three_x_ui_reset_journal; PRAGMA user_version = 2`); err != nil {
+	if _, err := store.db.Exec(`DROP TABLE three_x_ui_reset_journal;
+		DROP TABLE task_receipts;
+		ALTER TABLE control_plane_connection DROP COLUMN sealed_private_key;
+		ALTER TABLE control_plane_connection DROP COLUMN ca_fingerprint;
+		ALTER TABLE applied_installations RENAME TO applied_installations_v5_test;
+		CREATE TABLE applied_installations (
+			instance_id TEXT PRIMARY KEY,
+			app_key TEXT NOT NULL,
+			version TEXT NOT NULL,
+			config_json BLOB NOT NULL,
+			sealed_secrets BLOB NOT NULL,
+			service_address TEXT NOT NULL,
+			config_hash TEXT NOT NULL,
+			applied_at TEXT NOT NULL
+		);
+		DROP TABLE applied_installations_v5_test;
+		PRAGMA user_version = 2`); err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	legacySecrets, err := secret.Seal(store.key, []byte(`{"token":"legacy-secret"}`), []byte("agent-instance:legacy-app"))
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO applied_installations(instance_id, app_key, version, config_json, sealed_secrets, service_address, config_hash, applied_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, "legacy-app", "official/legacy", "1.0.0", []byte(`{"timezone":"UTC"}`), legacySecrets, "100.64.0.2", "hash", time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}
@@ -118,5 +160,39 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 	}
 	if _, _, err := store.beginThreeXUIReset(context.Background(), threeXUIResetOperationKey("service", "2026-09-01T00:00:00Z"), "service", "2026-09-01T00:00:00Z", 1, 9, "vastora-node", 10, true); err != nil {
 		t.Fatalf("migrated reset journal is unavailable: %v", err)
+	}
+	if _, err := store.AppliedInstallation(context.Background(), "official/legacy"); !errors.Is(err, errApplicationNotInstalled) {
+		t.Fatalf("unrestorable legacy state survived migration: %v", err)
+	}
+}
+
+func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: "legacy", AppKey: "aaa/legacy", Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`PRAGMA user_version = 7`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	restored, err := store.RestorableInstallations(ctx)
+	if err != nil || len(restored) != 1 || restored[0].AppKey != komariKey {
+		t.Fatalf("restorable applications after migration = %#v, err=%v", restored, err)
 	}
 }

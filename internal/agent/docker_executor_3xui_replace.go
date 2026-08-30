@@ -38,7 +38,7 @@ type threeXUIContainerEngine interface {
 	VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 }
 
-func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngine, createOptions client.ContainerCreateOptions, validate func(string) (string, error), verifyPromotion func(string, string) error) (string, error) {
+func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngine, createOptions client.ContainerCreateOptions, allowFreshState bool, validate func(string) (string, error), verifyPromotion func(string, string) error) (string, error) {
 	if validate == nil || verifyPromotion == nil {
 		return "", errors.New("agent: 3x-ui replacement validation is missing")
 	}
@@ -58,6 +58,9 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 	}
 	databaseVolumeFresh := !databaseVolumeExists
 	if databaseVolumeFresh {
+		if !allowFreshState {
+			return "", errors.New("agent: offline restore cannot create a new 3x-ui database")
+		}
 		createdVolume, createErr := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: threeXUIDatabaseVolume, Labels: map[string]string{threeXUIVolumeOwnerLabel: "true"}})
 		err = createErr
 		if err != nil {
@@ -120,6 +123,9 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 			// or partially populated keep-data volume fails closed.
 			managedEmptyVolume := !previousExists && errors.Is(err, errThreeXUIVolumeEmpty) && databaseVolume.Volume.Labels[threeXUIVolumeOwnerLabel] == "true"
 			if managedEmptyVolume {
+				if !allowFreshState {
+					return "", abortBeforeRename(errors.New("agent: offline restore requires a populated 3x-ui database"))
+				}
 				if cleanupErr := removeThreeXUIContainerIfExists(ctx, docker, candidateID); cleanupErr != nil {
 					return "", errors.Join(fmt.Errorf("agent: clear empty 3x-ui database candidate: %w", err), cleanupErr)
 				}

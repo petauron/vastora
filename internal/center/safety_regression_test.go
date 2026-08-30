@@ -27,7 +27,7 @@ func TestCreateDeploymentRequiresConfirmedServiceAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64")
+	node, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t))
 	if err != nil {
 		t.Fatal(err)
 	}

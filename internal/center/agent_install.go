@@ -54,6 +54,7 @@ set -eu
 
 center_url=@@CENTER_URL@@
 bootstrap_url=@@BOOTSTRAP_URL@@
+ca_fingerprint=@@CA_FINGERPRINT@@
 IFS= read -r token
 if [ -z "$token" ]; then
   echo "The one-time Agent token is required." >&2
@@ -158,9 +159,9 @@ fi
 install -m 0755 "$temporary" /usr/local/bin/vastora
 echo "Registering this node and starting the system service..."
 if [ "$replace_existing" -eq 1 ]; then
-  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --replace-existing
+  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint" --replace-existing
 else
-  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file -
+  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint"
 fi
 `
 
@@ -230,6 +231,7 @@ fi`
 	return strings.NewReplacer(
 		"@@CENTER_URL@@", shellQuote(profile.CenterURL),
 		"@@BOOTSTRAP_URL@@", shellQuote(bootstrapURL),
+		"@@CA_FINGERPRINT@@", shellQuote(profile.CAFingerprint),
 		"@@HEADSCALE_BOOTSTRAP@@", headscaleBootstrap,
 	).Replace(agentInstallScript)
 }

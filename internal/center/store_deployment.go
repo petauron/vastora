@@ -14,18 +14,19 @@ func (s *Store) HasActiveDeployment(ctx context.Context, agentID, appKey string)
 }
 
 type activeDeploymentState struct {
-	Installed bool
-	ID        string
-	Version   string
-	Manifest  json.RawMessage
+	Installed            bool
+	ID                   string
+	Version              string
+	Manifest             json.RawMessage
+	RegistryCredentialID string
 }
 
 func (s *Store) activeDeployment(ctx context.Context, agentID, appKey string) (activeDeploymentState, error) {
 	var operation string
 	var state activeDeploymentState
-	err := s.db.QueryRowContext(ctx, `SELECT id, operation, app_version, manifest_json FROM deployments
+	err := s.db.QueryRowContext(ctx, `SELECT id, operation, app_version, manifest_json, COALESCE(registry_credential_id, '') FROM deployments
 		WHERE agent_id = ? AND app_key = ? AND state = 'succeeded'
-		ORDER BY created_at DESC, rowid DESC LIMIT 1`, agentID, appKey).Scan(&state.ID, &operation, &state.Version, &state.Manifest)
+		ORDER BY created_at DESC, rowid DESC LIMIT 1`, agentID, appKey).Scan(&state.ID, &operation, &state.Version, &state.Manifest, &state.RegistryCredentialID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return activeDeploymentState{}, nil
 	}

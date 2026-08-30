@@ -79,6 +79,10 @@ func (c Client) uploadThreeXUIBackup(ctx context.Context, store *Store, applicat
 	if err != nil {
 		return err
 	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
+	if err != nil {
+		return err
+	}
 	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/three-x-ui-backups/" + url.PathEscape(applicationID) + "/" + strconv.FormatInt(revision, 10)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(content))
 	if err != nil {
@@ -86,9 +90,9 @@ func (c Client) uploadThreeXUIBackup(ctx context.Context, store *Store, applicat
 	}
 	request.Header.Set("Authorization", "Bearer "+connection.Credential)
 	request.Header.Set("Content-Type", "application/octet-stream")
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+	client, err := c.clientFor(connection.CAFingerprint, 2*time.Minute)
+	if err != nil {
+		return err
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -107,15 +111,19 @@ func (c Client) downloadThreeXUIMigrationBackup(ctx context.Context, store *Stor
 	if err != nil {
 		return nil, err
 	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
+	if err != nil {
+		return nil, err
+	}
 	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/three-x-ui-migrations/" + url.PathEscape(migrationID) + "/backup"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+connection.Credential)
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+	client, err := c.clientFor(connection.CAFingerprint, 2*time.Minute)
+	if err != nil {
+		return nil, err
 	}
 	response, err := client.Do(request)
 	if err != nil {

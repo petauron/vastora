@@ -91,22 +91,7 @@ func (manager SystemdHostApplicationManager) ApplyKomari(ctx context.Context, ta
 		return fmt.Errorf("agent: encode Komari Agent configuration: %w", err)
 	}
 	config = append(config, '\n')
-	unit := []byte(komariUnitMarker + `[Unit]
-Description=Komari Agent
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/opt/komari/agent --config /etc/komari-agent/config.json
-WorkingDirectory=/opt/komari
-Restart=always
-RestartSec=5
-User=root
-
-[Install]
-WantedBy=multi-user.target
-`)
+	unit := komariUnit()
 	paths := []string{manager.path(komariBinaryPath), manager.path(komariConfigPath), manager.path(komariUnitPath)}
 	snapshots := make([]hostFileSnapshot, 0, len(paths))
 	for _, path := range paths {
@@ -153,6 +138,100 @@ WantedBy=multi-user.target
 		_ = manager.run(ctx, "systemctl", "disable", "--now", "komari-agent.service")
 	}
 	return fmt.Errorf("agent: apply Komari Agent: %w", errors.Join(err, rollbackErr))
+}
+
+func komariUnit() []byte {
+	return []byte(komariUnitMarker + `[Unit]
+Description=Komari Agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/komari/agent --config /etc/komari-agent/config.json
+WorkingDirectory=/opt/komari
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+`)
+}
+
+// RestoreKomari restarts only the Vastora-managed binary and configuration
+// whose bytes still match the last successful signed manifest. It deliberately
+// has no download path so Center outages cannot introduce new code.
+func (manager SystemdHostApplicationManager) RestoreKomari(ctx context.Context, task DeploymentTask) error {
+	if task.Manifest.ID != "komari-agent" || task.Manifest.Version != "1.2.60" || !strings.HasSuffix(task.AppKey, "/"+task.Manifest.ID) {
+		return errors.New("agent: invalid Komari Agent restore state")
+	}
+	var input struct {
+		Endpoint string `json:"endpoint"`
+	}
+	var secretInput struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(task.Config, &input) != nil || json.Unmarshal(task.Secrets, &secretInput) != nil {
+		return errors.New("agent: invalid Komari Agent restore configuration")
+	}
+	endpoint, err := normalizedKomariEndpoint(input.Endpoint)
+	if err != nil || strings.TrimSpace(secretInput.Token) == "" || len(secretInput.Token) > 4096 {
+		return errors.New("agent: incomplete Komari Agent restore configuration")
+	}
+	target := manager.HostTarget
+	if target.OS == "" && target.Architecture == "" {
+		target, err = platform.Parse(runtime.GOOS, runtime.GOARCH)
+	} else {
+		target, err = platform.Parse(target.OS, target.Architecture)
+	}
+	if err != nil {
+		return fmt.Errorf("agent: restore Komari Agent: %w", err)
+	}
+	artifact, err := declaredArtifact(task.Manifest, "komari-agent", target)
+	if err != nil {
+		return err
+	}
+	desiredConfig, err := json.MarshalIndent(komariConfig{
+		Endpoint: endpoint, Token: strings.TrimSpace(secretInput.Token), Interval: 3,
+		InfoReportInterval: 5, DisableAutoUpdate: true, DisableWebSSH: true,
+		IgnoreUnsafeCert: false, ProtocolVersion: 2,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("agent: encode Komari Agent restore configuration: %w", err)
+	}
+	desiredConfig = append(desiredConfig, '\n')
+	binary, err := captureHostFile(manager.path(komariBinaryPath))
+	if err != nil || !binary.Exists {
+		return errors.Join(errors.New("agent: managed Komari Agent binary is unavailable"), err)
+	}
+	digest := sha256.Sum256(binary.Data)
+	if hex.EncodeToString(digest[:]) != artifact.SHA256 {
+		return errors.New("agent: managed Komari Agent binary no longer matches its signed manifest")
+	}
+	unit, err := captureHostFile(manager.path(komariUnitPath))
+	if err != nil || !unit.Exists || !bytes.Equal(unit.Data, komariUnit()) {
+		return errors.Join(errors.New("agent: managed Komari Agent service is unavailable"), err)
+	}
+	config, err := captureHostFile(manager.path(komariConfigPath))
+	if err != nil {
+		return err
+	}
+	configRestored := !config.Exists || !bytes.Equal(config.Data, desiredConfig)
+	if configRestored {
+		if err := writeHostFileAtomic(manager.path(komariConfigPath), desiredConfig, 0o600); err != nil {
+			return fmt.Errorf("agent: restore last-known-good Komari Agent configuration: %w", err)
+		}
+	}
+	if !configRestored && manager.run(ctx, "systemctl", "is-active", "--quiet", "komari-agent.service") == nil {
+		return nil
+	}
+	for _, command := range [][]string{{"daemon-reload"}, {"enable", "komari-agent.service"}, {"restart", "komari-agent.service"}, {"is-active", "--quiet", "komari-agent.service"}} {
+		if err := manager.run(ctx, "systemctl", command...); err != nil {
+			return fmt.Errorf("agent: restore Komari Agent service: %w", err)
+		}
+	}
+	return nil
 }
 
 func (manager SystemdHostApplicationManager) RemoveKomari(ctx context.Context) error {

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/netip"
 
 	"github.com/moby/moby/api/types/container"
@@ -30,7 +29,7 @@ func deployCPA(ctx context.Context, docker *client.Client, task DeploymentTask, 
 	if task.Manifest.ID != "cpa" || task.Manifest.Version != "7.2.128" {
 		return errors.New("agent: unsupported official CPA package")
 	}
-	imageRef, err := declaredImage(task.Manifest, "cli-proxy-api")
+	imageRef, err := pullDeclaredImage(ctx, docker, task, "cli-proxy-api")
 	if err != nil {
 		return err
 	}
@@ -38,12 +37,6 @@ func deployCPA(ctx context.Context, docker *client.Client, task DeploymentTask, 
 	if err != nil {
 		return err
 	}
-	pull, err := docker.ImagePull(ctx, imageRef, client.ImagePullOptions{})
-	if err != nil {
-		return fmt.Errorf("agent: pull CPA image: %w", err)
-	}
-	_, _ = io.Copy(io.Discard, pull)
-	_ = pull.Close()
 	_, _ = docker.ContainerRemove(ctx, cpaContainer, client.ContainerRemoveOptions{Force: true})
 	if err := ensureCPANetwork(ctx, docker); err != nil {
 		return err
@@ -53,6 +46,7 @@ func deployCPA(ctx context.Context, docker *client.Client, task DeploymentTask, 
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:        imageRef,
+			Labels:       map[string]string{applicationDeploymentIDLabel: task.ID},
 			Env:          []string{"TZ=" + settings.Timezone},
 			ExposedPorts: network.PortSet{port: struct{}{}},
 			WorkingDir:   "/CLIProxyAPI",
