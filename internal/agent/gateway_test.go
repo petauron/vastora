@@ -434,10 +434,13 @@ func TestGatewayRejectsMismatchedOrWrongHostnameCertificates(t *testing.T) {
 
 func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 	state := gateway.DesiredState{
-		Revision:    1,
-		Listeners:   []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
-		Routes:      []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
-		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
+		Revision:  1,
+		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
+		Routes:    []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
+		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{
+			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}},
+			{ID: "raw", Hostname: "raw.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 3443}}},
+		}},
 	}
 	payload, err := caddyConfiguration(state, nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
@@ -452,10 +455,19 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	haproxy := string(configuration)
-	for _, wanted := range []string{"bind 0.0.0.0:443", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check", "server upstream-0 127.0.0.1:2443 check"} {
+	for _, wanted := range []string{"bind 0.0.0.0:443", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check", "server upstream-0 127.0.0.1:2443 check send-proxy-v2", "server upstream-0 127.0.0.1:3443 check"} {
 		if !strings.Contains(haproxy, wanted) {
 			t.Fatalf("HAProxy configuration missing %q: %s", wanted, haproxy)
 		}
+	}
+	if strings.Contains(haproxy, "127.0.0.1:3443 check send-proxy") || strings.Contains(haproxy, "server caddy vastora-gateway-caddy:443 check send-proxy") {
+		t.Fatalf("Proxy Protocol leaked to an unrelated backend: %s", haproxy)
+	}
+	invalid := *state.SharedHTTPS
+	invalid.Routes = append([]gateway.Layer4Route(nil), invalid.Routes...)
+	invalid.Routes[0].ProxyProtocol = "v1"
+	if _, err := haproxyConfiguration(invalid); err == nil {
+		t.Fatal("unsupported route-scoped Proxy Protocol mode was accepted")
 	}
 }
 

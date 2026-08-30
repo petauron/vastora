@@ -166,10 +166,13 @@ func certificateCoversName(certificate *x509.Certificate, name string) bool {
 // Layer4Route is a raw TCP upstream selected from the TLS ClientHello SNI.
 // TLS remains end-to-end; HAProxy never terminates certificates.
 type Layer4Route struct {
-	ID        string     `json:"id"`
-	Hostname  string     `json:"hostname"`
-	Upstreams []Upstream `json:"upstreams"`
+	ID            string     `json:"id"`
+	Hostname      string     `json:"hostname"`
+	ProxyProtocol string     `json:"proxyProtocol,omitempty"`
+	Upstreams     []Upstream `json:"upstreams"`
 }
+
+const ProxyProtocolV2 = "v2"
 
 // SharedHTTPS describes the optional public TCP frontend that owns port 443.
 // Unknown and Web SNI values are passed through to Caddy, which remains the
@@ -265,6 +268,9 @@ func (state DesiredState) Validate() error {
 		for _, route := range shared.Routes {
 			if strings.TrimSpace(route.ID) == "" || !hostnamePattern.MatchString(route.Hostname) || len(route.Upstreams) == 0 {
 				return errors.New("gateway: invalid shared HTTPS route")
+			}
+			if route.ProxyProtocol != "" && route.ProxyProtocol != ProxyProtocolV2 {
+				return fmt.Errorf("gateway: shared HTTPS route %q has an invalid Proxy Protocol mode", route.ID)
 			}
 			if seenLayer4[route.Hostname] || webHosts[route.Hostname] {
 				return fmt.Errorf("gateway: duplicate shared HTTPS hostname %q", route.Hostname)

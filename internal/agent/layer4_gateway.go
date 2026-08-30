@@ -379,7 +379,11 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 	for index, route := range desired.Routes {
 		configuration.WriteString(fmt.Sprintf("\nbackend vastora-raw-%d\n", index))
 		for upstreamIndex, upstream := range route.Upstreams {
-			configuration.WriteString(fmt.Sprintf("  server upstream-%d %s check\n", upstreamIndex, net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port))))
+			proxyProtocol := ""
+			if route.ProxyProtocol == gateway.ProxyProtocolV2 {
+				proxyProtocol = " send-proxy-v2"
+			}
+			configuration.WriteString(fmt.Sprintf("  server upstream-%d %s check%s\n", upstreamIndex, net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port)), proxyProtocol))
 		}
 	}
 	return []byte(configuration.String()), nil

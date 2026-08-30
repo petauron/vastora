@@ -107,6 +107,7 @@ type RealityCommandResult struct {
 	CompanionTag       string `json:"companionTag,omitempty"`
 	CompanionPort      int    `json:"companionPort,omitempty"`
 	GuardStatus        string `json:"guardStatus"`
+	ProxyProtocol      bool   `json:"proxyProtocol"`
 	ConnectHostname    string `json:"connectHostname"`
 	ShareURI           string `json:"shareUri"`
 	InboundTag         string `json:"inboundTag"`
@@ -337,7 +338,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
-	if result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" {
+	if result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {

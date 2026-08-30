@@ -245,6 +245,7 @@ type RealityCommandResult struct {
 	CompanionTag       string `json:"companionTag,omitempty"`
 	CompanionPort      int    `json:"companionPort,omitempty"`
 	GuardStatus        string `json:"guardStatus"`
+	ProxyProtocol      bool   `json:"proxyProtocol"`
 	ConnectHostname    string `json:"connectHostname"`
 	ShareURI           string `json:"shareUri"`
 	InboundTag         string `json:"inboundTag"`

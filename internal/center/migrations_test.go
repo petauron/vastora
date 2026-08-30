@@ -296,6 +296,68 @@ func TestVersion26MigrationQuarantinesEveryExistingRealityPublication(t *testing
 	}
 }
 
+func TestVersion40MigrationWithdrawsRealityBeforeProxyProtocolCutover(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 39); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	statements := []string{
+		`INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
+		 VALUES('reality-v39-app', '3x-ui', 'agent-v3', 'site-v3', 'vastora-official/3x-ui', '', 'running', 'docker', 'master', '` + now + `', '` + now + `')`,
+		`INSERT INTO services(id, application_id, site_id, name, display_name, protocol, container_port, host_port, endpoint, source, app_protocol, status, created_at, updated_at)
+		 VALUES('reality-v39-service', 'reality-v39-app', 'site-v3', 'inbound-9', 'Managed REALITY', 'tcp', 20000, 20000, '10.0.0.9:20000', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO three_x_ui_reality_guards(service_id, target_host, target_ip, server_name, node_asn, target_asn, companion_inbound_id, companion_tag, companion_port, status, verified_at, created_at, updated_at)
+		 VALUES('reality-v39-service', 'www.example.com', '203.0.113.9', 'www.example.com', 64500, 64500, 10, 'vastora-guard', 21000, 'ready', '` + now + `', '` + now + `', '` + now + `')`,
+		`INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
+		 VALUES('reality-v39-publication', 'reality-v39-service', 'public_shared_443', 'agent-v3', 'reality.example.test', 'www.example.com', 'manual', 1, 1, 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO routes(id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, status, created_at, updated_at)
+		 VALUES('reality-v39-route', 'reality-v39-publication', 'site-v3', 'reality-v39-service', 'agent-v3', 'reality.example.test', 'https', '["10.0.0.9:20000"]', 'ready', '` + now + `', '` + now + `')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var guardStatus, guardError, serviceStatus, publicationStatus string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT guard.status, guard.last_error, service.status, publication.status
+		FROM three_x_ui_reality_guards guard JOIN services service ON service.id = guard.service_id
+		JOIN publications publication ON publication.service_id = service.id
+		WHERE guard.service_id = 'reality-v39-service'`).Scan(&guardStatus, &guardError, &serviceStatus, &publicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	var routes int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE id = 'reality-v39-route'`).Scan(&routes); err != nil {
+		t.Fatal(err)
+	}
+	if guardStatus != "action_required" || !strings.Contains(guardError, "Proxy Protocol v2") || serviceStatus != "degraded" || publicationStatus != "stopped" || routes != 0 {
+		t.Fatalf("Proxy Protocol cutover guard=%q error=%q service=%q publication=%q routes=%d", guardStatus, guardError, serviceStatus, publicationStatus, routes)
+	}
+}
+
 func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
