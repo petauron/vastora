@@ -14,14 +14,22 @@ import (
 )
 
 func removeJSONObjectKeys(raw json.RawMessage, keys ...string) (json.RawMessage, error) {
-	values := map[string]json.RawMessage{}
-	if json.Unmarshal(raw, &values) != nil {
-		return nil, errors.New("center: deployment configuration must be a JSON object")
+	values, err := decodeJSONObject(raw, "center: deployment configuration must be a JSON object")
+	if err != nil {
+		return nil, err
 	}
 	for _, key := range keys {
 		delete(values, key)
 	}
 	return json.Marshal(values)
+}
+
+func decodeJSONObject(raw json.RawMessage, message string) (map[string]json.RawMessage, error) {
+	var values map[string]json.RawMessage
+	if json.Unmarshal(raw, &values) != nil || values == nil {
+		return nil, errors.New(message)
+	}
+	return values, nil
 }
 
 func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appKey string, updates json.RawMessage) (json.RawMessage, error) {
@@ -40,8 +48,8 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 	} else if err != nil {
 		return nil, fmt.Errorf("center: read previous deployment configuration: %w", err)
 	}
-	merged := map[string]json.RawMessage{}
-	if json.Unmarshal(configJSON, &merged) != nil {
+	merged, err := decodeJSONObject(configJSON, "center: stored deployment configuration is invalid")
+	if err != nil {
 		return nil, errors.New("center: stored deployment configuration is invalid")
 	}
 	if secretID.Valid {
@@ -49,8 +57,8 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 		if err != nil {
 			return nil, err
 		}
-		var secretValues map[string]json.RawMessage
-		if json.Unmarshal(secretJSON, &secretValues) != nil {
+		secretValues, decodeErr := decodeJSONObject(secretJSON, "center: stored deployment secrets are invalid")
+		if decodeErr != nil {
 			return nil, errors.New("center: stored deployment secrets are invalid")
 		}
 		for key, value := range secretValues {
@@ -58,9 +66,9 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 		}
 	}
 	if len(updates) != 0 {
-		var changed map[string]json.RawMessage
-		if json.Unmarshal(updates, &changed) != nil {
-			return nil, errors.New("center: deployment configuration must be a JSON object")
+		changed, decodeErr := decodeJSONObject(updates, "center: deployment configuration must be a JSON object")
+		if decodeErr != nil {
+			return nil, decodeErr
 		}
 		for key, value := range changed {
 			merged[key] = value
@@ -91,9 +99,9 @@ func (s *Store) withCPASecret(ctx context.Context, agentID string, raw json.RawM
 	if err != nil {
 		return nil, err
 	}
-	var values map[string]json.RawMessage
-	var cpa map[string]json.RawMessage
-	if json.Unmarshal(raw, &values) != nil || json.Unmarshal(cpaSecrets, &cpa) != nil || cpa["management_key"] == nil {
+	values, valuesErr := decodeJSONObject(raw, "center: CPA management key is unavailable")
+	cpa, cpaErr := decodeJSONObject(cpaSecrets, "center: CPA management key is unavailable")
+	if valuesErr != nil || cpaErr != nil || cpa["management_key"] == nil {
 		return nil, errors.New("center: CPA management key is unavailable")
 	}
 	values["cpa_management_key"] = cpa["management_key"]
@@ -194,9 +202,11 @@ func (s *Store) storeApplicationSecrets(ctx context.Context, tx *sql.Tx, deploym
 func normalizeDeploymentConfig(manifest catalog.AppManifest, raw json.RawMessage) ([]byte, json.RawMessage, error) {
 	values := make(map[string]json.RawMessage, len(manifest.Config))
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &values); err != nil {
-			return nil, nil, errors.New("center: deployment configuration must be a JSON object")
+		decoded, err := decodeJSONObject(raw, "center: deployment configuration must be a JSON object")
+		if err != nil {
+			return nil, nil, err
 		}
+		values = decoded
 	}
 	fields := make(map[string]catalog.ConfigField, len(manifest.Config))
 	for _, field := range manifest.Config {

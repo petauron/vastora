@@ -345,7 +345,7 @@ func runAgent(arguments []string) error {
 		capabilitiesValue := flags.String("capabilities", "docker", "comma-separated implemented capabilities: docker,gateway")
 		caddyAdmin := flags.String("caddy-admin", "unix:///run/vastora/caddy-admin.sock", "private Caddy Admin API endpoint for gateway nodes")
 		caddyImage := flags.String("caddy-image", "docker.io/library/caddy:2.11.4@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d", "Caddy image installed by the Agent when this node is selected as a gateway")
-		haproxyImage := flags.String("haproxy-image", "docker.io/library/haproxy:3.2.7-alpine@sha256:a9b408a818f5d0d9a6a042ec2957921038399f7a515f8b7bfef2054ef7f4ce05", "HAProxy image installed only when this gateway shares public port 443")
+		haproxyImage := flags.String("haproxy-image", agent.DefaultHAProxyImage, "HAProxy image installed only when this gateway shares public port 443")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
