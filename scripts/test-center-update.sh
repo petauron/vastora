@@ -10,6 +10,7 @@ trap cleanup EXIT HUP INT TERM
 fake_bin="$temporary_dir/bin"
 install_dir="$temporary_dir/center"
 mkdir -p "$fake_bin" "$install_dir"
+printf '%s\n' 'VASTORA_VERSION=0.1.0-alpha.57' > "$install_dir/release.env"
 
 cat > "$fake_bin/id" <<'EOF'
 #!/bin/sh
@@ -79,6 +80,7 @@ grep -Fq '"state":"succeeded"' "$install_dir/.update-status.json"
 grep -Fq '"targetVersion":"0.1.0-alpha.58"' "$install_dir/.update-status.json"
 grep -Fqx 'VASTORA_VERSION=0.1.0-alpha.58' "$install_dir/release.env"
 grep -Fqx 'https://vastora.petauron.com/releases/v0.1.0-alpha.58/vastora-center-install.tar.gz' "$temporary_dir/installer.log"
+test ! -e "$install_dir/.update-request"
 
 if run_update 0.1.0-alpha.59 0.1.0-alpha.58 >/dev/null 2>&1; then
   echo "Center updater accepted an installer for the wrong version." >&2
@@ -86,5 +88,6 @@ if run_update 0.1.0-alpha.59 0.1.0-alpha.58 >/dev/null 2>&1; then
 fi
 grep -Fq '"state":"failed"' "$install_dir/.update-status.json"
 grep -Fq 'installer version did not match' "$install_dir/.update-status.json"
+test ! -e "$install_dir/.update-request"
 
 echo "Center automatic update tests: OK"
