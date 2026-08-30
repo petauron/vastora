@@ -33,6 +33,10 @@ type Server struct {
 	updates              deployapi.CenterUpdater
 	releaseChecker       CenterReleaseChecker
 	catalogRefreshMu     sync.Mutex
+	assistantRunMu       sync.Mutex
+	assistantRuns        map[string]context.CancelFunc
+	assistantWatchers    map[string]struct{}
+	assistantResumeOnce  sync.Once
 	startupReady         atomic.Bool
 }
 
@@ -53,7 +57,7 @@ func (s *Server) WithCenterReleaseChecker(checker CenterReleaseChecker) *Server 
 }
 
 func NewServer(store *Store, staticDir string, secureCookies bool) *Server {
-	server := &Server{store: store, staticDir: staticDir, secureCookies: secureCookies}
+	server := &Server{store: store, staticDir: staticDir, secureCookies: secureCookies, assistantRuns: make(map[string]context.CancelFunc), assistantWatchers: make(map[string]struct{})}
 	server.startupReady.Store(true)
 	return server
 }
@@ -79,6 +83,7 @@ func (s *Server) WithCoLocatedAgentURL(value string) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
+	s.assistantResumeOnce.Do(func() { s.store.startBackground(s.resumeAssistantExecutions) })
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
@@ -97,9 +102,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/system/update", s.requireAuth(true, s.handleStartCenterUpdate))
 	mux.HandleFunc("GET /api/v1/system/domain", s.requireAuth(false, s.handleSystemDomain))
 	mux.HandleFunc("POST /api/v1/system/domain", s.requireAuth(true, s.handleSwitchSystemDomain))
+	mux.HandleFunc("POST /api/v1/system/domain/aliases/{id}/retire", s.requireAuth(true, s.handleRetireSystemEndpointAliases))
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
 	mux.HandleFunc("POST /api/v1/deployments", s.requireAuth(true, s.handleCreateDeployment))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/credentials/reveal", s.requireAuth(true, s.handleRevealDeploymentCredentials))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/credentials/ack", s.requireAuth(true, s.handleAcknowledgeDeploymentCredentials))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry-reconciliation", s.requireAuth(true, s.handleRetryTaskReconciliation))
 	mux.HandleFunc("GET /api/v1/organizations", s.requireAuth(false, s.handleListOrganizations))
 	mux.HandleFunc("GET /api/v1/sites", s.requireAuth(false, s.handleListSites))
@@ -120,6 +128,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/application-commands/{id}", s.requireAuth(false, s.handleApplicationCommand))
 	mux.HandleFunc("GET /api/v1/application-commands/{id}/events", s.requireAuth(false, s.handleApplicationCommandEvents))
 	mux.HandleFunc("POST /api/v1/application-commands/{id}/reveal", s.requireAuth(true, s.handleRevealApplicationCommand))
+	mux.HandleFunc("POST /api/v1/application-commands/{id}/ack", s.requireAuth(true, s.handleAcknowledgeApplicationCommand))
 	mux.HandleFunc("GET /api/v1/services", s.requireAuth(false, s.handleListServices))
 	mux.HandleFunc("GET /api/v1/publications", s.requireAuth(false, s.handleListPublications))
 	mux.HandleFunc("POST /api/v1/publications", s.requireAuth(true, s.handleCreatePublication))
@@ -152,6 +161,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/enroll", s.handleEnrollAgent)
 	mux.HandleFunc("POST /api/v1/agents/{id}/heartbeat", s.handleAgentHeartbeat)
 	mux.HandleFunc("GET /api/v1/agents/{id}/tasks/next", s.handleClaimTask)
+	mux.HandleFunc("POST /api/v1/agents/{id}/tasks/{taskID}/lease", s.handleRenewTaskLease)
+	mux.HandleFunc("POST /api/v1/agents/{id}/decommission/start", s.handleStartAgentDecommission)
 	mux.HandleFunc("POST /api/v1/agents/{id}/tasks/{taskID}/result", s.handleCompleteTask)
 	mux.HandleFunc("PUT /api/v1/agents/{id}/three-x-ui-backups/{applicationID}/{revision}", s.handleStoreThreeXUIBackup)
 	mux.HandleFunc("GET /api/v1/agents/{id}/three-x-ui-migrations/{migrationID}/backup", s.handleThreeXUIMigrationBackup)
@@ -166,6 +177,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/registry-credentials", s.requireAuth(true, s.handleCreateRegistryCredential))
 	mux.HandleFunc("PUT /api/v1/registry-credentials/{id}", s.requireAuth(true, s.handleRotateRegistryCredential))
 	mux.HandleFunc("DELETE /api/v1/registry-credentials/{id}", s.requireAuth(true, s.handleDeleteRegistryCredential))
+	mux.HandleFunc("GET /api/v1/assistant/provider", s.requireAuth(false, s.handleAssistantProvider))
+	mux.HandleFunc("PUT /api/v1/assistant/provider", s.requireAuth(true, s.handleSaveAssistantProvider))
+	mux.HandleFunc("POST /api/v1/assistant/provider/validate", s.requireAuth(true, s.handleValidateAssistantProvider))
+	mux.HandleFunc("GET /api/v1/assistant/conversations", s.requireAuth(false, s.handleListAssistantConversations))
+	mux.HandleFunc("POST /api/v1/assistant/conversations", s.requireAuth(true, s.handleCreateAssistantConversation))
+	mux.HandleFunc("GET /api/v1/assistant/conversations/{id}", s.requireAuth(false, s.handleAssistantConversation))
+	mux.HandleFunc("POST /api/v1/assistant/conversations/{id}/messages", s.requireAuth(true, s.handleCreateAssistantMessage))
+	mux.HandleFunc("GET /api/v1/assistant/conversations/{id}/events", s.requireAuth(false, s.handleAssistantEvents))
+	mux.HandleFunc("POST /api/v1/assistant/runs/{id}/cancel", s.requireAuth(true, s.handleCancelAssistantRun))
+	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/approve", s.requireAuth(true, s.handleApproveAssistantProposal))
+	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/reject", s.requireAuth(true, s.handleRejectAssistantProposal))
+	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/apply", s.requireAuth(true, s.handleApplyAssistantProposal))
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.Handle("/", s.staticHandler())
 	return securityHeaders(mux)
@@ -196,6 +219,14 @@ func (s *Server) requireAuth(mutation bool, handler http.HandlerFunc) http.Handl
 		}
 		handler(writer, request)
 	}
+}
+
+func authenticatedSecretOwner(request *http.Request) string {
+	cookie, err := request.Cookie("vastora_session")
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%x", tokenHash(cookie.Value))
 }
 
 func (s *Server) setSessionCookies(writer http.ResponseWriter, request *http.Request, session, csrf string) {

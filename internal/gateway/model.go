@@ -4,7 +4,10 @@ package gateway
 import (
 	"bytes"
 	"crypto"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -47,6 +50,33 @@ type Certificate struct {
 	Hostname       string `json:"hostname"`
 	CertificatePEM string `json:"certificatePem"`
 	PrivateKeyPEM  string `json:"privateKeyPem"`
+}
+
+func ConfigurationHash(state DesiredState, certificates []Certificate) (string, error) {
+	if err := state.Validate(); err != nil {
+		return "", err
+	}
+	state = state.Sorted()
+	canonicalCertificates := append([]Certificate(nil), certificates...)
+	sort.Slice(canonicalCertificates, func(i, j int) bool {
+		if canonicalCertificates[i].Hostname != canonicalCertificates[j].Hostname {
+			return canonicalCertificates[i].Hostname < canonicalCertificates[j].Hostname
+		}
+		if canonicalCertificates[i].CertificatePEM != canonicalCertificates[j].CertificatePEM {
+			return canonicalCertificates[i].CertificatePEM < canonicalCertificates[j].CertificatePEM
+		}
+		return canonicalCertificates[i].PrivateKeyPEM < canonicalCertificates[j].PrivateKeyPEM
+	})
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return "", err
+	}
+	certificateJSON, err := json.Marshal(canonicalCertificates)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(append(encoded, certificateJSON...))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func ValidateCertificates(values []Certificate) error {
@@ -136,10 +166,13 @@ func certificateCoversName(certificate *x509.Certificate, name string) bool {
 // Layer4Route is a raw TCP upstream selected from the TLS ClientHello SNI.
 // TLS remains end-to-end; HAProxy never terminates certificates.
 type Layer4Route struct {
-	ID        string     `json:"id"`
-	Hostname  string     `json:"hostname"`
-	Upstreams []Upstream `json:"upstreams"`
+	ID            string     `json:"id"`
+	Hostname      string     `json:"hostname"`
+	ProxyProtocol string     `json:"proxyProtocol,omitempty"`
+	Upstreams     []Upstream `json:"upstreams"`
 }
+
+const ProxyProtocolV2 = "v2"
 
 // SharedHTTPS describes the optional public TCP frontend that owns port 443.
 // Unknown and Web SNI values are passed through to Caddy, which remains the
@@ -235,6 +268,9 @@ func (state DesiredState) Validate() error {
 		for _, route := range shared.Routes {
 			if strings.TrimSpace(route.ID) == "" || !hostnamePattern.MatchString(route.Hostname) || len(route.Upstreams) == 0 {
 				return errors.New("gateway: invalid shared HTTPS route")
+			}
+			if route.ProxyProtocol != "" && route.ProxyProtocol != ProxyProtocolV2 {
+				return fmt.Errorf("gateway: shared HTTPS route %q has an invalid Proxy Protocol mode", route.ID)
 			}
 			if seenLayer4[route.Hostname] || webHosts[route.Hostname] {
 				return fmt.Errorf("gateway: duplicate shared HTTPS hostname %q", route.Hostname)

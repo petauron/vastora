@@ -13,6 +13,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
 type cpaConfig struct {
@@ -37,8 +38,13 @@ func deployCPA(ctx context.Context, docker *client.Client, task DeploymentTask, 
 	if err != nil {
 		return err
 	}
-	_, _ = docker.ContainerRemove(ctx, cpaContainer, client.ContainerRemoveOptions{Force: true})
 	if err := ensureCPANetwork(ctx, docker); err != nil {
+		return err
+	}
+	if err := ensureOwnedApplicationVolumes(ctx, docker, applicationVolumes[cpaKey], cpaKey, task.ApplicationID); err != nil {
+		return err
+	}
+	if err := removeOwnedApplicationContainer(ctx, docker, cpaContainer, cpaKey, "cpa", task.ApplicationID, anyApplicationDeployment); err != nil {
 		return err
 	}
 
@@ -46,7 +52,7 @@ func deployCPA(ctx context.Context, docker *client.Client, task DeploymentTask, 
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:        imageRef,
-			Labels:       map[string]string{applicationDeploymentIDLabel: task.ID},
+			Labels:       applicationResourceLabels(cpaKey, "cpa", task.ApplicationID, task.ID),
 			Env:          []string{"TZ=" + settings.Timezone},
 			ExposedPorts: network.PortSet{port: struct{}{}},
 			WorkingDir:   "/CLIProxyAPI",
@@ -122,11 +128,5 @@ func copyCPAConfig(ctx context.Context, docker *client.Client, containerID strin
 }
 
 func ensureCPANetwork(ctx context.Context, docker *client.Client) error {
-	if _, err := docker.NetworkInspect(ctx, cpaNetwork, client.NetworkInspectOptions{}); err == nil {
-		return nil
-	}
-	if _, err := docker.NetworkCreate(ctx, cpaNetwork, client.NetworkCreateOptions{Driver: "bridge"}); err != nil {
-		return fmt.Errorf("agent: create CPA network: %w", err)
-	}
-	return nil
+	return dockerruntime.EnsureBridgeNetwork(ctx, docker, cpaNetwork, "cpa-network")
 }

@@ -23,6 +23,8 @@ var (
 	ErrUnsafeMode = errors.New("secret: key file permissions are too broad")
 )
 
+const databaseKeyBindingPlaintext = "vastora-database-key-binding-v1"
+
 // NewKey creates an AES-256 key from the operating system random source.
 func NewKey() ([]byte, error) {
 	key := make([]byte, KeySize)
@@ -77,34 +79,15 @@ func Open(key, sealed, additionalData []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// LoadOrCreateKey creates a 0600 key file, or verifies and reads an existing
-// one. It refuses an existing key readable by group or other users.
-func LoadOrCreateKey(path string) ([]byte, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("secret: create key directory: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err == nil {
-		key, keyErr := NewKey()
-		if keyErr != nil {
-			_ = file.Close()
-			return nil, keyErr
-		}
-		if _, writeErr := file.Write(key); writeErr != nil {
-			_ = file.Close()
-			return nil, fmt.Errorf("secret: write key: %w", writeErr)
-		}
-		if closeErr := file.Close(); closeErr != nil {
-			return nil, fmt.Errorf("secret: close key: %w", closeErr)
-		}
-		return key, nil
-	}
-	if !errors.Is(err, os.ErrExist) {
-		return nil, fmt.Errorf("secret: open key: %w", err)
-	}
-	info, err := os.Stat(path)
+// LoadKey verifies and reads an existing key. It refuses a key readable by
+// group or other users.
+func LoadKey(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("secret: stat key: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("secret: key is not a regular file")
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, ErrUnsafeMode
@@ -117,4 +100,68 @@ func LoadOrCreateKey(path string) ([]byte, error) {
 		return nil, ErrInvalidKey
 	}
 	return key, nil
+}
+
+// CreateKey creates a new 0600 key file and never replaces an existing path.
+func CreateKey(path string) ([]byte, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("secret: create key directory: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("secret: create key: %w", err)
+	}
+	committed := false
+	defer func() {
+		_ = file.Close()
+		if !committed {
+			_ = os.Remove(path)
+		}
+	}()
+	key, err := NewKey()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := file.Write(key); err != nil {
+		return nil, fmt.Errorf("secret: write key: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return nil, fmt.Errorf("secret: sync key: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return nil, fmt.Errorf("secret: close key: %w", err)
+	}
+	committed = true
+	return key, nil
+}
+
+// LoadOrCreateKey is retained for callers which do not own a database
+// lifecycle. Database stores must inspect their database before creating a key.
+func LoadOrCreateKey(path string) ([]byte, error) {
+	key, err := LoadKey(path)
+	if err == nil {
+		return key, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	return CreateKey(path)
+}
+
+// SealDatabaseKeyBinding creates the authenticated sentinel stored beside a
+// database. The component name gives Center and Agent distinct AAD domains.
+func SealDatabaseKeyBinding(key []byte, component string) ([]byte, error) {
+	return Seal(key, []byte(databaseKeyBindingPlaintext), []byte("database-key-binding:"+component+":v1"))
+}
+
+// VerifyDatabaseKeyBinding verifies an authenticated database sentinel.
+func VerifyDatabaseKeyBinding(key, sealed []byte, component string) error {
+	plaintext, err := Open(key, sealed, []byte("database-key-binding:"+component+":v1"))
+	if err != nil {
+		return fmt.Errorf("secret: database key binding does not match: %w", err)
+	}
+	if string(plaintext) != databaseKeyBindingPlaintext {
+		return errors.New("secret: database key binding is invalid")
+	}
+	return nil
 }

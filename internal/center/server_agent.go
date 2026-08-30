@@ -133,6 +133,7 @@ func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request
 func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		Token           string `json:"token"`
+		OperationID     string `json:"operationId"`
 		Version         string `json:"version"`
 		OperatingSystem string `json:"operatingSystem"`
 		Architecture    string `json:"architecture"`
@@ -142,7 +143,7 @@ func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Version, input.OperatingSystem, input.Architecture, input.PublicKey)
+	credential, err := s.store.EnrollAgentOperation(request.Context(), input.Token, input.OperationID, input.Version, input.OperatingSystem, input.Architecture, input.PublicKey)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
@@ -161,6 +162,8 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
 		ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
 		GatewayHealthy               bool                             `json:"gatewayHealthy"`
+		GatewayRevision              int64                            `json:"gatewayRevision"`
+		GatewayConfigHash            string                           `json:"gatewayConfigHash"`
 		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
 		TailscaleEnrolled            bool                             `json:"tailscaleEnrolled"`
 		TailscaleOwnership           string                           `json:"tailscaleOwnership"`
@@ -175,7 +178,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
@@ -254,13 +257,17 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 		Error                        string          `json:"error"`
 		Result                       json.RawMessage `json:"result"`
 		ReconciliationRequired       bool            `json:"reconciliationRequired"`
-		ApplicationRuntimeGeneration int             `json:"applicationRuntimeGeneration"`
+		ApplicationRuntimeGeneration *int            `json:"applicationRuntimeGeneration"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.completeTaskWithDisposition(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, input.ApplicationRuntimeGeneration); err != nil {
+	executedRuntimeGenerations := []int{}
+	if input.ApplicationRuntimeGeneration != nil {
+		executedRuntimeGenerations = append(executedRuntimeGenerations, *input.ApplicationRuntimeGeneration)
+	}
+	if err := s.store.completeTaskWithDisposition(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, executedRuntimeGenerations...); err != nil {
 		if errors.Is(err, errInvalidReconciliationDisposition) {
 			writeError(writer, http.StatusBadRequest, err)
 			return
@@ -269,6 +276,56 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]bool{"completed": true})
+}
+
+func (s *Server) handleStartAgentDecommission(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input struct {
+		TaskID  string `json:"taskId"`
+		Attempt int64  `json:"attempt"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.beginAgentDecommission(request.Context(), request.PathValue("id"), credential, input.TaskID, input.Attempt); err != nil {
+		if errors.Is(err, errStaleTaskLease) {
+			writeError(writer, http.StatusConflict, err)
+			return
+		}
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"started": true})
+}
+
+func (s *Server) handleRenewTaskLease(writer http.ResponseWriter, request *http.Request) {
+	credential, err := agentCredential(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input struct {
+		Attempt int64 `json:"attempt"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	expiresAt, err := s.store.RenewTaskLease(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt)
+	if err != nil {
+		if errors.Is(err, errStaleTaskLease) {
+			writeError(writer, http.StatusConflict, err)
+			return
+		}
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"leaseExpiresAt": expiresAt.Format(time.RFC3339Nano)})
 }
 
 func agentCredential(request *http.Request) (string, error) {

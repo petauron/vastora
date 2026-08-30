@@ -24,9 +24,12 @@ import (
 
 const threeXUIControllerBackupMaxSize = 64 << 20
 
-func (c Client) applyThreeXUIControllerCommand(ctx context.Context, store *Store, command ThreeXUIControllerCommandTask) (ThreeXUIControllerCommandResult, error) {
+func (c Client) applyThreeXUIControllerCommand(ctx context.Context, store *Store, taskID string, command ThreeXUIControllerCommandTask) (ThreeXUIControllerCommandResult, error) {
 	if command.ApplicationID == "" || (command.Action != "backup" && command.Action != "promote" && command.Action != "demote") {
 		return ThreeXUIControllerCommandResult{}, errors.New("agent: invalid 3x-ui controller operation")
+	}
+	if command.Action == "promote" {
+		return c.promoteThreeXUIController(ctx, store, taskID, command)
 	}
 	baseURL, currentToken, err := threeXUIClientAPIConnection(ctx, store)
 	if err != nil {
@@ -43,8 +46,6 @@ func (c Client) applyThreeXUIControllerCommand(ctx context.Context, store *Store
 		}
 		digest := sha256.Sum256(content)
 		return ThreeXUIControllerCommandResult{Action: "backup", BackupRevision: command.BackupRevision, BackupSHA256: hex.EncodeToString(digest[:]), BackupSize: int64(len(content))}, nil
-	case "promote":
-		return c.promoteThreeXUIController(ctx, store, baseURL, currentToken, command)
 	default:
 		if err := demoteThreeXUIController(ctx, store, baseURL, command.SourceAPIToken); err != nil {
 			return ThreeXUIControllerCommandResult{}, err
@@ -153,13 +154,9 @@ func centerFailureMessage(status string, content []byte) string {
 	return status
 }
 
-func (c Client) promoteThreeXUIController(ctx context.Context, store *Store, baseURL, currentToken string, command ThreeXUIControllerCommandTask) (ThreeXUIControllerCommandResult, error) {
+func (c Client) promoteThreeXUIController(ctx context.Context, store *Store, taskID string, command ThreeXUIControllerCommandTask) (ThreeXUIControllerCommandResult, error) {
 	if command.MigrationID == "" || command.SourceApplicationID == "" || command.BackupRevision < 1 || command.SourceRemoteNodeID < 1 || command.SourceAPIToken == "" || command.SourceAddress == "" || command.SourcePanelPort < 1 {
 		return ThreeXUIControllerCommandResult{}, errors.New("agent: incomplete 3x-ui controller migration")
-	}
-	original, err := downloadThreeXUIDatabase(ctx, baseURL, currentToken)
-	if err != nil {
-		return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: create target rollback point: %w", err)
 	}
 	installation, err := store.AppliedInstallation(ctx, threeXUIKey)
 	if err != nil {
@@ -169,57 +166,171 @@ func (c Client) promoteThreeXUIController(ctx context.Context, store *Store, bas
 	if err != nil {
 		return ThreeXUIControllerCommandResult{}, err
 	}
-	panelGUID, err := threeXUISettingFromDatabase(original, "panelGuid")
+	baseURL := "http://" + net.JoinHostPort(installation.ServiceAddress, strconv.Itoa(config.PanelPort))
+	promotion, found, err := store.ThreeXUIControllerPromotion(ctx)
 	if err != nil {
-		return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: preserve target 3x-ui identity: %w", err)
+		return ThreeXUIControllerCommandResult{}, err
 	}
-	if panelGUID == "" {
-		panelGUID, err = randomUUID()
+	if !found {
+		var secrets map[string]string
+		if json.Unmarshal(installation.Secrets, &secrets) != nil || strings.TrimSpace(secrets["api_token"]) == "" {
+			return ThreeXUIControllerCommandResult{}, errors.New("agent: stored 3x-ui secrets are invalid")
+		}
+		currentToken := strings.TrimSpace(secrets["api_token"])
+		original, err := downloadThreeXUIDatabase(ctx, baseURL, currentToken)
+		if err != nil {
+			return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: create target rollback point: %w", err)
+		}
+		panelGUID, err := threeXUISettingFromDatabase(original, "panelGuid")
+		if err != nil {
+			return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: preserve target 3x-ui identity: %w", err)
+		}
+		if panelGUID == "" {
+			panelGUID, err = randomUUID()
+			if err != nil {
+				return ThreeXUIControllerCommandResult{}, err
+			}
+		}
+		restore, err := c.downloadThreeXUIMigrationBackup(ctx, store, command.MigrationID)
 		if err != nil {
 			return ThreeXUIControllerCommandResult{}, err
 		}
-	}
-	restore, err := c.downloadThreeXUIMigrationBackup(ctx, store, command.MigrationID)
-	if err != nil {
-		return ThreeXUIControllerCommandResult{}, err
-	}
-	transformed, err := transformThreeXUIControllerDatabase(restore, command, threeXUIControllerTargetSettings{
-		Address:   installation.ServiceAddress,
-		PanelPort: config.PanelPort,
-		PanelGUID: panelGUID,
-	})
-	if err != nil {
-		return ThreeXUIControllerCommandResult{}, err
-	}
-	if err := importThreeXUIDatabase(ctx, baseURL, currentToken, transformed); err != nil {
-		return ThreeXUIControllerCommandResult{}, fmt.Errorf("agent: restore 3x-ui controller database: %w", err)
-	}
-	rollback := func(operationErr error) (ThreeXUIControllerCommandResult, error) {
-		if rollbackErr := rollbackThreeXUIControllerDatabase(baseURL, command.SourceAPIToken, currentToken, original); rollbackErr != nil {
-			return ThreeXUIControllerCommandResult{}, errors.Join(operationErr, fmt.Errorf("agent: rollback promoted 3x-ui controller: %w", rollbackErr))
+		transformed, err := transformThreeXUIControllerDatabase(restore, command, threeXUIControllerTargetSettings{
+			Address: installation.ServiceAddress, PanelPort: config.PanelPort, PanelGUID: panelGUID,
+		})
+		if err != nil {
+			return ThreeXUIControllerCommandResult{}, err
 		}
-		return ThreeXUIControllerCommandResult{}, operationErr
+		promotion, err = store.BeginThreeXUIControllerPromotion(ctx, taskID, command, threeXUIControllerPromotionRecovery{
+			OriginalDatabase: original, TransformedDB: transformed, OriginalSecrets: append(json.RawMessage(nil), installation.Secrets...),
+			OldToken: currentToken, NewToken: command.SourceAPIToken,
+		})
+		if err != nil {
+			return ThreeXUIControllerCommandResult{}, err
+		}
+	} else {
+		hash, hashErr := threeXUIControllerCommandHash(command)
+		if hashErr != nil || promotion.TaskID != taskID || promotion.MigrationID != command.MigrationID || promotion.ApplicationID != command.ApplicationID || !bytes.Equal(promotion.CommandHash, hash) {
+			return ThreeXUIControllerCommandResult{}, errors.New("agent: pending 3x-ui controller promotion does not match the replayed command")
+		}
 	}
-	if err := waitForThreeXUIAPI(ctx, baseURL, command.SourceAPIToken); err != nil {
-		return rollback(fmt.Errorf("agent: validate restored 3x-ui controller: %w", err))
+	fail := func(cause error) (ThreeXUIControllerCommandResult, error) {
+		store.RecordThreeXUIControllerPromotionError(context.WithoutCancel(ctx), cause)
+		rollbackErr := rollbackPersistentThreeXUIControllerPromotion(store, baseURL, installation, promotion)
+		if rollbackErr != nil {
+			return ThreeXUIControllerCommandResult{}, deferTaskUntilReconciled(errors.Join(cause, fmt.Errorf("agent: rollback promoted 3x-ui controller: %w", rollbackErr)))
+		}
+		return ThreeXUIControllerCommandResult{}, cause
 	}
-	parsedBase, parseErr := url.Parse(baseURL)
-	if parseErr != nil || parsedBase.Hostname() == "" || mustPort(baseURL) < 1 {
-		return rollback(errors.New("agent: promoted 3x-ui endpoint is invalid"))
+	deferReplay := func(cause error) (ThreeXUIControllerCommandResult, error) {
+		store.RecordThreeXUIControllerPromotionError(context.WithoutCancel(ctx), cause)
+		return ThreeXUIControllerCommandResult{}, deferTaskUntilReconciled(cause)
 	}
-	if err := configureThreeXUISubscriptionRole(ctx, parsedBase.Hostname(), mustPort(baseURL), command.SourceAPIToken, "master"); err != nil {
-		return rollback(fmt.Errorf("agent: enable subscription on promoted 3x-ui controller: %w", err))
+	for {
+		switch promotion.Phase {
+		case "prepared":
+			imported, probeErr := threeXUIControllerPromotionImported(ctx, baseURL, promotion.Recovery.NewToken, promotion.MigrationID)
+			if probeErr != nil {
+				return fail(probeErr)
+			}
+			if !imported {
+				if err := importThreeXUIControllerDatabaseWithTokens(ctx, baseURL, promotion.Recovery.TransformedDB, promotion.Recovery.OldToken, promotion.Recovery.NewToken); err != nil {
+					return fail(fmt.Errorf("agent: restore 3x-ui controller database: %w", err))
+				}
+			}
+			if err := store.AdvanceThreeXUIControllerPromotion(ctx, "prepared", "imported"); err != nil {
+				return deferReplay(err)
+			}
+			promotion.Phase = "imported"
+		case "imported":
+			if err := waitForThreeXUIAPI(ctx, baseURL, promotion.Recovery.NewToken); err != nil {
+				return fail(fmt.Errorf("agent: validate restored 3x-ui controller: %w", err))
+			}
+			if err := store.AdvanceThreeXUIControllerPromotion(ctx, "imported", "api_ready"); err != nil {
+				return deferReplay(err)
+			}
+			promotion.Phase = "api_ready"
+		case "api_ready":
+			parsedBase, parseErr := url.Parse(baseURL)
+			if parseErr != nil || parsedBase.Hostname() == "" || mustPort(baseURL) < 1 {
+				return fail(errors.New("agent: promoted 3x-ui endpoint is invalid"))
+			}
+			if err := configureThreeXUISubscriptionRole(ctx, parsedBase.Hostname(), mustPort(baseURL), promotion.Recovery.NewToken, "master"); err != nil {
+				return fail(fmt.Errorf("agent: enable subscription on promoted 3x-ui controller: %w", err))
+			}
+			if err := store.AdvanceThreeXUIControllerPromotion(ctx, "api_ready", "role_configured"); err != nil {
+				return deferReplay(err)
+			}
+			promotion.Phase = "role_configured"
+		case "role_configured":
+			var secrets map[string]string
+			if json.Unmarshal(promotion.Recovery.OriginalSecrets, &secrets) != nil {
+				return fail(errors.New("agent: stored 3x-ui promotion secrets are invalid"))
+			}
+			secrets["api_token"] = promotion.Recovery.NewToken
+			installation.Secrets, _ = json.Marshal(secrets)
+			if _, err := store.RecordApplied(ctx, installation); err != nil {
+				return fail(fmt.Errorf("agent: save promoted 3x-ui controller token: %w", err))
+			}
+			if err := store.AdvanceThreeXUIControllerPromotion(ctx, "role_configured", "applied"); err != nil {
+				return deferReplay(err)
+			}
+			promotion.Phase = "applied"
+		case "applied":
+			return ThreeXUIControllerCommandResult{Action: "promote", BackupRevision: command.BackupRevision, SourceRemoteNodeID: command.SourceRemoteNodeID}, nil
+		default:
+			return ThreeXUIControllerCommandResult{}, errors.New("agent: stored 3x-ui controller promotion phase is invalid")
+		}
 	}
-	var secrets map[string]string
-	if json.Unmarshal(installation.Secrets, &secrets) != nil {
-		return rollback(errors.New("agent: stored 3x-ui secrets are invalid"))
+}
+
+func threeXUIControllerPromotionImported(ctx context.Context, baseURL, token, migrationID string) (bool, error) {
+	content, err := downloadThreeXUIDatabase(ctx, baseURL, token)
+	if err != nil {
+		return false, nil
 	}
-	secrets["api_token"] = command.SourceAPIToken
-	installation.Secrets, _ = json.Marshal(secrets)
-	if _, err := store.RecordApplied(ctx, installation); err != nil {
-		return rollback(fmt.Errorf("agent: save promoted 3x-ui controller token: %w", err))
+	marker, err := threeXUISettingFromDatabase(content, "vastoraControllerMigration")
+	if err != nil {
+		return false, fmt.Errorf("agent: inspect promoted 3x-ui controller marker: %w", err)
 	}
-	return ThreeXUIControllerCommandResult{Action: "promote", BackupRevision: command.BackupRevision, SourceRemoteNodeID: command.SourceRemoteNodeID}, nil
+	if marker != "" && marker != migrationID {
+		return false, errors.New("agent: live 3x-ui database belongs to another controller promotion")
+	}
+	return marker == migrationID, nil
+}
+
+func importThreeXUIControllerDatabaseWithTokens(ctx context.Context, baseURL string, content []byte, tokens ...string) error {
+	seen := map[string]bool{}
+	var failures []error
+	for _, token := range tokens {
+		token = strings.TrimSpace(token)
+		if token == "" || seen[token] {
+			continue
+		}
+		seen[token] = true
+		if err := importThreeXUIDatabase(ctx, baseURL, token, content); err == nil {
+			return nil
+		} else {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func rollbackPersistentThreeXUIControllerPromotion(store *Store, baseURL string, installation AppliedInstallation, promotion threeXUIControllerPromotion) error {
+	if err := rollbackThreeXUIControllerDatabase(baseURL, promotion.Recovery.NewToken, promotion.Recovery.OldToken, promotion.Recovery.OriginalDatabase); err != nil {
+		return err
+	}
+	rollbackContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := waitForThreeXUIAPI(rollbackContext, baseURL, promotion.Recovery.OldToken); err != nil {
+		return fmt.Errorf("verify restored target 3x-ui: %w", err)
+	}
+	installation.Secrets = promotion.Recovery.OriginalSecrets
+	if _, err := store.RecordApplied(rollbackContext, installation); err != nil {
+		return fmt.Errorf("restore target 3x-ui token: %w", err)
+	}
+	return store.ClearThreeXUIControllerPromotion(rollbackContext, promotion.MigrationID)
 }
 
 func rollbackThreeXUIControllerDatabase(baseURL, restoredToken, originalToken string, content []byte) error {
@@ -313,11 +424,12 @@ func transformThreeXUIControllerDatabase(content []byte, command ThreeXUIControl
 		return nil, err
 	}
 	settings := map[string]string{
-		"webListen": target.Address,
-		"webPort":   strconv.Itoa(target.PanelPort),
-		"subListen": target.Address,
-		"subPort":   "2096",
-		"panelGuid": target.PanelGUID,
+		"webListen":                  target.Address,
+		"webPort":                    strconv.Itoa(target.PanelPort),
+		"subListen":                  target.Address,
+		"subPort":                    "2096",
+		"panelGuid":                  target.PanelGUID,
+		"vastoraControllerMigration": command.MigrationID,
 	}
 	for key, value := range settings {
 		if err := upsertThreeXUISetting(tx, key, value); err != nil {

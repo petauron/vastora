@@ -17,7 +17,10 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/secret"
 )
+
+const agentEnrollmentReplayLifetime = 24 * time.Hour
 
 type AgentEnrollment struct {
 	Token        string    `json:"token"`
@@ -135,10 +138,15 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 	}
 	defer tx.Rollback()
 	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_operations WHERE expires_at <= ?`, now); err != nil {
+		return AgentEnrollment{}, fmt.Errorf("center: delete expired Agent enrollment operations: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id IN (SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE expires_at <= ? AND bootstrap_secret_id IS NOT NULL)`, now); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: delete expired Agent bootstrap secrets: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_tokens WHERE expires_at <= ?`, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_tokens WHERE expires_at <= ? AND NOT EXISTS (
+		SELECT 1 FROM agent_enrollment_operations operations WHERE operations.token_hash = agent_enrollment_tokens.token_hash
+	)`, now); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: delete expired Agent enrollments: %w", err)
 	}
 	var bootstrapSecretID sql.NullString
@@ -166,15 +174,26 @@ func (s *Store) AgentEnrollmentInstallProfile(ctx context.Context, token string)
 	var profile AgentEnrollmentInstallProfile
 	var rolesJSON, capabilitiesJSON []byte
 	var expiresAt string
-	var usedAt, bootstrapSecretID sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT name, center_url, roles_json, capabilities_json, bootstrap_secret_id, ca_fingerprint, expires_at, used_at FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(token)).Scan(&profile.Name, &profile.CenterURL, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID, &profile.CAFingerprint, &expiresAt, &usedAt)
-	if errors.Is(err, sql.ErrNoRows) || usedAt.Valid {
+	var usedAt, bootstrapSecretID, recoveryExpiresAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT tokens.name, tokens.center_url, tokens.roles_json, tokens.capabilities_json,
+		tokens.bootstrap_secret_id, tokens.ca_fingerprint, tokens.expires_at, tokens.used_at, operations.expires_at
+		FROM agent_enrollment_tokens tokens
+		LEFT JOIN agent_enrollment_operations operations ON operations.token_hash = tokens.token_hash
+		WHERE tokens.token_hash = ?`, tokenHash(token)).Scan(&profile.Name, &profile.CenterURL, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID, &profile.CAFingerprint, &expiresAt, &usedAt, &recoveryExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
 		return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token is invalid")
 	}
 	if err != nil {
 		return AgentEnrollmentInstallProfile{}, fmt.Errorf("center: read agent enrollment: %w", err)
 	}
-	expires, err := time.Parse(time.RFC3339Nano, expiresAt)
+	validUntil := expiresAt
+	if usedAt.Valid {
+		if !recoveryExpiresAt.Valid {
+			return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token is invalid")
+		}
+		validUntil = recoveryExpiresAt.String
+	}
+	expires, err := time.Parse(time.RFC3339Nano, validUntil)
 	if err != nil || !expires.After(s.now()) {
 		return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token has expired")
 	}
@@ -226,6 +245,18 @@ func agentEnrollmentSecretContext(token string) string {
 }
 
 func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, operatingSystem, architecture string, publicKey []byte) (AgentCredential, error) {
+	operationID, err := randomToken(18)
+	if err != nil {
+		return AgentCredential{}, err
+	}
+	return s.EnrollAgentOperation(ctx, enrollmentToken, operationID, version, operatingSystem, architecture, publicKey)
+}
+
+func (s *Store) EnrollAgentOperation(ctx context.Context, enrollmentToken, operationID, version, operatingSystem, architecture string, publicKey []byte) (AgentCredential, error) {
+	operationID = strings.TrimSpace(operationID)
+	if !validAgentEnrollmentOperationID(operationID) {
+		return AgentCredential{}, errors.New("center: valid Agent enrollment operation ID is required")
+	}
 	version = strings.TrimSpace(version)
 	if version == "" || len(version) > 128 {
 		return AgentCredential{}, errors.New("center: agent version is required")
@@ -237,6 +268,17 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, opera
 	if err != nil {
 		return AgentCredential{}, fmt.Errorf("center: invalid Agent platform: %w", err)
 	}
+	requestPayload, err := json.Marshal(struct {
+		Version         string `json:"version"`
+		OperatingSystem string `json:"operatingSystem"`
+		Architecture    string `json:"architecture"`
+		PublicKey       []byte `json:"publicKey"`
+	}{Version: version, OperatingSystem: target.OS, Architecture: target.Architecture, PublicKey: publicKey})
+	if err != nil {
+		return AgentCredential{}, err
+	}
+	requestHash := sha256.Sum256(requestPayload)
+	enrollmentTokenHash := tokenHash(enrollmentToken)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AgentCredential{}, fmt.Errorf("center: begin agent enrollment: %w", err)
@@ -245,12 +287,15 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, opera
 	var expiresAt, siteID, name string
 	var rolesJSON, capabilitiesJSON []byte
 	var usedAt, bootstrapSecretID sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT expires_at, used_at, site_id, name, roles_json, capabilities_json, bootstrap_secret_id FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(enrollmentToken)).Scan(&expiresAt, &usedAt, &siteID, &name, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID)
-	if errors.Is(err, sql.ErrNoRows) || usedAt.Valid {
+	err = tx.QueryRowContext(ctx, `SELECT expires_at, used_at, site_id, name, roles_json, capabilities_json, bootstrap_secret_id FROM agent_enrollment_tokens WHERE token_hash = ?`, enrollmentTokenHash).Scan(&expiresAt, &usedAt, &siteID, &name, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return AgentCredential{}, errors.New("center: agent enrollment token is invalid")
 	}
 	if err != nil {
 		return AgentCredential{}, fmt.Errorf("center: read agent enrollment: %w", err)
+	}
+	if usedAt.Valid {
+		return s.replayAgentEnrollment(ctx, tx, enrollmentTokenHash, operationID, requestHash[:])
 	}
 	expires, err := time.Parse(time.RFC3339Nano, expiresAt)
 	if err != nil || !expires.After(s.now()) {
@@ -269,10 +314,23 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, opera
 		return AgentCredential{}, err
 	}
 	now := s.now().UTC()
+	response := AgentCredential{ID: id, Credential: credential, Name: name, Roles: profile.Roles, Capabilities: profile.Capabilities}
+	encodedResponse, err := json.Marshal(response)
+	if err != nil {
+		return AgentCredential{}, err
+	}
+	responseSecretID, err := s.putSecret(ctx, tx, encodedResponse, agentEnrollmentOperationSecretContext(enrollmentTokenHash, operationID))
+	if err != nil {
+		return AgentCredential{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, x25519_public_key, version, operating_system, architecture, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`, id, name, tokenHash(credential), append([]byte(nil), publicKey...), version, target.OS, target.Architecture, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID, rolesJSON, capabilitiesJSON); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: save agent: %w", err)
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash(enrollmentToken))
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_enrollment_operations(token_hash, operation_id, request_hash, agent_id, response_secret_id, expires_at, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?)`, enrollmentTokenHash, operationID, requestHash[:], id, responseSecretID, now.Add(agentEnrollmentReplayLifetime).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		return AgentCredential{}, fmt.Errorf("center: save Agent enrollment operation: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), enrollmentTokenHash)
 	if err != nil {
 		return AgentCredential{}, fmt.Errorf("center: consume agent enrollment: %w", err)
 	}
@@ -288,7 +346,61 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, opera
 	if err := tx.Commit(); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: commit agent enrollment: %w", err)
 	}
-	return AgentCredential{ID: id, Credential: credential, Name: name, Roles: profile.Roles, Capabilities: profile.Capabilities}, nil
+	return response, nil
+}
+
+func (s *Store) replayAgentEnrollment(ctx context.Context, tx *sql.Tx, enrollmentTokenHash []byte, operationID string, requestHash []byte) (AgentCredential, error) {
+	var storedOperationID, agentID, responseSecretID, replayExpiresAt string
+	var storedRequestHash []byte
+	err := tx.QueryRowContext(ctx, `SELECT operation_id, request_hash, agent_id, response_secret_id, expires_at
+		FROM agent_enrollment_operations WHERE token_hash = ?`, enrollmentTokenHash).Scan(&storedOperationID, &storedRequestHash, &agentID, &responseSecretID, &replayExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AgentCredential{}, errors.New("center: agent enrollment token is invalid")
+	}
+	if err != nil {
+		return AgentCredential{}, fmt.Errorf("center: read Agent enrollment operation: %w", err)
+	}
+	if storedOperationID != operationID || !bytes.Equal(storedRequestHash, requestHash) {
+		return AgentCredential{}, errors.New("center: agent enrollment token is invalid")
+	}
+	expires, err := time.Parse(time.RFC3339Nano, replayExpiresAt)
+	if err != nil || !expires.After(s.now()) {
+		return AgentCredential{}, errors.New("center: Agent enrollment recovery window has expired")
+	}
+	var sealedResponse []byte
+	if err := tx.QueryRowContext(ctx, `SELECT sealed FROM secrets WHERE id = ?`, responseSecretID).Scan(&sealedResponse); err != nil {
+		return AgentCredential{}, fmt.Errorf("center: read Agent enrollment response: %w", err)
+	}
+	encodedResponse, err := secret.Open(s.key, sealedResponse, []byte(agentEnrollmentOperationSecretContext(enrollmentTokenHash, operationID)))
+	if err != nil {
+		return AgentCredential{}, fmt.Errorf("center: decrypt Agent enrollment response: %w", err)
+	}
+	var response AgentCredential
+	if json.Unmarshal(encodedResponse, &response) != nil || response.ID != agentID || response.Credential == "" {
+		return AgentCredential{}, errors.New("center: stored Agent enrollment response is invalid")
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active' AND credential_revoked_at = '' AND credential_hash = ?`, agentID, tokenHash(response.Credential)).Scan(&active); err != nil || active != 1 {
+		return AgentCredential{}, errors.New("center: replayed Agent identity is no longer active")
+	}
+	return response, nil
+}
+
+func agentEnrollmentOperationSecretContext(enrollmentTokenHash []byte, operationID string) string {
+	return "agent-enrollment-operation:" + hex.EncodeToString(enrollmentTokenHash) + ":" + operationID
+}
+
+func validAgentEnrollmentOperationID(value string) bool {
+	if len(value) < 16 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // RevokeAgentCredential immediately closes the Agent control channel without
@@ -316,6 +428,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if heartbeat.ApplicationRuntimeGeneration < 0 || heartbeat.ApplicationRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 		return errors.New("center: unsupported Agent application runtime generation")
+	}
+	heartbeat.GatewayConfigHash = strings.ToLower(strings.TrimSpace(heartbeat.GatewayConfigHash))
+	decodedGatewayHash, gatewayHashErr := hex.DecodeString(heartbeat.GatewayConfigHash)
+	if heartbeat.GatewayRevision < 0 || (heartbeat.GatewayRevision == 0 && heartbeat.GatewayConfigHash != "") || (heartbeat.GatewayRevision > 0 && (gatewayHashErr != nil || len(decodedGatewayHash) != sha256.Size)) {
+		return errors.New("center: Agent reported an invalid live Gateway revision")
 	}
 	if heartbeat.TailscaleOwnership != "managed" && heartbeat.TailscaleOwnership != "external" && heartbeat.TailscaleOwnership != "" {
 		return errors.New("center: Agent reported an unsupported Tailscale ownership")
@@ -426,6 +543,10 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		if err := s.queueUnhealthyGatewayReconcile(ctx, tx, id, now); err != nil {
 			return err
 		}
+	} else if heartbeat.Capabilities.Gateway {
+		if err := s.queueMismatchedGatewayReconcile(ctx, tx, id, heartbeat.GatewayRevision, heartbeat.GatewayConfigHash, now); err != nil {
+			return err
+		}
 	}
 	if heartbeat.Capabilities.Gateway && reportedHeadscaleAddress {
 		needsPrivateListener, err := gatewayStateNeedsReportedHeadscaleListener(ctx, tx, id, heartbeat.NetworkCandidates)
@@ -454,6 +575,41 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) queueMismatchedGatewayReconcile(ctx context.Context, tx *sql.Tx, agentID string, liveRevision int64, liveHash string, now time.Time) error {
+	var desiredRevision, appliedRevision int64
+	var stateStatus string
+	var encoded []byte
+	err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, desired_json FROM gateway_states WHERE gateway_node_id = ?`, agentID).Scan(&desiredRevision, &appliedRevision, &stateStatus, &encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("center: inspect live Gateway revision: %w", err)
+	}
+	if stateStatus != "ready" || desiredRevision != appliedRevision {
+		return nil
+	}
+	var desired gateway.DesiredState
+	if json.Unmarshal(encoded, &desired) != nil || desired.Validate() != nil || desired.Revision != desiredRevision {
+		return errors.New("center: stored gateway desired state is invalid")
+	}
+	certificates, err := s.gatewayCertificates(ctx, tx, agentID, desired)
+	if err != nil {
+		return err
+	}
+	expectedHash, err := gateway.ConfigurationHash(desired, certificates)
+	if err != nil {
+		return fmt.Errorf("center: hash expected Gateway configuration: %w", err)
+	}
+	if liveRevision == appliedRevision && liveHash == expectedHash {
+		return nil
+	}
+	if err := s.queueGatewayState(ctx, tx, agentID, now); err != nil {
+		return fmt.Errorf("center: queue mismatched live Gateway state: %w", err)
 	}
 	return nil
 }

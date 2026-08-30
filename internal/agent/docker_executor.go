@@ -29,6 +29,12 @@ const (
 	applicationDeploymentIDLabel = "io.vastora.application.deployment-id"
 )
 
+var applicationVolumes = map[string][]string{
+	threeXUIKey: {threeXUIDatabaseVolume, "vastora-3x-ui-cert", "vastora-3x-ui-acme"},
+	cpaKey:      {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"},
+	keeperKey:   {"vastora-cpa-keeper-data"},
+}
+
 type HostApplicationManager interface {
 	ApplyKomari(context.Context, DeploymentTask) error
 	RemoveKomari(context.Context) error
@@ -76,7 +82,7 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	}
 	defer docker.Close()
 	if task.Operation == "uninstall" {
-		return ApplicationTaskResult{}, uninstallDockerApp(ctx, docker, task.AppKey, task.DeleteData)
+		return ApplicationTaskResult{}, uninstallDockerApp(ctx, docker, task.AppKey, task.ApplicationID, task.DeleteData)
 	}
 	if task.OfflineRestore && task.AppKey == threeXUIKey {
 		if _, exists, err := inspectThreeXUIVolume(ctx, docker, threeXUIDatabaseVolume); err != nil {
@@ -119,7 +125,7 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 }
 
 func validateApplicationTask(task DeploymentTask) error {
-	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.AppKey) == "" {
+	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.ApplicationID) == "" || strings.TrimSpace(task.AppKey) == "" {
 		return errors.New("agent: application task identity is required")
 	}
 	if task.Operation != "install" && task.Operation != "upgrade" && task.Operation != "configure" && task.Operation != "uninstall" {
@@ -246,13 +252,18 @@ func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
 	for _, installation := range installations {
 		task := DeploymentTask{
 			Kind: "application.apply", ID: installation.InstanceID, Attempt: 1,
-			AppKey: installation.AppKey, Manifest: installation.Manifest,
+			ApplicationID: installation.ApplicationID,
+			AppKey:        installation.AppKey, Manifest: installation.Manifest,
 			Config: installation.Config, Secrets: installation.Secrets,
 			Operation: "install", ServiceAddress: installation.ServiceAddress,
 			ApplicationRole: installation.ApplicationRole, OfflineRestore: true,
 		}
 		if installation.Manifest.ID == "" {
 			failures = append(failures, fmt.Errorf("agent: legacy %s state cannot be restored offline; reconcile it with Center", installation.AppKey))
+			continue
+		}
+		if strings.TrimSpace(installation.ApplicationID) == "" {
+			failures = append(failures, fmt.Errorf("agent: %s state has no proven application ownership; reconcile it with Center", installation.AppKey))
 			continue
 		}
 		if installation.AppKey == komariKey {
@@ -303,24 +314,15 @@ func (e ApplicationExecutor) containerMatchesInstallation(ctx context.Context, c
 		return false, fmt.Errorf("agent: connect Docker for offline restore: %w", err)
 	}
 	defer docker.Close()
-	inspection, err := docker.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{})
-	if errdefs.IsNotFound(err) {
+	component := strings.TrimPrefix(installation.AppKey, "vastora-official/")
+	inspection, exists, err := inspectOwnedApplicationContainer(ctx, docker, containerName, installation.AppKey, component, installation.ApplicationID, installation.InstanceID)
+	if !exists && err == nil {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("agent: inspect %s for offline restore: %w", installation.AppKey, err)
+		return false, fmt.Errorf("agent: verify %s ownership for offline restore: %w", installation.AppKey, err)
 	}
 	if inspection.Container.State == nil || !inspection.Container.State.Running {
-		return false, nil
-	}
-	if installation.Manifest.ID == "" {
-		return true, nil
-	}
-	label := applicationDeploymentIDLabel
-	if installation.AppKey == threeXUIKey {
-		label = threeXUIDeploymentIDLabel
-	}
-	if inspection.Container.Config == nil || inspection.Container.Config.Labels[label] != installation.InstanceID {
 		return false, nil
 	}
 	imageName := map[string]string{threeXUIKey: "3x-ui", cpaKey: "cli-proxy-api", keeperKey: "keeper"}[installation.AppKey]
@@ -332,11 +334,13 @@ func (e ApplicationExecutor) containerMatchesInstallation(ctx context.Context, c
 }
 
 type appUninstallEngine interface {
+	ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
 	ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+	VolumeInspect(context.Context, string, client.VolumeInspectOptions) (client.VolumeInspectResult, error)
 	VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 }
 
-func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey string, deleteData bool) error {
+func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, applicationID string, deleteData bool) error {
 	containers := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer}
 	name, ok := containers[appKey]
 	if !ok {
@@ -344,11 +348,17 @@ func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey s
 	}
 	containerNames := []string{name}
 	if appKey == threeXUIKey {
-		if !deleteData {
-			transactionalDocker, ok := docker.(threeXUIContainerEngine)
-			if !ok {
+		transactionalDocker, ok := docker.(threeXUIContainerEngine)
+		if !ok {
+			if !deleteData {
 				return errors.New("agent: Docker engine cannot preserve 3x-ui data before uninstall")
 			}
+			return errors.New("agent: Docker engine cannot verify 3x-ui ownership before uninstall")
+		}
+		if err := validateThreeXUIOwnership(ctx, transactionalDocker, applicationID); err != nil {
+			return err
+		}
+		if !deleteData {
 			// Keep-data uninstall never starts a stopped service. It only quiesces
 			// the authoritative container and restores a durable rollback snapshot
 			// when that is the only safe copy of the retained database.
@@ -361,16 +371,16 @@ func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey s
 		containerNames = []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUICleanupContainer, threeXUIContainer}
 	}
 	for _, containerName := range containerNames {
-		if _, err := docker.ContainerRemove(ctx, containerName, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		component := strings.TrimPrefix(appKey, "vastora-official/")
+		if err := removeOwnedApplicationContainer(ctx, docker, containerName, appKey, component, applicationID, anyApplicationDeployment); err != nil {
 			return fmt.Errorf("agent: remove %s container: %w", appKey, err)
 		}
 	}
 	if !deleteData {
 		return nil
 	}
-	volumes := map[string][]string{threeXUIKey: {threeXUIDatabaseVolume, "vastora-3x-ui-cert", "vastora-3x-ui-acme"}, cpaKey: {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"}, keeperKey: {"vastora-cpa-keeper-data"}}
-	for _, volume := range volumes[appKey] {
-		if _, err := docker.VolumeRemove(ctx, volume, client.VolumeRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+	for _, volume := range applicationVolumes[appKey] {
+		if err := removeOwnedApplicationVolume(ctx, docker, volume, appKey, applicationVolumeComponent(volume), applicationID); err != nil {
 			return fmt.Errorf("agent: remove %s data volume: %w", appKey, err)
 		}
 	}

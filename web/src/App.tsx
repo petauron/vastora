@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { AppWindowIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
+import { AppWindowIcon, BotIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import { administratorPasswordMinLength } from "./lib/security";
@@ -32,10 +32,12 @@ const navigation = [
   { id: "nodes" as const, icon: ServerIcon, zh: "节点", en: "Nodes" },
   { id: "apps" as const, icon: AppWindowIcon, zh: "应用", en: "Apps" },
   { id: "network" as const, icon: NetworkIcon, zh: "网络", en: "Network" },
-  { id: "activity" as const, icon: HistoryIcon, zh: "活动", en: "Activity" }
+  { id: "activity" as const, icon: HistoryIcon, zh: "活动", en: "Activity" },
+  { id: "assistant" as const, icon: BotIcon, zh: "助手", en: "Assistant" }
 ];
 
 const ActivityView = lazy(() => import("./views/ActivityView").then((module) => ({ default: module.ActivityView })));
+const AssistantView = lazy(() => import("./views/AssistantView").then((module) => ({ default: module.AssistantView })));
 const AppsView = lazy(() => import("./views/AppsView").then((module) => ({ default: module.AppsView })));
 const HomeView = lazy(() => import("./views/HomeView").then((module) => ({ default: module.HomeView })));
 const NetworkView = lazy(() => import("./views/NetworkView").then((module) => ({ default: module.NetworkView })));
@@ -58,6 +60,9 @@ export function App() {
   const [lastSync, setLastSync] = useState<Date | null>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const focusAfterNavigation = useRef(false);
+  const activeScreen = useRef(screen);
+  const screenLoadGeneration = useRef(0);
+  const screenLoadController = useRef<AbortController | null>(null);
 
   const setLanguage = (next: Language) => {
     window.localStorage.setItem("vastora.language", next);
@@ -65,9 +70,15 @@ export function App() {
   };
 
   const loadScreen = useCallback(async (target: Screen) => {
+    const generation = screenLoadGeneration.current + 1;
+    screenLoadGeneration.current = generation;
+    screenLoadController.current?.abort();
+    const controller = new AbortController();
+    screenLoadController.current = controller;
     setLoadingScreen(target);
     try {
-      const patch = await loadScreenData(target);
+      const patch = await loadScreenData(target, controller.signal);
+      if (screenLoadGeneration.current !== generation || activeScreen.current !== target) return;
       setData((current) => ({ ...(current ?? emptyAppData(patch.status)), ...patch }));
       setLoadedScreens((current) => {
         if (current.has(target)) return current;
@@ -77,13 +88,17 @@ export function App() {
       setConnectionError(null);
       setLastSync(new Date());
     } catch (error) {
+      if (controller.signal.aborted || screenLoadGeneration.current !== generation || activeScreen.current !== target) return;
       if (!(error instanceof APIError && error.status === 401)) {
         setConnection("reconnecting");
         setConnectionError(error);
       }
       throw error;
     } finally {
-      setLoadingScreen((current) => current === target ? null : current);
+      if (screenLoadGeneration.current === generation) {
+        if (screenLoadController.current === controller) screenLoadController.current = null;
+        setLoadingScreen(null);
+      }
     }
   }, []);
 
@@ -99,6 +114,7 @@ export function App() {
       window.history[replace ? "replaceState" : "pushState"]({}, "", path);
     }
     focusAfterNavigation.current = true;
+    activeScreen.current = target;
     setScreen(target);
     void loadScreen(target).catch(handleLoadError);
   }, [handleLoadError, loadScreen]);
@@ -127,6 +143,7 @@ export function App() {
       }
       try {
         const target = screenFromPath();
+        activeScreen.current = target;
         await loadScreen(target);
         setScreen(target);
         setPhase("ready");
@@ -144,11 +161,16 @@ export function App() {
   }, [loadScreen]);
 
   useEffect(() => { void initialize(); }, [initialize]);
+  useEffect(() => () => {
+    screenLoadGeneration.current += 1;
+    screenLoadController.current?.abort();
+  }, []);
   useEffect(() => { document.documentElement.lang = language; }, [language]);
   useEffect(() => {
     const onPopState = () => {
       const target = screenFromPath();
       focusAfterNavigation.current = true;
+      activeScreen.current = target;
       setScreen(target);
       if (phase === "ready") void loadScreen(target).catch(handleLoadError);
     };
@@ -197,7 +219,7 @@ export function App() {
     }
     setNotice(success ? { message: success } : null);
     try {
-      await loadScreen(screen);
+      await loadScreen(activeScreen.current);
     } catch (error) {
       if (error instanceof APIError && error.status === 401) {
         setPhase("login");
@@ -206,11 +228,15 @@ export function App() {
         setNotice({ message: success ? `${success} ${refreshMessage}` : refreshMessage });
       }
     }
-  }, [language, screen, loadScreen]);
+  }, [language, loadScreen]);
   const updateCenterStatus = useCallback((centerUpdate: CenterUpdateStatus) => {
+    screenLoadGeneration.current += 1;
+    screenLoadController.current?.abort();
+    screenLoadController.current = null;
+    setLoadingScreen(null);
     setData((current) => current ? { ...current, centerUpdate, status: { ...current.status, version: centerUpdate.currentVersion } } : current);
   }, []);
-  const refreshSettings = useCallback(() => loadScreen("settings"), [loadScreen]);
+  const refreshSettings = useCallback(() => activeScreen.current === "settings" ? loadScreen("settings") : Promise.resolve(), [loadScreen]);
 
   if (phase === "loading") return <CenteredState language={language} loading />;
   if (phase === "unavailable") return <CenteredState language={language} message={notice?.message} onRetry={initialize} />;
@@ -238,6 +264,7 @@ export function App() {
       setSetupStatus(await api.setupStatus());
       try {
         window.history.replaceState({}, "", pathForScreen("nodes"));
+        activeScreen.current = "nodes";
         setScreen("nodes");
         await loadScreen("nodes");
         setAddFirstNode(true);
@@ -248,7 +275,7 @@ export function App() {
       }
     }}
   /></Suspense>;
-  if (phase === "login") return <CredentialPage language={language} mode="login" onLanguage={setLanguage} onSubmit={async (username, password) => { await api.login(username, password); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); await loadScreen(target); setScreen(target); setPhase("ready"); }} />;
+  if (phase === "login") return <CredentialPage language={language} mode="login" onLanguage={setLanguage} onSubmit={async (username, password) => { await api.login(username, password); const setup = await api.setupStatus(); setSetupStatus(setup); if (!setup.onboardingComplete) { setPhase("setup-wizard"); return; } const target = screenFromPath(); activeScreen.current = target; await loadScreen(target); setScreen(target); setPhase("ready"); }} />;
   if (!data) return <CenteredState language={language} onRetry={initialize} />;
 
   const currentLabel = navigation.find((item) => item.id === screen);
@@ -295,6 +322,7 @@ export function App() {
               {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}
+              {loadedScreens.has(screen) && screen === "assistant" ? <AssistantView language={language} /> : null}
               {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>

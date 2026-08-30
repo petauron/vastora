@@ -19,6 +19,7 @@ afterEach(() => {
 
 describe("screen-scoped data loading", () => {
   it("loads only the home summary resources", async () => {
+    const controller = new AbortController();
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, automatic: true, state: "idle" });
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
@@ -29,10 +30,11 @@ describe("screen-scoped data loading", () => {
     const apps = vi.spyOn(api, "apps");
     const deployments = vi.spyOn(api, "deployments");
 
-    const result = await loadScreenData("home");
+    const result = await loadScreenData("home", controller.signal);
 
     expect(result.status).toEqual(status);
-    expect(actions).toHaveBeenCalledWith(10);
+    expect(actions).toHaveBeenCalledWith(10, controller.signal);
+    expect(api.status).toHaveBeenCalledWith(controller.signal);
     expect(apps).not.toHaveBeenCalled();
     expect(deployments).not.toHaveBeenCalled();
   });

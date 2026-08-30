@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
-	"github.com/petauron/vastora/internal/secret"
 )
 
 const (
@@ -108,6 +107,7 @@ type RealityCommandResult struct {
 	CompanionTag       string `json:"companionTag,omitempty"`
 	CompanionPort      int    `json:"companionPort,omitempty"`
 	GuardStatus        string `json:"guardStatus"`
+	ProxyProtocol      bool   `json:"proxyProtocol"`
 	ConnectHostname    string `json:"connectHostname"`
 	ShareURI           string `json:"shareUri"`
 	InboundTag         string `json:"inboundTag"`
@@ -338,7 +338,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
-	if result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" {
+	if result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
@@ -786,33 +786,4 @@ func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kin
 		return ApplicationCommandView{}, err
 	}
 	return s.ApplicationCommand(ctx, id)
-}
-
-func (s *Store) ConsumeApplicationCommandResult(ctx context.Context, id string) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-	var secretID string
-	var sealed []byte
-	if err := tx.QueryRowContext(ctx, `SELECT c.result_secret_id, s.sealed FROM application_commands c JOIN secrets s ON s.id = c.result_secret_id WHERE c.id = ? AND c.state = 'succeeded'`, id).Scan(&secretID, &sealed); errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("center: one-time application result is unavailable")
-	} else if err != nil {
-		return "", err
-	}
-	plain, err := secret.Open(s.key, sealed, []byte("application-command:"+id))
-	if err != nil {
-		return "", err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET result_secret_id = NULL WHERE id = ?`, id); err != nil {
-		return "", err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, secretID); err != nil {
-		return "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return string(plain), nil
 }

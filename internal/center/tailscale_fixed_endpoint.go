@@ -129,36 +129,9 @@ func (s *Store) ConfigureTailscaleFixedEndpoint(ctx context.Context, input Tails
 	if builtin != 1 {
 		return TailscaleFixedEndpointView{}, errors.New("center: a managed fixed endpoint is available only with built-in Headscale")
 	}
-	config := tailscaleFixedEndpointConfig{Enabled: input.Enabled}
-	if input.Enabled {
-		if !input.ConfirmMapping {
-			return TailscaleFixedEndpointView{}, errors.New("center: confirm the reserved public IPv4 and UDP 41641 mapping")
-		}
-		endpoint, err := normalizeTailscaleFixedEndpoint(input.Endpoint)
-		if err != nil {
-			return TailscaleFixedEndpointView{}, err
-		}
-		localAddress := net.ParseIP(strings.TrimSpace(input.LocalAddress))
-		if localAddress == nil || localAddress.To4() == nil {
-			return TailscaleFixedEndpointView{}, errors.New("center: select the local IPv4 address that receives UDP 41641")
-		}
-		candidates, err := s.discoverNetworkCandidates(s.now().UTC())
-		if err != nil {
-			return TailscaleFixedEndpointView{}, fmt.Errorf("center: discover fixed-endpoint local address: %w", err)
-		}
-		if !candidateAddressExists(candidates, localAddress.String()) {
-			return TailscaleFixedEndpointView{}, errors.New("center: the confirmed local address is stale or is not assigned to this Center host")
-		}
-		config.Endpoint = endpoint
-		config.LocalAddress = localAddress.String()
-		config.ConfirmedAt = s.now().UTC()
-		current, reason, err := s.tailscaleFixedEndpointCurrent(ctx, config)
-		if err != nil {
-			return TailscaleFixedEndpointView{}, err
-		}
-		if !current {
-			return TailscaleFixedEndpointView{}, errors.New("center: " + reason)
-		}
+	_, config, err := s.validateTailscaleFixedEndpointInput(ctx, input)
+	if err != nil {
+		return TailscaleFixedEndpointView{}, err
 	}
 	payload, err := json.Marshal(config)
 	if err != nil {
@@ -168,6 +141,43 @@ func (s *Store) ConfigureTailscaleFixedEndpoint(ctx context.Context, input Tails
 		return TailscaleFixedEndpointView{}, fmt.Errorf("center: save Tailscale fixed endpoint: %w", err)
 	}
 	return s.TailscaleFixedEndpoint(ctx)
+}
+
+func (s *Store) validateTailscaleFixedEndpointInput(ctx context.Context, input TailscaleFixedEndpointInput) (TailscaleFixedEndpointInput, tailscaleFixedEndpointConfig, error) {
+	config := tailscaleFixedEndpointConfig{Enabled: input.Enabled}
+	if input.Enabled {
+		if !input.ConfirmMapping {
+			return TailscaleFixedEndpointInput{}, tailscaleFixedEndpointConfig{}, errors.New("center: confirm the reserved public IPv4 and UDP 41641 mapping")
+		}
+		endpoint, err := normalizeTailscaleFixedEndpoint(input.Endpoint)
+		if err != nil {
+			return TailscaleFixedEndpointInput{}, tailscaleFixedEndpointConfig{}, err
+		}
+		localAddress := net.ParseIP(strings.TrimSpace(input.LocalAddress))
+		if localAddress == nil || localAddress.To4() == nil {
+			return TailscaleFixedEndpointInput{}, tailscaleFixedEndpointConfig{}, errors.New("center: select the local IPv4 address that receives UDP 41641")
+		}
+		candidates, err := s.discoverNetworkCandidates(s.now().UTC())
+		if err != nil {
+			return TailscaleFixedEndpointInput{}, tailscaleFixedEndpointConfig{}, fmt.Errorf("center: discover fixed-endpoint local address: %w", err)
+		}
+		if !candidateAddressExists(candidates, localAddress.String()) {
+			return TailscaleFixedEndpointInput{}, tailscaleFixedEndpointConfig{}, errors.New("center: the confirmed local address is stale or is not assigned to this Center host")
+		}
+		config.Endpoint = endpoint
+		config.LocalAddress = localAddress.String()
+		config.ConfirmedAt = s.now().UTC()
+		current, reason, err := s.tailscaleFixedEndpointCurrent(ctx, config)
+		if err != nil {
+			return TailscaleFixedEndpointInput{}, tailscaleFixedEndpointConfig{}, err
+		}
+		if !current {
+			return TailscaleFixedEndpointInput{}, tailscaleFixedEndpointConfig{}, errors.New("center: " + reason)
+		}
+		input.Endpoint = endpoint
+		input.LocalAddress = localAddress.String()
+	}
+	return input, config, nil
 }
 
 func (s *Store) readTailscaleFixedEndpoint(ctx context.Context) (tailscaleFixedEndpointConfig, error) {
