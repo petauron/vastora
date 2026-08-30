@@ -111,6 +111,10 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       ]);
       return { status, actions: actions.actions, agents: agents.agents };
     }
+    case "assistant": {
+      const status = await statusPromise;
+      return { status };
+    }
     case "settings": {
       const [status, centerUpdate, sources, applications, agents, systemDomain] = await Promise.all([
         statusPromise,
@@ -138,6 +142,7 @@ const screenPaths: Record<Screen, string> = {
   apps: "/apps",
   network: "/network",
   activity: "/activity",
+  assistant: "/assistant",
   settings: "/settings"
 };
 

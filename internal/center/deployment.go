@@ -29,6 +29,7 @@ type DeploymentRequest struct {
 	RegistryCredentialID *string `json:"registryCredentialId,omitempty"`
 	SecretOperationOwner string  `json:"-"`
 	SecretOperationKey   string  `json:"-"`
+	ChangeProposalID     string  `json:"-"`
 }
 
 type DeploymentView struct {
@@ -85,6 +86,21 @@ func validateRegistryCredentialBinding(ctx context.Context, querier registryCred
 func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest) (DeploymentView, error) {
 	s.deploymentCreateMu.Lock()
 	defer s.deploymentCreateMu.Unlock()
+	request.ChangeProposalID = strings.TrimSpace(request.ChangeProposalID)
+	if request.ChangeProposalID != "" {
+		var replay DeploymentView
+		var createdAt, updatedAt string
+		err := s.db.QueryRowContext(ctx, `SELECT id, agent_id, app_key, app_version, state, reconciliation_required, operation, delete_data, error, created_at, updated_at, application_id
+			FROM deployments WHERE change_proposal_id = ?`, request.ChangeProposalID).Scan(&replay.ID, &replay.AgentID, &replay.AppKey, &replay.AppVersion, &replay.State, &replay.ReconciliationRequired, &replay.Operation, &replay.DeleteData, &replay.Error, &createdAt, &updatedAt, &replay.ApplicationID)
+		if err == nil {
+			replay.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+			replay.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+			return replay, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return DeploymentView{}, fmt.Errorf("center: replay approved proposal deployment: %w", err)
+		}
+	}
 	request.Role = strings.TrimSpace(request.Role)
 	if strings.TrimSpace(request.AgentID) == "" || strings.TrimSpace(request.AppKey) == "" {
 		return DeploymentView{}, errors.New("center: agent and app are required")
@@ -286,8 +302,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation, change_proposal_id)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration, nullableString(request.ChangeProposalID)); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if producesCredentials {

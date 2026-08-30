@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, AssistantConversation, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -69,6 +69,16 @@ export const api = {
     }),
   logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST", body: "{}" }),
   changePassword: (currentPassword: string, newPassword: string) => request<{ changed: boolean }>("/api/v1/auth/password", { method: "PUT", body: JSON.stringify({ currentPassword, newPassword }) }),
+  assistantProvider: (signal?: AbortSignal) => request<AssistantProvider>("/api/v1/assistant/provider", { signal }),
+  saveAssistantProvider: (input: { apiUrl: string; apiKey: string; model: string; allowPrivate: boolean }) => request<AssistantProvider>("/api/v1/assistant/provider", { method: "PUT", body: JSON.stringify(input) }),
+  validateAssistantProvider: () => request<AssistantProvider>("/api/v1/assistant/provider/validate", { method: "POST", body: "{}" }),
+  assistantConversations: (signal?: AbortSignal) => request<{ conversations: AssistantConversation[] }>("/api/v1/assistant/conversations", { signal }),
+  createAssistantConversation: (title: string) => request<AssistantConversation>("/api/v1/assistant/conversations", { method: "POST", body: JSON.stringify({ title }) }),
+  assistantConversation: (id: string, signal?: AbortSignal) => request<AssistantConversation>(`/api/v1/assistant/conversations/${encodeURIComponent(id)}`, { signal }),
+  createAssistantMessage: (id: string, content: string) => request<AssistantRun>(`/api/v1/assistant/conversations/${encodeURIComponent(id)}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
+  cancelAssistantRun: (id: string) => request<{ cancelled: boolean }>(`/api/v1/assistant/runs/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+  decideAssistantProposal: (id: string, decision: "approve" | "reject", digest: string) => request<AssistantProposal>(`/api/v1/assistant/proposals/${encodeURIComponent(id)}/${decision}`, { method: "POST", body: JSON.stringify({ digest }) }),
+  applyAssistantProposal: (id: string, digest: string) => request<Deployment>(`/api/v1/assistant/proposals/${encodeURIComponent(id)}/apply`, { method: "POST", body: JSON.stringify({ digest }) }),
   status: (signal?: AbortSignal) => request<CenterStatus>("/api/v1/status", { signal }),
   centerUpdate: (refresh = false, signal?: AbortSignal) => request<CenterUpdateStatus>(`/api/v1/system/update${refresh ? "?refresh=true" : ""}`, { signal }),
   startCenterUpdate: () => request<CenterUpdateStatus>("/api/v1/system/update", { method: "POST", body: "{}" }),

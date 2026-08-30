@@ -426,7 +426,7 @@ var agentUnitRuntimePattern = regexp.MustCompile(`--roles\s+("(?:[^"\\]|\\.)*")\
 func parseAgentRuntimeFromUnit(content []byte) ([]string, agent.Capabilities, error) {
 	match := agentUnitRuntimePattern.FindSubmatch(content)
 	if len(match) != 3 {
-		return nil, agent.Capabilities{}, errors.New("Vastora Agent runtime flags are missing")
+		return nil, agent.Capabilities{}, errors.New("vastora Agent runtime flags are missing")
 	}
 	rolesValue, err := strconv.Unquote(string(match[1]))
 	if err != nil {

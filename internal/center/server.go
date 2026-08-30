@@ -33,6 +33,10 @@ type Server struct {
 	updates              deployapi.CenterUpdater
 	releaseChecker       CenterReleaseChecker
 	catalogRefreshMu     sync.Mutex
+	assistantRunMu       sync.Mutex
+	assistantRuns        map[string]context.CancelFunc
+	assistantWatchers    map[string]struct{}
+	assistantResumeOnce  sync.Once
 	startupReady         atomic.Bool
 }
 
@@ -53,7 +57,7 @@ func (s *Server) WithCenterReleaseChecker(checker CenterReleaseChecker) *Server 
 }
 
 func NewServer(store *Store, staticDir string, secureCookies bool) *Server {
-	server := &Server{store: store, staticDir: staticDir, secureCookies: secureCookies}
+	server := &Server{store: store, staticDir: staticDir, secureCookies: secureCookies, assistantRuns: make(map[string]context.CancelFunc), assistantWatchers: make(map[string]struct{})}
 	server.startupReady.Store(true)
 	return server
 }
@@ -79,6 +83,7 @@ func (s *Server) WithCoLocatedAgentURL(value string) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
+	s.assistantResumeOnce.Do(func() { s.store.startBackground(s.resumeAssistantExecutions) })
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
@@ -172,6 +177,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/registry-credentials", s.requireAuth(true, s.handleCreateRegistryCredential))
 	mux.HandleFunc("PUT /api/v1/registry-credentials/{id}", s.requireAuth(true, s.handleRotateRegistryCredential))
 	mux.HandleFunc("DELETE /api/v1/registry-credentials/{id}", s.requireAuth(true, s.handleDeleteRegistryCredential))
+	mux.HandleFunc("GET /api/v1/assistant/provider", s.requireAuth(false, s.handleAssistantProvider))
+	mux.HandleFunc("PUT /api/v1/assistant/provider", s.requireAuth(true, s.handleSaveAssistantProvider))
+	mux.HandleFunc("POST /api/v1/assistant/provider/validate", s.requireAuth(true, s.handleValidateAssistantProvider))
+	mux.HandleFunc("GET /api/v1/assistant/conversations", s.requireAuth(false, s.handleListAssistantConversations))
+	mux.HandleFunc("POST /api/v1/assistant/conversations", s.requireAuth(true, s.handleCreateAssistantConversation))
+	mux.HandleFunc("GET /api/v1/assistant/conversations/{id}", s.requireAuth(false, s.handleAssistantConversation))
+	mux.HandleFunc("POST /api/v1/assistant/conversations/{id}/messages", s.requireAuth(true, s.handleCreateAssistantMessage))
+	mux.HandleFunc("GET /api/v1/assistant/conversations/{id}/events", s.requireAuth(false, s.handleAssistantEvents))
+	mux.HandleFunc("POST /api/v1/assistant/runs/{id}/cancel", s.requireAuth(true, s.handleCancelAssistantRun))
+	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/approve", s.requireAuth(true, s.handleApproveAssistantProposal))
+	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/reject", s.requireAuth(true, s.handleRejectAssistantProposal))
+	mux.HandleFunc("POST /api/v1/assistant/proposals/{id}/apply", s.requireAuth(true, s.handleApplyAssistantProposal))
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.Handle("/", s.staticHandler())
 	return securityHeaders(mux)

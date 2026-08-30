@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { AppWindowIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
+import { AppWindowIcon, BotIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import { administratorPasswordMinLength } from "./lib/security";
@@ -32,10 +32,12 @@ const navigation = [
   { id: "nodes" as const, icon: ServerIcon, zh: "节点", en: "Nodes" },
   { id: "apps" as const, icon: AppWindowIcon, zh: "应用", en: "Apps" },
   { id: "network" as const, icon: NetworkIcon, zh: "网络", en: "Network" },
-  { id: "activity" as const, icon: HistoryIcon, zh: "活动", en: "Activity" }
+  { id: "activity" as const, icon: HistoryIcon, zh: "活动", en: "Activity" },
+  { id: "assistant" as const, icon: BotIcon, zh: "助手", en: "Assistant" }
 ];
 
 const ActivityView = lazy(() => import("./views/ActivityView").then((module) => ({ default: module.ActivityView })));
+const AssistantView = lazy(() => import("./views/AssistantView").then((module) => ({ default: module.AssistantView })));
 const AppsView = lazy(() => import("./views/AppsView").then((module) => ({ default: module.AppsView })));
 const HomeView = lazy(() => import("./views/HomeView").then((module) => ({ default: module.HomeView })));
 const NetworkView = lazy(() => import("./views/NetworkView").then((module) => ({ default: module.NetworkView })));
@@ -320,6 +322,7 @@ export function App() {
               {loadedScreens.has(screen) && screen === "apps" ? <AppsView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}
+              {loadedScreens.has(screen) && screen === "assistant" ? <AssistantView language={language} /> : null}
               {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>

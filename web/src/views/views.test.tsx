@@ -1436,7 +1436,7 @@ describe("network and app views", () => {
 
   it("clears backup secrets after every close path and successful download", async () => {
     vi.spyOn(api, "downloadBackup").mockResolvedValue(undefined);
-    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
     const enter = (selector: string, value: string) => act(() => {
       const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);

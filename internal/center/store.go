@@ -39,6 +39,8 @@ type Store struct {
 	cloudflareOAuthSessions        map[string]*cloudflareOAuthSession
 	cloudflareTokenMu              sync.Mutex
 	cloudflareTunnelMu             sync.Mutex
+	assistantProposalMu            sync.Mutex
+	assistantResolve               func(context.Context, string) ([]net.IPAddr, error)
 	certificateMu                  sync.Mutex
 	deploymentCreateMu             sync.Mutex
 	domainSwitchMu                 sync.Mutex
@@ -183,6 +185,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		builtinHeadscaleDialAddress:    net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
 		cloudflareOAuth:                defaultCloudflareOAuthConfig(),
 		cloudflareOAuthSessions:        make(map[string]*cloudflareOAuthSession),
+		assistantResolve:               net.DefaultResolver.LookupIPAddr,
 		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),
 		publicationVerificationBackoff: defaultPublicationVerificationBackoff,
 		now:                            time.Now,

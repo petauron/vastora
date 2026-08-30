@@ -889,6 +889,16 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE assistant_audit_events`,
+		`DROP TABLE assistant_events`,
+		`DROP TABLE change_approvals`,
+		`DROP TABLE change_proposals`,
+		`DROP TABLE assistant_tool_calls`,
+		`DROP TABLE assistant_runs`,
+		`DROP TABLE assistant_messages`,
+		`DROP TABLE assistant_conversations`,
+		`DROP TABLE assistant_model_providers`,
+		`DROP INDEX deployments_change_proposal_idx`,
 		`DROP TRIGGER application_command_updates_block_during_three_x_ui_deployment`,
 		`DROP TRIGGER agent_enrollment_operation_secret_cleanup`,
 		`DROP TRIGGER application_commands_block_during_three_x_ui_deployment`,
@@ -922,6 +932,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE deployments DROP COLUMN runtime_generation`,
 		`ALTER TABLE deployments DROP COLUMN reconciliation_requested`,
 		`ALTER TABLE deployments DROP COLUMN registry_credential_id`,
+		`ALTER TABLE deployments DROP COLUMN change_proposal_id`,
 		`ALTER TABLE services DROP COLUMN region_code`,
 		`ALTER TABLE services DROP COLUMN display_name`,
 		`ALTER TABLE catalog_sources DROP COLUMN last_checked_at`,

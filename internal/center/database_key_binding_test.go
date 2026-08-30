@@ -204,8 +204,19 @@ func makeLegacyUnboundCenter(t *testing.T, directory string) {
 	}
 	if _, err := db.Exec(`DROP TRIGGER secret_deliveries_delete_with_deployment;
 		DROP TRIGGER secret_deliveries_delete_with_application_command;
+		DROP TABLE assistant_audit_events;
+		DROP TABLE assistant_events;
+		DROP TABLE change_approvals;
+		DROP TABLE change_proposals;
+		DROP TABLE assistant_tool_calls;
+		DROP TABLE assistant_runs;
+		DROP TABLE assistant_messages;
+		DROP TABLE assistant_conversations;
+		DROP TABLE assistant_model_providers;
+		DROP INDEX deployments_change_proposal_idx;
 		DROP TABLE secret_deliveries;
 		DROP TABLE storage_key_binding;
+		ALTER TABLE deployments DROP COLUMN change_proposal_id;
 		ALTER TABLE deployments DROP COLUMN executed_runtime_generation;
 		DELETE FROM goose_db_version WHERE version_id > 35;
 		PRAGMA user_version = 35`); err != nil {

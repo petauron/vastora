@@ -22,7 +22,7 @@ export type CenterStatus = {
   agentConnectUrl: string;
 };
 
-export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "settings";
+export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "assistant" | "settings";
 
 export type AppData = {
   status: CenterStatus;
@@ -91,6 +91,71 @@ export type CenterUpdateStatus = {
   checkedAt?: string;
   updatedAt?: string;
   error?: string;
+};
+
+export type AssistantProvider = {
+  apiUrl: string;
+  model: string;
+  apiKeySet: boolean;
+  allowPrivate: boolean;
+  status: "disabled" | "configured" | "verified" | "failed";
+  lastError?: string;
+  updatedAt?: string;
+};
+
+export type AssistantMessage = {
+  id: string;
+  runId?: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+};
+
+export type AssistantRun = {
+  id: string;
+  conversationId: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "approval_required";
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AssistantProposal = {
+  id: string;
+  conversationId: string;
+  runId: string;
+  kind: "install_application";
+  summary: {
+    action?: string;
+    agentId?: string;
+    agentName?: string;
+    appKey?: string;
+    appName?: LocalizedText;
+    version?: string;
+    role?: string;
+    impact?: string;
+    dataRetention?: string;
+  };
+  digest: string;
+  targets: Array<{ kind: string; id: string }>;
+  expectedRevision: string;
+  policyVersion: string;
+  risk: "low" | "medium" | "high";
+  status: "pending" | "approved" | "rejected" | "expired" | "applied" | "cancelled";
+  expiresAt: string;
+  deploymentId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AssistantConversation = {
+  id: string;
+  title: string;
+  messages: AssistantMessage[];
+  runs: AssistantRun[];
+  proposals: AssistantProposal[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AgentConnectionMode = "lan" | "headscale" | "public";
