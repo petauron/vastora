@@ -265,6 +265,7 @@ export type Deployment = {
   reconciliationRequired?: boolean;
   applicationId?: string;
   oneTimeCredentials?: { username: string; password: string };
+  oneTimeCredentialsAvailable?: boolean;
   createdAt: string;
   updatedAt: string;
 };

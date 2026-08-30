@@ -40,6 +40,7 @@ type Store struct {
 	cloudflareTokenMu              sync.Mutex
 	cloudflareTunnelMu             sync.Mutex
 	certificateMu                  sync.Mutex
+	deploymentCreateMu             sync.Mutex
 	domainSwitchMu                 sync.Mutex
 	initialSetupMu                 sync.Mutex
 	remoteAccessMu                 sync.Mutex
@@ -48,6 +49,7 @@ type Store struct {
 	publicationVerificationMu      sync.Mutex
 	publicationVerificationJobs    map[string]*publicationVerificationJob
 	publicationVerificationBackoff func(int) time.Duration
+	secretDeliveryMu               sync.Mutex
 	agentDecommissionGrace         time.Duration
 	verifyPublication              func(context.Context, string, int64) (PublicationView, error)
 	taskChanges                    changeNotifier

@@ -757,12 +757,20 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	if err != nil || len(publications) != 1 || publications[0].Hostname != "reality.edge.site.example.test" || publications[0].SNIHostname != "www.example.com" {
 		t.Fatalf("connection hostname and SNI were not kept separate: %#v err=%v", publications, err)
 	}
-	link, err := store.ConsumeApplicationCommandResult(ctx, command.ID)
+	const deliveryOwner = "test-administrator"
+	const deliveryKey = "reality-result-operation-1"
+	link, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey)
 	if err != nil || link != shareURI {
 		t.Fatalf("one-time link = %q, err=%v", link, err)
 	}
-	if _, err := store.ConsumeApplicationCommandResult(ctx, command.ID); err == nil {
-		t.Fatal("one-time link was revealed twice")
+	if replay, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil || replay != shareURI {
+		t.Fatalf("replayed one-time link = %q, err=%v", replay, err)
+	}
+	if err := store.AcknowledgeApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err == nil {
+		t.Fatal("acknowledged one-time link remained available")
 	}
 }
 

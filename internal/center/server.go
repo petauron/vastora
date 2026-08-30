@@ -101,6 +101,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
 	mux.HandleFunc("POST /api/v1/deployments", s.requireAuth(true, s.handleCreateDeployment))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/credentials/reveal", s.requireAuth(true, s.handleRevealDeploymentCredentials))
+	mux.HandleFunc("POST /api/v1/deployments/{id}/credentials/ack", s.requireAuth(true, s.handleAcknowledgeDeploymentCredentials))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry-reconciliation", s.requireAuth(true, s.handleRetryTaskReconciliation))
 	mux.HandleFunc("GET /api/v1/organizations", s.requireAuth(false, s.handleListOrganizations))
 	mux.HandleFunc("GET /api/v1/sites", s.requireAuth(false, s.handleListSites))
@@ -121,6 +123,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/application-commands/{id}", s.requireAuth(false, s.handleApplicationCommand))
 	mux.HandleFunc("GET /api/v1/application-commands/{id}/events", s.requireAuth(false, s.handleApplicationCommandEvents))
 	mux.HandleFunc("POST /api/v1/application-commands/{id}/reveal", s.requireAuth(true, s.handleRevealApplicationCommand))
+	mux.HandleFunc("POST /api/v1/application-commands/{id}/ack", s.requireAuth(true, s.handleAcknowledgeApplicationCommand))
 	mux.HandleFunc("GET /api/v1/services", s.requireAuth(false, s.handleListServices))
 	mux.HandleFunc("GET /api/v1/publications", s.requireAuth(false, s.handleListPublications))
 	mux.HandleFunc("POST /api/v1/publications", s.requireAuth(true, s.handleCreatePublication))
@@ -198,6 +201,14 @@ func (s *Server) requireAuth(mutation bool, handler http.HandlerFunc) http.Handl
 		}
 		handler(writer, request)
 	}
+}
+
+func authenticatedSecretOwner(request *http.Request) string {
+	cookie, err := request.Cookie("vastora_session")
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return ""
+	}
+	return fmt.Sprintf("%x", tokenHash(cookie.Value))
 }
 
 func (s *Server) setSessionCookies(writer http.ResponseWriter, request *http.Request, session, csrf string) {

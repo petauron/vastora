@@ -27,23 +27,26 @@ type DeploymentRequest struct {
 	// RegistryCredentialID is tri-state: omitted preserves an installed binding,
 	// an empty string clears it, and a non-empty value replaces it.
 	RegistryCredentialID *string `json:"registryCredentialId,omitempty"`
+	SecretOperationOwner string  `json:"-"`
+	SecretOperationKey   string  `json:"-"`
 }
 
 type DeploymentView struct {
-	ID                     string              `json:"id"`
-	AgentID                string              `json:"agentId"`
-	AppKey                 string              `json:"appKey"`
-	AppVersion             string              `json:"appVersion"`
-	State                  string              `json:"state"`
-	ReconciliationRequired bool                `json:"reconciliationRequired"`
-	Operation              string              `json:"operation"`
-	DeleteData             bool                `json:"deleteData"`
-	AccessURL              string              `json:"accessUrl,omitempty"`
-	Error                  string              `json:"error,omitempty"`
-	CreatedAt              time.Time           `json:"createdAt"`
-	UpdatedAt              time.Time           `json:"updatedAt"`
-	ApplicationID          string              `json:"applicationId,omitempty"`
-	OneTimeCredentials     *OneTimeCredentials `json:"oneTimeCredentials,omitempty"`
+	ID                          string              `json:"id"`
+	AgentID                     string              `json:"agentId"`
+	AppKey                      string              `json:"appKey"`
+	AppVersion                  string              `json:"appVersion"`
+	State                       string              `json:"state"`
+	ReconciliationRequired      bool                `json:"reconciliationRequired"`
+	Operation                   string              `json:"operation"`
+	DeleteData                  bool                `json:"deleteData"`
+	AccessURL                   string              `json:"accessUrl,omitempty"`
+	Error                       string              `json:"error,omitempty"`
+	CreatedAt                   time.Time           `json:"createdAt"`
+	UpdatedAt                   time.Time           `json:"updatedAt"`
+	ApplicationID               string              `json:"applicationId,omitempty"`
+	OneTimeCredentials          *OneTimeCredentials `json:"oneTimeCredentials,omitempty"`
+	OneTimeCredentialsAvailable bool                `json:"oneTimeCredentialsAvailable,omitempty"`
 }
 
 type OneTimeCredentials struct {
@@ -80,12 +83,43 @@ func validateRegistryCredentialBinding(ctx context.Context, querier registryCred
 }
 
 func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest) (DeploymentView, error) {
+	s.deploymentCreateMu.Lock()
+	defer s.deploymentCreateMu.Unlock()
 	request.Role = strings.TrimSpace(request.Role)
 	if strings.TrimSpace(request.AgentID) == "" || strings.TrimSpace(request.AppKey) == "" {
 		return DeploymentView{}, errors.New("center: agent and app are required")
 	}
 	if request.Operation == "" {
 		request.Operation = "install"
+	}
+	producesCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker
+	var secretOwner string
+	var operationKeyHash, secretRequestHash []byte
+	if producesCredentials {
+		if request.SecretOperationOwner == "" {
+			request.SecretOperationOwner = "internal"
+			if request.SecretOperationKey == "" {
+				var err error
+				request.SecretOperationKey, err = randomToken(18)
+				if err != nil {
+					return DeploymentView{}, err
+				}
+			}
+		}
+		var err error
+		secretOwner, operationKeyHash, err = normalizeSecretOperation(request.SecretOperationOwner, request.SecretOperationKey)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+		secretRequestHash, err = deploymentSecretRequestHash(request)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+		if replay, exists, err := s.replayDeploymentCredentials(ctx, secretOwner, operationKeyHash, secretRequestHash); err != nil {
+			return DeploymentView{}, err
+		} else if exists {
+			return replay, nil
+		}
 	}
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
@@ -223,7 +257,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, err
 	}
 	now := s.now().UTC()
-	deployment := DeploymentView{ID: id, AgentID: request.AgentID, AppKey: request.AppKey, AppVersion: manifest.Version, Operation: request.Operation, DeleteData: request.DeleteData, State: "pending", CreatedAt: now, UpdatedAt: now, OneTimeCredentials: oneTimeCredentials}
+	deployment := DeploymentView{ID: id, AgentID: request.AgentID, AppKey: request.AppKey, AppVersion: manifest.Version, Operation: request.Operation, DeleteData: request.DeleteData, State: "pending", CreatedAt: now, UpdatedAt: now, OneTimeCredentials: oneTimeCredentials, OneTimeCredentialsAvailable: producesCredentials}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
@@ -256,6 +290,14 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
+	if producesCredentials {
+		if oneTimeCredentials == nil {
+			return DeploymentView{}, errors.New("center: generated 3x-ui credentials are unavailable")
+		}
+		if err := insertSecretDelivery(ctx, tx, deploymentCredentialsDelivery, secretOwner, operationKeyHash, secretRequestHash, deployment.ID, now); err != nil {
+			return DeploymentView{}, err
+		}
+	}
 	if err := s.recordTaskEvent(ctx, tx, deployment.ID, deployment.AgentID, "application.apply", applicationTaskRevision, "queued", deployment.Operation+" "+deployment.AppKey); err != nil {
 		return DeploymentView{}, err
 	}
@@ -282,7 +324,8 @@ func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {
 	for _, app := range apps {
 		homepages[app.Key] = app.App.Homepage
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.agent_id, d.app_key, d.app_version, d.operation, d.delete_data, d.state, d.reconciliation_required, d.error, d.created_at, d.updated_at, d.application_id
+	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.agent_id, d.app_key, d.app_version, d.operation, d.delete_data, d.state, d.reconciliation_required, d.error, d.created_at, d.updated_at, d.application_id,
+		EXISTS(SELECT 1 FROM secret_deliveries delivery WHERE delivery.kind = 'deployment_credentials' AND delivery.resource_id = d.id AND delivery.state = 'pending')
 		FROM deployments AS d WHERE d.state IN ('pending', 'running') OR d.reconciliation_required = 1 OR d.id IN (
 			SELECT recent.id FROM deployments recent ORDER BY recent.created_at DESC, recent.rowid DESC LIMIT 200
 		)
@@ -295,7 +338,7 @@ func (s *Store) ListDeployments(ctx context.Context) ([]DeploymentView, error) {
 	for rows.Next() {
 		var deployment DeploymentView
 		var createdAt, updatedAt string
-		if err := rows.Scan(&deployment.ID, &deployment.AgentID, &deployment.AppKey, &deployment.AppVersion, &deployment.Operation, &deployment.DeleteData, &deployment.State, &deployment.ReconciliationRequired, &deployment.Error, &createdAt, &updatedAt, &deployment.ApplicationID); err != nil {
+		if err := rows.Scan(&deployment.ID, &deployment.AgentID, &deployment.AppKey, &deployment.AppVersion, &deployment.Operation, &deployment.DeleteData, &deployment.State, &deployment.ReconciliationRequired, &deployment.Error, &createdAt, &updatedAt, &deployment.ApplicationID, &deployment.OneTimeCredentialsAvailable); err != nil {
 			return nil, fmt.Errorf("center: scan deployment: %w", err)
 		}
 		var err error

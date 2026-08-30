@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
-	"github.com/petauron/vastora/internal/secret"
 )
 
 const (
@@ -786,33 +785,4 @@ func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kin
 		return ApplicationCommandView{}, err
 	}
 	return s.ApplicationCommand(ctx, id)
-}
-
-func (s *Store) ConsumeApplicationCommandResult(ctx context.Context, id string) (string, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-	var secretID string
-	var sealed []byte
-	if err := tx.QueryRowContext(ctx, `SELECT c.result_secret_id, s.sealed FROM application_commands c JOIN secrets s ON s.id = c.result_secret_id WHERE c.id = ? AND c.state = 'succeeded'`, id).Scan(&secretID, &sealed); errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("center: one-time application result is unavailable")
-	} else if err != nil {
-		return "", err
-	}
-	plain, err := secret.Open(s.key, sealed, []byte("application-command:"+id))
-	if err != nil {
-		return "", err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET result_secret_id = NULL WHERE id = ?`, id); err != nil {
-		return "", err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, secretID); err != nil {
-		return "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return string(plain), nil
 }

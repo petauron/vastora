@@ -202,7 +202,12 @@ func makeLegacyUnboundCenter(t *testing.T, directory string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`DROP TABLE storage_key_binding; DELETE FROM goose_db_version WHERE version_id = 36; PRAGMA user_version = 35`); err != nil {
+	if _, err := db.Exec(`DROP TRIGGER secret_deliveries_delete_with_deployment;
+		DROP TRIGGER secret_deliveries_delete_with_application_command;
+		DROP TABLE secret_deliveries;
+		DROP TABLE storage_key_binding;
+		DELETE FROM goose_db_version WHERE version_id > 35;
+		PRAGMA user_version = 35`); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}

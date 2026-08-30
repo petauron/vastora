@@ -18,6 +18,7 @@ import { CenterUpdateCard } from "./CenterUpdateCard";
 import { ThemeProvider } from "../components/theme";
 import { defaultPublicationHostname, defaultRealityHostname } from "./appAccess";
 import { CopyButton, userError } from "./shared";
+import { commandSecretScope, secretOperation } from "../secret-delivery";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -489,7 +490,7 @@ describe("network and app views", () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("开始安装"))?.click();
       await Promise.resolve();
     });
-    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "");
+    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "", undefined);
   });
 
 	it("shows one Site controller and keeps worker controls focused on VLESS", () => {
@@ -559,6 +560,7 @@ describe("network and app views", () => {
     const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, resetDays: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDays: 30, nextResetAt: "2026-09-22T00:00:00Z" }, { id: 10, serviceId: "reality-service-2", name: "inbound-10", nodeName: "oracle-worker", connectHostname: "reality.oracle.example.test", totalBytes: 0, usedBytes: 0, resetDays: 0 }], inboundsObserved: true, subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
     const create = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action.startsWith("reveal_") ? { ...baseCommand, id: `client-command-${input.action}`, action: input.action, resultAvailable: true } : baseCommand);
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockImplementation(async (id) => ({ shareUri: id.includes("subscription") ? "https://subscription.example.test/sub/client-id" : "vless://one-time-client-link" }));
+    const acknowledge = vi.spyOn(api, "acknowledgeApplicationCommand").mockResolvedValue({ acknowledged: true });
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -594,9 +596,14 @@ describe("network and app views", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(reveal).toHaveBeenCalledWith("client-command-reveal_link");
+    expect(reveal).toHaveBeenCalledWith("client-command-reveal_link", expect.any(String));
     expect(writeText).toHaveBeenCalledWith("vless://one-time-client-link");
     expect(document.body.textContent).toContain("vless://one-time-client-link");
+    await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("我已保存"))?.click();
+      await Promise.resolve();
+    });
+    expect(acknowledge).toHaveBeenCalledWith("client-command-reveal_link", expect.any(String));
     await act(async () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("复制订阅"))?.click();
       await Promise.resolve();
@@ -644,6 +651,28 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("2026年8月24日");
   });
 
+	it("recovers an unacknowledged client link even after a newer list command", async () => {
+		const data = realityDashboard();
+		const listCommand: ApplicationCommand = { id: "newer-client-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 0, usedBytes: 0, expiryTime: 0, resetDays: 0, limitIp: 0, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test" }], inboundsObserved: true, subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-23T00:00:02Z", updatedAt: "2026-08-23T00:00:03Z" };
+		const secretCommand: ApplicationCommand = { ...listCommand, id: "unacknowledged-client-link", action: "reveal_link", resultAvailable: true, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+		const operationKey = secretOperation(commandSecretScope("three-x-ui", secretCommand.id));
+		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(listCommand);
+		vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue(listCommand);
+		vi.spyOn(api, "applicationCommand").mockResolvedValue(secretCommand);
+		const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://recovered-after-refresh" });
+		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+		await act(async () => {
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理客户端"))?.click();
+			await Promise.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(reveal).toHaveBeenCalledWith(secretCommand.id, operationKey);
+		expect(document.body.textContent).toContain("vless://recovered-after-refresh");
+	});
+
   it("offers browser-trusted HTTPS only when Cloudflare is connected", () => {
     const data = dashboard();
     data.sites[0].domainSuffix = "vastora.example.com";
@@ -683,20 +712,29 @@ describe("network and app views", () => {
 	it("reveals a REALITY client link only after explicit confirmation", async () => {
     const data = realityDashboard();
 	    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", targetAsn: 64500, guardStatus: "ready", clientCreated: true, resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
-    const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
+	    const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
+	    const acknowledge = vi.spyOn(api, "acknowledgeApplicationCommand").mockResolvedValue({ acknowledged: true });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
     expect(reveal).not.toHaveBeenCalled();
-    const revealButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("显示一次性链接"));
+    const revealButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("显示客户端链接"));
     await act(async () => {
       revealButton?.click();
       await Promise.resolve();
     });
-    expect(reveal).toHaveBeenCalledWith("application-command-1");
+	const operationKey = reveal.mock.calls[0]?.[1];
+	expect(operationKey).toEqual(expect.any(String));
+	expect(reveal).toHaveBeenCalledWith("application-command-1", operationKey);
 		expect(document.body.textContent).toContain("vless://one-time-client-link");
+	await act(async () => {
+		[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("我已保存"))?.click();
+		await Promise.resolve();
+	});
+	expect(acknowledge).toHaveBeenCalledWith("application-command-1", operationKey);
+	expect(document.body.textContent).not.toContain("vless://one-time-client-link");
 	});
 
 	it("keeps the one-time REALITY link available when only public access fails", async () => {
@@ -709,7 +747,7 @@ describe("network and app views", () => {
 		});
 		expect(document.body.textContent).toContain("REALITY 已创建，公网入口待处理");
 		expect(document.body.textContent).toContain("客户端凭据已安全保留");
-		expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("显示一次性链接"))).toBe(true);
+		expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("显示客户端链接"))).toBe(true);
 	});
 
 	it("returns to the REALITY form after a previous creation failed", async () => {
