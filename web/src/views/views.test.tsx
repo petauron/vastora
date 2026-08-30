@@ -1396,6 +1396,35 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("至少 10 个字符。");
   });
 
+  it("clears backup and catalog secrets whenever their sheets close", () => {
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
+    const enter = (selector: string, value: string) => act(() => {
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+      if (!input) throw new Error(`missing input ${selector}`);
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    clickButton("下载加密备份");
+    enter("#backup-password", "secret-backup-password");
+    enter("#backup-confirmation", "secret-backup-password");
+    clickButton("取消");
+    clickButton("下载加密备份");
+    expect(document.querySelector<HTMLInputElement>("#backup-password")?.value).toBe("");
+    expect(document.querySelector<HTMLInputElement>("#backup-confirmation")?.value).toBe("");
+    clickButton("取消");
+
+    act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"))?.click());
+    clickButton("添加目录");
+    enter("#source-token", "secret-bearer-token");
+    enter("#source-ca", "secret-custom-ca");
+    clickButton("取消");
+    clickButton("添加目录");
+    expect(document.querySelector<HTMLInputElement>("#source-token")?.value).toBe("");
+    expect(document.querySelector<HTMLTextAreaElement>("#source-ca")?.value).toBe("");
+  });
+
   it("distinguishes verified, cached, failed, pending, and disabled catalog states in Chinese", () => {
     const data = dashboard();
     data.sources = [
