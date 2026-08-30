@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "vitest run"
+    "test": "vitest run && npm run test:contracts",
+    "test:contracts": "node scripts/validate-catalog-contracts.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -25,11 +26,13 @@
     "@eslint/js": "10.0.1",
     "@rolldown/plugin-babel": "0.2.3",
     "@tailwindcss/vite": "4.3.3",
-    "@typescript/native": "npm:typescript@7.0.2",
     "@types/node": "^26.2.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "6.0.5",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "10.8.1",
     "globals": "17.11.0",

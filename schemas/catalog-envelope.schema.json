@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vastora.petauron.com/contracts/catalog/v0.1/catalog-envelope.schema.json",
+  "title": "Vastora v0.1 signed catalog envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "keyId", "payload", "signature"],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "keyId": { "type": "string", "pattern": "\\S" },
+    "payload": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+    "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+  }
+}

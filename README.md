@@ -12,8 +12,8 @@ when the Center is unavailable.
 ## What is implemented now
 
 - A Go `vastora` CLI with a Center HTTP API, one-time Agent enrollment,
-  authenticated Agent heartbeats, Agent-local encrypted credentials, and catalog
-  signing/validation commands.
+  authenticated Agent heartbeats, Agent-local encrypted credentials, and portable
+  Catalog key generation, validation, signing, and verification commands.
 - Browser-based first-administrator setup with a username, Argon2id password
   hashing, and authenticated sessions.
 - AES-256-GCM encrypted secrets in SQLite, multi-source catalog persistence,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/url"
 	"regexp"
 	"sort"
@@ -17,7 +18,9 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
+
+const maxPortableInteger int64 = 9_007_199_254_740_991
 
 var (
 	identifierPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
@@ -43,14 +46,6 @@ type ConfigField struct {
 	Required    bool             `json:"required"`
 	Secret      bool             `json:"secret"`
 	Default     *json.RawMessage `json:"default,omitempty"`
-	VisibleWhen *FieldCondition  `json:"visibleWhen,omitempty"`
-}
-
-// FieldCondition permits a single explicit condition without an expression
-// language or executable template code.
-type FieldCondition struct {
-	Field  string `json:"field"`
-	Equals any    `json:"equals"`
 }
 
 type Image struct {
@@ -176,12 +171,16 @@ func ValidateApp(app AppManifest) error {
 		if !identifierPattern.MatchString(artifact.Name) {
 			return fmt.Errorf("catalog: invalid artifact name %q in %q", artifact.Name, app.ID)
 		}
+		if strings.TrimSpace(artifact.OperatingSystem) != artifact.OperatingSystem || strings.TrimSpace(artifact.Architecture) != artifact.Architecture {
+			return fmt.Errorf("catalog: artifact %q in %q has a non-canonical platform", artifact.Name, app.ID)
+		}
 		target, err := platform.Parse(artifact.OperatingSystem, artifact.Architecture)
 		if err != nil {
 			return fmt.Errorf("catalog: invalid artifact platform for %q in %q: %w", artifact.Name, app.ID, err)
 		}
-		parsed, err := url.Parse(strings.TrimSpace(artifact.URL))
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		rawURL := artifact.URL
+		parsed, err := url.Parse(rawURL)
+		if err != nil || strings.TrimSpace(rawURL) != rawURL || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || strings.ContainsAny(rawURL, "?#") {
 			return fmt.Errorf("catalog: artifact %q in %q needs an exact credential-free HTTPS URL", artifact.Name, app.ID)
 		}
 		if !sha256Pattern.MatchString(artifact.SHA256) {
@@ -193,7 +192,7 @@ func ValidateApp(app AppManifest) error {
 		}
 		artifactTargets[key] = struct{}{}
 	}
-	fields := make(map[string]struct{}, len(app.Config))
+	fields := make(map[string]string, len(app.Config))
 	for _, field := range app.Config {
 		if !fieldPattern.MatchString(field.Key) {
 			return fmt.Errorf("catalog: invalid field %q in %q", field.Key, app.ID)
@@ -201,18 +200,21 @@ func ValidateApp(app AppManifest) error {
 		if _, exists := fields[field.Key]; exists {
 			return fmt.Errorf("catalog: duplicate field %q in %q", field.Key, app.ID)
 		}
-		fields[field.Key] = struct{}{}
+		fields[field.Key] = field.Type
 		if field.Type != "string" && field.Type != "boolean" && field.Type != "integer" {
 			return fmt.Errorf("catalog: unsupported field type %q in %q", field.Type, app.ID)
 		}
 		if field.Secret && field.Default != nil {
 			return fmt.Errorf("catalog: secret field %q in %q cannot define a default", field.Key, app.ID)
 		}
+		if err := validateConfigDefault(field, app.ID); err != nil {
+			return err
+		}
 		if err := validateLocalized("field label", app.ID, field.Label); err != nil {
 			return err
 		}
-		if field.VisibleWhen != nil && !fieldPattern.MatchString(field.VisibleWhen.Field) {
-			return fmt.Errorf("catalog: invalid condition field in %q", app.ID)
+		if err := validateLocalized("field description", app.ID, field.Description); err != nil {
+			return err
 		}
 	}
 	services := make(map[string]struct{}, len(app.Services))
@@ -233,12 +235,19 @@ func ValidateApp(app AppManifest) error {
 		if service.HostPortField == "" && service.DefaultHostPort == 0 {
 			return fmt.Errorf("catalog: service %q in %q needs a host port", service.Name, app.ID)
 		}
+		if service.HostPortField != "" && service.DefaultHostPort != 0 {
+			return fmt.Errorf("catalog: service %q in %q cannot define both a default host port and a host port field", service.Name, app.ID)
+		}
 		if service.HostPortField != "" {
 			if !fieldPattern.MatchString(service.HostPortField) {
 				return fmt.Errorf("catalog: invalid host port field for service %q in %q", service.Name, app.ID)
 			}
-			if _, exists := fields[service.HostPortField]; !exists {
+			fieldType, exists := fields[service.HostPortField]
+			if !exists {
 				return fmt.Errorf("catalog: service %q in %q references unknown host port field %q", service.Name, app.ID, service.HostPortField)
+			}
+			if fieldType != "integer" {
+				return fmt.Errorf("catalog: service %q in %q needs an integer host port field", service.Name, app.ID)
 			}
 		}
 		if service.HealthPath != "" && (!strings.HasPrefix(service.HealthPath, "/") || strings.HasPrefix(service.HealthPath, "//") || strings.ContainsAny(service.HealthPath, "?#")) {
@@ -253,14 +262,70 @@ func ValidateApp(app AppManifest) error {
 			return fmt.Errorf("catalog: homepage in %q has an invalid path", app.ID)
 		}
 	}
-	for _, field := range app.Config {
-		if field.VisibleWhen != nil {
-			if _, exists := fields[field.VisibleWhen.Field]; !exists {
-				return fmt.Errorf("catalog: condition for %q references unknown field %q", field.Key, field.VisibleWhen.Field)
-			}
+	return nil
+}
+
+func validateConfigDefault(field ConfigField, appID string) error {
+	if field.Default == nil {
+		return nil
+	}
+	raw := []byte(*field.Default)
+	if string(raw) == "null" {
+		return fmt.Errorf("catalog: default for field %q in %q must match type %q", field.Key, appID, field.Type)
+	}
+	switch field.Type {
+	case "string":
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return configDefaultTypeError(field, appID)
 		}
+	case "boolean":
+		var value bool
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return configDefaultTypeError(field, appID)
+		}
+	case "integer":
+		if _, err := NormalizePortableInteger(*field.Default); err != nil {
+			return fmt.Errorf("catalog: invalid integer default for field %q in %q: %w", field.Key, appID, err)
+		}
+	default:
+		return nil
 	}
 	return nil
+}
+
+func configDefaultTypeError(field ConfigField, appID string) error {
+	return fmt.Errorf("catalog: default for field %q in %q must match type %q", field.Key, appID, field.Type)
+}
+
+// NormalizePortableInteger accepts any JSON number whose mathematical value is
+// an integer in JavaScript's exactly representable safe range and returns its
+// canonical base-10 JSON representation. Catalog consumers use this at both
+// contract-validation and deployment boundaries so equivalent lexemes such as
+// 1, 1.0, and 1e0 have identical behavior.
+func NormalizePortableInteger(raw json.RawMessage) (json.RawMessage, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, errors.New("value must be an integer")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("value must contain one JSON number")
+	}
+	number, ok := value.(json.Number)
+	if !ok {
+		return nil, errors.New("value must be an integer")
+	}
+	rational, ok := new(big.Rat).SetString(number.String())
+	if !ok || !rational.IsInt() {
+		return nil, errors.New("value must be an integer")
+	}
+	limit := big.NewInt(maxPortableInteger)
+	if rational.Num().Cmp(limit) > 0 || rational.Num().Cmp(new(big.Int).Neg(limit)) < 0 {
+		return nil, errors.New("integer exceeds the portable safe range")
+	}
+	return json.RawMessage(rational.Num().String()), nil
 }
 
 func validateLocalized(kind, appID string, value LocalizedText) error {
@@ -271,6 +336,9 @@ func validateLocalized(kind, appID string, value LocalizedText) error {
 }
 
 func ParseCatalog(payload []byte) (Catalog, error) {
+	if err := validateCatalogJSONShape(payload); err != nil {
+		return Catalog{}, err
+	}
 	var c Catalog
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
@@ -284,6 +352,104 @@ func ParseCatalog(payload []byte) (Catalog, error) {
 		return Catalog{}, err
 	}
 	return c, nil
+}
+
+func validateCatalogJSONShape(payload []byte) error {
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return fmt.Errorf("catalog: decode payload: %w", err)
+	}
+	if err := rejectJSONNull("catalog", value); err != nil {
+		return err
+	}
+	root, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("catalog: payload must be an object")
+	}
+	appsValue, exists := root["apps"]
+	if !exists {
+		return errors.New("catalog: apps is required")
+	}
+	apps, ok := appsValue.([]any)
+	if !ok {
+		return errors.New("catalog: apps must be an array")
+	}
+	for appIndex, appValue := range apps {
+		app, ok := appValue.(map[string]any)
+		if !ok {
+			return fmt.Errorf("catalog: app %d must be an object", appIndex)
+		}
+		configValue, exists := app["config"]
+		if !exists {
+			return fmt.Errorf("catalog: config is required for app %d", appIndex)
+		}
+		config, ok := configValue.([]any)
+		if !ok {
+			return fmt.Errorf("catalog: config for app %d must be an array", appIndex)
+		}
+		for fieldIndex, fieldValue := range config {
+			field, ok := fieldValue.(map[string]any)
+			if !ok {
+				return fmt.Errorf("catalog: config field %d in app %d must be an object", fieldIndex, appIndex)
+			}
+			for _, property := range []string{"required", "secret"} {
+				if _, exists := field[property]; !exists {
+					return fmt.Errorf("catalog: %s is required for config field %d in app %d", property, fieldIndex, appIndex)
+				}
+			}
+		}
+		servicesValue, exists := app["services"]
+		if !exists {
+			continue
+		}
+		services, ok := servicesValue.([]any)
+		if !ok {
+			return fmt.Errorf("catalog: services for app %d must be an array", appIndex)
+		}
+		for serviceIndex, serviceValue := range services {
+			service, ok := serviceValue.(map[string]any)
+			if !ok {
+				return fmt.Errorf("catalog: service %d in app %d must be an object", serviceIndex, appIndex)
+			}
+			for _, property := range []string{"healthPath", "hostPortField"} {
+				if value, exists := service[property]; exists && value == "" {
+					return fmt.Errorf("catalog: %s cannot be empty for service %d in app %d", property, serviceIndex, appIndex)
+				}
+			}
+			if value, exists := service["defaultHostPort"]; exists {
+				if number, ok := value.(json.Number); ok {
+					parsed, parseErr := number.Float64()
+					if parseErr == nil && parsed == 0 {
+						return fmt.Errorf("catalog: defaultHostPort cannot be zero for service %d in app %d", serviceIndex, appIndex)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func rejectJSONNull(path string, value any) error {
+	if value == nil {
+		return fmt.Errorf("catalog: null is not allowed at %s", path)
+	}
+	switch value := value.(type) {
+	case []any:
+		for index, item := range value {
+			if err := rejectJSONNull(fmt.Sprintf("%s[%d]", path, index), item); err != nil {
+				return err
+			}
+		}
+	case map[string]any:
+		for key, item := range value {
+			if err := rejectJSONNull(path+"."+key, item); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func MarshalCatalog(c Catalog) ([]byte, error) {

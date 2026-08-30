@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-15T00:00:00Z",
+  "apps": [
+    {
+      "id": "fixture-app",
+      "version": "1.2.3",
+      "name": { "en": "Fixture app", "zh-CN": "夹具应用" },
+      "description": { "en": "Synthetic fixture", "zh-CN": "合成夹具" },
+      "license": "Apache-2.0",
+      "images": [{ "name": "runtime", "reference": "registry.example.invalid/fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+      "config": []
+    },
+    {
+      "id": "fixture-app",
+      "version": "1.2.4",
+      "name": { "en": "Duplicate fixture", "zh-CN": "重复夹具" },
+      "description": { "en": "Synthetic duplicate", "zh-CN": "合成重复项" },
+      "license": "Apache-2.0",
+      "images": [{ "name": "runtime", "reference": "registry.example.invalid/fixture@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }],
+      "config": []
+    }
+  ]
+}
