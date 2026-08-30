@@ -68,7 +68,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	}
 	metadata := []ThreeXUIClientView{{Email: "MacBook", Enabled: true, TotalBytes: 10 << 30, UsedBytes: 1024, InboundIDs: []int{9}, HasSubscription: true}}
 	result, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds, InboundsObserved: true}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
@@ -82,7 +82,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	}
 	task = claimTask(t, store, node)
 	result, _ = json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Inbounds: task.ClientCommand.Inbounds, InboundsObserved: true}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err = store.ApplicationCommand(ctx, inboundList.ID)
@@ -97,7 +97,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	task = claimTask(t, store, node)
 	secretLink := "vless://11111111-2222-4333-8444-555555555555@reality.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=deadbeef#MacBook"
 	result, _ = json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds, Secret: secretLink, SecretKind: "client_link"}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err = store.ApplicationCommand(ctx, reveal.ID)
@@ -136,7 +136,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	task = claimTask(t, store, node)
 	subscriptionLink := "https://subscription.example.test/sub/client-sub-id"
 	result, _ = json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds, Secret: subscriptionLink, SecretKind: "subscription"}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err = store.ApplicationCommand(ctx, subscriptionReveal.ID)
@@ -180,7 +180,7 @@ func TestThreeXUIClientCommandSelectsMultipleSiteNodes(t *testing.T) {
 	}
 	metadata := []ThreeXUIClientView{{Email: "Router", Enabled: true, InboundIDs: []int{9, 10}, HasSubscription: true}}
 	result, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Clients: metadata, ClientsObserved: true, Inbounds: task.ClientCommand.Inbounds}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)

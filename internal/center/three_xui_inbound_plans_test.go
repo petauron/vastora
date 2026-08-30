@@ -58,7 +58,7 @@ func TestDueThreeXUIInboundPlanResetAdvancesWithRevisionCAS(t *testing.T) {
 	result, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{
 		Inbounds: task.ClientCommand.Inbounds,
 	}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	planTx, err := store.db.BeginTx(ctx, nil)

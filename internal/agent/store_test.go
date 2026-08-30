@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -181,7 +182,9 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE agent_install_operations; PRAGMA user_version = 7`); err != nil {
+	if _, err := store.db.Exec(`DROP TABLE agent_install_operations;
+		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
+		PRAGMA user_version = 7`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -208,7 +211,7 @@ func TestAgentSchemaV10PreservesPendingCompletionOutbox(t *testing.T) {
 	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
 		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
 	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "stored failure"}); err != nil {
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "stored failure", ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`CREATE TABLE task_receipts_v9 (
@@ -221,7 +224,8 @@ func TestAgentSchemaV10PreservesPendingCompletionOutbox(t *testing.T) {
 		created_at TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	);
-	INSERT INTO task_receipts_v9 SELECT * FROM task_receipts;
+	INSERT INTO task_receipts_v9(task_id, task_kind, attempt, task_hash, state, sealed_completion, created_at, updated_at)
+	SELECT task_id, task_kind, attempt, task_hash, state, sealed_completion, created_at, updated_at FROM task_receipts;
 	DROP TABLE task_receipts;
 	ALTER TABLE task_receipts_v9 RENAME TO task_receipts;
 	PRAGMA user_version = 9`); err != nil {

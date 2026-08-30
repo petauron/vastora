@@ -29,14 +29,14 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 			if task.Operation != "uninstall" || task.AppKey != cpaAppKey || task.DeleteData != deleteData {
 				t.Fatalf("unexpected decommission task: %#v", task)
 			}
-			if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+			if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
 				t.Fatal(err)
 			}
 			hostTask := waitForDecommissionTask(t, store, node)
 			if hostTask.Kind != "agent.decommission" || hostTask.DeleteData != deleteData {
 				t.Fatalf("unexpected Agent host cleanup task: %#v", hostTask)
 			}
-			if err := store.CompleteTask(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt, true, "", nil); err != nil {
+			if err := store.CompleteTask(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt, true, "", nil, hostTask.RequiredRuntimeGeneration); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-finished; err != nil {

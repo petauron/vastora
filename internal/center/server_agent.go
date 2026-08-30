@@ -257,13 +257,17 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 		Error                        string          `json:"error"`
 		Result                       json.RawMessage `json:"result"`
 		ReconciliationRequired       bool            `json:"reconciliationRequired"`
-		ApplicationRuntimeGeneration int             `json:"applicationRuntimeGeneration"`
+		ApplicationRuntimeGeneration *int            `json:"applicationRuntimeGeneration"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.completeTaskWithDisposition(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, input.ApplicationRuntimeGeneration); err != nil {
+	executedRuntimeGenerations := []int{}
+	if input.ApplicationRuntimeGeneration != nil {
+		executedRuntimeGenerations = append(executedRuntimeGenerations, *input.ApplicationRuntimeGeneration)
+	}
+	if err := s.store.completeTaskWithDisposition(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, executedRuntimeGenerations...); err != nil {
 		if errors.Is(err, errInvalidReconciliationDisposition) {
 			writeError(writer, http.StatusBadRequest, err)
 			return

@@ -943,7 +943,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	var err error
 	switch task.Kind {
 	case "application.apply":
-		if task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 		} else if c.Executor == nil {
 			err = errors.New("agent: application capability is not configured")

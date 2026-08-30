@@ -47,7 +47,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	if len(task.GatewayCertificates) != 1 || task.GatewayCertificates[0].PrivateKeyPEM != certificate.PrivateKeyPEM {
 		t.Fatalf("certificate was not delivered with the gateway task: %#v", task.GatewayCertificates)
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	publication, err = store.Publication(ctx, publication.ID)
@@ -75,7 +75,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	if task.GatewayState == nil || len(task.GatewayState.Routes) != 1 || task.GatewayState.Routes[0].TLSEnabled || len(task.GatewayCertificates) != 0 {
 		t.Fatalf("HTTP route state is invalid: %#v", task)
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	publication, err = store.Publication(ctx, publication.ID)

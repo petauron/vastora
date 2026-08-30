@@ -79,7 +79,7 @@ type Connection struct {
 	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 13
+const agentSchemaVersion = 14
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -520,6 +520,23 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 13
 		}
+		if version == 13 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`ALTER TABLE task_receipts ADD COLUMN runtime_generation INTEGER NOT NULL DEFAULT 0 CHECK(runtime_generation >= 0);
+					PRAGMA user_version = 14`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 13 to 14: %w", migrateErr)
+			}
+			version = 14
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -590,6 +607,7 @@ func Open(dataDir string) (*Store, error) {
 		CREATE TABLE task_receipts (
 			task_id TEXT PRIMARY KEY,
 			task_kind TEXT NOT NULL,
+			runtime_generation INTEGER NOT NULL CHECK(runtime_generation >= 0),
 			attempt INTEGER NOT NULL CHECK(attempt > 0),
 			task_hash BLOB NOT NULL,
 			state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')),
@@ -619,7 +637,7 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 13;`); err != nil {
+		PRAGMA user_version = 14;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}

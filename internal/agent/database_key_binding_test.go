@@ -175,7 +175,9 @@ func makeLegacyUnboundAgent(t *testing.T, directory string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`DROP TABLE storage_key_binding; PRAGMA user_version = 10`); err != nil {
+	if _, err := db.Exec(`DROP TABLE storage_key_binding;
+		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
+		PRAGMA user_version = 10`); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}

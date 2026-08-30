@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -77,13 +78,17 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM task_receipts WHERE state = 'acknowledged' AND updated_at < ?`, s.now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano))
 	var attempt int64
+	var executorRuntimeGeneration int
 	var storedHash []byte
 	var state string
 	var sealed []byte
-	err = s.db.QueryRowContext(ctx, `SELECT attempt, task_hash, state, COALESCE(sealed_completion, X'') FROM task_receipts WHERE task_id = ?`, task.ID).Scan(&attempt, &storedHash, &state, &sealed)
+	err = s.db.QueryRowContext(ctx, `SELECT attempt, task_hash, state, COALESCE(sealed_completion, X''), runtime_generation FROM task_receipts WHERE task_id = ?`, task.ID).Scan(&attempt, &storedHash, &state, &sealed, &executorRuntimeGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
 		now := s.now().UTC().Format(time.RFC3339Nano)
-		if _, err := s.db.ExecContext(ctx, `INSERT INTO task_receipts(task_id, task_kind, attempt, task_hash, state, created_at, updated_at) VALUES(?, ?, ?, ?, 'processing', ?, ?)`, task.ID, task.Kind, task.Attempt, hash, now, now); err != nil {
+		if task.Kind == "application.apply" {
+			executorRuntimeGeneration = platform.ApplicationRuntimeGeneration
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO task_receipts(task_id, task_kind, runtime_generation, attempt, task_hash, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, 'processing', ?, ?)`, task.ID, task.Kind, executorRuntimeGeneration, task.Attempt, hash, now, now); err != nil {
 			return nil, fmt.Errorf("agent: record task receipt: %w", err)
 		}
 		return nil, nil
@@ -105,6 +110,9 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		var completion TaskCompletion
 		if json.Unmarshal(plaintext, &completion) != nil || completion.TaskID != task.ID {
 			return nil, errors.New("agent: stored task completion is invalid")
+		}
+		if task.Kind == "application.apply" && completion.ApplicationRuntimeGeneration != executorRuntimeGeneration {
+			return nil, errors.New("agent: stored task completion has invalid runtime generation evidence")
 		}
 		if (state == "reconciliation_required" || state == "reconciliation_acknowledged") && task.Reconcile {
 			result, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, state = 'processing', sealed_completion = NULL, updated_at = ? WHERE task_id = ? AND state IN ('reconciliation_required', 'reconciliation_acknowledged')`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID)
@@ -147,7 +155,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		ReconciliationRequired: task.Kind == "application.apply",
 	}
 	if task.Kind == "application.apply" {
-		completion.ApplicationRuntimeGeneration = task.RequiredRuntimeGeneration
+		completion.ApplicationRuntimeGeneration = executorRuntimeGeneration
 	}
 	if err := s.storeTaskCompletion(ctx, completion, hash); err != nil {
 		return nil, err
@@ -157,8 +165,13 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 
 func (s *Store) RecordTaskCompletion(ctx context.Context, completion TaskCompletion) error {
 	var hash []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT task_hash FROM task_receipts WHERE task_id = ? AND attempt <= ?`, completion.TaskID, completion.Attempt).Scan(&hash); err != nil {
+	var taskKind string
+	var executorRuntimeGeneration int
+	if err := s.db.QueryRowContext(ctx, `SELECT task_hash, task_kind, runtime_generation FROM task_receipts WHERE task_id = ? AND attempt <= ?`, completion.TaskID, completion.Attempt).Scan(&hash, &taskKind, &executorRuntimeGeneration); err != nil {
 		return fmt.Errorf("agent: read task receipt for completion: %w", err)
+	}
+	if taskKind == "application.apply" && completion.ApplicationRuntimeGeneration != executorRuntimeGeneration {
+		return errors.New("agent: task completion runtime generation does not match its executor receipt")
 	}
 	return s.storeTaskCompletion(ctx, completion, hash)
 }

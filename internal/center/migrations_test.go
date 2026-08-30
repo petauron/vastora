@@ -856,6 +856,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE agents DROP COLUMN credential_revoked_at`,
 		`ALTER TABLE applications DROP COLUMN role`,
 		`ALTER TABLE applications DROP COLUMN runtime_generation`,
+		`ALTER TABLE deployments DROP COLUMN executed_runtime_generation`,
 		`ALTER TABLE deployments DROP COLUMN runtime_generation`,
 		`ALTER TABLE deployments DROP COLUMN reconciliation_requested`,
 		`ALTER TABLE deployments DROP COLUMN registry_credential_id`,

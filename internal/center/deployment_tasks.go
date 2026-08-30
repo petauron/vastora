@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -222,6 +223,9 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 	task.Revision = applicationTaskRevision
 	task.Reconcile = reconciliationRequested == 1
 	task.RequiredRuntimeGeneration = requiredRuntimeGeneration
+	if requiredRuntimeGeneration < 0 || requiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+		return nil, errors.New("center: deployment requires an unsupported application runtime generation")
+	}
 	if agentRuntimeGeneration < requiredRuntimeGeneration {
 		return nil, nil
 	}
@@ -303,8 +307,8 @@ func (s *Store) WaitAndClaimNextTask(ctx context.Context, agentID, credential st
 	}
 }
 
-func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage) error {
-	return s.completeTaskWithDisposition(ctx, agentID, credential, taskID, expectedAttempt, succeeded, taskError, rawResult, false)
+func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, executedRuntimeGeneration int) error {
+	return s.completeTaskWithDisposition(ctx, agentID, credential, taskID, expectedAttempt, succeeded, taskError, rawResult, false, executedRuntimeGeneration)
 }
 
 var errInvalidReconciliationDisposition = errors.New("center: invalid task reconciliation disposition")
@@ -381,11 +385,11 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 	if expectedAttempt <= 0 || expectedAttempt != attempt {
 		return errors.New("center: stale task result")
 	}
-	executedRuntimeGeneration := agentRuntimeGeneration
-	if len(executedRuntimeGenerations) != 0 {
-		executedRuntimeGeneration = executedRuntimeGenerations[0]
+	if len(executedRuntimeGenerations) != 1 {
+		return errors.New("center: Agent task result is missing application runtime generation evidence")
 	}
-	if executedRuntimeGeneration < requiredRuntimeGeneration || agentRuntimeGeneration < executedRuntimeGeneration {
+	executedRuntimeGeneration := executedRuntimeGenerations[0]
+	if executedRuntimeGeneration < 0 || executedRuntimeGeneration < requiredRuntimeGeneration || agentRuntimeGeneration < executedRuntimeGeneration {
 		return errors.New("center: Agent task result does not prove the required application runtime generation")
 	}
 	now := s.now().UTC()
@@ -464,7 +468,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 			return err
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE deployments SET state = ?, reconciliation_required = ?, reconciliation_requested = 0, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running'`, state, reconciliationRequired, taskError, now.Format(time.RFC3339Nano), taskID, agentID)
+	result, err := tx.ExecContext(ctx, `UPDATE deployments SET state = ?, reconciliation_required = ?, reconciliation_requested = 0, executed_runtime_generation = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running'`, state, reconciliationRequired, executedRuntimeGeneration, taskError, now.Format(time.RFC3339Nano), taskID, agentID)
 	if err != nil {
 		return fmt.Errorf("center: complete task: %w", err)
 	}

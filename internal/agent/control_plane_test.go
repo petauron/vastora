@@ -15,6 +15,7 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 type executorFunc func(context.Context, DeploymentTask) (ApplicationTaskResult, error)
@@ -721,7 +722,7 @@ func TestProcessingReceiptAfterRestartFailsClosedWithoutRepeatingEffect(t *testi
 	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
 		t.Fatalf("explicit reconciliation did not reopen the same task: completion=%#v err=%v", completion, err)
 	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt}); err != nil {
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
@@ -752,23 +753,23 @@ func TestStoredApplicationCompletionKeepsExecutedRuntimeGeneration(t *testing.T)
 	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
-	task := DeploymentTask{Kind: "application.apply", ID: "lost-result", Attempt: 1, AppKey: cpaKey, Operation: "uninstall", RequiredRuntimeGeneration: 1}
+	task := DeploymentTask{Kind: "application.apply", ID: "lost-result", Attempt: 1, AppKey: cpaKey, Operation: "uninstall", RequiredRuntimeGeneration: 0}
 	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
 		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
 	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, ApplicationRuntimeGeneration: 1}); err != nil {
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	task.Attempt = 2
 	completion, err := store.PrepareTaskReceipt(context.Background(), task)
-	if err != nil || completion == nil || completion.ApplicationRuntimeGeneration != 1 {
+	if err != nil || completion == nil || completion.ApplicationRuntimeGeneration != platform.ApplicationRuntimeGeneration {
 		t.Fatalf("stored completion = %#v, err=%v", completion, err)
 	}
 	if err := (Client{}).sendTaskCompletion(context.Background(), store, *completion); err != nil {
 		t.Fatal(err)
 	}
-	if received.ApplicationRuntimeGeneration != 1 {
-		t.Fatalf("replayed runtime generation = %d, want 1", received.ApplicationRuntimeGeneration)
+	if received.ApplicationRuntimeGeneration != platform.ApplicationRuntimeGeneration {
+		t.Fatalf("replayed runtime generation = %d, want %d", received.ApplicationRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 	}
 }
 
@@ -795,7 +796,7 @@ func TestPendingTaskCompletionReplaysAfterRestartAndAcknowledgesOnce(t *testing.
 	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
 		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
 	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "operation failed"}); err != nil {
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "operation failed", ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 37
+const centerSchemaVersion = 38
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -503,6 +503,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			reconciliation_required INTEGER NOT NULL DEFAULT 0 CHECK(reconciliation_required IN (0, 1)),
 			reconciliation_requested INTEGER NOT NULL DEFAULT 0 CHECK(reconciliation_requested IN (0, 1)),
 			runtime_generation INTEGER NOT NULL DEFAULT 0,
+			executed_runtime_generation INTEGER CHECK(executed_runtime_generation >= 0),
 			attempt INTEGER NOT NULL DEFAULT 0,
 			lease_expires_at TEXT NOT NULL DEFAULT '',
 			error TEXT NOT NULL DEFAULT '',
