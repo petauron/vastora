@@ -3,7 +3,12 @@ package center
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -106,6 +111,139 @@ func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("valid credentials got status %d, want %d", response.StatusCode, http.StatusOK)
+	}
+}
+
+func TestAuthenticationCookiesFollowDirectAndProxiedHTTPS(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		directTLS      bool
+		forwardedProto string
+		wantSecure     bool
+	}{
+		{name: "direct HTTP"},
+		{name: "direct TLS cannot be downgraded by proxy header", directTLS: true, forwardedProto: "http", wantSecure: true},
+		{name: "HTTPS reverse proxy", forwardedProto: "https", wantSecure: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			handler := NewServer(store, "", test.directTLS).Handler()
+			body, _ := json.Marshal(map[string]string{"username": "admin", "password": "correct-horse-battery-staple"})
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/admin", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Forwarded-Proto", test.forwardedProto)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusCreated {
+				t.Fatalf("setup status = %d, body = %q", response.Code, response.Body.String())
+			}
+			cookies := assertAuthenticationCookies(t, response.Result().Cookies(), test.wantSecure, false)
+
+			request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+			request.Header.Set("X-CSRF-Token", cookies["vastora_csrf"].Value)
+			request.Header.Set("X-Forwarded-Proto", test.forwardedProto)
+			request.AddCookie(cookies["vastora_session"])
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("logout status = %d, body = %q", response.Code, response.Body.String())
+			}
+			assertAuthenticationCookies(t, response.Result().Cookies(), test.wantSecure, true)
+
+			request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Forwarded-Proto", test.forwardedProto)
+			response = httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("login status = %d, body = %q", response.Code, response.Body.String())
+			}
+			assertAuthenticationCookies(t, response.Result().Cookies(), test.wantSecure, false)
+		})
+	}
+}
+
+func assertAuthenticationCookies(t *testing.T, cookies []*http.Cookie, secure, cleared bool) map[string]*http.Cookie {
+	t.Helper()
+	if len(cookies) != 2 {
+		t.Fatalf("authentication cookies = %#v", cookies)
+	}
+	values := make(map[string]*http.Cookie, len(cookies))
+	for _, cookie := range cookies {
+		values[cookie.Name] = cookie
+	}
+	session, csrf := values["vastora_session"], values["vastora_csrf"]
+	if session == nil || !session.HttpOnly || session.Secure != secure || session.SameSite != http.SameSiteStrictMode || session.Path != "/" {
+		t.Fatalf("unsafe session cookie = %#v", session)
+	}
+	if csrf == nil || csrf.HttpOnly || csrf.Secure != secure || csrf.SameSite != http.SameSiteStrictMode || csrf.Path != "/" {
+		t.Fatalf("unsafe CSRF cookie = %#v", csrf)
+	}
+	if cleared {
+		if session.MaxAge >= 0 || csrf.MaxAge >= 0 || session.Value != "" || csrf.Value != "" {
+			t.Fatalf("cookies were not cleared: session=%#v csrf=%#v", session, csrf)
+		}
+	} else if session.Expires.IsZero() || csrf.Expires.IsZero() {
+		t.Fatalf("cookies do not expire: session=%#v csrf=%#v", session, csrf)
+	}
+	return values
+}
+
+func TestProtectedRoutesRejectInvalidExpiredAndMissingCSRFSessions(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fixed := time.Date(2026, time.August, 30, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return fixed }
+	session, csrf, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(store, "", false).Handler()
+
+	invalid := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/sources", nil)
+	invalid.AddCookie(&http.Cookie{Name: "vastora_session", Value: "invalid-session"})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, invalid)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid session status = %d, body = %q", response.Code, response.Body.String())
+	}
+
+	missingCSRF := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", strings.NewReader("{}"))
+	missingCSRF.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, missingCSRF)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("missing CSRF status = %d, body = %q", response.Code, response.Body.String())
+	}
+	if err := store.ValidateSession(context.Background(), session, csrf, false); err != nil {
+		t.Fatalf("CSRF rejection revoked the valid session: %v", err)
+	}
+	wrongCSRF := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	wrongCSRF.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+	wrongCSRF.Header.Set("X-CSRF-Token", "wrong-csrf-token")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, wrongCSRF)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong CSRF status = %d, body = %q", response.Code, response.Body.String())
+	}
+	if err := store.ValidateSession(context.Background(), session, csrf, false); err != nil {
+		t.Fatalf("wrong CSRF rejection revoked the valid session: %v", err)
+	}
+
+	store.now = func() time.Time { return fixed.Add(sessionLifetime + time.Second) }
+	expired := httptest.NewRequest(http.MethodGet, "/api/v1/catalog/sources", nil)
+	expired.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, expired)
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "expired") {
+		t.Fatalf("expired session status = %d, body = %q", response.Code, response.Body.String())
 	}
 }
 
@@ -311,9 +449,51 @@ func TestEncryptedBackupRestoresToNewDirectory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	expectedCertificate := storeSystemCenterCertificateForTest(t, store, "center.example.invalid")
+	expectedACMEKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedACMEDER, err := x509.MarshalPKCS8PrivateKey(expectedACMEKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acmeSecretID, err := store.putSecret(context.Background(), tx, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: expectedACMEDER}), "acme-account:"+letsencryptAccountID)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	acmeAccountURI := "https://acme-v02.api.letsencrypt.org/acme/acct/123456"
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`INSERT INTO certificate_authorities(id, account_uri, secret_id, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`, letsencryptAccountID, acmeAccountURI, acmeSecretID, now, now); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	expectedACMEPublic, err := x509.MarshalPKIXPublicKey(&expectedACMEKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceSchema, err := sqliteSchemaVersion(context.Background(), store.db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	backupPath := filepath.Join(t.TempDir(), "center.vastora")
 	if err := store.Backup(context.Background(), backupPath, "backup-password-for-test"); err != nil {
 		t.Fatal(err)
+	}
+	backupInfo, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backupInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("backup mode = %v, want 0600", backupInfo.Mode().Perm())
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
@@ -321,9 +501,47 @@ func TestEncryptedBackupRestoresToNewDirectory(t *testing.T) {
 	if err := Restore(backupPath, filepath.Join(t.TempDir(), "restored"), "wrong-password"); err == nil {
 		t.Fatal("restore accepted a wrong password")
 	}
+	tampered, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered[len(tampered)-1] ^= 0xff
+	tamperedPath := filepath.Join(t.TempDir(), "tampered.vastora")
+	if err := os.WriteFile(tamperedPath, tampered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(tamperedPath, filepath.Join(t.TempDir(), "tampered-restore"), "backup-password-for-test"); err == nil {
+		t.Fatal("restore accepted a modified archive")
+	}
+	nonemptyDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(nonemptyDir, "keep"), []byte("do not replace"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(backupPath, nonemptyDir, "backup-password-for-test"); err == nil {
+		t.Fatal("restore accepted a non-empty destination")
+	}
 	restoredDir := filepath.Join(t.TempDir(), "restored")
+	if err := os.Mkdir(restoredDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := Restore(backupPath, restoredDir, "backup-password-for-test"); err != nil {
 		t.Fatal(err)
+	}
+	restoredDirectoryInfo, err := os.Stat(restoredDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restoredDirectoryInfo.Mode().Perm() != 0o700 {
+		t.Fatalf("restored directory mode = %v, want 0700", restoredDirectoryInfo.Mode().Perm())
+	}
+	for _, name := range []string{"center.db", "center.key"} {
+		info, err := os.Stat(filepath.Join(restoredDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("restored %s mode = %v, want 0600", name, info.Mode().Perm())
+		}
 	}
 	restored, err := Open(restoredDir)
 	if err != nil {
@@ -336,6 +554,67 @@ func TestEncryptedBackupRestoresToNewDirectory(t *testing.T) {
 	}
 	if len(sources) != 1 || sources[0].ID != "official" {
 		t.Fatalf("unexpected restored sources: %#v", sources)
+	}
+	restoredSchema, err := sqliteSchemaVersion(context.Background(), restored.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restoredSchema != sourceSchema {
+		t.Fatalf("restored schema = %d, want %d", restoredSchema, sourceSchema)
+	}
+	restoredCertificate, err := restored.loadSystemCenterCertificate(context.Background(), restored.db, "", "center.example.invalid")
+	if err != nil {
+		t.Fatalf("restored Center certificate is not decryptable: %v", err)
+	}
+	if restoredCertificate.CertificatePEM != expectedCertificate.CertificatePEM || restoredCertificate.PrivateKeyPEM != expectedCertificate.PrivateKeyPEM {
+		t.Fatal("restored Center certificate does not match the encrypted source certificate")
+	}
+	restoredACME, err := restored.acmeClient(context.Background(), "")
+	if err != nil {
+		t.Fatalf("restored ACME account is not decryptable: %v", err)
+	}
+	restoredACMEPublic, err := x509.MarshalPKIXPublicKey(restoredACME.Key.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restoredACME.KID) != acmeAccountURI || !bytes.Equal(restoredACMEPublic, expectedACMEPublic) {
+		t.Fatal("restored ACME account does not match the encrypted source account")
+	}
+}
+
+func TestEncryptedBackupRestoresACenterDatabaseLargerThan32MiB(t *testing.T) {
+	sourceDir := t.TempDir()
+	store, err := Open(sourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeValue := strings.Repeat("x", 33<<20)
+	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES('large-backup-fixture', ?)`, largeValue); err != nil {
+		t.Fatal(err)
+	}
+	backupPath := filepath.Join(t.TempDir(), "large-center.vastora")
+	if err := store.Backup(context.Background(), backupPath, "large-backup-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restoredDir := filepath.Join(t.TempDir(), "restored")
+	if err := Restore(backupPath, restoredDir, "large-backup-password"); err != nil {
+		t.Fatalf("restore rejected a valid Center database larger than 32 MiB: %v", err)
+	}
+	restored, err := Open(restoredDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	var restoredLength int
+	if err := restored.db.QueryRow(`SELECT length(value) FROM settings WHERE key = 'large-backup-fixture'`).Scan(&restoredLength); err != nil {
+		t.Fatal(err)
+	}
+	if restoredLength != len(largeValue) {
+		t.Fatalf("restored large value length = %d, want %d", restoredLength, len(largeValue))
 	}
 }
 
@@ -433,6 +712,108 @@ func TestCatalogSourceListRedactsBearerToken(t *testing.T) {
 	}
 	if !sources[0].BearerTokenSet {
 		t.Fatal("expected token metadata")
+	}
+}
+
+func TestCatalogSourceRejectsCredentialsEmbeddedInURL(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	err = store.CreateSource(context.Background(), SourceInput{
+		ID: "unsafe-catalog", DisplayName: "Unsafe catalog",
+		URL: "https://catalog-user:catalog-password@example.invalid/v1.json", PublicKey: make([]byte, 32),
+	})
+	if err == nil || !strings.Contains(err.Error(), "without credentials") {
+		t.Fatalf("catalog source URL credentials were accepted: %v", err)
+	}
+	sources, err := store.ListSources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 0 {
+		t.Fatalf("rejected catalog source was persisted: %#v", sources)
+	}
+	if _, err := store.db.Exec(`INSERT INTO catalog_sources(id, display_name, url, public_key, enabled, refresh_seconds, created_at)
+		VALUES('legacy-unsafe-catalog', 'Legacy unsafe catalog', 'https://legacy-user:legacy-password@example.invalid/v1.json', ?, 1, 3600, ?)`, make([]byte, 32), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	sources, err = store.ListSources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("legacy-user")) || bytes.Contains(encoded, []byte("legacy-password")) {
+		t.Fatalf("stored catalog URL credentials leaked through metadata: %s", encoded)
+	}
+	if len(sources) != 1 || sources[0].URL != "https://example.invalid/v1.json" {
+		t.Fatalf("unexpected redacted catalog source metadata: %#v", sources)
+	}
+}
+
+func TestOfficialCatalogMetadataKeepsItsBuiltinURL(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	payload, err := os.ReadFile("../../catalog/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SeedOfficialCatalog(context.Background(), payload); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := store.ListSources(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) != 1 || sources[0].ID != OfficialCatalogSourceID || sources[0].URL != "builtin://vastora-official" {
+		t.Fatalf("unexpected official Catalog metadata: %#v", sources)
+	}
+}
+
+func TestRegistryAndIntegrationResponsesExposeOnlySecretMetadata(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	credential, err := store.CreateRegistryCredential(ctx, "registry.example.invalid", "registry-user", "registry-secret-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{
+		AccessToken: "cloudflare-access-secret", RefreshToken: "cloudflare-refresh-secret",
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	integration, err := store.Integration(ctx, "cloudflare")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !credential.TokenSet || !integration.SecretSet {
+		t.Fatalf("secret metadata is missing: credential=%#v integration=%#v", credential, integration)
+	}
+	encoded, err := json.Marshal(map[string]any{"credential": credential, "integration": integration})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secretValue := range []string{"registry-secret-token", "cloudflare-access-secret", "cloudflare-refresh-secret"} {
+		if bytes.Contains(encoded, []byte(secretValue)) {
+			t.Fatalf("secret response leaked %q: %s", secretValue, encoded)
+		}
+	}
+	var registrySealed []byte
+	if err := store.db.QueryRow(`SELECT sealed FROM secrets WHERE id = (SELECT secret_id FROM registry_credentials WHERE id = ?)`, credential.ID).Scan(&registrySealed); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(registrySealed, []byte("registry-secret-token")) {
+		t.Fatal("registry token was stored in plaintext")
 	}
 }
 

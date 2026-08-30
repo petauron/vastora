@@ -40,8 +40,8 @@ type FetchResult struct {
 // cross-origin redirect.
 func Fetch(ctx context.Context, config FetchConfig) (FetchResult, error) {
 	parsedURL, err := url.Parse(config.URL)
-	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" {
-		return FetchResult{}, errors.New("catalog: source URL must be absolute HTTPS")
+	if err != nil || parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil {
+		return FetchResult{}, errors.New("catalog: source URL must be absolute HTTPS without credentials")
 	}
 	if config.Timeout <= 0 {
 		config.Timeout = 10 * time.Second

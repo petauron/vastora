@@ -80,6 +80,11 @@ GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center backup --data-dir .vastora/cent
 GOTOOLCHAIN=go1.26.6 go run ./cmd/vastora center restore --input center.vastora --data-dir .vastora/restored-center --password-file ./backup-password
 ```
 
+Restore uses an equivalent Vastora version and recreates the Center directory
+with restrictive permissions. The archive contains SQLite, the Center root key,
+and therefore the encrypted ACME account and certificate state stored in SQLite;
+it does not contain Headscale, Agent, gateway, or application runtime volumes.
+
 The Dockerfiles build an unprivileged Center image with the compiled web UI and
 a separate Agent image. They intentionally do not provide an insecure default
 command: a network-reachable Center must be started with its TLS certificate

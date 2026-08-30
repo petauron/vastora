@@ -99,7 +99,7 @@ func (s *Server) handleSetupAdmin(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	s.setSessionCookies(writer, session, csrf)
+	s.setSessionCookies(writer, request, session, csrf)
 	writeJSON(writer, http.StatusCreated, map[string]bool{"administratorConfigured": true})
 }
 
@@ -159,7 +159,7 @@ func (s *Server) handleLogin(writer http.ResponseWriter, request *http.Request) 
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	s.setSessionCookies(writer, session, csrf)
+	s.setSessionCookies(writer, request, session, csrf)
 	writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": true})
 }
 
@@ -173,7 +173,7 @@ func (s *Server) handleLogout(writer http.ResponseWriter, request *http.Request)
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	s.clearSessionCookies(writer)
+	s.clearSessionCookies(writer, request)
 	writeJSON(writer, http.StatusOK, map[string]bool{"authenticated": false})
 }
 
