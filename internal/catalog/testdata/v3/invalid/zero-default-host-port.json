@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-15T00:00:00Z",
+  "apps": [
+    {
+      "id": "fixture-app",
+      "version": "1.2.3",
+      "name": { "en": "Fixture app", "zh-CN": "夹具应用" },
+      "description": { "en": "Explicit zero host port", "zh-CN": "显式零主机端口" },
+      "license": "Apache-2.0",
+      "images": [
+        {
+          "name": "runtime",
+          "reference": "registry.example.invalid/fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "services": [
+        {
+          "name": "manager",
+          "protocol": "http",
+          "containerPort": 8080,
+          "defaultHostPort": 0,
+          "hostPortField": "listen_port"
+        }
+      ],
+      "config": [
+        {
+          "key": "listen_port",
+          "type": "integer",
+          "label": { "en": "Listen port", "zh-CN": "监听端口" },
+          "description": { "en": "Synthetic port", "zh-CN": "合成端口" },
+          "required": true,
+          "secret": false
+        }
+      ]
+    }
+  ]
+}

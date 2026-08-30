@@ -2,14 +2,15 @@
 
 Vastora is intentionally released as complete vertical slices, not as a
 collection of empty screens or speculative interfaces. The current foundation
-implements catalog signing and refresh, encrypted Center and Agent local state,
+implements versioned Catalog schemas, portable signing/verification fixtures,
+signed refresh, encrypted Center and Agent local state,
 administrator setup, encrypted Center backup and recovery, multi-Site topology,
 typed private Service and multi-entry Publication orchestration, Agent-managed
 Caddy/cloudflared components, Headscale integration, and the bilingual console.
 
 The following slices remain before `v0.1.0`:
 
-1. Complete API and catalog interoperability fixtures.
+1. Publish and enforce the complete Center/Agent v1 OpenAPI contract.
 2. Private Registry credential consumption during image pulls.
 3. Expand the typed application executor beyond the initial official package allowlist.
 4. Multi-user RBAC and task revocation.

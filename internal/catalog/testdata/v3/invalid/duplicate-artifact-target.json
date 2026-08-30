@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-15T00:00:00Z",
+  "apps": [
+    {
+      "id": "fixture-app",
+      "version": "1.2.3",
+      "name": { "en": "Fixture app", "zh-CN": "夹具应用" },
+      "description": { "en": "Duplicate artifact target", "zh-CN": "重复制品目标" },
+      "license": "Apache-2.0",
+      "artifacts": [
+        {
+          "name": "fixture-agent",
+          "operatingSystem": "linux",
+          "architecture": "arm64",
+          "url": "https://downloads.example.invalid/fixture-agent-a",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "name": "fixture-agent",
+          "operatingSystem": "linux",
+          "architecture": "arm64",
+          "url": "https://downloads.example.invalid/fixture-agent-b",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "config": []
+    }
+  ]
+}

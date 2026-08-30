@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-15T00:00:00Z",
+  "apps": [
+    {
+      "id": "fixture-app",
+      "version": "1.2.3",
+      "name": { "en": "Fixture app", "zh-CN": "夹具应用" },
+      "description": { "en": "Duplicate config identity", "zh-CN": "重复配置标识" },
+      "license": "Apache-2.0",
+      "images": [
+        {
+          "name": "runtime",
+          "reference": "registry.example.invalid/fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "config": [
+        {
+          "key": "enabled",
+          "type": "boolean",
+          "label": { "en": "Enabled", "zh-CN": "启用" },
+          "description": { "en": "First value", "zh-CN": "第一个值" },
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "enabled",
+          "type": "boolean",
+          "label": { "en": "Enabled again", "zh-CN": "再次启用" },
+          "description": { "en": "Second value", "zh-CN": "第二个值" },
+          "required": false,
+          "secret": false
+        }
+      ]
+    }
+  ]
+}

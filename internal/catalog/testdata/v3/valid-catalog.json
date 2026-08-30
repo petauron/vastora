@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-15T00:00:00Z",
+  "apps": [
+    {
+      "id": "fixture-app",
+      "version": "1.2.3",
+      "name": { "en": "Fixture app", "zh-CN": "夹具应用" },
+      "description": { "en": "Portable synthetic fixture", "zh-CN": "可移植的合成夹具" },
+      "license": "Apache-2.0",
+      "images": [
+        {
+          "name": "runtime",
+          "reference": "registry.example.invalid/fixture@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "services": [
+        {
+          "name": "manager",
+          "protocol": "http",
+          "containerPort": 8080,
+          "defaultHostPort": 18080,
+          "healthPath": "/healthz",
+          "management": true
+        }
+      ],
+      "homepage": { "service": "manager", "path": "/" },
+      "hostAccess": false,
+      "config": [
+        {
+          "key": "admin_secret",
+          "type": "string",
+          "label": { "en": "Administrator secret", "zh-CN": "管理员密钥" },
+          "description": { "en": "Synthetic write-only value", "zh-CN": "合成的只写值" },
+          "required": true,
+          "secret": true
+        },
+        {
+          "key": "listen_port",
+          "type": "integer",
+          "label": { "en": "Listen port", "zh-CN": "监听端口" },
+          "description": { "en": "Synthetic port", "zh-CN": "合成端口" },
+          "required": false,
+          "secret": false,
+          "default": 18080
+        },
+        {
+          "key": "enabled",
+          "type": "boolean",
+          "label": { "en": "Enabled", "zh-CN": "启用" },
+          "description": { "en": "Synthetic switch", "zh-CN": "合成开关" },
+          "required": false,
+          "secret": false,
+          "default": true
+        },
+        {
+          "key": "display_name",
+          "type": "string",
+          "label": { "en": "Display name", "zh-CN": "显示名称" },
+          "description": { "en": "Synthetic label", "zh-CN": "合成标签" },
+          "required": false,
+          "secret": false,
+          "default": "Fixture"
+        }
+      ]
+    }
+  ]
+}

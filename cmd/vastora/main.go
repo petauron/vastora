@@ -87,5 +87,6 @@ Usage:
   vastora catalog keygen --out-dir DIR
   vastora catalog validate --catalog FILE
   vastora catalog sign --catalog FILE --private-key FILE --key-id ID --output FILE
+  vastora catalog verify --envelope FILE --public-key FILE
 `)
 }

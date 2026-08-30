@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-15T00:00:00Z",
+  "apps": [{
+    "id": "fixture-app",
+    "version": "1.2.3",
+    "name": { "en": "Fixture app", "zh-CN": "夹具应用" },
+    "description": { "en": "Synthetic fixture", "zh-CN": "合成夹具" },
+    "license": "Apache-2.0",
+    "images": [{ "name": "runtime", "reference": "registry.example.invalid/fixture:latest" }],
+    "config": []
+  }]
+}

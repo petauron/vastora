@@ -218,9 +218,11 @@ func normalizeDeploymentConfig(manifest catalog.AppManifest, raw json.RawMessage
 			}
 			continue
 		}
-		if err := validateConfigValue(field, value); err != nil {
+		normalized, err := normalizeConfigValue(field, value)
+		if err != nil {
 			return nil, nil, err
 		}
+		values[field.Key] = normalized
 	}
 	configuration := make(map[string]json.RawMessage, len(values))
 	secrets := make(map[string]json.RawMessage)
@@ -242,25 +244,26 @@ func normalizeDeploymentConfig(manifest catalog.AppManifest, raw json.RawMessage
 	return configJSON, secretJSON, nil
 }
 
-func validateConfigValue(field catalog.ConfigField, raw json.RawMessage) error {
+func normalizeConfigValue(field catalog.ConfigField, raw json.RawMessage) (json.RawMessage, error) {
 	switch field.Type {
 	case "string":
 		var value string
 		if json.Unmarshal(raw, &value) != nil {
-			return fmt.Errorf("center: configuration field %q must be a string", field.Key)
+			return nil, fmt.Errorf("center: configuration field %q must be a string", field.Key)
 		}
 	case "boolean":
 		var value bool
 		if json.Unmarshal(raw, &value) != nil {
-			return fmt.Errorf("center: configuration field %q must be a boolean", field.Key)
+			return nil, fmt.Errorf("center: configuration field %q must be a boolean", field.Key)
 		}
 	case "integer":
-		var value int
-		if json.Unmarshal(raw, &value) != nil {
-			return fmt.Errorf("center: configuration field %q must be an integer", field.Key)
+		normalized, err := catalog.NormalizePortableInteger(raw)
+		if err != nil {
+			return nil, fmt.Errorf("center: configuration field %q must be a portable integer: %w", field.Key, err)
 		}
+		return normalized, nil
 	default:
-		return fmt.Errorf("center: unsupported configuration field %q", field.Key)
+		return nil, fmt.Errorf("center: unsupported configuration field %q", field.Key)
 	}
-	return nil
+	return raw, nil
 }
