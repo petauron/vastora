@@ -1434,30 +1434,113 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("至少 10 个字符。");
   });
 
-  it("clears backup and catalog secrets whenever their sheets close", () => {
+  it("clears backup secrets after every close path and successful download", async () => {
+    vi.spyOn(api, "downloadBackup").mockResolvedValue(undefined);
     const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
     const enter = (selector: string, value: string) => act(() => {
       const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
       if (!input) throw new Error(`missing input ${selector}`);
-      input.value = value;
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    const openAndFill = () => {
+      clickButton("下载加密备份");
+      enter("#backup-password", "secret-backup-password");
+      enter("#backup-confirmation", "secret-backup-password");
+    };
+    const expectReopenedEmpty = () => {
+      clickButton("下载加密备份");
+      expect(document.querySelector<HTMLInputElement>("#backup-password")?.value).toBe("");
+      expect(document.querySelector<HTMLInputElement>("#backup-confirmation")?.value).toBe("");
+      clickButton("取消");
+    };
+    const dismissOutside = () => act(() => {
+      const overlay = document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) overlay?.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+    });
 
-    clickButton("下载加密备份");
-    enter("#backup-password", "secret-backup-password");
-    enter("#backup-confirmation", "secret-backup-password");
-    clickButton("取消");
-    clickButton("下载加密备份");
-    expect(document.querySelector<HTMLInputElement>("#backup-password")?.value).toBe("");
-    expect(document.querySelector<HTMLInputElement>("#backup-confirmation")?.value).toBe("");
-    clickButton("取消");
+    openAndFill(); clickButton("取消"); expectReopenedEmpty();
+    openAndFill(); act(() => document.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.click()); expectReopenedEmpty();
+    openAndFill(); act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expectReopenedEmpty();
+    openAndFill(); dismissOutside(); expectReopenedEmpty();
+    openAndFill();
+    await act(async () => {
+      document.querySelector<HTMLFormElement>("#backup-password")?.closest("form")?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(api.downloadBackup).toHaveBeenCalledWith("secret-backup-password");
+    expectReopenedEmpty();
+  });
 
+  it("retains failed catalog input only while open and clears it on every close path", async () => {
+    const mutate = vi.fn().mockRejectedValue(new Error("catalog rejected"));
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={mutate} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
+    const enter = (selector: string, value: string) => act(() => {
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+      if (!input) throw new Error(`missing input ${selector}`);
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const openAndFill = () => {
+      clickButton("添加目录");
+      enter("#source-token", "secret-bearer-token");
+      enter("#source-ca", "secret-custom-ca");
+    };
+    const expectReopenedEmpty = () => {
+      clickButton("添加目录");
+      expect(document.querySelector<HTMLInputElement>("#source-token")?.value).toBe("");
+      expect(document.querySelector<HTMLTextAreaElement>("#source-ca")?.value).toBe("");
+      clickButton("取消");
+    };
+    const dismissOutside = () => act(() => {
+      const overlay = document.querySelector<HTMLElement>('[data-slot="sheet-overlay"]');
+      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) overlay?.dispatchEvent(new MouseEvent(type, { bubbles: true }));
+    });
+    act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"))?.click());
+    openAndFill(); clickButton("取消"); expectReopenedEmpty();
+    openAndFill(); act(() => document.querySelector<HTMLButtonElement>('[data-slot="sheet-close"]')?.click()); expectReopenedEmpty();
+    openAndFill(); act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expectReopenedEmpty();
+    openAndFill(); dismissOutside(); expectReopenedEmpty();
+
+    openAndFill();
+    enter("#source-id", "private-source");
+    enter("#source-name", "Private source");
+    enter("#source-url", "https://private.example/catalog");
+    enter("#source-key", "public-key");
+    await act(async () => {
+      document.querySelector<HTMLFormElement>("#source-id")?.closest("form")?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(document.querySelector<HTMLInputElement>("#source-token")?.value).toBe("secret-bearer-token");
+    expect(document.querySelector<HTMLTextAreaElement>("#source-ca")?.value).toBe("secret-custom-ca");
+    expect(document.body.textContent).toContain("操作未完成");
+    clickButton("取消");
+    expectReopenedEmpty();
+  });
+
+  it("unmounts catalog secrets when a successful submit closes the sheet programmatically", async () => {
+    const mutate = vi.fn().mockResolvedValue(undefined);
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={mutate} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    const clickButton = (label: string) => act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes(label))?.click());
+    const enter = (selector: string, value: string) => act(() => {
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+      if (!input) throw new Error(`missing input ${selector}`);
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     act(() => [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"))?.click());
     clickButton("添加目录");
-    enter("#source-token", "secret-bearer-token");
-    enter("#source-ca", "secret-custom-ca");
-    clickButton("取消");
+    enter("#source-id", "private-source"); enter("#source-name", "Private source"); enter("#source-url", "https://private.example/catalog"); enter("#source-key", "public-key"); enter("#source-token", "secret-bearer-token"); enter("#source-ca", "secret-custom-ca");
+    await act(async () => {
+      document.querySelector<HTMLFormElement>("#source-id")?.closest("form")?.requestSubmit();
+      await Promise.resolve();
+    });
+    expect(document.querySelector("#source-token")).toBeNull();
     clickButton("添加目录");
     expect(document.querySelector<HTMLInputElement>("#source-token")?.value).toBe("");
     expect(document.querySelector<HTMLTextAreaElement>("#source-ca")?.value).toBe("");

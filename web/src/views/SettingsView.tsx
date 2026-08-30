@@ -43,9 +43,9 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
         </CardContent>
       </Card>
       <CatalogSettings data={data} language={language} mutate={mutate} onAdd={() => setAdding(true)} />
-      <SourceSheet language={language} onClose={() => setAdding(false)} onSubmit={async (source) => { await mutate(() => api.createSource(source), copy(language, "应用目录已添加。", "App catalog added.")); setAdding(false); }} open={adding} />
-      <BackupSheet language={language} onClose={() => setBackupOpen(false)} open={backupOpen} />
-      <PasswordSheet language={language} onClose={() => setPasswordOpen(false)} open={passwordOpen} />
+      {adding ? <SourceSheet language={language} onClose={() => setAdding(false)} onSubmit={async (source) => { await mutate(() => api.createSource(source), copy(language, "应用目录已添加。", "App catalog added.")); setAdding(false); }} open /> : null}
+      {backupOpen ? <BackupSheet language={language} onClose={() => setBackupOpen(false)} open /> : null}
+      {passwordOpen ? <PasswordSheet language={language} onClose={() => setPasswordOpen(false)} open /> : null}
     </section>
   );
 }
