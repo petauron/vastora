@@ -13,15 +13,27 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 
 const manualCommand = "curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center";
+const updateStages: Readonly<Record<string, readonly [string, string]>> = {
+  queued: ["等待主机更新服务", "Waiting for the host update service"],
+  downloading: ["正在下载安装元数据", "Downloading release metadata"],
+  verifying: ["正在校验不可变版本", "Verifying the immutable release"],
+  installing: ["正在安装已验证版本", "Installing the verified release"],
+  validating: ["正在检查现有安装", "Validating the existing installation"],
+  pulling: ["正在下载 Center 镜像", "Downloading the Center image"],
+  agent: ["正在更新同机 Agent", "Updating the co-located Agent"],
+  restarting: ["正在重启 Center", "Restarting Center"],
+  health: ["正在等待健康检查", "Waiting for health checks"],
+  reconciling: ["正在完成启动协调", "Finishing startup reconciliation"],
+  finalizing: ["正在完成最终检查", "Finishing final checks"],
+};
 
 export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }: { language: Language; onRefresh: () => Promise<void>; onStatusChange: (status: CenterUpdateStatus) => void; status: CenterUpdateStatus }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const running = status.state === "queued" || status.state === "applying";
-  const updateStage = status.state === "queued"
-    ? copy(language, "等待主机更新服务", "Waiting for the host update service")
-    : copy(language, "正在下载、校验与安装", "Downloading, verifying, and installing");
+  const stageCopy = updateStages[status.phase || (status.state === "queued" ? "queued" : "installing")] || updateStages.installing;
+  const updateStage = copy(language, stageCopy[0], stageCopy[1]);
 
   useEffect(() => {
     if (!running) return;
@@ -59,7 +71,7 @@ export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }
       <CardHeader><CardTitle className="flex items-center gap-2"><CircleArrowUpIcon />{copy(language, "Center 更新", "Center update")}</CardTitle><CardDescription>{copy(language, "自动检查官方完整版本，并沿用安装时的安全升级流程。", "Checks complete official releases and reuses the verified installation upgrade flow.")}</CardDescription><CardAction>{running ? <Spinner /> : status.updateAvailable ? <span className="rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">{copy(language, "有新版本", "Update available")}</span> : <CircleCheckIcon className="size-5 text-success" />}</CardAction></CardHeader>
       <CardContent className="flex flex-col gap-4">
         <dl className="grid gap-4 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "当前版本", "Current version")}</dt><dd className="mt-1 font-medium">{status.currentVersion}</dd></div><div><dt className="text-muted-foreground">{copy(language, "官方版本", "Official version")}</dt><dd className="mt-1 font-medium">{status.latestVersion || "—"}</dd></div></dl>
-        {running ? <Alert><Spinner /><AlertTitle>{copy(language, `正在更新到 ${status.targetVersion || status.latestVersion}`, `Updating to ${status.targetVersion || status.latestVersion}`)}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{copy(language, "Center 会短暂重启，本页会自动重新连接。请不要关闭服务器或 Docker。", "Center briefly restarts and this page reconnects automatically. Do not stop the server or Docker.")}</span><Progress value={null}><ProgressLabel>{updateStage}</ProgressLabel><span aria-hidden="true" className="ml-auto text-xs text-muted-foreground">{copy(language, "进行中", "In progress")}</span></Progress></AlertDescription></Alert> : null}
+        {running ? <Alert><Spinner /><AlertTitle>{copy(language, `正在更新到 ${status.targetVersion || status.latestVersion}`, `Updating to ${status.targetVersion || status.latestVersion}`)}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{copy(language, "Center 会短暂重启，本页会自动重新连接。请不要关闭服务器或 Docker。", "Center briefly restarts and this page reconnects automatically. Do not stop the server or Docker.")}</span><Progress value={status.progress ?? null}><ProgressLabel>{updateStage}</ProgressLabel><span aria-hidden="true" className="ml-auto text-xs text-muted-foreground tabular-nums">{status.progress !== undefined ? `${status.progress}%` : copy(language, "进行中", "In progress")}</span></Progress></AlertDescription></Alert> : null}
         {status.state === "succeeded" && !status.updateAvailable ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "更新完成", "Update complete")}</AlertTitle><AlertDescription>{copy(language, `Center 已安全更新到 ${status.currentVersion}。`, `Center was safely updated to ${status.currentVersion}.`)}</AlertDescription></Alert> : null}
         {status.state === "failed" ? <FieldError role="alert">{copy(language, "更新没有完成。系统保留了可诊断状态，请重试；若仍失败，请下载诊断报告。", "The update did not finish. Diagnostic state was preserved; retry, then download diagnostics if it still fails.")}</FieldError> : null}
         {status.error ? <FieldError role="alert">{copy(language, "暂时无法检查官方版本，请稍后重试。", "The official release cannot be checked right now. Try again shortly.")}</FieldError> : null}

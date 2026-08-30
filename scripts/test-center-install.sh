@@ -126,6 +126,8 @@ grep -Fq 'ensure_vastora_runtime_network' "$temporary_dir/setup.sh"
 grep -Fq 'io.vastora.component: center' "$temporary_dir/compose.yaml"
 grep -Fq 'io.vastora.component: deployer' "$temporary_dir/compose.yaml"
 grep -Fq 'migrate_legacy_vastora_runtime_network "$install_dir"' "$temporary_dir/upgrade.sh"
+grep -Fq 'write_host_update_stage "Downloading the immutable Center image."' "$temporary_dir/upgrade.sh"
+grep -Fq 'VASTORA_UPDATE_STATUS_FILE="$status_file"' "$temporary_dir/update-center.sh"
 if grep -Fq 'network_mode: host' "$temporary_dir/compose.yaml"; then
   echo "Center install bundle still uses the host network" >&2
   exit 1

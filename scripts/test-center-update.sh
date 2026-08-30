@@ -33,6 +33,9 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$release_url" = "https://vastora.petauron.com/releases/v$expected_version/vastora-center-install.tar.gz" ]
+[ "$VASTORA_UPDATE_STATUS_FILE" = "$install_dir/.update-status.json" ]
+[ "$VASTORA_UPDATE_TARGET_VERSION" = "$expected_version" ]
+grep -Fq '"message":"Installing the verified release."' "$VASTORA_UPDATE_STATUS_FILE"
 printf '%s\n' "$release_url" > "$FAKE_INSTALLER_LOG"
 printf 'VASTORA_VERSION=%s\n' "$expected_version" > "$install_dir/release.env"
 EOF

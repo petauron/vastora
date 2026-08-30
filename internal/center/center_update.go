@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/petauron/vastora/internal/deployapi"
 	"golang.org/x/mod/semver"
 )
 
@@ -25,6 +26,8 @@ type CenterUpdateStatus struct {
 	Automatic       bool   `json:"automatic"`
 	State           string `json:"state"`
 	TargetVersion   string `json:"targetVersion,omitempty"`
+	Phase           string `json:"phase,omitempty"`
+	Progress        int    `json:"progress,omitempty"`
 	Message         string `json:"message,omitempty"`
 	CheckedAt       string `json:"checkedAt,omitempty"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
@@ -117,6 +120,7 @@ func (s *Server) handleStartCenterUpdate(writer http.ResponseWriter, request *ht
 	}
 	status.State = execution.State
 	status.TargetVersion = execution.TargetVersion
+	status.Phase, status.Progress = centerUpdateProgress(execution)
 	status.Message = execution.Message
 	status.UpdatedAt = execution.UpdatedAt
 	writeJSON(writer, http.StatusAccepted, status)
@@ -154,13 +158,51 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 	if execution.State == "queued" || execution.State == "applying" || execution.TargetVersion == latest {
 		result.State = execution.State
 		result.TargetVersion = execution.TargetVersion
+		result.Phase, result.Progress = centerUpdateProgress(execution)
 		result.Message = execution.Message
 		result.UpdatedAt = execution.UpdatedAt
 	} else if execution.State == "succeeded" && execution.TargetVersion == strings.TrimPrefix(Version, "v") {
 		result.State = execution.State
 		result.TargetVersion = execution.TargetVersion
+		result.Phase, result.Progress = centerUpdateProgress(execution)
 		result.Message = execution.Message
 		result.UpdatedAt = execution.UpdatedAt
 	}
 	return result
+}
+
+func centerUpdateProgress(execution deployapi.CenterUpdateExecution) (string, int) {
+	if execution.State == "queued" {
+		return "queued", 5
+	}
+	if execution.State == "succeeded" {
+		return "completed", 100
+	}
+	if execution.State != "applying" {
+		return "", 0
+	}
+	switch execution.Message {
+	case "Downloading the verified release metadata.":
+		return "downloading", 10
+	case "Verifying the immutable release.":
+		return "verifying", 20
+	case "Installing the verified release.":
+		return "installing", 30
+	case "Validating the existing installation.":
+		return "validating", 40
+	case "Downloading the immutable Center image.":
+		return "pulling", 50
+	case "Preparing the co-located Agent.":
+		return "agent", 65
+	case "Restarting Center.":
+		return "restarting", 80
+	case "Waiting for Center health checks.":
+		return "health", 88
+	case "Finishing Center startup reconciliation.":
+		return "reconciling", 94
+	case "Verifying the co-located Agent.":
+		return "finalizing", 97
+	default:
+		return "installing", 30
+	}
 }

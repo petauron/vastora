@@ -96,6 +96,23 @@ func TestCenterUpdateStatusAndStartUseTheRestrictedUpdater(t *testing.T) {
 	}
 }
 
+func TestCenterUpdateStatusReportsVerifiedHostProgress(t *testing.T) {
+	previousVersion := Version
+	Version = "0.1.0-alpha.72"
+	defer func() { Version = previousVersion }()
+	updater := &fakeCenterUpdater{status: deployapi.CenterUpdateExecution{
+		Available:     true,
+		State:         "applying",
+		TargetVersion: "0.1.0-alpha.73",
+		Message:       "Downloading the immutable Center image.",
+	}}
+	server := &Server{updates: updater, releaseChecker: fixedReleaseChecker{version: "0.1.0-alpha.73"}}
+	status := server.centerUpdateStatus(context.Background(), false)
+	if status.State != "applying" || status.Phase != "pulling" || status.Progress != 50 {
+		t.Fatalf("unexpected update progress: %#v", status)
+	}
+}
+
 func TestOfficialReleaseCheckerBypassesItsCacheWhenRefreshIsRequested(t *testing.T) {
 	requests := 0
 	installer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
