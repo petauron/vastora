@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.73](https://github.com/petauron/vastora/compare/v0.1.0-alpha.72...v0.1.0-alpha.73) (2026-08-30)
+
+
+### Bug Fixes
+
+* **center:** recover updates and report progress ([a5bebbd](https://github.com/petauron/vastora/commit/a5bebbd3fae5ab5cdf17a64392e1e3bef682df8b))
+
 ## [0.1.0-alpha.72](https://github.com/petauron/vastora/compare/v0.1.0-alpha.71...v0.1.0-alpha.72) (2026-08-30)
 
 
