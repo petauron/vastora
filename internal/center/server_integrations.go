@@ -2,9 +2,12 @@ package center
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/petauron/vastora/internal/deployapi"
@@ -93,6 +96,19 @@ func (s *Server) handleSwitchSystemDomain(writer http.ResponseWriter, request *h
 	writeJSON(writer, http.StatusOK, value)
 }
 
+func (s *Server) handleRetireSystemEndpointAliases(writer http.ResponseWriter, request *http.Request) {
+	if err := s.RetireSystemEndpointAliases(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.SystemDomain(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, value)
+}
+
 func (s *Server) handleConfigureSetupDNS(writer http.ResponseWriter, request *http.Request) {
 	var input SetupDNSInput
 	if err := decodeJSON(request, &input); err != nil {
@@ -132,6 +148,10 @@ func (s *Server) handleConfigureHeadscale(writer http.ResponseWriter, request *h
 }
 
 func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, centerURL string) (IntegrationView, error) {
+	return s.configureHeadscaleOperation(ctx, input, centerURL, "")
+}
+
+func (s *Server) configureHeadscaleOperation(ctx context.Context, input HeadscaleInput, centerURL, operationID string) (IntegrationView, error) {
 	if strings.TrimSpace(input.Mode) != "builtin" {
 		return s.store.ConfigureHeadscale(ctx, input)
 	}
@@ -141,6 +161,9 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if strings.TrimSpace(input.APIKey) != "" {
 		return IntegrationView{}, errors.New("center: built-in Headscale creates its API key automatically")
 	}
+	s.store.domainSwitchMu.Lock()
+	defer s.store.domainSwitchMu.Unlock()
+
 	centerCertificate, _, err := s.store.ensureSystemCenterCertificate(ctx, centerURL)
 	if err != nil {
 		return IntegrationView{}, fmt.Errorf("center: prepare private Center HTTPS: %w", err)
@@ -157,7 +180,7 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	result, err := s.infrastructure.InstallHeadscale(ctx, deployapi.HeadscaleInstallRequest{
+	installRequest := deployapi.HeadscaleInstallRequest{
 		CenterURL:                centerURL,
 		HeadscaleURL:             input.URL,
 		CenterAliases:            centerAliases,
@@ -167,18 +190,24 @@ func (s *Server) configureHeadscale(ctx context.Context, input HeadscaleInput, c
 		CenterPrivateBindAddress: centerPrivateBindAddress,
 		CenterCertificatePEM:     centerCertificate.CertificatePEM,
 		CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
-	})
+	}
+	if operationID == "" {
+		encodedRequest, marshalErr := json.Marshal(installRequest)
+		if marshalErr != nil {
+			return IntegrationView{}, marshalErr
+		}
+		operationID = fmt.Sprintf("headscale-%x", sha256.Sum256(encodedRequest))
+	}
+	installRequest.OperationID = operationID
+	result, err := s.infrastructure.InstallHeadscale(ctx, installRequest)
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	value, err := s.store.ConfigureBuiltinHeadscale(ctx, result.Endpoint, result.APIKey)
+	value, err := s.store.ConfigureBuiltinHeadscale(ctx, result)
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	if err := s.store.queueAllGatewayStates(ctx); err != nil {
-		return IntegrationView{}, err
-	}
-	if err := s.store.markBuiltinHeadscaleRuntime(ctx); err != nil {
+	if err := s.finalizeSetupHeadscale(ctx, "builtin", operationID); err != nil {
 		return IntegrationView{}, err
 	}
 	return value, nil
@@ -195,49 +224,82 @@ func (s *Server) ReconcileBuiltinHeadscale(ctx context.Context) (err error) {
 	if s.infrastructure == nil {
 		return nil
 	}
-	endpoint, runtime, configured, err := s.store.builtinHeadscaleRuntime(ctx)
+	s.store.domainSwitchMu.Lock()
+	defer s.store.domainSwitchMu.Unlock()
+
+	_, runtime, configured, err := s.store.builtinHeadscaleRuntime(ctx)
 	if err != nil || !configured || runtime == builtinHeadscaleRuntimeVersion {
 		return err
 	}
-	network, err := s.store.CenterNetworkConfig(ctx)
+	snapshot, configured, err := s.builtinHeadscaleReconcileSnapshot(ctx)
 	if err != nil {
 		return err
 	}
-	centerCertificate, _, err := s.store.ensureSystemCenterCertificate(ctx, network.AgentConnectURL)
+	if !configured || snapshot.Runtime != runtime {
+		return errors.New("center: bundled Headscale desired state changed before reconciliation")
+	}
+	if err := s.infrastructure.ReconcileHeadscale(ctx, snapshot.Request); err != nil {
+		return err
+	}
+	latest, configured, err := s.builtinHeadscaleReconcileSnapshot(ctx)
 	if err != nil {
 		return err
 	}
-	binding, _, err := s.store.setupGatewayBinding(ctx)
-	if err != nil {
-		return err
-	}
-	centerAliases, headscaleAliases, err := s.store.deploymentEndpointAliases(ctx)
-	if err != nil {
-		return err
-	}
-	if err := s.infrastructure.ReconcileHeadscale(ctx, deployapi.HeadscaleInstallRequest{
-		CenterURL:          network.AgentConnectURL,
-		HeadscaleURL:       endpoint,
-		CenterAliases:      centerAliases,
-		HeadscaleAliases:   headscaleAliases,
-		PublicAddress:      binding.PublicAddress,
-		GatewayBindAddress: binding.BindAddress,
-		// Startup reconciliation must not trust a pre-restart tailnet address.
-		// The co-located Agent queues the private listener after tailscale0 is
-		// observed again; its control channel remains on the host-only port.
-		CenterPrivateBindAddress: "",
-		CenterCertificatePEM:     centerCertificate.CertificatePEM,
-		CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
-	}); err != nil {
-		return err
+	if !configured || latest.Runtime != snapshot.Runtime || !reflect.DeepEqual(latest.Request, snapshot.Request) {
+		return errors.New("center: bundled Headscale desired state changed during reconciliation")
 	}
 	if err := s.store.reconcileHeadscaleDNS(ctx); err != nil {
 		return err
 	}
-	if err := s.store.removePublicCenterSetupDNS(ctx, network.AgentConnectURL); err != nil {
+	if err := s.store.removePublicCenterSetupDNS(ctx, snapshot.Request.CenterURL); err != nil {
 		return err
 	}
 	return s.store.markBuiltinHeadscaleRuntime(ctx)
+}
+
+type builtinHeadscaleReconcileState struct {
+	Runtime string
+	Request deployapi.HeadscaleInstallRequest
+}
+
+func (s *Server) builtinHeadscaleReconcileSnapshot(ctx context.Context) (builtinHeadscaleReconcileState, bool, error) {
+	endpoint, runtime, configured, err := s.store.builtinHeadscaleRuntime(ctx)
+	if err != nil || !configured {
+		return builtinHeadscaleReconcileState{}, configured, err
+	}
+	network, err := s.store.CenterNetworkConfig(ctx)
+	if err != nil {
+		return builtinHeadscaleReconcileState{}, false, err
+	}
+	centerCertificate, _, err := s.store.ensureSystemCenterCertificate(ctx, network.AgentConnectURL)
+	if err != nil {
+		return builtinHeadscaleReconcileState{}, false, err
+	}
+	binding, _, err := s.store.setupGatewayBinding(ctx)
+	if err != nil {
+		return builtinHeadscaleReconcileState{}, false, err
+	}
+	centerAliases, headscaleAliases, err := s.store.deploymentEndpointAliases(ctx)
+	if err != nil {
+		return builtinHeadscaleReconcileState{}, false, err
+	}
+	return builtinHeadscaleReconcileState{
+		Runtime: runtime,
+		Request: deployapi.HeadscaleInstallRequest{
+			CenterURL:          network.AgentConnectURL,
+			HeadscaleURL:       endpoint,
+			CenterAliases:      centerAliases,
+			HeadscaleAliases:   headscaleAliases,
+			PublicAddress:      binding.PublicAddress,
+			GatewayBindAddress: binding.BindAddress,
+			// Startup reconciliation must not trust a pre-restart tailnet address.
+			// The co-located Agent queues the private listener after tailscale0 is
+			// observed again; its control channel remains on the host-only port.
+			CenterPrivateBindAddress: "",
+			CenterCertificatePEM:     centerCertificate.CertificatePEM,
+			CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
+		},
+	}, true, nil
 }
 
 func (s *Server) handleCreateHeadscaleJoin(writer http.ResponseWriter, request *http.Request) {

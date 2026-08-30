@@ -22,7 +22,7 @@ export type CenterStatus = {
   agentConnectUrl: string;
 };
 
-export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "settings";
+export type Screen = "home" | "nodes" | "apps" | "network" | "activity" | "assistant" | "settings";
 
 export type AppData = {
   status: CenterStatus;
@@ -54,7 +54,15 @@ export type RegistryCredential = {
   createdAt: string;
 };
 
-export type SystemEndpointAlias = { kind: "center" | "headscale"; endpoint: string; certificateNotAfter?: string };
+export type SystemEndpointAlias = {
+  kind: "center" | "headscale";
+  endpoint: string;
+  transitionId: string;
+  lifecycleState: "active" | "retiring" | "failed";
+  retireAfter: string;
+  certificateNotAfter?: string;
+  lastError?: string;
+};
 export type SystemDomain = {
   namespace: string;
   centerUrl: string;
@@ -83,6 +91,71 @@ export type CenterUpdateStatus = {
   checkedAt?: string;
   updatedAt?: string;
   error?: string;
+};
+
+export type AssistantProvider = {
+  apiUrl: string;
+  model: string;
+  apiKeySet: boolean;
+  allowPrivate: boolean;
+  status: "disabled" | "configured" | "verified" | "failed";
+  lastError?: string;
+  updatedAt?: string;
+};
+
+export type AssistantMessage = {
+  id: string;
+  runId?: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
+};
+
+export type AssistantRun = {
+  id: string;
+  conversationId: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "approval_required";
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AssistantProposal = {
+  id: string;
+  conversationId: string;
+  runId: string;
+  kind: "install_application";
+  summary: {
+    action?: string;
+    agentId?: string;
+    agentName?: string;
+    appKey?: string;
+    appName?: LocalizedText;
+    version?: string;
+    role?: string;
+    impact?: string;
+    dataRetention?: string;
+  };
+  digest: string;
+  targets: Array<{ kind: string; id: string }>;
+  expectedRevision: string;
+  policyVersion: string;
+  risk: "low" | "medium" | "high";
+  status: "pending" | "approved" | "rejected" | "expired" | "applied" | "cancelled";
+  expiresAt: string;
+  deploymentId?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AssistantConversation = {
+  id: string;
+  title: string;
+  messages: AssistantMessage[];
+  runs: AssistantRun[];
+  proposals: AssistantProposal[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AgentConnectionMode = "lan" | "headscale" | "public";
@@ -231,7 +304,7 @@ export type PublicationKind = "lan_gateway" | "headscale_gateway" | "public_dire
 export type DNSRecordInstruction = { type: "A" | "CNAME"; name: string; value: string; proxy: boolean };
 export type Publication = { id: string; serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; dnsRecordId?: string; dnsRecord?: DNSRecordInstruction; tlsEnabled: boolean; certificateExpiresAt?: string; desiredRevision: number; appliedRevision: number; status: "pending" | "applying" | "ready" | "degraded" | "failed" | "stopped"; lastError?: string; accessUrl?: string; createdAt: string; updatedAt: string };
 export type Route = { id: string; publicationId: string; siteId: string; serviceId: string; gatewayNodeId: string; hostname: string; protocol: string; upstreams: string[]; tlsEnabled: boolean; status: string; desiredRevision: number; appliedRevision: number; lastError?: string; createdAt: string; updatedAt: string };
-export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; accessManagement?: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string };
+export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; accessManagement?: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string; credentialStatus?: "ready" | "preparing" | "committing"; credentialExpiresAt?: string };
 export type CloudflareZone = { id: string; name: string; accountId: string; accountName: string };
 export type CloudflareOAuthStart = { sessionId: string; authorizationUrl: string; expiresAt: string };
 export type CloudflareOAuthPoll = { status: "pending" | "authorized"; zones?: CloudflareZone[] };
@@ -257,6 +330,7 @@ export type Deployment = {
   reconciliationRequired?: boolean;
   applicationId?: string;
   oneTimeCredentials?: { username: string; password: string };
+  oneTimeCredentialsAvailable?: boolean;
   createdAt: string;
   updatedAt: string;
 };

@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -60,7 +61,7 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil || len(task.GatewayState.Routes) != 2 || len(task.GatewayState.Listeners) != 2 {
 		t.Fatalf("unexpected multi-network gateway desired state: %#v", task)
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	publications, err = store.ListPublications(ctx)
@@ -127,7 +128,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 		t.Fatalf("unexpected runtime migration task: %#v", task)
 	}
 	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.81"}]}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	var generation int
@@ -165,12 +166,22 @@ func TestAgentRuntimeGenerationFencesClaimsAndResultEvidence(t *testing.T) {
 	}
 	task := claimTask(t, store, node)
 	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.83"}]}`)
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false); err == nil || !strings.Contains(err.Error(), "missing application runtime generation") {
+		t.Fatalf("result without executor generation was accepted: %v", err)
+	}
 	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, 0); err == nil || !strings.Contains(err.Error(), "runtime generation") {
 		t.Fatalf("generation-zero result was accepted: %v", err)
 	}
 	var state string
-	if err := store.db.QueryRowContext(ctx, `SELECT state FROM deployments WHERE id = ?`, deployment.ID).Scan(&state); err != nil || state != "running" {
-		t.Fatalf("rejected result changed deployment: state=%q err=%v", state, err)
+	var executedGeneration sql.NullInt64
+	if err := store.db.QueryRowContext(ctx, `SELECT state, executed_runtime_generation FROM deployments WHERE id = ?`, deployment.ID).Scan(&state, &executedGeneration); err != nil || state != "running" || executedGeneration.Valid {
+		t.Fatalf("rejected result changed deployment: state=%q executed=%#v err=%v", state, executedGeneration, err)
+	}
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT state, executed_runtime_generation FROM deployments WHERE id = ?`, deployment.ID).Scan(&state, &executedGeneration); err != nil || state != "succeeded" || !executedGeneration.Valid || executedGeneration.Int64 != platform.ApplicationRuntimeGeneration {
+		t.Fatalf("verified result evidence was not persisted: state=%q executed=%#v err=%v", state, executedGeneration, err)
 	}
 }
 
@@ -346,7 +357,7 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "vastora-gateway-caddy" || sharedState.CaddyPort != 443 || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "www.example.test" {
 		t.Fatalf("unexpected shared 443 desired state: %#v", sharedState)
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -583,7 +594,7 @@ func completeNextTask(t *testing.T, store *Store, node AgentCredential, kind str
 	if task.Kind != kind {
 		t.Fatalf("got task kind %q, want %q", task.Kind, kind)
 	}
-	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -603,7 +614,6 @@ func openOrchestrationStore(t *testing.T) *Store {
 		store.Close()
 		t.Fatal(err)
 	}
-	store.agentDecommissionGrace = 0
 	return store
 }
 
@@ -709,7 +719,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 			t.Fatalf("unprotected bundled route: %#v", route)
 		}
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC"}); err != nil {
@@ -744,9 +754,9 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 		t.Fatalf("unexpected command task: %#v", task)
 	}
 	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 20000, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, CompanionInboundID: 10, CompanionTag: task.ApplicationCommand.InboundTag + "-guard", CompanionPort: 21000, GuardStatus: "ready", ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 20000, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, CompanionInboundID: 10, CompanionTag: task.ApplicationCommand.InboundTag + "-guard", CompanionPort: 21000, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
 	encoded, _ := json.Marshal(result)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
@@ -757,12 +767,20 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	if err != nil || len(publications) != 1 || publications[0].Hostname != "reality.edge.site.example.test" || publications[0].SNIHostname != "www.example.com" {
 		t.Fatalf("connection hostname and SNI were not kept separate: %#v err=%v", publications, err)
 	}
-	link, err := store.ConsumeApplicationCommandResult(ctx, command.ID)
+	const deliveryOwner = "test-administrator"
+	const deliveryKey = "reality-result-operation-1"
+	link, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey)
 	if err != nil || link != shareURI {
 		t.Fatalf("one-time link = %q, err=%v", link, err)
 	}
-	if _, err := store.ConsumeApplicationCommandResult(ctx, command.ID); err == nil {
-		t.Fatal("one-time link was revealed twice")
+	if replay, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil || replay != shareURI {
+		t.Fatalf("replayed one-time link = %q, err=%v", replay, err)
+	}
+	if err := store.AcknowledgeApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevealApplicationCommandResult(ctx, command.ID, deliveryOwner, deliveryKey); err == nil {
+		t.Fatal("acknowledged one-time link remained available")
 	}
 }
 
@@ -800,7 +818,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 		t.Fatalf("unexpected subscription settings: %#v", task.SubscriptionCommand)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{SubscriptionCommand: &SubscriptionCommandResult{Domain: task.SubscriptionCommand.Domain, BaseURI: task.SubscriptionCommand.BaseURI}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
@@ -893,7 +911,7 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 		t.Fatalf("unexpected rename task: %#v", task)
 	}
 	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 美国Oracle"}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
@@ -931,6 +949,7 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 		CompanionTag:       "vastora-test-guard",
 		CompanionPort:      21000,
 		GuardStatus:        "ready",
+		ProxyProtocol:      true,
 		ConnectHostname:    "reality.edge.site.example.test",
 		ShareURI:           "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
 		InboundTag:         "vastora-test",

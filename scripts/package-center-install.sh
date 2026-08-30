@@ -73,6 +73,7 @@ install -m 0755 "$project_dir/deploy/center/uninstall.sh" "$temporary_dir/uninst
 install -m 0755 "$project_dir/deploy/center/install-host-cli.sh" "$temporary_dir/install-host-cli.sh"
 install -m 0755 "$project_dir/deploy/center/install-update-service.sh" "$temporary_dir/install-update-service.sh"
 install -m 0755 "$project_dir/deploy/center/update-center.sh" "$temporary_dir/update-center.sh"
+install -m 0644 "$project_dir/scripts/compare-semver.awk" "$temporary_dir/compare-semver.awk"
 install -m 0644 "$project_dir/deploy/center/runtime-network.sh" "$temporary_dir/runtime-network.sh"
 install -m 0644 "$project_dir/deploy/center/compose.yaml" "$temporary_dir/compose.yaml"
 {

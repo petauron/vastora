@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,9 +31,15 @@ import (
 )
 
 type fakeGatewayDriver struct {
-	applied    []gateway.DesiredState
-	fail       bool
-	healthFail bool
+	mu            sync.Mutex
+	applied       []gateway.DesiredState
+	certificates  []gateway.Certificate
+	fail          bool
+	healthFail    bool
+	blockRevision int64
+	applyStarted  chan struct{}
+	releaseApply  chan struct{}
+	startOnce     sync.Once
 }
 
 type fakeLayer4Provisioner struct {
@@ -66,20 +73,46 @@ func (provisioner *fakeLayer4Provisioner) Remove(context.Context) error {
 
 func (*fakeLayer4Provisioner) Health(context.Context) error { return nil }
 
-func (driver *fakeGatewayDriver) ApplyConfiguration(_ context.Context, desired gateway.DesiredState, _ []gateway.Certificate) error {
+func (driver *fakeGatewayDriver) ApplyConfiguration(_ context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
+	if desired.Revision == driver.blockRevision && driver.releaseApply != nil {
+		if driver.applyStarted != nil {
+			driver.startOnce.Do(func() { close(driver.applyStarted) })
+		}
+		<-driver.releaseApply
+	}
 	if driver.fail {
 		return errors.New("Caddy rejected configuration")
 	}
+	driver.mu.Lock()
 	driver.applied = append(driver.applied, desired.Sorted())
+	driver.certificates = append([]gateway.Certificate(nil), certificates...)
+	driver.mu.Unlock()
 	return nil
+}
+
+func (driver *fakeGatewayDriver) CurrentConfiguration() (gateway.DesiredState, []gateway.Certificate) {
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	if len(driver.applied) == 0 {
+		return gateway.DesiredState{}, nil
+	}
+	return driver.applied[len(driver.applied)-1].Sorted(), append([]gateway.Certificate(nil), driver.certificates...)
 }
 func (driver *fakeGatewayDriver) ApplyRoute(context.Context, gateway.Route) error { return nil }
 func (driver *fakeGatewayDriver) DeleteRoute(context.Context, string) error       { return nil }
 func (driver *fakeGatewayDriver) ListRoutes(context.Context) ([]gateway.Route, error) {
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
 	if len(driver.applied) == 0 {
 		return nil, nil
 	}
 	return driver.applied[len(driver.applied)-1].Routes, nil
+}
+
+func (driver *fakeGatewayDriver) appliedStates() []gateway.DesiredState {
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	return append([]gateway.DesiredState(nil), driver.applied...)
 }
 func (driver *fakeGatewayDriver) GetRouteStatus(context.Context, string) (string, error) {
 	return "ready", nil
@@ -207,6 +240,126 @@ func TestGatewayRestoresAfterAgentOrCaddyRestartWithoutCenter(t *testing.T) {
 	}
 }
 
+func TestGatewayStartupRestoreFencesNewerRevisionUntilRestoreFinishes(t *testing.T) {
+	assertGatewayStartupFence(t, gatewayState(7, 3000), nil, gatewayState(8, 3100), nil)
+}
+
+func TestGatewayStartupFenceCoversRouteCertificateSharedHTTPSAndPortMutations(t *testing.T) {
+	base := gatewayState(7, 3000)
+	updated := gatewayState(8, 3100)
+	added := gatewayState(8, 3000)
+	added.Routes = append(added.Routes, gateway.Route{ID: "added-route", Hostname: "added.apps.example.test", Protocol: "http", ListenerKind: "headscale", Upstreams: []gateway.Upstream{{Address: "100.64.0.11", Port: 3200}}})
+	stopped := gatewayState(8, 3000)
+	stopped.Routes = nil
+	portChanged := gatewayState(8, 3000)
+	portChanged.Listeners[0].HTTPPort = 10080
+	portChanged.Listeners[0].HTTPSPort = 10443
+	tlsBase := gatewayState(7, 3000)
+	tlsBase.Routes[0].TLSEnabled = true
+	tlsNext := gatewayState(8, 3000)
+	tlsNext.Routes[0].TLSEnabled = true
+	oldCertificate := testGatewayCertificate(t, tlsBase.Routes[0].Hostname)
+	newCertificate := testGatewayCertificate(t, tlsNext.Routes[0].Hostname)
+	publicBase := gateway.DesiredState{
+		Revision:  7,
+		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
+		Routes:    []gateway.Route{{ID: "web-route", Hostname: "web.example.test", Protocol: "https", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "100.64.0.10", Port: 3000}}}},
+	}
+	sharedEnabled := publicBase
+	sharedEnabled.Revision = 8
+	sharedEnabled.SharedHTTPS = &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "127.0.0.1", CaddyPort: 10443, Routes: []gateway.Layer4Route{{ID: "raw-route", Hostname: "raw.example.test", Upstreams: []gateway.Upstream{{Address: "100.64.0.12", Port: 443}}}}}
+
+	for _, test := range []struct {
+		name             string
+		initial, desired gateway.DesiredState
+		initialCerts     []gateway.Certificate
+		desiredCerts     []gateway.Certificate
+	}{
+		{name: "update route", initial: base, desired: updated},
+		{name: "add route", initial: base, desired: added},
+		{name: "stop route", initial: base, desired: stopped},
+		{name: "rotate certificate", initial: tlsBase, desired: tlsNext, initialCerts: []gateway.Certificate{oldCertificate}, desiredCerts: []gateway.Certificate{newCertificate}},
+		{name: "enable shared 443", initial: publicBase, desired: sharedEnabled},
+		{name: "change Caddy ports", initial: base, desired: portChanged},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assertGatewayStartupFence(t, test.initial, test.initialCerts, test.desired, test.desiredCerts)
+		})
+	}
+}
+
+func assertGatewayStartupFence(t *testing.T, initial gateway.DesiredState, initialCertificates []gateway.Certificate, desired gateway.DesiredState, desiredCertificates []gateway.Certificate) {
+	t.Helper()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := store.RecordGatewayState(ctx, initial, initialCertificates); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	driver := &fakeGatewayDriver{blockRevision: initial.Revision, applyStarted: started, releaseApply: make(chan struct{})}
+	restored := make(chan error, 1)
+	go func() { restored <- (Client{GatewayDriver: driver}).PrepareGatewayStartup(ctx, store) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("startup restore did not reach the gated driver")
+	}
+	applied := make(chan error, 1)
+	go func() { applied <- applyGatewayDesiredState(ctx, store, driver, desired, desiredCertificates) }()
+	select {
+	case err := <-applied:
+		t.Fatalf("revision %d bypassed the startup restore fence: %v", desired.Revision, err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(driver.releaseApply)
+	if err := <-restored; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-applied; err != nil {
+		t.Fatal(err)
+	}
+	states := driver.appliedStates()
+	if len(states) != 2 || states[0].Revision != initial.Revision || states[1].Revision != desired.Revision {
+		t.Fatalf("live gateway ordering = %#v, want revisions %d then %d", states, initial.Revision, desired.Revision)
+	}
+	persisted, err := store.GatewayState(ctx)
+	if err != nil || persisted.Desired.Revision != desired.Revision {
+		t.Fatalf("persisted gateway = %#v, err=%v", persisted, err)
+	}
+	live, liveCertificates := driver.CurrentConfiguration()
+	wantHash, err := gateway.ConfigurationHash(desired, desiredCertificates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveHash, err := gateway.ConfigurationHash(live, liveCertificates)
+	if err != nil || liveHash != wantHash || persisted.ConfigHash != wantHash {
+		t.Fatalf("gateway hashes live=%q persisted=%q want=%q err=%v", liveHash, persisted.ConfigHash, wantHash, err)
+	}
+}
+
+func TestGatewayRejectsConflictingReplayAtSameRevision(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	driver := &fakeGatewayDriver{}
+	if err := applyGatewayDesiredState(context.Background(), store, driver, gatewayState(4, 3000), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyGatewayDesiredState(context.Background(), store, driver, gatewayState(4, 3100), nil); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("conflicting revision replay was accepted: %v", err)
+	}
+	if states := driver.appliedStates(); len(states) != 1 || states[0].Routes[0].Upstreams[0].Port != 3000 {
+		t.Fatalf("conflicting replay changed live state: %#v", states)
+	}
+}
+
 func TestCaddyConfigurationUsesOnlyGatewayListenersAndMeshUpstreams(t *testing.T) {
 	payload, err := caddyConfiguration(gatewayState(1, 3000), nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
@@ -281,10 +434,13 @@ func TestGatewayRejectsMismatchedOrWrongHostnameCertificates(t *testing.T) {
 
 func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 	state := gateway.DesiredState{
-		Revision:    1,
-		Listeners:   []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
-		Routes:      []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
-		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{{ID: "vless", Hostname: "vless.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}},
+		Revision:  1,
+		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
+		Routes:    []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
+		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{
+			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}},
+			{ID: "raw", Hostname: "raw.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 3443}}},
+		}},
 	}
 	payload, err := caddyConfiguration(state, nil, "unix//run/vastora/caddy-admin.sock")
 	if err != nil {
@@ -299,10 +455,19 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	haproxy := string(configuration)
-	for _, wanted := range []string{"bind 0.0.0.0:443", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check", "server upstream-0 127.0.0.1:2443 check"} {
+	for _, wanted := range []string{"bind 0.0.0.0:443", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check", "server upstream-0 127.0.0.1:2443 check send-proxy-v2", "server upstream-0 127.0.0.1:3443 check"} {
 		if !strings.Contains(haproxy, wanted) {
 			t.Fatalf("HAProxy configuration missing %q: %s", wanted, haproxy)
 		}
+	}
+	if strings.Contains(haproxy, "127.0.0.1:3443 check send-proxy") || strings.Contains(haproxy, "server caddy vastora-gateway-caddy:443 check send-proxy") {
+		t.Fatalf("Proxy Protocol leaked to an unrelated backend: %s", haproxy)
+	}
+	invalid := *state.SharedHTTPS
+	invalid.Routes = append([]gateway.Layer4Route(nil), invalid.Routes...)
+	invalid.Routes[0].ProxyProtocol = "v1"
+	if _, err := haproxyConfiguration(invalid); err == nil {
+		t.Fatal("unsupported route-scoped Proxy Protocol mode was accepted")
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
@@ -30,7 +31,7 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 	}
 	task := claimTask(t, store, node)
 	result := json.RawMessage(`{"generatedSecrets":{"api_token":"recovered-local-api-token"}}`)
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "container state requires reconciliation", result, true); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "container state requires reconciliation", result, true, platform.ApplicationRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	deployments, err := store.ListDeployments(ctx)
@@ -202,7 +203,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 	if replayed.ID != command.ID || replayed.Attempt != first.Attempt+1 {
 		t.Fatalf("reconciliation changed task identity or attempt history: first=%#v replay=%#v", first, replayed)
 	}
-	if err := store.CompleteTask(ctx, previousController.ID, previousController.Credential, replayed.ID, replayed.Attempt, false, "remote mutation was compensated", nil); err != nil {
+	if err := store.CompleteTask(ctx, previousController.ID, previousController.Credential, replayed.ID, replayed.Attempt, false, "remote mutation was compensated", nil, replayed.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -261,10 +262,10 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	if first.ID != second.ID || first.Attempt != 1 || second.Attempt != 2 || first.Revision != second.Revision {
 		t.Fatalf("unexpected retry claims: first=%#v second=%#v", first, second)
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, first.ID, first.Attempt, false, "late result", nil); err == nil || !strings.Contains(err.Error(), "stale") {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, first.ID, first.Attempt, false, "late result", nil, first.RequiredRuntimeGeneration); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("stale result was not rejected: %v", err)
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, second.ID, second.Attempt, false, "expected failure", nil); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, second.ID, second.Attempt, false, "expected failure", nil, second.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	actions, err := store.ListActions(ctx, defaultActionLimit)
@@ -289,6 +290,47 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	}
 }
 
+func TestTaskLeaseRenewalKeepsAttemptActiveAndNeverResurrectsExpiredLease(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return clock }
+	node := enrollOrchestrationNode(t, store, "lease-renewal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
+	config := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	first := claimTask(t, store, node)
+	clock = clock.Add(4 * time.Minute)
+	expiresAt, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt)
+	if err != nil || !expiresAt.Equal(clock.Add(taskLeaseDuration)) {
+		t.Fatalf("renewed lease = %s, err=%v", expiresAt, err)
+	}
+	clock = clock.Add(2 * time.Minute)
+	if err := store.recoverExpiredTasks(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM deployments WHERE id = ?`, first.ID).Scan(&state); err != nil || state != "running" {
+		t.Fatalf("renewed task state = %q, err=%v", state, err)
+	}
+	clock = expiresAt.Add(time.Second)
+	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt); !errors.Is(err, errStaleTaskLease) {
+		t.Fatalf("expired lease was resurrected: %v", err)
+	}
+	second := claimTask(t, store, node)
+	if second.ID != first.ID || second.Attempt != first.Attempt+1 {
+		t.Fatalf("expired task retry = %#v, first=%#v", second, first)
+	}
+	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt); !errors.Is(err, errStaleTaskLease) {
+		t.Fatalf("stale attempt renewed the newer lease: %v", err)
+	}
+	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, second.ID, second.Attempt); err != nil {
+		t.Fatalf("current attempt could not renew: %v", err)
+	}
+}
+
 func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -306,7 +348,7 @@ func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{Services: []ApplicationServiceResult{{Name: "api", Protocol: "http", ContainerPort: 8317, HostPort: 8317, Address: "10.0.0.11"}}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	var deploymentState, applicationStatus, endpoint string
@@ -527,7 +569,7 @@ func TestFailedChangeRemainsAnInstalledApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "replacement failed", nil); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "replacement failed", nil, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	applications, err := store.ListApplications(ctx)
@@ -597,7 +639,7 @@ func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 		t.Fatalf("Agent task did not receive matching encrypted credentials: %#v", secrets)
 	}
 	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.40"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.40"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	listed, err := store.ListDeployments(ctx)
@@ -621,7 +663,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 	}
 	task := claimTask(t, store, node)
 	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.42"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.42"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -661,7 +703,7 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 	}
 	task := claimTask(t, store, node)
 	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.41"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.41"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result); err != nil {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	heartbeat := NodeHeartbeat{Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-7", Protocol: "tcp", AppProtocol: "vless/tcp", Listen: "0.0.0.0", Port: 443, Enabled: true}}}

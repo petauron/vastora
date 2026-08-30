@@ -100,6 +100,7 @@ jobs:
           path: .release-tools
           sparse-checkout: |
             scripts/publish-installer-r2.sh
+            scripts/compare-semver.awk
             scripts/verify-installer-release.sh
           sparse-checkout-cone-mode: false
 

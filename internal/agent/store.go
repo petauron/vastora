@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
@@ -25,16 +26,22 @@ import (
 )
 
 var errApplicationNotInstalled = errors.New("agent: application is not installed")
+var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 
 type Store struct {
-	db      *sql.DB
-	key     []byte
-	dataDir string
-	now     func() time.Time
+	db                *sql.DB
+	key               []byte
+	dataDir           string
+	now               func() time.Time
+	gatewayMutationMu sync.Mutex
+	gatewayStartupMu  sync.RWMutex
+	gatewayStartupErr error
+	gatewayStartupOK  bool
 }
 
 type AppliedInstallation struct {
 	InstanceID      string              `json:"instanceId"`
+	ApplicationID   string              `json:"applicationId"`
 	AppKey          string              `json:"appKey"`
 	Version         string              `json:"version"`
 	Config          json.RawMessage     `json:"config"`
@@ -47,6 +54,7 @@ type AppliedInstallation struct {
 }
 
 type sealedApplicationState struct {
+	ApplicationID   string              `json:"applicationId"`
 	Config          json.RawMessage     `json:"config"`
 	Secrets         json.RawMessage     `json:"secrets"`
 	ServiceAddress  string              `json:"serviceAddress"`
@@ -71,15 +79,11 @@ type Connection struct {
 	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 8
+const agentSchemaVersion = 14
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agent: create data directory: %w", err)
-	}
-	key, err := secret.LoadOrCreateKey(filepath.Join(dataDir, "agent.key"))
-	if err != nil {
-		return nil, fmt.Errorf("agent: load local key: %w", err)
 	}
 	databasePath := filepath.Join(dataDir, "agent.db")
 	databaseInfo, statErr := os.Stat(databasePath)
@@ -87,12 +91,59 @@ func Open(dataDir string) (*Store, error) {
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("agent: inspect database: %w", statErr)
 	}
+	keyPath := filepath.Join(dataDir, "agent.key")
+	_, keyStatErr := os.Stat(keyPath)
+	keyExists := keyStatErr == nil
+	if keyStatErr != nil && !errors.Is(keyStatErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("agent: inspect local key: %w", keyStatErr)
+	}
+	if existingDatabase && !keyExists {
+		return nil, errors.New("agent: existing database requires its original local key")
+	}
+	if !existingDatabase && keyExists {
+		return nil, errors.New("agent: local key exists without its database")
+	}
+	var key []byte
+	var err error
+	if existingDatabase {
+		key, err = secret.LoadKey(keyPath)
+	} else {
+		key, err = secret.CreateKey(keyPath)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("agent: load local key: %w", err)
+	}
+	freshComplete := existingDatabase
+	if !existingDatabase {
+		defer func() {
+			if freshComplete {
+				return
+			}
+			_ = os.Remove(keyPath)
+			_ = os.Remove(databasePath)
+			_ = os.Remove(databasePath + "-wal")
+			_ = os.Remove(databasePath + "-shm")
+		}()
+	}
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
 		return nil, fmt.Errorf("agent: open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, key: key, dataDir: dataDir, now: time.Now}
+	if existingDatabase {
+		bound, err := inspectAgentDatabaseKeyBinding(context.Background(), db, key)
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		if !bound {
+			if err := verifyAgentEncryptedState(context.Background(), db, key); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: verify legacy encrypted state before binding the database: %w", err)
+			}
+		}
+	}
 	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize database: %w", err)
@@ -308,13 +359,199 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 8
 		}
+		if version == 8 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE agent_install_operations (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					operation_id TEXT NOT NULL UNIQUE,
+					center_url TEXT NOT NULL,
+					token_hash BLOB NOT NULL,
+					sealed_token BLOB NOT NULL,
+					sealed_private_key BLOB NOT NULL,
+					ca_fingerprint TEXT NOT NULL,
+					replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
+					phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started')),
+					agent_id TEXT NOT NULL DEFAULT '',
+					name TEXT NOT NULL DEFAULT '',
+					roles_json BLOB NOT NULL DEFAULT '[]',
+					capabilities_json BLOB NOT NULL DEFAULT '{}',
+					last_error TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				PRAGMA user_version = 9`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 8 to 9: %w", migrateErr)
+			}
+			version = 9
+		}
+		if version == 9 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE task_receipts_v10 (
+					task_id TEXT PRIMARY KEY,
+					task_kind TEXT NOT NULL,
+					attempt INTEGER NOT NULL CHECK(attempt > 0),
+					task_hash BLOB NOT NULL,
+					state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')),
+					sealed_completion BLOB,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				INSERT INTO task_receipts_v10 SELECT * FROM task_receipts;
+				DROP TABLE task_receipts;
+				ALTER TABLE task_receipts_v10 RENAME TO task_receipts;
+				PRAGMA user_version = 10`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 9 to 10: %w", migrateErr)
+			}
+			version = 10
+		}
+		if version == 10 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE IF NOT EXISTS storage_key_binding (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					sealed BLOB NOT NULL
+				);
+				PRAGMA user_version = 11`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 10 to 11: %w", migrateErr)
+			}
+			version = 11
+		}
+		if version == 11 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE agent_install_operations_v12 (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					operation_id TEXT NOT NULL UNIQUE,
+					center_url TEXT NOT NULL,
+					token_hash BLOB NOT NULL,
+					sealed_token BLOB NOT NULL,
+					sealed_private_key BLOB NOT NULL,
+					ca_fingerprint TEXT NOT NULL,
+					replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
+					phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started', 'healthy')),
+					agent_id TEXT NOT NULL DEFAULT '',
+					name TEXT NOT NULL DEFAULT '',
+					roles_json BLOB NOT NULL DEFAULT '[]',
+					capabilities_json BLOB NOT NULL DEFAULT '{}',
+					previous_agent_id TEXT NOT NULL DEFAULT '',
+					previous_name TEXT NOT NULL DEFAULT '',
+					previous_center_url TEXT NOT NULL DEFAULT '',
+					previous_sealed_credential BLOB NOT NULL DEFAULT X'',
+					previous_sealed_private_key BLOB NOT NULL DEFAULT X'',
+					previous_ca_fingerprint TEXT NOT NULL DEFAULT '',
+					last_error TEXT NOT NULL DEFAULT '',
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				INSERT INTO agent_install_operations_v12(
+					id, operation_id, center_url, token_hash, sealed_token, sealed_private_key, ca_fingerprint,
+					replace_existing, phase, agent_id, name, roles_json, capabilities_json, last_error, created_at, updated_at
+				) SELECT id, operation_id, center_url, token_hash, sealed_token, sealed_private_key, ca_fingerprint,
+					replace_existing, phase, agent_id, name, roles_json, capabilities_json, last_error, created_at, updated_at
+				FROM agent_install_operations;
+				DROP TABLE agent_install_operations;
+				ALTER TABLE agent_install_operations_v12 RENAME TO agent_install_operations;
+				PRAGMA user_version = 12`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 11 to 12: %w", migrateErr)
+			}
+			version = 12
+		}
+		if version == 12 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE IF NOT EXISTS three_x_ui_controller_promotions (
+				id INTEGER PRIMARY KEY CHECK(id = 1),
+				migration_id TEXT NOT NULL UNIQUE,
+				task_id TEXT NOT NULL UNIQUE,
+				application_id TEXT NOT NULL,
+				command_hash BLOB NOT NULL,
+				phase TEXT NOT NULL CHECK(phase IN ('prepared', 'imported', 'api_ready', 'role_configured', 'applied')),
+				sealed_state BLOB NOT NULL,
+				last_error TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version = 13`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 12 to 13: %w", migrateErr)
+			}
+			version = 13
+		}
+		if version == 13 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`ALTER TABLE task_receipts ADD COLUMN runtime_generation INTEGER NOT NULL DEFAULT 0 CHECK(runtime_generation >= 0);
+					PRAGMA user_version = 14`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 13 to 14: %w", migrateErr)
+			}
+			version = 14
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
 		}
+		if err := store.initializeDatabaseKeyBinding(context.Background()); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 		return store, nil
 	}
-	if _, err := db.Exec(`CREATE TABLE applied_installations (
+	if _, err := db.Exec(`CREATE TABLE storage_key_binding (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			sealed BLOB NOT NULL
+		);
+		CREATE TABLE applied_installations (
 			instance_id TEXT PRIMARY KEY,
 			app_key TEXT NOT NULL,
 			version TEXT NOT NULL,
@@ -331,12 +568,49 @@ func Open(dataDir string) (*Store, error) {
 			sealed_private_key BLOB NOT NULL,
 			ca_fingerprint TEXT NOT NULL
 		);
+		CREATE TABLE agent_install_operations (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			operation_id TEXT NOT NULL UNIQUE,
+			center_url TEXT NOT NULL,
+			token_hash BLOB NOT NULL,
+			sealed_token BLOB NOT NULL,
+			sealed_private_key BLOB NOT NULL,
+			ca_fingerprint TEXT NOT NULL,
+			replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
+			phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started', 'healthy')),
+			agent_id TEXT NOT NULL DEFAULT '',
+			name TEXT NOT NULL DEFAULT '',
+			roles_json BLOB NOT NULL DEFAULT '[]',
+			capabilities_json BLOB NOT NULL DEFAULT '{}',
+			previous_agent_id TEXT NOT NULL DEFAULT '',
+			previous_name TEXT NOT NULL DEFAULT '',
+			previous_center_url TEXT NOT NULL DEFAULT '',
+			previous_sealed_credential BLOB NOT NULL DEFAULT X'',
+			previous_sealed_private_key BLOB NOT NULL DEFAULT X'',
+			previous_ca_fingerprint TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+		CREATE TABLE three_x_ui_controller_promotions (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			migration_id TEXT NOT NULL UNIQUE,
+			task_id TEXT NOT NULL UNIQUE,
+			application_id TEXT NOT NULL,
+			command_hash BLOB NOT NULL,
+			phase TEXT NOT NULL CHECK(phase IN ('prepared', 'imported', 'api_ready', 'role_configured', 'applied')),
+			sealed_state BLOB NOT NULL,
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
 		CREATE TABLE task_receipts (
 			task_id TEXT PRIMARY KEY,
 			task_kind TEXT NOT NULL,
+			runtime_generation INTEGER NOT NULL CHECK(runtime_generation >= 0),
 			attempt INTEGER NOT NULL CHECK(attempt > 0),
 			task_hash BLOB NOT NULL,
-			state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required')),
+			state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required', 'reconciliation_acknowledged')),
 			sealed_completion BLOB,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
@@ -363,10 +637,15 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 8;`); err != nil {
+		PRAGMA user_version = 14;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
+	if err := store.initializeDatabaseKeyBinding(context.Background()); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	freshComplete = true
 	return store, nil
 }
 
@@ -495,7 +774,7 @@ func (s *Store) GatewayState(ctx context.Context) (GatewayAppliedState, error) {
 	var appliedAt string
 	err := s.db.QueryRowContext(ctx, `SELECT desired_json, sealed_certificates, config_hash, applied_at FROM gateway_applied_state WHERE id = 1`).Scan(&encoded, &sealedCertificates, &state.ConfigHash, &appliedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return GatewayAppliedState{}, errors.New("agent: no applied gateway state")
+		return GatewayAppliedState{}, errNoAppliedGatewayState
 	}
 	if err != nil {
 		return GatewayAppliedState{}, fmt.Errorf("agent: read gateway state: %w", err)
@@ -534,16 +813,21 @@ func (s *Store) RecordGatewayState(ctx context.Context, desired gateway.DesiredS
 	if err != nil {
 		return GatewayAppliedState{}, fmt.Errorf("agent: encrypt gateway certificates: %w", err)
 	}
-	digestInput := append(append([]byte(nil), encoded...), certificateJSON...)
-	digest := sha256.Sum256(digestInput)
+	configHash, err := gateway.ConfigurationHash(desired, certificates)
+	if err != nil {
+		return GatewayAppliedState{}, err
+	}
 	now := s.now().UTC()
-	state := GatewayAppliedState{Desired: desired, Certificates: append([]gateway.Certificate(nil), certificates...), ConfigHash: hex.EncodeToString(digest[:]), AppliedAt: now}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO gateway_applied_state(id, applied_revision, desired_json, sealed_certificates, config_hash, applied_at)
+	state := GatewayAppliedState{Desired: desired, Certificates: append([]gateway.Certificate(nil), certificates...), ConfigHash: configHash, AppliedAt: now}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO gateway_applied_state(id, applied_revision, desired_json, sealed_certificates, config_hash, applied_at)
 		VALUES(1, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET applied_revision = excluded.applied_revision, desired_json = excluded.desired_json, sealed_certificates = excluded.sealed_certificates, config_hash = excluded.config_hash, applied_at = excluded.applied_at
 		WHERE excluded.applied_revision >= gateway_applied_state.applied_revision`, desired.Revision, encoded, sealedCertificates, state.ConfigHash, now.Format(time.RFC3339Nano))
 	if err != nil {
 		return GatewayAppliedState{}, fmt.Errorf("agent: record gateway state: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return GatewayAppliedState{}, fmt.Errorf("agent: gateway revision %d is older than the persisted configuration", desired.Revision)
 	}
 	return state, nil
 }
@@ -588,6 +872,18 @@ func (s *Store) ReplaceConnection(ctx context.Context, connection Connection) er
 		return fmt.Errorf("agent: replace Center connection: %w", err)
 	}
 	return nil
+}
+
+// HasConnection reports whether enrollment state is present without requiring
+// its encrypted contents to be readable. Install recovery must distinguish a
+// missing enrollment from a damaged one without silently treating damage as a
+// fresh host.
+func (s *Store) HasConnection(ctx context.Context) (bool, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM control_plane_connection WHERE id = 1`).Scan(&count); err != nil {
+		return false, fmt.Errorf("agent: inspect Center connection: %w", err)
+	}
+	return count == 1, nil
 }
 
 func (s *Store) sealConnection(connection Connection) ([]byte, []byte, error) {
@@ -679,7 +975,7 @@ func (s *Store) RecordApplied(ctx context.Context, installation AppliedInstallat
 	}
 	configHash := sha256.Sum256(canonicalConfig)
 	encodedState, err := json.Marshal(sealedApplicationState{
-		Config: canonicalConfig, Secrets: canonicalSecrets, ServiceAddress: installation.ServiceAddress,
+		ApplicationID: installation.ApplicationID, Config: canonicalConfig, Secrets: canonicalSecrets, ServiceAddress: installation.ServiceAddress,
 		Manifest: installation.Manifest, ApplicationRole: installation.ApplicationRole,
 	})
 	if err != nil {
@@ -758,6 +1054,7 @@ func (s *Store) AppliedInstallation(ctx context.Context, appKey string) (Applied
 		return AppliedInstallation{}, err
 	}
 	value.Config = state.Config
+	value.ApplicationID = state.ApplicationID
 	value.Secrets = state.Secrets
 	value.ServiceAddress = state.ServiceAddress
 	value.Manifest = state.Manifest

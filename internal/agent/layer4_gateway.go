@@ -50,12 +50,15 @@ type ManagedGatewayDriver struct {
 	Layer4  Layer4Provisioner
 	Runtime GatewayRuntimeProvisioner
 
+	mutationMu   sync.Mutex
 	mu           sync.RWMutex
 	state        gateway.DesiredState
 	certificates []gateway.Certificate
 }
 
 func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
 	if driver.Caddy == nil || driver.Layer4 == nil || driver.Runtime == nil {
 		return errors.New("agent: managed gateway is not configured")
 	}
@@ -115,6 +118,8 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 // RetainSystemRoutes removes application ingress while keeping the Center and
 // bundled infrastructure reachable on a co-located control-plane host.
 func (driver *ManagedGatewayDriver) RetainSystemRoutes(ctx context.Context) (bool, error) {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
 	if driver.Caddy == nil {
 		return false, errors.New("agent: managed gateway is not configured")
 	}
@@ -171,6 +176,12 @@ func (driver *ManagedGatewayDriver) RetainSystemRoutes(ctx context.Context) (boo
 
 func (driver *ManagedGatewayDriver) ListRoutes(ctx context.Context) ([]gateway.Route, error) {
 	return driver.Caddy.ListRoutes(ctx)
+}
+
+func (driver *ManagedGatewayDriver) CurrentConfiguration() (gateway.DesiredState, []gateway.Certificate) {
+	driver.mu.RLock()
+	defer driver.mu.RUnlock()
+	return driver.state.Sorted(), append([]gateway.Certificate(nil), driver.certificates...)
 }
 
 func (driver *ManagedGatewayDriver) ApplyRoute(ctx context.Context, route gateway.Route) error {
@@ -368,7 +379,11 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 	for index, route := range desired.Routes {
 		configuration.WriteString(fmt.Sprintf("\nbackend vastora-raw-%d\n", index))
 		for upstreamIndex, upstream := range route.Upstreams {
-			configuration.WriteString(fmt.Sprintf("  server upstream-%d %s check\n", upstreamIndex, net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port))))
+			proxyProtocol := ""
+			if route.ProxyProtocol == gateway.ProxyProtocolV2 {
+				proxyProtocol = " send-proxy-v2"
+			}
+			configuration.WriteString(fmt.Sprintf("  server upstream-%d %s check%s\n", upstreamIndex, net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port)), proxyProtocol))
 		}
 	}
 	return []byte(configuration.String()), nil

@@ -35,6 +35,18 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 			t.Fatal(err)
 		}
 	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyDesired, err := store.desiredGatewayState(ctx, tx, node.ID, 1)
+	_ = tx.Rollback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readyDesired.SharedHTTPS == nil || len(readyDesired.SharedHTTPS.Routes) != 1 || readyDesired.SharedHTTPS.Routes[0].ProxyProtocol != gateway.ProxyProtocolV2 {
+		t.Fatalf("managed REALITY route did not request Proxy Protocol v2: %#v", readyDesired.SharedHTTPS)
+	}
 
 	if err := store.quarantineReadyRealityGuards(ctx); err != nil {
 		t.Fatal(err)

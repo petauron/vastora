@@ -15,7 +15,14 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/platform"
 )
+
+type executorFunc func(context.Context, DeploymentTask) (ApplicationTaskResult, error)
+
+func (execute executorFunc) Deploy(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
+	return execute(ctx, task)
+}
 
 func testConnection(t *testing.T, agentID, name, centerURL, credential string) Connection {
 	t.Helper()
@@ -33,7 +40,7 @@ func testConnection(t *testing.T, agentID, name, centerURL, credential string) C
 type fakeHostDecommissioner struct {
 	prepared      bool
 	scheduled     bool
-	deleteData    bool
+	request       HostDecommissionRequest
 	prepareCalls  int
 	scheduleCalls int
 }
@@ -41,16 +48,17 @@ type fakeHostDecommissioner struct {
 func (d *fakeHostDecommissioner) Prepare(_ context.Context, deleteData bool) error {
 	d.prepared = true
 	d.prepareCalls++
-	d.deleteData = deleteData
+	d.request.DeleteData = deleteData
 	return nil
 }
 
-func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, deleteData bool) error {
+func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, request HostDecommissionRequest) error {
 	d.scheduled = true
 	d.scheduleCalls++
-	if deleteData != d.deleteData {
+	if request.DeleteData != d.request.DeleteData {
 		return errors.New("delete-data changed between cleanup phases")
 	}
+	d.request = request
 	return nil
 }
 
@@ -232,7 +240,11 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := &fakeGatewayDriver{}
-	(Client{GatewayDriver: driver}).RunHeartbeats(ctx, store, time.Second, func(err error) {
+	client := Client{GatewayDriver: driver}
+	if err := client.PrepareGatewayStartup(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	client.RunHeartbeats(ctx, store, time.Second, func(err error) {
 		if ctx.Err() == nil {
 			t.Errorf("heartbeat error: %v", err)
 		}
@@ -242,6 +254,36 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 	}
 	if len(driver.applied) != 1 || driver.applied[0].Revision != 3 {
 		t.Fatalf("persisted gateway state was restored %d times: %#v", len(driver.applied), driver.applied)
+	}
+}
+
+func TestGatewayControlPlaneFailsClosedBeforeStartupRestore(t *testing.T) {
+	claims := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		claims++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"task":null}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	var reported error
+	client := Client{GatewayDriver: &fakeGatewayDriver{}}
+	client.RunTasks(context.Background(), store, func(err error) { reported = err })
+	if reported == nil || !strings.Contains(reported.Error(), "has not completed") {
+		t.Fatalf("startup gate error = %v", reported)
+	}
+	if err := client.Heartbeat(context.Background(), store); err == nil || !strings.Contains(err.Error(), "has not completed") {
+		t.Fatalf("heartbeat startup gate error = %v", err)
+	}
+	if claims != 0 {
+		t.Fatalf("task loop contacted Center %d times before Gateway restore", claims)
 	}
 }
 
@@ -526,14 +568,11 @@ func TestTunnelDesiredStateRequiresFixedImageAndTokenWhileRunning(t *testing.T) 
 	}
 }
 
-func TestAgentDecommissionSchedulesFinalRemovalBeforeAcknowledgement(t *testing.T) {
+func TestAgentDecommissionHandsOffWithoutPrematureAcknowledgement(t *testing.T) {
 	acknowledged := false
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/agents/agent-1/tasks/agent-decommission-agent-1/result" || request.Header.Get("Authorization") != "Bearer credential" {
-			t.Fatalf("unexpected task acknowledgement: %s %s", request.Method, request.URL.Path)
-		}
 		acknowledged = true
-		response.WriteHeader(http.StatusNoContent)
+		t.Fatalf("unexpected request before host cleanup completed: %s %s", request.Method, request.URL.Path)
 	}))
 	defer server.Close()
 	directory := t.TempDir()
@@ -559,11 +598,126 @@ func TestAgentDecommissionSchedulesFinalRemovalBeforeAcknowledgement(t *testing.
 	(Client{HTTPClient: server.Client(), Decommissioner: decommissioner}).processTask(context.Background(), store, DeploymentTask{
 		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 1, DeleteData: true,
 	}, func(err error) { t.Errorf("duplicate task error: %v", err) })
-	if !decommissioner.prepared || !decommissioner.scheduled || !acknowledged {
+	if !decommissioner.prepared || !decommissioner.scheduled || acknowledged {
 		t.Fatalf("decommission lifecycle incomplete: %#v acknowledged=%v", decommissioner, acknowledged)
 	}
-	if decommissioner.prepareCalls != 1 || decommissioner.scheduleCalls != 1 {
+	if decommissioner.prepareCalls != 2 || decommissioner.scheduleCalls != 2 {
 		t.Fatalf("duplicate delivery repeated the external effect: %#v", decommissioner)
+	}
+	if decommissioner.request.TaskID != "agent-decommission-agent-1" || decommissioner.request.Attempt != 1 || decommissioner.request.Connection.Credential != "credential" {
+		t.Fatalf("decommission handoff is incomplete: %#v", decommissioner.request)
+	}
+}
+
+func TestHostDecommissionHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
+	started := false
+	completed := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer credential" || request.Method != http.MethodPost {
+			t.Fatalf("unauthenticated host cleanup callback: %s %s", request.Method, request.Header.Get("Authorization"))
+		}
+		switch request.URL.Path {
+		case "/api/v1/agents/agent-1/decommission/start":
+			started = true
+		case "/api/v1/agents/agent-1/tasks/agent-decommission-agent-1/result":
+			completed = true
+		default:
+			t.Fatalf("unexpected host cleanup callback: %s", request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
+	client := Client{HTTPClient: server.Client()}
+	if err := client.BeginHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CompleteHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !started || !completed {
+		t.Fatalf("host cleanup lifecycle callbacks: started=%v completed=%v", started, completed)
+	}
+}
+
+func TestTaskCompletionUsesFreshContextsAfterExecutionCancellation(t *testing.T) {
+	resultReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/tasks/deadline-task/result" {
+			t.Fatalf("unexpected request: %s", request.URL.Path)
+		}
+		resultReceived = true
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"completed":true}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	executionContext, cancelExecution := context.WithCancel(context.Background())
+	cancelExecution()
+	task := DeploymentTask{Kind: "application.apply", ID: "deadline-task", Attempt: 1, ApplicationID: "application-1", AppKey: cpaKey, Operation: "install", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}
+	task.Manifest.Version = "1.0.0"
+	client := Client{HTTPClient: server.Client(), Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
+		if ctx.Err() == nil {
+			t.Fatal("executor did not receive the canceled execution context")
+		}
+		return ApplicationTaskResult{}, nil
+	})}
+	client.processTask(executionContext, store, task, func(err error) { t.Errorf("task error: %v", err) })
+	if !resultReceived {
+		t.Fatal("task result was not delivered after execution cancellation")
+	}
+	installation, err := store.AppliedInstallation(context.Background(), cpaKey)
+	if err != nil || installation.InstanceID != task.ID || installation.ApplicationID != task.ApplicationID {
+		t.Fatalf("applied state = %#v, err=%v", installation, err)
+	}
+}
+
+func TestLeaseRenewalFailureCancelsExecutionBeforeReporting(t *testing.T) {
+	resultReceived := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/api/v1/agents/agent-1/tasks/lease-failure/lease":
+			http.Error(response, `{"error":"lease unavailable"}`, http.StatusConflict)
+		case "/api/v1/agents/agent-1/tasks/lease-failure/result":
+			resultReceived = true
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = response.Write([]byte(`{"completed":true}`))
+		default:
+			t.Fatalf("unexpected request: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	executionCanceled := false
+	reportedRenewalFailure := false
+	client := Client{HTTPClient: server.Client(), Capabilities: Capabilities{Docker: true}, Executor: executorFunc(func(ctx context.Context, _ DeploymentTask) (ApplicationTaskResult, error) {
+		<-ctx.Done()
+		executionCanceled = true
+		return ApplicationTaskResult{}, ctx.Err()
+	})}
+	task := DeploymentTask{Kind: "application.apply", ID: "lease-failure", Attempt: 1, ApplicationID: "application-1", AppKey: cpaKey, Operation: "install", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}
+	client.processTaskWithLeaseInterval(context.Background(), store, task, func(err error) {
+		if strings.Contains(err.Error(), "renew task lease") {
+			reportedRenewalFailure = true
+		}
+	}, time.Millisecond)
+	if !executionCanceled || !reportedRenewalFailure || !resultReceived {
+		t.Fatalf("lease failure ordering: canceled=%t reported=%t result=%t", executionCanceled, reportedRenewalFailure, resultReceived)
 	}
 }
 
@@ -601,7 +755,7 @@ func TestProcessingReceiptAfterRestartFailsClosedWithoutRepeatingEffect(t *testi
 	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
 		t.Fatalf("explicit reconciliation did not reopen the same task: completion=%#v err=%v", completion, err)
 	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt}); err != nil {
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
@@ -632,22 +786,71 @@ func TestStoredApplicationCompletionKeepsExecutedRuntimeGeneration(t *testing.T)
 	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
-	task := DeploymentTask{Kind: "application.apply", ID: "lost-result", Attempt: 1, AppKey: cpaKey, Operation: "uninstall", RequiredRuntimeGeneration: 1}
+	task := DeploymentTask{Kind: "application.apply", ID: "lost-result", Attempt: 1, AppKey: cpaKey, Operation: "uninstall", RequiredRuntimeGeneration: 0}
 	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
 		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
 	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, ApplicationRuntimeGeneration: 1}); err != nil {
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	task.Attempt = 2
 	completion, err := store.PrepareTaskReceipt(context.Background(), task)
-	if err != nil || completion == nil || completion.ApplicationRuntimeGeneration != 1 {
+	if err != nil || completion == nil || completion.ApplicationRuntimeGeneration != platform.ApplicationRuntimeGeneration {
 		t.Fatalf("stored completion = %#v, err=%v", completion, err)
 	}
 	if err := (Client{}).sendTaskCompletion(context.Background(), store, *completion); err != nil {
 		t.Fatal(err)
 	}
-	if received.ApplicationRuntimeGeneration != 1 {
-		t.Fatalf("replayed runtime generation = %d, want 1", received.ApplicationRuntimeGeneration)
+	if received.ApplicationRuntimeGeneration != platform.ApplicationRuntimeGeneration {
+		t.Fatalf("replayed runtime generation = %d, want %d", received.ApplicationRuntimeGeneration, platform.ApplicationRuntimeGeneration)
+	}
+}
+
+func TestPendingTaskCompletionReplaysAfterRestartAndAcknowledgesOnce(t *testing.T) {
+	deliveries := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/tasks/restart-outbox/result" {
+			t.Fatalf("unexpected outbox request: %s", request.URL.Path)
+		}
+		deliveries++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"completed":true}`))
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: "application.apply", ID: "restart-outbox", Attempt: 1, AppKey: cpaKey, Operation: "uninstall"}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "operation failed", ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	pending, err := store.PendingTaskCompletion(context.Background())
+	if err != nil || pending == nil || pending.TaskID != task.ID || pending.Attempt != task.Attempt {
+		t.Fatalf("pending completion = %#v, err=%v", pending, err)
+	}
+	if err := (Client{HTTPClient: server.Client()}).deliverTaskCompletion(context.Background(), store, *pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := store.PendingTaskCompletion(context.Background()); err != nil || pending != nil {
+		t.Fatalf("acknowledged completion replayed again: %#v err=%v", pending, err)
+	}
+	if deliveries != 1 {
+		t.Fatalf("outbox deliveries = %d, want 1", deliveries)
 	}
 }

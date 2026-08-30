@@ -67,10 +67,12 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","id":"11111111-2222-4333-8444-555555555555","subId":"","flow":"xtls-rprx-vision","enable":true},"inboundIds":[9]}}`))
 		case "GET /panel/api/inbounds/get/9":
 			minClientVersion := ""
+			proxySettings := ""
 			if clientVersionUpdated.Load() {
 				minClientVersion = threeXUIRealityMinClientVersion
+				proxySettings = `,"tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true}`
 			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"inbound-9","protocol":"vless","listen":"100.64.0.1","port":39871,"total":0,"expiryTime":0,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"MacBook","flow":"xtls-rprx-vision"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverNames":["www.example.com"],"shortIds":["deadbeef"],"minClientVer":"` + minClientVersion + `","settings":{"publicKey":"public-key"}}},"sniffing":{"enabled":true}}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"inbound-9","protocol":"vless","listen":"100.64.0.1","port":39871,"total":0,"expiryTime":0,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"MacBook","flow":"xtls-rprx-vision"}]},"streamSettings":{"network":"tcp","security":"reality"` + proxySettings + `,"realitySettings":{"serverNames":["www.example.com"],"shortIds":["deadbeef"],"minClientVer":"` + minClientVersion + `","settings":{"publicKey":"public-key"}}},"sniffing":{"enabled":true}}}`))
 		case "POST /panel/api/inbounds/update/9":
 			var payload map[string]any
 			if json.NewDecoder(request.Body).Decode(&payload) != nil {
@@ -78,7 +80,7 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 			}
 			streamSettings, _ := payload["streamSettings"].(map[string]any)
 			realitySettings, _ := streamSettings["realitySettings"].(map[string]any)
-			if realitySettings["minClientVer"] != threeXUIRealityMinClientVersion {
+			if realitySettings["minClientVer"] != threeXUIRealityMinClientVersion || !realityStreamAcceptsProxyProtocol(streamSettings) {
 				t.Fatalf("minimum Reality client version = %#v", realitySettings["minClientVer"])
 			}
 			clientVersionUpdateCount.Add(1)

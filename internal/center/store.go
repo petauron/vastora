@@ -38,15 +38,20 @@ type Store struct {
 	cloudflareOAuthMu              sync.Mutex
 	cloudflareOAuthSessions        map[string]*cloudflareOAuthSession
 	cloudflareTokenMu              sync.Mutex
+	cloudflareTunnelMu             sync.Mutex
+	assistantProposalMu            sync.Mutex
+	assistantResolve               func(context.Context, string) ([]net.IPAddr, error)
 	certificateMu                  sync.Mutex
+	deploymentCreateMu             sync.Mutex
 	domainSwitchMu                 sync.Mutex
+	initialSetupMu                 sync.Mutex
 	remoteAccessMu                 sync.Mutex
 	siteCertificateMu              sync.Mutex
 	publicationCleanupMu           sync.Mutex
 	publicationVerificationMu      sync.Mutex
 	publicationVerificationJobs    map[string]*publicationVerificationJob
 	publicationVerificationBackoff func(int) time.Duration
-	agentDecommissionGrace         time.Duration
+	secretDeliveryMu               sync.Mutex
 	verifyPublication              func(context.Context, string, int64) (PublicationView, error)
 	taskChanges                    changeNotifier
 	now                            func() time.Time
@@ -125,15 +130,45 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("center: create data directory: %w", err)
 	}
-	key, err := secret.LoadOrCreateKey(filepath.Join(dataDir, "center.key"))
-	if err != nil {
-		return nil, fmt.Errorf("center: load root key: %w", err)
-	}
 	databasePath := filepath.Join(dataDir, "center.db")
 	databaseInfo, statErr := os.Stat(databasePath)
 	existingDatabase := statErr == nil && databaseInfo.Size() > 0
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return nil, fmt.Errorf("center: inspect database: %w", statErr)
+	}
+	keyPath := filepath.Join(dataDir, "center.key")
+	_, keyStatErr := os.Stat(keyPath)
+	keyExists := keyStatErr == nil
+	if keyStatErr != nil && !errors.Is(keyStatErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("center: inspect root key: %w", keyStatErr)
+	}
+	if existingDatabase && !keyExists {
+		return nil, errors.New("center: existing database requires its original root key")
+	}
+	if !existingDatabase && keyExists {
+		return nil, errors.New("center: root key exists without its database")
+	}
+	var key []byte
+	var err error
+	if existingDatabase {
+		key, err = secret.LoadKey(keyPath)
+	} else {
+		key, err = secret.CreateKey(keyPath)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("center: load root key: %w", err)
+	}
+	freshComplete := existingDatabase
+	if !existingDatabase {
+		defer func() {
+			if freshComplete {
+				return
+			}
+			_ = os.Remove(keyPath)
+			_ = os.Remove(databasePath)
+			_ = os.Remove(databasePath + "-wal")
+			_ = os.Remove(databasePath + "-shm")
+		}()
 	}
 	db, err := sql.Open("sqlite", databasePath)
 	if err != nil {
@@ -150,9 +185,9 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		builtinHeadscaleDialAddress:    net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
 		cloudflareOAuth:                defaultCloudflareOAuthConfig(),
 		cloudflareOAuthSessions:        make(map[string]*cloudflareOAuthSession),
+		assistantResolve:               net.DefaultResolver.LookupIPAddr,
 		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),
 		publicationVerificationBackoff: defaultPublicationVerificationBackoff,
-		agentDecommissionGrace:         45 * time.Second,
 		now:                            time.Now,
 		discoverNetworkCandidates:      networking.Discover,
 		lookupPublicRegion: countryISLookup(&http.Client{
@@ -168,7 +203,27 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	store.verifyPublication = store.verifyPublicationRevision
 	store.issuePrivateCertificate = store.obtainPrivateCertificate
 	store.issueDomainCertificate = store.obtainPrivateCertificateWithCloudflare
+	if existingDatabase {
+		bound, err := inspectCenterDatabaseKeyBinding(context.Background(), db, key)
+		if err != nil {
+			backgroundCancel()
+			_ = db.Close()
+			return nil, err
+		}
+		if !bound {
+			if err := verifyCenterEncryptedState(context.Background(), db, key); err != nil {
+				backgroundCancel()
+				_ = db.Close()
+				return nil, fmt.Errorf("center: verify legacy encrypted state before binding the database: %w", err)
+			}
+		}
+	}
 	if err := store.initializeSchema(context.Background(), existingDatabase); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.initializeDatabaseKeyBinding(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, err
@@ -188,6 +243,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	freshComplete = true
 	return store, nil
 }
 

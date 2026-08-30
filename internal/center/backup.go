@@ -8,6 +8,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/secret"
 	"golang.org/x/crypto/scrypt"
 )
 
@@ -43,16 +45,29 @@ func (s *Store) Backup(ctx context.Context, outputPath, password string) error {
 	if strings.TrimSpace(outputPath) == "" {
 		return errors.New("center: backup output path is required")
 	}
+	rootKeyPath := filepath.Join(s.dataDir, "center.key")
+	rootKey, err := secret.LoadKey(rootKeyPath)
+	if err != nil {
+		return fmt.Errorf("center: read root key for backup: %w", err)
+	}
+	if subtle.ConstantTimeCompare(rootKey, s.key) != 1 {
+		return errors.New("center: root key changed while Center was running; backup refused")
+	}
+	bound, err := inspectCenterDatabaseKeyBinding(ctx, s.db, rootKey)
+	if err != nil {
+		return fmt.Errorf("center: verify database key binding before backup: %w", err)
+	}
+	if !bound {
+		return errors.New("center: database is not bound to its root key; backup refused")
+	}
+	if err := verifyCenterEncryptedState(ctx, s.db, rootKey); err != nil {
+		return fmt.Errorf("center: verify encrypted state before backup: %w", err)
+	}
 	snapshot, err := compactSnapshot(ctx, s.db, s.dataDir)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(snapshot)
-	rootKeyPath := filepath.Join(s.dataDir, "center.key")
-	rootKey, err := os.ReadFile(rootKeyPath)
-	if err != nil {
-		return fmt.Errorf("center: read root key for backup: %w", err)
-	}
 	snapshotData, err := os.ReadFile(snapshot)
 	if err != nil {
 		return fmt.Errorf("center: read SQLite backup snapshot: %w", err)

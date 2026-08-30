@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
@@ -33,7 +34,7 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 				t.Fatalf("unexpected input: %#v", input)
 			}
 			if request.URL.Path == "/v1/headscale/install" {
-				_ = json.NewEncoder(writer).Encode(HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz"})
+				_ = json.NewEncoder(writer).Encode(HeadscaleInstallResult{Endpoint: input.HeadscaleURL, APIKey: "hskey-api-abcdefghijklmnopqrstuvwxyz", APIKeyID: 1, APIKeyPrefix: "abcdefghijkl", APIKeyExpiresAt: time.Now().Add(365 * 24 * time.Hour)})
 				return
 			}
 			_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ready"})
