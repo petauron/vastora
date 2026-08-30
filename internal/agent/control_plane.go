@@ -428,6 +428,11 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 }
 
 func (c Client) Heartbeat(ctx context.Context, store *Store) error {
+	if c.GatewayDriver != nil {
+		if err := store.requireGatewayStartup(); err != nil {
+			return err
+		}
+	}
 	_, err := c.heartbeat(ctx, store)
 	return err
 }
@@ -449,10 +454,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, err
 	}
-	gatewayHealthy := false
-	if c.GatewayDriver != nil {
-		gatewayHealthy = c.GatewayDriver.Health(ctx) == nil
-	}
+	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver)
 	candidates, err := networking.Discover(time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
@@ -476,6 +478,8 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"publicKey": publicKey,
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
+		"gatewayRevision":              gatewayRevision,
+		"gatewayConfigHash":            gatewayConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           c.TailscaleOwnership,
@@ -687,11 +691,14 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 	if interval < time.Second {
 		interval = 15 * time.Second
 	}
-	restoreContext, restoreCancel := context.WithTimeout(ctx, 5*time.Minute)
-	if gatewayErr := restoreGatewayState(restoreContext, store, c.GatewayDriver); gatewayErr != nil && report != nil {
-		report(gatewayErr)
+	if c.GatewayDriver != nil {
+		if err := store.requireGatewayStartup(); err != nil {
+			if report != nil {
+				report(err)
+			}
+			return
+		}
 	}
-	restoreCancel()
 	startup := true
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -721,6 +728,14 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 }
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
+	if c.GatewayDriver != nil {
+		if err := store.requireGatewayStartup(); err != nil {
+			if report != nil {
+				report(err)
+			}
+			return
+		}
+	}
 	var lastMaintenance time.Time
 	var lastRestore time.Time
 	restorePending := true
@@ -996,18 +1011,22 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	case "gateway.component.apply":
 		if c.GatewayProvisioner == nil || !c.Capabilities.Gateway {
 			err = errors.New("agent: gateway provisioning capability is not configured")
-		} else if task.Operation == "running" {
-			err = c.GatewayProvisioner.Ensure(ctx)
-			if err == nil {
-				err = waitForGateway(ctx, c.GatewayDriver)
-			}
-		} else if task.Operation == "stopped" {
-			err = c.GatewayProvisioner.Remove(ctx)
-			if err == nil {
-				err = store.ClearGatewayState(ctx)
-			}
 		} else {
-			err = errors.New("agent: invalid gateway component operation")
+			store.gatewayMutationMu.Lock()
+			if task.Operation == "running" {
+				err = c.GatewayProvisioner.Ensure(ctx)
+				if err == nil {
+					err = waitForGateway(ctx, c.GatewayDriver)
+				}
+			} else if task.Operation == "stopped" {
+				err = c.GatewayProvisioner.Remove(ctx)
+				if err == nil {
+					err = store.ClearGatewayState(ctx)
+				}
+			} else {
+				err = errors.New("agent: invalid gateway component operation")
+			}
+			store.gatewayMutationMu.Unlock()
 		}
 	case "tunnel.state.apply":
 		if c.TunnelProvisioner == nil || !c.Capabilities.Tunnel || task.TunnelState == nil {

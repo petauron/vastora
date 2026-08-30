@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
@@ -25,12 +26,17 @@ import (
 )
 
 var errApplicationNotInstalled = errors.New("agent: application is not installed")
+var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 
 type Store struct {
-	db      *sql.DB
-	key     []byte
-	dataDir string
-	now     func() time.Time
+	db                *sql.DB
+	key               []byte
+	dataDir           string
+	now               func() time.Time
+	gatewayMutationMu sync.Mutex
+	gatewayStartupMu  sync.RWMutex
+	gatewayStartupErr error
+	gatewayStartupOK  bool
 }
 
 type AppliedInstallation struct {
@@ -750,7 +756,7 @@ func (s *Store) GatewayState(ctx context.Context) (GatewayAppliedState, error) {
 	var appliedAt string
 	err := s.db.QueryRowContext(ctx, `SELECT desired_json, sealed_certificates, config_hash, applied_at FROM gateway_applied_state WHERE id = 1`).Scan(&encoded, &sealedCertificates, &state.ConfigHash, &appliedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return GatewayAppliedState{}, errors.New("agent: no applied gateway state")
+		return GatewayAppliedState{}, errNoAppliedGatewayState
 	}
 	if err != nil {
 		return GatewayAppliedState{}, fmt.Errorf("agent: read gateway state: %w", err)
@@ -789,16 +795,21 @@ func (s *Store) RecordGatewayState(ctx context.Context, desired gateway.DesiredS
 	if err != nil {
 		return GatewayAppliedState{}, fmt.Errorf("agent: encrypt gateway certificates: %w", err)
 	}
-	digestInput := append(append([]byte(nil), encoded...), certificateJSON...)
-	digest := sha256.Sum256(digestInput)
+	configHash, err := gateway.ConfigurationHash(desired, certificates)
+	if err != nil {
+		return GatewayAppliedState{}, err
+	}
 	now := s.now().UTC()
-	state := GatewayAppliedState{Desired: desired, Certificates: append([]gateway.Certificate(nil), certificates...), ConfigHash: hex.EncodeToString(digest[:]), AppliedAt: now}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO gateway_applied_state(id, applied_revision, desired_json, sealed_certificates, config_hash, applied_at)
+	state := GatewayAppliedState{Desired: desired, Certificates: append([]gateway.Certificate(nil), certificates...), ConfigHash: configHash, AppliedAt: now}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO gateway_applied_state(id, applied_revision, desired_json, sealed_certificates, config_hash, applied_at)
 		VALUES(1, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET applied_revision = excluded.applied_revision, desired_json = excluded.desired_json, sealed_certificates = excluded.sealed_certificates, config_hash = excluded.config_hash, applied_at = excluded.applied_at
 		WHERE excluded.applied_revision >= gateway_applied_state.applied_revision`, desired.Revision, encoded, sealedCertificates, state.ConfigHash, now.Format(time.RFC3339Nano))
 	if err != nil {
 		return GatewayAppliedState{}, fmt.Errorf("agent: record gateway state: %w", err)
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return GatewayAppliedState{}, fmt.Errorf("agent: gateway revision %d is older than the persisted configuration", desired.Revision)
 	}
 	return state, nil
 }

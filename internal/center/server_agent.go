@@ -162,6 +162,8 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
 		ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
 		GatewayHealthy               bool                             `json:"gatewayHealthy"`
+		GatewayRevision              int64                            `json:"gatewayRevision"`
+		GatewayConfigHash            string                           `json:"gatewayConfigHash"`
 		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
 		TailscaleEnrolled            bool                             `json:"tailscaleEnrolled"`
 		TailscaleOwnership           string                           `json:"tailscaleOwnership"`
@@ -176,7 +178,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}

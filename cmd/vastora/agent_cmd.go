@@ -489,6 +489,12 @@ func runAgent(arguments []string) error {
 			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
 		}
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		restoreContext, restoreCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		err = client.PrepareGatewayStartup(restoreContext, store)
+		restoreCancel()
+		if err != nil {
+			return fmt.Errorf("restore Gateway before starting the Agent control plane: %w", err)
+		}
 		if err := client.Heartbeat(context.Background(), store); err != nil {
 			controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 		}

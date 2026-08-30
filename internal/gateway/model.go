@@ -4,7 +4,10 @@ package gateway
 import (
 	"bytes"
 	"crypto"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -47,6 +50,33 @@ type Certificate struct {
 	Hostname       string `json:"hostname"`
 	CertificatePEM string `json:"certificatePem"`
 	PrivateKeyPEM  string `json:"privateKeyPem"`
+}
+
+func ConfigurationHash(state DesiredState, certificates []Certificate) (string, error) {
+	if err := state.Validate(); err != nil {
+		return "", err
+	}
+	state = state.Sorted()
+	canonicalCertificates := append([]Certificate(nil), certificates...)
+	sort.Slice(canonicalCertificates, func(i, j int) bool {
+		if canonicalCertificates[i].Hostname != canonicalCertificates[j].Hostname {
+			return canonicalCertificates[i].Hostname < canonicalCertificates[j].Hostname
+		}
+		if canonicalCertificates[i].CertificatePEM != canonicalCertificates[j].CertificatePEM {
+			return canonicalCertificates[i].CertificatePEM < canonicalCertificates[j].CertificatePEM
+		}
+		return canonicalCertificates[i].PrivateKeyPEM < canonicalCertificates[j].PrivateKeyPEM
+	})
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return "", err
+	}
+	certificateJSON, err := json.Marshal(canonicalCertificates)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(append(encoded, certificateJSON...))
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func ValidateCertificates(values []Certificate) error {

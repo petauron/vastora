@@ -238,7 +238,11 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := &fakeGatewayDriver{}
-	(Client{GatewayDriver: driver}).RunHeartbeats(ctx, store, time.Second, func(err error) {
+	client := Client{GatewayDriver: driver}
+	if err := client.PrepareGatewayStartup(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	client.RunHeartbeats(ctx, store, time.Second, func(err error) {
 		if ctx.Err() == nil {
 			t.Errorf("heartbeat error: %v", err)
 		}
@@ -248,6 +252,36 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 	}
 	if len(driver.applied) != 1 || driver.applied[0].Revision != 3 {
 		t.Fatalf("persisted gateway state was restored %d times: %#v", len(driver.applied), driver.applied)
+	}
+}
+
+func TestGatewayControlPlaneFailsClosedBeforeStartupRestore(t *testing.T) {
+	claims := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		claims++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"task":null}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	var reported error
+	client := Client{GatewayDriver: &fakeGatewayDriver{}}
+	client.RunTasks(context.Background(), store, func(err error) { reported = err })
+	if reported == nil || !strings.Contains(reported.Error(), "has not completed") {
+		t.Fatalf("startup gate error = %v", reported)
+	}
+	if err := client.Heartbeat(context.Background(), store); err == nil || !strings.Contains(err.Error(), "has not completed") {
+		t.Fatalf("heartbeat startup gate error = %v", err)
+	}
+	if claims != 0 {
+		t.Fatalf("task loop contacted Center %d times before Gateway restore", claims)
 	}
 }
 

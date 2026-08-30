@@ -429,6 +429,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if heartbeat.ApplicationRuntimeGeneration < 0 || heartbeat.ApplicationRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 		return errors.New("center: unsupported Agent application runtime generation")
 	}
+	heartbeat.GatewayConfigHash = strings.ToLower(strings.TrimSpace(heartbeat.GatewayConfigHash))
+	decodedGatewayHash, gatewayHashErr := hex.DecodeString(heartbeat.GatewayConfigHash)
+	if heartbeat.GatewayRevision < 0 || (heartbeat.GatewayRevision == 0 && heartbeat.GatewayConfigHash != "") || (heartbeat.GatewayRevision > 0 && (gatewayHashErr != nil || len(decodedGatewayHash) != sha256.Size)) {
+		return errors.New("center: Agent reported an invalid live Gateway revision")
+	}
 	if heartbeat.TailscaleOwnership != "managed" && heartbeat.TailscaleOwnership != "external" && heartbeat.TailscaleOwnership != "" {
 		return errors.New("center: Agent reported an unsupported Tailscale ownership")
 	}
@@ -538,6 +543,10 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		if err := s.queueUnhealthyGatewayReconcile(ctx, tx, id, now); err != nil {
 			return err
 		}
+	} else if heartbeat.Capabilities.Gateway {
+		if err := s.queueMismatchedGatewayReconcile(ctx, tx, id, heartbeat.GatewayRevision, heartbeat.GatewayConfigHash, now); err != nil {
+			return err
+		}
 	}
 	if heartbeat.Capabilities.Gateway && reportedHeadscaleAddress {
 		needsPrivateListener, err := gatewayStateNeedsReportedHeadscaleListener(ctx, tx, id, heartbeat.NetworkCandidates)
@@ -566,6 +575,41 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) queueMismatchedGatewayReconcile(ctx context.Context, tx *sql.Tx, agentID string, liveRevision int64, liveHash string, now time.Time) error {
+	var desiredRevision, appliedRevision int64
+	var stateStatus string
+	var encoded []byte
+	err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, desired_json FROM gateway_states WHERE gateway_node_id = ?`, agentID).Scan(&desiredRevision, &appliedRevision, &stateStatus, &encoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("center: inspect live Gateway revision: %w", err)
+	}
+	if stateStatus != "ready" || desiredRevision != appliedRevision {
+		return nil
+	}
+	var desired gateway.DesiredState
+	if json.Unmarshal(encoded, &desired) != nil || desired.Validate() != nil || desired.Revision != desiredRevision {
+		return errors.New("center: stored gateway desired state is invalid")
+	}
+	certificates, err := s.gatewayCertificates(ctx, tx, agentID, desired)
+	if err != nil {
+		return err
+	}
+	expectedHash, err := gateway.ConfigurationHash(desired, certificates)
+	if err != nil {
+		return fmt.Errorf("center: hash expected Gateway configuration: %w", err)
+	}
+	if liveRevision == appliedRevision && liveHash == expectedHash {
+		return nil
+	}
+	if err := s.queueGatewayState(ctx, tx, agentID, now); err != nil {
+		return fmt.Errorf("center: queue mismatched live Gateway state: %w", err)
 	}
 	return nil
 }
