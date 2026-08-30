@@ -489,7 +489,7 @@ describe("network and app views", () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("开始安装"))?.click();
       await Promise.resolve();
     });
-    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker");
+    expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "");
   });
 
 	it("shows one Site controller and keeps worker controls focused on VLESS", () => {
