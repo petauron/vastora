@@ -46,3 +46,43 @@ func TestNormalizeDeploymentConfigRejectsNonPortableInteger(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeDeploymentConfigRejectsNonObjectShapes(t *testing.T) {
+	t.Parallel()
+	defaultValue := json.RawMessage(`"UTC"`)
+	manifest := catalog.AppManifest{Config: []catalog.ConfigField{{
+		Key: "timezone", Type: "string", Default: &defaultValue,
+	}}}
+	for _, value := range []json.RawMessage{
+		json.RawMessage(`null`),
+		json.RawMessage(`[]`),
+		json.RawMessage(`"value"`),
+		json.RawMessage(`1`),
+		json.RawMessage(`true`),
+	} {
+		value := value
+		t.Run(string(value), func(t *testing.T) {
+			t.Parallel()
+			if _, _, err := normalizeDeploymentConfig(manifest, value); err == nil {
+				t.Fatalf("configuration shape %s was accepted", value)
+			}
+		})
+	}
+}
+
+func TestNormalizeDeploymentConfigAllowsOmittedAndEmptyObjects(t *testing.T) {
+	t.Parallel()
+	defaultValue := json.RawMessage(`"UTC"`)
+	manifest := catalog.AppManifest{Config: []catalog.ConfigField{{
+		Key: "timezone", Type: "string", Default: &defaultValue,
+	}}}
+	for _, value := range []json.RawMessage{nil, json.RawMessage(`{}`)} {
+		configuration, _, err := normalizeDeploymentConfig(manifest, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(configuration) != `{"timezone":"UTC"}` {
+			t.Fatalf("configuration = %s", configuration)
+		}
+	}
+}
