@@ -235,9 +235,22 @@ func (engine *fakeThreeXUIContainerEngine) VolumeRemove(_ context.Context, name 
 
 func acceptThreeXUIPromotion(string, string) error { return nil }
 
+func TestOfflineThreeXUIRestoreCannotCreateFreshDatabase(t *testing.T) {
+	engine := newFakeThreeXUIContainerEngine(t, false)
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, false, func(string) (string, error) {
+		return "", nil
+	}, acceptThreeXUIPromotion)
+	if err == nil || !strings.Contains(err.Error(), "cannot create a new 3x-ui database") {
+		t.Fatalf("offline restore error = %v", err)
+	}
+	if engine.volumeExists || engine.startCalls != 0 {
+		t.Fatal("offline restore created fresh 3x-ui state")
+	}
+}
+
 func TestReplaceThreeXUIContainerRollsBackContainerAndDatabase(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "", errors.New("configuration failed")
 	}, acceptThreeXUIPromotion)
 	if err == nil || !strings.Contains(err.Error(), "configuration failed") {
@@ -257,7 +270,7 @@ func TestReplaceThreeXUIContainerRollsBackContainerAndDatabase(t *testing.T) {
 
 func TestReplaceThreeXUIContainerPromotesOnlyHealthyCandidate(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
-	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test", Labels: map[string]string{threeXUIDeploymentIDLabel: "deployment-1"}}}, func(string) (string, error) {
+	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test", Labels: map[string]string{threeXUIDeploymentIDLabel: "deployment-1"}}}, true, func(string) (string, error) {
 		return "new-token", nil
 	}, acceptThreeXUIPromotion)
 	if err != nil || token != "new-token" {
@@ -280,7 +293,7 @@ func TestReplaceThreeXUIContainerPromotesOnlyHealthyCandidate(t *testing.T) {
 
 func TestReplaceThreeXUIContainerKeepsRollbackUntilPostPromotionHealthPasses(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "new-token", nil
 	}, func(containerID, _ string) error {
 		promoted, resolveErr := engine.resolve(containerID)
@@ -308,7 +321,7 @@ func TestReplaceThreeXUIContainerKeepsRollbackUntilPostPromotionHealthPasses(t *
 func TestReplaceThreeXUIContainerRestoresRetainedVolumeAfterPostPromotionFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.volumeExists = true
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "new-token", nil
 	}, func(string, string) error { return errors.New("promoted API unavailable") })
 	if err == nil || !strings.Contains(err.Error(), "promoted API unavailable") {
@@ -324,7 +337,7 @@ func TestReplaceThreeXUIContainerRestoresRetainedVolumeAfterPostPromotionFailure
 
 func TestReplaceThreeXUIContainerRemovesFreshVolumeAfterPostPromotionFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "new-token", nil
 	}, func(string, string) error { return errors.New("promoted API unavailable") })
 	if err == nil {
@@ -341,7 +354,7 @@ func TestReplaceThreeXUIContainerRemovesFreshVolumeAfterPostPromotionFailure(t *
 func TestReplaceThreeXUIContainerTreatsLostPromotionResponseAsCommitted(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failRenameAfterName = threeXUIContainer
-	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test", Labels: map[string]string{threeXUIDeploymentIDLabel: "deployment-2"}}}, func(string) (string, error) {
+	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test", Labels: map[string]string{threeXUIDeploymentIDLabel: "deployment-2"}}}, true, func(string) (string, error) {
 		return "new-token", nil
 	}, acceptThreeXUIPromotion)
 	if err != nil || token != "new-token" {
@@ -362,7 +375,7 @@ func TestReplaceThreeXUIContainerTreatsLostPromotionResponseAsCommitted(t *testi
 func TestReplaceThreeXUIContainerCreateFailureDoesNotStopCurrent(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failCreate = true
-	if _, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) { return "", nil }, acceptThreeXUIPromotion); err == nil {
+	if _, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) { return "", nil }, acceptThreeXUIPromotion); err == nil {
 		t.Fatal("candidate creation failure was ignored")
 	}
 	current, _ := engine.resolve(threeXUIContainer)
@@ -374,7 +387,7 @@ func TestReplaceThreeXUIContainerCreateFailureDoesNotStopCurrent(t *testing.T) {
 func TestReplaceThreeXUIContainerStartFailureRestoresCurrent(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failStartName = threeXUICandidateContainer
-	if _, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) { return "", nil }, acceptThreeXUIPromotion); err == nil || !strings.Contains(err.Error(), "start 3x-ui candidate") {
+	if _, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) { return "", nil }, acceptThreeXUIPromotion); err == nil || !strings.Contains(err.Error(), "start 3x-ui candidate") {
 		t.Fatalf("candidate start error = %v", err)
 	}
 	current, resolveErr := engine.resolve(threeXUIContainer)
@@ -406,7 +419,7 @@ func TestRecoverInterruptedThreeXUIDeployRestoresDurableBackup(t *testing.T) {
 func TestReplaceThreeXUIContainerRestoresRetainedVolumeWithoutCurrentContainer(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.volumeExists = true
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "", errors.New("configuration failed")
 	}, acceptThreeXUIPromotion)
 	if err == nil || !strings.Contains(err.Error(), "configuration failed") {
@@ -439,7 +452,7 @@ func TestRecoverInterruptedRetainedVolumeCandidateBeforeRemoval(t *testing.T) {
 func TestReplaceThreeXUIContainerDoesNotHideCommittedBackupCleanupFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failRemoveName = threeXUICleanupContainer
-	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "new-token", nil
 	}, acceptThreeXUIPromotion)
 	if err != nil || token != "new-token" {
@@ -750,7 +763,7 @@ func TestRecoverInterruptedRetainedCandidateKeepsVolumeWithoutSnapshot(t *testin
 func TestReplaceThreeXUIContainerNeverRestoresWhileCandidateMayBeRunning(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failStopName = threeXUICandidateContainer
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "", errors.New("configuration failed")
 	}, acceptThreeXUIPromotion)
 	if err == nil || !strings.Contains(err.Error(), "stop failed 3x-ui candidate") {
@@ -894,7 +907,7 @@ func TestReplaceThreeXUIContainerRecreatesImplicitEmptyVolume(t *testing.T) {
 	engine.volumeExists = true
 	engine.volumeLabels = map[string]string{threeXUIVolumeOwnerLabel: "true"}
 	engine.snapshot = threeXUITestEmptyDatabaseArchive(t)
-	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	token, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "token", nil
 	}, acceptThreeXUIPromotion)
 	if err != nil || token != "token" {
@@ -914,7 +927,7 @@ func TestReplaceThreeXUIContainerNeverDeletesPartiallyPopulatedRetainedVolume(t 
 	engine.volumeExists = true
 	engine.volumeLabels = map[string]string{threeXUIVolumeOwnerLabel: "true"}
 	engine.snapshot = threeXUITestDatabaseBackupOnlyArchive(t)
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "token", nil
 	}, acceptThreeXUIPromotion)
 	if !errors.Is(err, errThreeXUIDatabaseMissing) {
@@ -928,7 +941,7 @@ func TestReplaceThreeXUIContainerNeverDeletesPartiallyPopulatedRetainedVolume(t 
 func TestReplaceThreeXUIContainerRestartsCurrentAfterLostStopResponse(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failStopAfter = threeXUIContainer
-	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, func(string) (string, error) {
+	_, err := replaceThreeXUIContainer(context.Background(), engine, client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test"}}, true, func(string) (string, error) {
 		return "token", nil
 	}, acceptThreeXUIPromotion)
 	if err == nil || !strings.Contains(err.Error(), "stop response lost") {

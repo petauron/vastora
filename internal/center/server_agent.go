@@ -60,12 +60,13 @@ func (s *Server) handleListAgents(writer http.ResponseWriter, request *http.Requ
 
 func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
-		SiteID       string `json:"siteId"`
-		Name         string `json:"name"`
-		CenterURL    string `json:"centerUrl"`
-		UseHeadscale bool   `json:"useHeadscale"`
-		Gateway      bool   `json:"gateway"`
-		Tunnel       bool   `json:"tunnel"`
+		SiteID        string `json:"siteId"`
+		Name          string `json:"name"`
+		CenterURL     string `json:"centerUrl"`
+		UseHeadscale  bool   `json:"useHeadscale"`
+		Gateway       bool   `json:"gateway"`
+		Tunnel        bool   `json:"tunnel"`
+		CAFingerprint string `json:"caFingerprint"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -74,6 +75,7 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), AgentEnrollmentSpec{
 		SiteID: input.SiteID, Name: input.Name, CenterURL: input.CenterURL,
 		UseHeadscale: input.UseHeadscale, Gateway: input.Gateway, Tunnel: input.Tunnel,
+		CAFingerprint: input.CAFingerprint,
 	})
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -106,6 +108,14 @@ func (s *Server) handleDisableAgent(writer http.ResponseWriter, request *http.Re
 	writeJSON(writer, http.StatusOK, map[string]bool{"disabled": true})
 }
 
+func (s *Server) handleRevokeAgentCredential(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.RevokeAgentCredential(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"revoked": true})
+}
+
 func (s *Server) handleConfirmNetworkProfile(writer http.ResponseWriter, request *http.Request) {
 	var input networking.Profile
 	if err := decodeJSON(request, &input); err != nil {
@@ -126,12 +136,13 @@ func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Req
 		Version         string `json:"version"`
 		OperatingSystem string `json:"operatingSystem"`
 		Architecture    string `json:"architecture"`
+		PublicKey       []byte `json:"publicKey"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Version, input.OperatingSystem, input.Architecture)
+	credential, err := s.store.EnrollAgent(request.Context(), input.Token, input.Version, input.OperatingSystem, input.Architecture, input.PublicKey)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
@@ -141,6 +152,7 @@ func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Req
 
 func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
+		PublicKey                    []byte                           `json:"publicKey"`
 		Version                      string                           `json:"version"`
 		AppliedInstallations         int                              `json:"appliedInstallations"`
 		Roles                        []string                         `json:"roles"`
@@ -152,6 +164,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
 		TailscaleEnrolled            bool                             `json:"tailscaleEnrolled"`
 		TailscaleOwnership           string                           `json:"tailscaleOwnership"`
+		Startup                      bool                             `json:"startup"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -162,7 +175,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, TailscaleOwnership: input.TailscaleOwnership}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
@@ -207,12 +220,26 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 			return
 		}
 	}
-	task, err := s.store.WaitAndClaimNextTask(request.Context(), request.PathValue("id"), credential, wait)
+	requiredTaskID := strings.TrimSpace(request.URL.Query().Get("taskId"))
+	if len(requiredTaskID) > 128 || strings.ContainsAny(requiredTaskID, "\r\n\t ") {
+		writeError(writer, http.StatusBadRequest, errors.New("center: reconciliation task ID is invalid"))
+		return
+	}
+	task, err := s.store.WaitAndClaimNextTask(request.Context(), request.PathValue("id"), credential, wait, requiredTaskID)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"task": task})
+	if task == nil {
+		writeJSON(writer, http.StatusOK, map[string]any{"task": nil})
+		return
+	}
+	encrypted, err := s.store.EncryptAgentTask(request.Context(), request.PathValue("id"), *task)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"task": encrypted})
 }
 
 func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Request) {
@@ -222,17 +249,18 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	var input struct {
-		Attempt                int64           `json:"attempt"`
-		Succeeded              bool            `json:"succeeded"`
-		Error                  string          `json:"error"`
-		Result                 json.RawMessage `json:"result"`
-		ReconciliationRequired bool            `json:"reconciliationRequired"`
+		Attempt                      int64           `json:"attempt"`
+		Succeeded                    bool            `json:"succeeded"`
+		Error                        string          `json:"error"`
+		Result                       json.RawMessage `json:"result"`
+		ReconciliationRequired       bool            `json:"reconciliationRequired"`
+		ApplicationRuntimeGeneration int             `json:"applicationRuntimeGeneration"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.completeTaskWithDisposition(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired); err != nil {
+	if err := s.store.completeTaskWithDisposition(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, input.ApplicationRuntimeGeneration); err != nil {
 		if errors.Is(err, errInvalidReconciliationDisposition) {
 			writeError(writer, http.StatusBadRequest, err)
 			return

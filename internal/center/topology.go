@@ -33,6 +33,7 @@ type NodeCapabilities struct {
 }
 
 type NodeHeartbeat struct {
+	PublicKey                    []byte
 	Version                      string
 	AppliedInstallations         int
 	Roles                        []string

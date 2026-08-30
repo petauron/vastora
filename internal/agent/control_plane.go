@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
@@ -122,27 +123,37 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
-	Kind                string                         `json:"kind"`
-	ID                  string                         `json:"id"`
-	Attempt             int64                          `json:"attempt"`
-	AppKey              string                         `json:"appKey"`
-	Manifest            catalog.AppManifest            `json:"manifest"`
-	Config              json.RawMessage                `json:"config"`
-	Secrets             json.RawMessage                `json:"secrets"`
-	Operation           string                         `json:"operation"`
-	DeleteData          bool                           `json:"deleteData"`
-	Revision            int64                          `json:"revision,omitempty"`
-	ApplicationID       string                         `json:"applicationId,omitempty"`
-	ApplicationRole     string                         `json:"applicationRole,omitempty"`
-	ServiceAddress      string                         `json:"serviceAddress,omitempty"`
-	GatewayState        *gateway.DesiredState          `json:"gatewayState,omitempty"`
-	GatewayCertificates []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
-	TunnelState         *TunnelDesiredState            `json:"tunnelState,omitempty"`
-	ApplicationCommand  *RealityCommandTask            `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandTask       `json:"subscriptionCommand,omitempty"`
-	ClientCommand       *ThreeXUIClientCommandTask     `json:"clientCommand,omitempty"`
-	NodeCommand         *ThreeXUINodeCommandTask       `json:"nodeCommand,omitempty"`
-	ControllerCommand   *ThreeXUIControllerCommandTask `json:"controllerCommand,omitempty"`
+	Kind                      string                         `json:"kind"`
+	ID                        string                         `json:"id"`
+	Attempt                   int64                          `json:"attempt"`
+	AppKey                    string                         `json:"appKey"`
+	Manifest                  catalog.AppManifest            `json:"manifest"`
+	Config                    json.RawMessage                `json:"config"`
+	Secrets                   json.RawMessage                `json:"secrets"`
+	Operation                 string                         `json:"operation"`
+	DeleteData                bool                           `json:"deleteData"`
+	Revision                  int64                          `json:"revision,omitempty"`
+	ApplicationID             string                         `json:"applicationId,omitempty"`
+	ApplicationRole           string                         `json:"applicationRole,omitempty"`
+	ServiceAddress            string                         `json:"serviceAddress,omitempty"`
+	GatewayState              *gateway.DesiredState          `json:"gatewayState,omitempty"`
+	GatewayCertificates       []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
+	TunnelState               *TunnelDesiredState            `json:"tunnelState,omitempty"`
+	ApplicationCommand        *RealityCommandTask            `json:"applicationCommand,omitempty"`
+	SubscriptionCommand       *SubscriptionCommandTask       `json:"subscriptionCommand,omitempty"`
+	ClientCommand             *ThreeXUIClientCommandTask     `json:"clientCommand,omitempty"`
+	NodeCommand               *ThreeXUINodeCommandTask       `json:"nodeCommand,omitempty"`
+	ControllerCommand         *ThreeXUIControllerCommandTask `json:"controllerCommand,omitempty"`
+	RegistryCredential        *RegistryCredential            `json:"registryCredential,omitempty"`
+	Reconcile                 bool                           `json:"reconcile,omitempty"`
+	RequiredRuntimeGeneration int                            `json:"requiredRuntimeGeneration,omitempty"`
+	OfflineRestore            bool                           `json:"-"`
+}
+
+type RegistryCredential struct {
+	Host     string `json:"host"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type Executor interface {
@@ -151,6 +162,10 @@ type Executor interface {
 
 type executorMaintainer interface {
 	Maintain(context.Context) error
+}
+
+type executorRestorer interface {
+	Restore(context.Context, *Store) error
 }
 
 type ApplicationServiceResult struct {
@@ -354,17 +369,17 @@ type ApplicationEndpointObservation struct {
 	InboundTotalBytes int64  `json:"inboundTotalBytes,omitempty"`
 }
 
-func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken string) (Enrollment, error) {
-	return c.enroll(ctx, store, centerURL, enrollmentToken, false)
+func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint string) (Enrollment, error) {
+	return c.enroll(ctx, store, centerURL, enrollmentToken, caFingerprint, false)
 }
 
 // MigrateEnrollment explicitly replaces an existing Center identity while
 // preserving all workload state held by the Agent store.
-func (c Client) MigrateEnrollment(ctx context.Context, store *Store, centerURL, enrollmentToken string) (Enrollment, error) {
-	return c.enroll(ctx, store, centerURL, enrollmentToken, true)
+func (c Client) MigrateEnrollment(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint string) (Enrollment, error) {
+	return c.enroll(ctx, store, centerURL, enrollmentToken, caFingerprint, true)
 }
 
-func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentToken string, replace bool) (Enrollment, error) {
+func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint string, replace bool) (Enrollment, error) {
 	baseURL, err := normalizeCenterURL(centerURL)
 	if err != nil {
 		return Enrollment{}, err
@@ -372,16 +387,30 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if strings.TrimSpace(enrollmentToken) == "" {
 		return Enrollment{}, errors.New("agent: enrollment token is required")
 	}
+	privateKey, publicKey, err := controlplane.GenerateKeyPair()
+	if err != nil {
+		return Enrollment{}, err
+	}
+	caFingerprint = normalizeCAFingerprint(caFingerprint)
+	if caFingerprint == "" && !loopbackCenterURL(baseURL) {
+		caFingerprint, err = c.probeCenterCAFingerprint(ctx, baseURL)
+		if err != nil {
+			return Enrollment{}, err
+		}
+	}
+	if err := validateCAFingerprint(baseURL, caFingerprint); err != nil {
+		return Enrollment{}, err
+	}
 	var response Enrollment
-	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]string{
-		"token": enrollmentToken, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH,
-	}, "", &response); err != nil {
+	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]any{
+		"token": enrollmentToken, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH, "publicKey": publicKey,
+	}, "", caFingerprint, &response); err != nil {
 		return Enrollment{}, err
 	}
 	if response.ID == "" || response.Credential == "" || strings.TrimSpace(response.Name) == "" || len(response.Roles) == 0 {
 		return Enrollment{}, errors.New("agent: Center returned an incomplete enrollment response")
 	}
-	connection := Connection{AgentID: response.ID, Name: response.Name, CenterURL: baseURL, Credential: response.Credential}
+	connection := Connection{AgentID: response.ID, Name: response.Name, CenterURL: baseURL, Credential: response.Credential, PrivateKey: privateKey, CAFingerprint: caFingerprint}
 	if replace {
 		err = store.ReplaceConnection(ctx, connection)
 	} else {
@@ -404,6 +433,10 @@ func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 
 func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup bool) (error, error) {
 	connection, err := store.Connection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
 	if err != nil {
 		return nil, err
 	}
@@ -430,14 +463,19 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		CenterURL          string                          `json:"centerUrl"`
 		TailscaleIsolation *TailscaleIsolationDesiredState `json:"tailscaleIsolation,omitempty"`
 	}
+	publicKey, err := controlplane.PublicKey(connection.PrivateKey)
+	if err != nil {
+		return observeErr, err
+	}
 	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/heartbeat", map[string]any{
-		"version": Version, "appliedInstallations": len(states), "roles": c.Roles,
+		"publicKey": publicKey,
+		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           c.TailscaleOwnership,
 		"startup":                      startup,
-	}, connection.Credential, &response)
+	}, connection.Credential, connection.CAFingerprint, &response)
 	if err != nil {
 		return observeErr, err
 	}
@@ -476,11 +514,13 @@ func (c Client) applyDesiredCenterURL(ctx context.Context, store *Store, connect
 		// control channel does not depend on the Caddy instance it manages.
 		return nil
 	}
-	if _, err := c.VerifyCenterURL(ctx, normalized); err != nil {
+	_, fingerprint, err := c.verifyCenterURL(ctx, normalized)
+	if err != nil {
 		return fmt.Errorf("agent: verify new Center URL before switching: %w", err)
 	}
 	previous := connection
 	connection.CenterURL = normalized
+	connection.CAFingerprint = fingerprint
 	if err := store.ReplaceConnection(ctx, connection); err != nil {
 		return fmt.Errorf("agent: save new Center URL: %w", err)
 	}
@@ -511,21 +551,57 @@ func loopbackCenterURL(value string) bool {
 
 // VerifyCenterURL validates a user- or Center-supplied control-plane address
 // and confirms that it serves a healthy Center before local state is changed.
-func (c Client) VerifyCenterURL(ctx context.Context, desired string) (string, error) {
+type VerifiedCenter struct {
+	URL           string
+	CAFingerprint string
+}
+
+func (c Client) VerifyCenterURL(ctx context.Context, desired, expectedCAFingerprint string) (VerifiedCenter, error) {
 	normalized, err := normalizeCenterURL(desired)
 	if err != nil {
-		return "", err
+		return VerifiedCenter{}, err
+	}
+	fingerprint := normalizeCAFingerprint(expectedCAFingerprint)
+	if fingerprint == "" && !loopbackCenterURL(normalized) {
+		fingerprint, err = c.probeCenterCAFingerprint(ctx, normalized)
+		if err != nil {
+			return VerifiedCenter{}, err
+		}
+	}
+	if err := validateCAFingerprint(normalized, fingerprint); err != nil {
+		return VerifiedCenter{}, err
 	}
 	var health struct {
 		Status string `json:"status"`
 	}
-	if err := c.get(ctx, normalized+"/healthz", "", &health); err != nil {
-		return "", err
+	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, &health); err != nil {
+		return VerifiedCenter{}, err
 	}
 	if health.Status != "ok" {
-		return "", errors.New("health check is not OK")
+		return VerifiedCenter{}, errors.New("health check is not OK")
 	}
-	return normalized, nil
+	return VerifiedCenter{URL: normalized, CAFingerprint: fingerprint}, err
+}
+
+func (c Client) verifyCenterURL(ctx context.Context, desired string) (string, string, error) {
+	normalized, err := normalizeCenterURL(desired)
+	if err != nil {
+		return "", "", err
+	}
+	fingerprint, err := c.probeCenterCAFingerprint(ctx, normalized)
+	if err != nil {
+		return "", "", err
+	}
+	var health struct {
+		Status string `json:"status"`
+	}
+	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, &health); err != nil {
+		return "", "", err
+	}
+	if health.Status != "ok" {
+		return "", "", errors.New("health check is not OK")
+	}
+	return normalized, fingerprint, nil
 }
 
 func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointObservation, error) {
@@ -641,7 +717,68 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
 	var lastMaintenance time.Time
+	var lastRestore time.Time
+	restorePending := true
 	for {
+		if restorePending {
+			receiptTaskID, receiptKind, receiptErr := store.UnresolvedApplicationTaskReceipt(ctx)
+			if receiptErr != nil {
+				if report != nil && ctx.Err() == nil {
+					report(receiptErr)
+				}
+				if !waitForTaskRetry(ctx) {
+					return
+				}
+				continue
+			}
+			if receiptTaskID != "" {
+				if receiptKind == "legacy" {
+					if report != nil {
+						report(errors.New("agent: legacy unresolved task receipt requires operator reconciliation"))
+					}
+					if !waitForTaskRetry(ctx) {
+						return
+					}
+					continue
+				}
+				claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+				task, err := c.claimNextTask(claimContext, store, 10*time.Second, receiptTaskID)
+				cancel()
+				if err != nil {
+					if report != nil && ctx.Err() == nil {
+						report(err)
+					}
+				} else if task != nil {
+					requestContext, requestCancel := context.WithTimeout(ctx, 5*time.Minute)
+					c.processTask(requestContext, store, *task, report)
+					requestCancel()
+				}
+				continue
+			}
+		}
+		if restorePending && (lastRestore.IsZero() || time.Since(lastRestore) >= time.Minute) {
+			lastRestore = time.Now()
+			if restorer, ok := c.Executor.(executorRestorer); ok {
+				restoreContext, restoreCancel := context.WithTimeout(ctx, 5*time.Minute)
+				restoreErr := restorer.Restore(restoreContext, store)
+				restoreCancel()
+				if restoreErr != nil {
+					if report != nil && ctx.Err() == nil {
+						report(restoreErr)
+					}
+				} else {
+					restorePending = false
+				}
+			} else {
+				restorePending = false
+			}
+		}
+		if restorePending {
+			if !waitForTaskRetry(ctx) {
+				return
+			}
+			continue
+		}
 		if maintainer, ok := c.Executor.(executorMaintainer); ok && (lastMaintenance.IsZero() || time.Since(lastMaintenance) >= time.Minute) {
 			maintenanceContext, maintenanceCancel := context.WithTimeout(ctx, 15*time.Second)
 			maintenanceErr := maintainer.Maintain(maintenanceContext)
@@ -677,12 +814,42 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 	}
 }
 
+func waitForTaskRetry(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(time.Second):
+		return true
+	}
+}
+
 func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTask, report func(error)) {
+	storedCompletion, receiptErr := store.PrepareTaskReceipt(ctx, task)
+	if receiptErr != nil {
+		if report != nil {
+			report(receiptErr)
+		}
+		return
+	}
+	if storedCompletion != nil {
+		if err := c.sendTaskCompletion(ctx, store, *storedCompletion); err != nil {
+			if report != nil {
+				report(err)
+			}
+			return
+		}
+		if err := store.AcknowledgeTaskCompletion(ctx, task.ID); err != nil && report != nil {
+			report(err)
+		}
+		return
+	}
 	var result ApplicationTaskResult
 	var err error
 	switch task.Kind {
 	case "application.apply":
-		if c.Executor == nil {
+		if task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
+		} else if c.Executor == nil {
 			err = errors.New("agent: application capability is not configured")
 		} else if task.AppKey != komariKey && !c.Capabilities.Docker {
 			err = errors.New("agent: Docker capability is not configured")
@@ -789,7 +956,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		err = deferTaskUntilReconciled(err)
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress})
+		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
 		if err != nil && committedThreeXUI {
 			err = deferTaskUntilReconciled(err)
 		}
@@ -802,17 +969,46 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		// task lease recovery requeues the same command ID, allowing its
 		// deterministic 3x-ui tag/client identifiers to converge safely.
 		if report != nil {
-			report(err)
+			report(errors.New(safeTaskError(err)))
 		}
 		return
 	}
 	reconciliationRequired := taskCompletionRequiresReconciliation(err, task.Attempt)
-	if completeErr := c.completeTask(ctx, store, task.ID, task.Attempt, result, err, reconciliationRequired); completeErr != nil && report != nil {
-		report(completeErr)
+	completion := TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Result: result, Error: safeTaskError(err), ReconciliationRequired: reconciliationRequired}
+	if task.Kind == "application.apply" {
+		completion.ApplicationRuntimeGeneration = platform.ApplicationRuntimeGeneration
+	}
+	if completionErr := store.RecordTaskCompletion(ctx, completion); completionErr != nil {
+		if report != nil {
+			report(completionErr)
+		}
+		return
+	}
+	if completeErr := c.sendTaskCompletion(ctx, store, completion); completeErr != nil {
+		if report != nil {
+			report(completeErr)
+		}
+	} else if acknowledgeErr := store.AcknowledgeTaskCompletion(ctx, task.ID); acknowledgeErr != nil && report != nil {
+		report(acknowledgeErr)
 	}
 	if err != nil && report != nil {
-		report(err)
+		report(errors.New(safeTaskError(err)))
 	}
+}
+
+func (c Client) sendTaskCompletion(ctx context.Context, store *Store, completion TaskCompletion) error {
+	var deploymentErr error
+	if completion.Error != "" {
+		deploymentErr = errors.New(completion.Error)
+	}
+	return c.completeTask(ctx, store, completion.TaskID, completion.Attempt, completion.Result, deploymentErr, completion.ReconciliationRequired, completion.ApplicationRuntimeGeneration)
+}
+
+func safeTaskError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return controlplane.SafeError(err.Error())
 }
 
 func mergeGeneratedSecrets(raw json.RawMessage, generated map[string]string) (json.RawMessage, error) {
@@ -846,37 +1042,72 @@ func waitForGateway(ctx context.Context, driver GatewayDriver) error {
 	}
 }
 
-func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration) (*DeploymentTask, error) {
+func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration, requiredTaskIDs ...string) (*DeploymentTask, error) {
 	connection, err := store.Connection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
 	if err != nil {
 		return nil, err
 	}
 	var response struct {
-		Task *DeploymentTask `json:"task"`
+		Task *struct {
+			ID       string                `json:"id"`
+			Attempt  int64                 `json:"attempt"`
+			Envelope controlplane.Envelope `json:"envelope"`
+		} `json:"task"`
 	}
 	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/tasks/next?wait=" + url.QueryEscape(wait.String())
-	if err := c.get(ctx, endpoint, connection.Credential, &response); err != nil {
+	if len(requiredTaskIDs) != 0 && strings.TrimSpace(requiredTaskIDs[0]) != "" {
+		endpoint += "&taskId=" + url.QueryEscape(strings.TrimSpace(requiredTaskIDs[0]))
+	}
+	if err := c.get(ctx, endpoint, connection.Credential, connection.CAFingerprint, &response); err != nil {
 		return nil, err
 	}
-	return response.Task, nil
+	if response.Task == nil {
+		return nil, nil
+	}
+	aad := controlplane.TaskAdditionalData(connection.AgentID, response.Task.ID, response.Task.Attempt)
+	plaintext, err := controlplane.Open(connection.PrivateKey, response.Task.Envelope, aad)
+	if err != nil {
+		return nil, err
+	}
+	var task DeploymentTask
+	decoder := json.NewDecoder(bytes.NewReader(plaintext))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&task); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, errors.New("agent: Center returned an invalid encrypted task")
+	}
+	if task.ID != response.Task.ID || task.Attempt != response.Task.Attempt || task.ID == "" || task.Attempt <= 0 {
+		return nil, errors.New("agent: encrypted task identity does not match its envelope")
+	}
+	return &task, nil
 }
 
-func (c Client) completeTask(ctx context.Context, store *Store, taskID string, attempt int64, result ApplicationTaskResult, deploymentErr error, reconciliationRequired bool) error {
+func (c Client) completeTask(ctx context.Context, store *Store, taskID string, attempt int64, result ApplicationTaskResult, deploymentErr error, reconciliationRequired bool, applicationRuntimeGeneration int) error {
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return err
 	}
-	payload := map[string]any{"attempt": attempt, "succeeded": deploymentErr == nil, "error": "", "result": result, "reconciliationRequired": reconciliationRequired}
+	connection, err = c.ensureConnectionPinned(ctx, store, connection)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"attempt": attempt, "succeeded": deploymentErr == nil, "error": "", "result": result, "reconciliationRequired": reconciliationRequired, "applicationRuntimeGeneration": applicationRuntimeGeneration}
 	if deploymentErr != nil {
 		payload["error"] = deploymentErr.Error()
 	}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, nil)
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
 }
 
-func (c Client) post(ctx context.Context, endpoint string, payload any, credential string, target any) error {
+func (c Client) post(ctx context.Context, endpoint string, payload any, credential, caFingerprint string, target any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("agent: encode Center request: %w", err)
+	}
+	if len(body) > controlplane.MaxJSONPayload {
+		return errors.New("agent: Center request exceeds the allowed size")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -886,16 +1117,16 @@ func (c Client) post(ctx context.Context, endpoint string, payload any, credenti
 	if credential != "" {
 		request.Header.Set("Authorization", "Bearer "+credential)
 	}
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+	client, err := c.clientFor(caFingerprint, 15*time.Second)
+	if err != nil {
+		return err
 	}
 	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("agent: request Center: %w", err)
 	}
 	defer response.Body.Close()
-	content, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	content, err := readBoundedResponse(response.Body, controlplane.MaxEnvelopeWire)
 	if err != nil {
 		return fmt.Errorf("agent: read Center response: %w", err)
 	}
@@ -915,22 +1146,22 @@ func (c Client) post(ctx context.Context, endpoint string, payload any, credenti
 	return nil
 }
 
-func (c Client) get(ctx context.Context, endpoint, credential string, target any) error {
+func (c Client) get(ctx context.Context, endpoint, credential, caFingerprint string, target any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("agent: create Center request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+credential)
-	client := c.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+	client, err := c.clientFor(caFingerprint, 15*time.Second)
+	if err != nil {
+		return err
 	}
 	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("agent: request Center: %w", err)
 	}
 	defer response.Body.Close()
-	content, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	content, err := readBoundedResponse(response.Body, controlplane.MaxEnvelopeWire)
 	if err != nil {
 		return fmt.Errorf("agent: read Center response: %w", err)
 	}
@@ -941,6 +1172,17 @@ func (c Client) get(ctx context.Context, endpoint, credential string, target any
 		return errors.New("agent: Center returned invalid JSON")
 	}
 	return nil
+}
+
+func readBoundedResponse(reader io.Reader, limit int64) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > limit {
+		return nil, errors.New("agent: Center response exceeds the allowed size")
+	}
+	return content, nil
 }
 
 func normalizeCenterURL(raw string) (string, error) {

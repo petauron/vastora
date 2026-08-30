@@ -20,7 +20,7 @@ func TestAgentEnrollmentPersistsSupportedPlatform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "arm64")
+	credential, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "arm64", testAgentPublicKey(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,10 +47,10 @@ func TestAgentEnrollmentRejectsUnsupportedPlatformWithoutConsumingToken(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "386"); err == nil || !strings.Contains(err.Error(), "invalid Agent platform") {
+	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "386", testAgentPublicKey(t)); err == nil || !strings.Contains(err.Error(), "invalid Agent platform") {
 		t.Fatalf("unsupported platform error = %v", err)
 	}
-	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64"); err != nil {
+	if _, err := store.EnrollAgent(context.Background(), enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t)); err != nil {
 		t.Fatalf("unsupported platform consumed enrollment token: %v", err)
 	}
 }

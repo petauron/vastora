@@ -9,6 +9,7 @@ export function emptyAppData(status: CenterStatus): AppData {
     centerUpdate: { currentVersion: status.version, updateAvailable: false, automatic: false, state: "idle" },
     sources: [],
     apps: [],
+    registryCredentials: [],
     agents: [],
     deployments: [],
     organizations: [],
@@ -65,9 +66,10 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
       };
     }
     case "apps": {
-      const [status, apps, agents, deployments, applications, services, publications, integrations, sites, migrations] = await Promise.all([
+      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations] = await Promise.all([
         statusPromise,
         api.apps(),
+        api.registryCredentials(),
         api.agents(),
         api.deployments(),
         api.applications(),
@@ -80,6 +82,7 @@ export async function loadScreenData(screen: Screen): Promise<AppDataPatch> {
       return {
         status,
         apps: apps.apps,
+        registryCredentials: registryCredentials.credentials,
         agents: agents.agents,
         deployments: deployments.deployments,
         applications: applications.applications,

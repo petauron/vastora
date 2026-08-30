@@ -13,7 +13,7 @@ func TestInspectConnectionIsReadOnlyAndExcludesCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "edge", CenterURL: "https://center.example.com", Credential: "secret-credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "edge", "https://center.example.com", "secret-credential")); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

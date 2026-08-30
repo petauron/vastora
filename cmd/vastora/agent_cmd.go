@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/platform"
 )
 
@@ -33,6 +35,7 @@ func runAgent(arguments []string) error {
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
 		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
+		caFingerprint := flags.String("ca-fingerprint", "", "expected Center CA SHA-256 public-key fingerprint")
 		replaceExisting := flags.Bool("replace-existing", false, "replace an existing Center enrollment after explicit confirmation")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
@@ -65,9 +68,9 @@ func runAgent(arguments []string) error {
 		client := agent.Client{}
 		var enrollment agent.Enrollment
 		if *replaceExisting {
-			enrollment, err = client.MigrateEnrollment(context.Background(), store, *centerURL, token)
+			enrollment, err = client.MigrateEnrollment(context.Background(), store, *centerURL, token, *caFingerprint)
 		} else {
-			enrollment, err = client.Enroll(context.Background(), store, *centerURL, token)
+			enrollment, err = client.Enroll(context.Background(), store, *centerURL, token, *caFingerprint)
 		}
 		if err != nil {
 			return err
@@ -160,6 +163,7 @@ func runAgent(arguments []string) error {
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
+		caFingerprint := flags.String("ca-fingerprint", "", "expected Center CA SHA-256 public-key fingerprint")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -169,7 +173,7 @@ func runAgent(arguments []string) error {
 		if *centerURL == "" || flags.NArg() != 0 {
 			return errors.New("--center-url is required")
 		}
-		if err := configureAgentCenter(context.Background(), *dataDir, *centerURL, &http.Client{Timeout: 30 * time.Second}); err != nil {
+		if err := configureAgentCenter(context.Background(), *dataDir, *centerURL, *caFingerprint); err != nil {
 			return err
 		}
 		fmt.Println("Agent Center connection updated")
@@ -179,6 +183,7 @@ func runAgent(arguments []string) error {
 		flags.SetOutput(os.Stderr)
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		centerURL := flags.String("center-url", "", "current Center HTTPS URL or loopback HTTP URL")
+		caFingerprint := flags.String("ca-fingerprint", "", "expected CA fingerprint when changing the Center URL")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -194,18 +199,22 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return errors.New("agent must be enrolled before it can update")
 		}
-		httpClient := &http.Client{Timeout: 2 * time.Minute}
 		if strings.TrimSpace(*centerURL) != "" {
-			verified, verifyErr := (agent.Client{HTTPClient: httpClient}).VerifyCenterURL(context.Background(), *centerURL)
+			verified, verifyErr := (agent.Client{}).VerifyCenterURL(context.Background(), *centerURL, *caFingerprint)
 			if verifyErr != nil {
 				return fmt.Errorf("verify requested Center URL: %w", verifyErr)
 			}
-			if verified != connection.CenterURL {
-				connection.CenterURL = verified
+			if verified.URL != connection.CenterURL || verified.CAFingerprint != connection.CAFingerprint {
+				connection.CenterURL = verified.URL
+				connection.CAFingerprint = verified.CAFingerprint
 				if err := store.ReplaceConnection(context.Background(), connection); err != nil {
 					return fmt.Errorf("save requested Center URL: %w", err)
 				}
 			}
+		}
+		httpClient, err := agent.CenterHTTPClient(connection, 2*time.Minute)
+		if err != nil {
+			return err
 		}
 		executable, err := os.Executable()
 		if err != nil {
@@ -251,6 +260,7 @@ func runAgent(arguments []string) error {
 		dataDir := flags.String("data-dir", "", "Agent state directory")
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
 		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
+		caFingerprint := flags.String("ca-fingerprint", "", "expected Center CA SHA-256 public-key fingerprint")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -266,7 +276,7 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		defer store.Close()
-		enrollment, err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, token)
+		enrollment, err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, token, *caFingerprint)
 		if err != nil {
 			return err
 		}
@@ -415,11 +425,15 @@ func runAgent(arguments []string) error {
 		if capabilities.Tunnel {
 			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
 		}
+		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+		if err := client.Heartbeat(context.Background(), store); err != nil {
+			controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
+		}
 		go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
-			fmt.Fprintln(os.Stderr, "agent heartbeat:", err)
+			controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 		})
 		go client.RunTasks(context.Background(), store, func(err error) {
-			fmt.Fprintln(os.Stderr, "agent task channel:", err)
+			controlLogger.Error("Agent task channel failed", "event", "control_plane.task", "error", controlplane.SafeError(err.Error()))
 		})
 		fmt.Printf("Agent health listener on %s\n", *listen)
 		return http.ListenAndServe(*listen, store.Handler())
@@ -428,7 +442,7 @@ func runAgent(arguments []string) error {
 	}
 }
 
-func configureAgentCenter(ctx context.Context, dataDir, centerURL string, httpClient *http.Client) error {
+func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint string) error {
 	store, err := agent.Open(dataDir)
 	if err != nil {
 		return err
@@ -438,24 +452,25 @@ func configureAgentCenter(ctx context.Context, dataDir, centerURL string, httpCl
 	if err != nil {
 		return errors.New("agent must be enrolled before its Center can be changed")
 	}
-	verified, err := (agent.Client{HTTPClient: httpClient}).VerifyCenterURL(ctx, centerURL)
+	verified, err := (agent.Client{}).VerifyCenterURL(ctx, centerURL, caFingerprint)
 	if err != nil {
 		return fmt.Errorf("verify requested Center URL: %w", err)
 	}
-	if verified == connection.CenterURL {
-		if agentLoopbackCenterURL(verified) {
-			return store.SetLocalCenterChannel(verified)
+	if verified.URL == connection.CenterURL && verified.CAFingerprint == connection.CAFingerprint {
+		if agentLoopbackCenterURL(verified.URL) {
+			return store.SetLocalCenterChannel(verified.URL)
 		}
 		return store.SetLocalCenterChannel("")
 	}
 	previous := connection
-	connection.CenterURL = verified
+	connection.CenterURL = verified.URL
+	connection.CAFingerprint = verified.CAFingerprint
 	if err := store.ReplaceConnection(ctx, connection); err != nil {
 		return fmt.Errorf("save requested Center URL: %w", err)
 	}
 	marker := ""
-	if agentLoopbackCenterURL(verified) {
-		marker = verified
+	if agentLoopbackCenterURL(verified.URL) {
+		marker = verified.URL
 	}
 	if err := store.SetLocalCenterChannel(marker); err != nil {
 		if restoreErr := store.ReplaceConnection(ctx, previous); restoreErr != nil {

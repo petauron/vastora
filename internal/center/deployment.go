@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/platform"
 	"golang.org/x/mod/semver"
@@ -23,6 +24,9 @@ type DeploymentRequest struct {
 	Config     json.RawMessage `json:"config"`
 	Operation  string          `json:"operation"`
 	DeleteData bool            `json:"deleteData"`
+	// RegistryCredentialID is tri-state: omitted preserves an installed binding,
+	// an empty string clears it, and a non-empty value replaces it.
+	RegistryCredentialID *string `json:"registryCredentialId,omitempty"`
 }
 
 type DeploymentView struct {
@@ -51,6 +55,29 @@ const applicationTaskRevision int64 = 1
 const cpaAppKey = "vastora-official/cpa"
 const threeXUIAppKey = "vastora-official/3x-ui"
 const komariAppKey = "vastora-official/komari-agent"
+
+type registryCredentialQuerier interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+func validateRegistryCredentialBinding(ctx context.Context, querier registryCredentialQuerier, credentialID string, manifest catalog.AppManifest) error {
+	var host string
+	if err := querier.QueryRowContext(ctx, `SELECT host FROM registry_credentials WHERE id = ?`, credentialID).Scan(&host); errors.Is(err, sql.ErrNoRows) {
+		return errors.New("center: Registry credential was not found")
+	} else if err != nil {
+		return fmt.Errorf("center: read Registry credential: %w", err)
+	}
+	if len(manifest.Images) == 0 {
+		return errors.New("center: Registry credential host does not match an application without declared images")
+	}
+	for _, image := range manifest.Images {
+		named, err := reference.ParseNormalizedNamed(image.Reference)
+		if err != nil || !strings.EqualFold(reference.Domain(named), host) {
+			return errors.New("center: Registry credential host must match every declared application image")
+		}
+	}
+	return nil
+}
 
 func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest) (DeploymentView, error) {
 	request.Role = strings.TrimSpace(request.Role)
@@ -87,6 +114,16 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	active, err := s.activeDeployment(ctx, request.AgentID, request.AppKey)
 	if err != nil {
 		return DeploymentView{}, err
+	}
+	registryCredentialID := ""
+	if request.Operation != "uninstall" {
+		if request.RegistryCredentialID == nil {
+			if active.Installed {
+				registryCredentialID = active.RegistryCredentialID
+			}
+		} else {
+			registryCredentialID = strings.TrimSpace(*request.RegistryCredentialID)
+		}
 	}
 	if request.Operation == "install" && active.Installed {
 		return DeploymentView{}, errors.New("center: app is already installed; use upgrade or configure")
@@ -126,6 +163,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 		if comparison < 0 {
 			return DeploymentView{}, fmt.Errorf("center: catalog version %s is older than installed version %s; downgrade is not allowed", manifest.Version, active.Version)
+		}
+	}
+	if registryCredentialID != "" && request.Operation != "uninstall" {
+		if err := validateRegistryCredentialBinding(ctx, s.db, registryCredentialID, manifest); err != nil {
+			return DeploymentView{}, err
 		}
 	}
 	if request.Operation == "configure" {
@@ -210,8 +252,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, deployment.ID, deployment.AgentID, "application.apply", applicationTaskRevision, "queued", deployment.Operation+" "+deployment.AppKey); err != nil {
