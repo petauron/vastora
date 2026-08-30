@@ -15,14 +15,15 @@ import (
 )
 
 type runtimeMigrationApplication struct {
-	applicationID  string
-	appKey         string
-	deploymentID   string
-	appVersion     string
-	manifestJSON   []byte
-	configJSON     []byte
-	serviceAddress string
-	secretID       sql.NullString
+	applicationID        string
+	appKey               string
+	deploymentID         string
+	appVersion           string
+	manifestJSON         []byte
+	configJSON           []byte
+	serviceAddress       string
+	secretID             sql.NullString
+	registryCredentialID sql.NullString
 }
 
 // queueApplicationRuntimeMigration replays stored desired state once after an
@@ -62,14 +63,14 @@ func (s *Store) queueApplicationRuntimeMigration(ctx context.Context, tx *sql.Tx
 }
 
 func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.Tx, agentID string, generation int, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT a.id, a.app_key, d.id, d.app_version, d.manifest_json, d.config_json, d.service_address, d.secret_id
+	rows, err := tx.QueryContext(ctx, `SELECT a.id, a.app_key, d.id, d.app_version, d.manifest_json, d.config_json, d.service_address, d.secret_id, d.registry_credential_id
 		FROM applications a
 		JOIN deployments d ON d.rowid = (
 			SELECT previous.rowid FROM deployments previous
 			WHERE previous.application_id = a.id AND previous.state = 'succeeded' AND previous.operation IN ('install', 'upgrade', 'configure')
 			ORDER BY previous.updated_at DESC, previous.rowid DESC LIMIT 1
 		)
-		WHERE a.node_id = ? AND a.status = 'running' AND a.runtime_generation < ?
+		WHERE a.node_id = ? AND a.status IN ('running', 'pending', 'failed') AND a.runtime_generation < ?
 		AND NOT EXISTS (
 			SELECT 1 FROM deployments active WHERE active.application_id = a.id
 			AND (active.state IN ('pending', 'running') OR active.reconciliation_required = 1)
@@ -81,7 +82,7 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 	applications := []runtimeMigrationApplication{}
 	for rows.Next() {
 		var app runtimeMigrationApplication
-		if err := rows.Scan(&app.applicationID, &app.appKey, &app.deploymentID, &app.appVersion, &app.manifestJSON, &app.configJSON, &app.serviceAddress, &app.secretID); err != nil {
+		if err := rows.Scan(&app.applicationID, &app.appKey, &app.deploymentID, &app.appVersion, &app.manifestJSON, &app.configJSON, &app.serviceAddress, &app.secretID, &app.registryCredentialID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -106,6 +107,15 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 			}
 			app.appVersion = manifest.Version
 		}
+		if app.registryCredentialID.Valid {
+			var manifest catalog.AppManifest
+			if err := json.Unmarshal(app.manifestJSON, &manifest); err != nil {
+				return errors.New("center: stored application manifest is invalid during runtime migration")
+			}
+			if err := validateRegistryCredentialBinding(ctx, tx, app.registryCredentialID.String, manifest); err != nil {
+				return err
+			}
+		}
 		deploymentID, err := randomToken(18)
 		if err != nil {
 			return err
@@ -126,8 +136,8 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 			}
 		}
 		formattedNow := now.Format(time.RFC3339Nano)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'configure', 0, 'pending', '', ?, ?, ?, ?)`, deploymentID, agentID, app.appKey, app.appVersion, app.manifestJSON, app.configJSON, app.serviceAddress, newSecretID, formattedNow, formattedNow, app.applicationID, generation); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'configure', 0, 'pending', '', ?, ?, ?, ?)`, deploymentID, agentID, app.appKey, app.appVersion, app.manifestJSON, app.configJSON, app.serviceAddress, newSecretID, nullableSQLString(app.registryCredentialID), formattedNow, formattedNow, app.applicationID, generation); err != nil {
 			return fmt.Errorf("center: queue application runtime migration: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, komariAppKey, formattedNow, app.applicationID); err != nil {

@@ -111,13 +111,13 @@ func TestApplicationExecutorUsesNativeKomariWithoutDocker(t *testing.T) {
 	t.Parallel()
 	host := &fakeHostApplicationManager{}
 	executor := ApplicationExecutor{DockerSocket: "unix://" + filepath.Join(t.TempDir(), "missing-docker.sock"), Host: host}
-	if _, err := executor.Deploy(context.Background(), DeploymentTask{AppKey: komariKey, Operation: "install"}); err != nil {
+	if _, err := executor.Deploy(context.Background(), komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))); err != nil {
 		t.Fatal(err)
 	}
 	if host.applied != 1 || host.removed != 0 {
 		t.Fatalf("native Komari calls after install = apply:%d remove:%d", host.applied, host.removed)
 	}
-	if _, err := executor.Deploy(context.Background(), DeploymentTask{AppKey: komariKey, Operation: "uninstall"}); err != nil {
+	if _, err := executor.Deploy(context.Background(), DeploymentTask{ID: "komari-uninstall", AppKey: komariKey, Operation: "uninstall"}); err != nil {
 		t.Fatal(err)
 	}
 	if host.removed != 1 {
@@ -127,9 +127,18 @@ func TestApplicationExecutorUsesNativeKomariWithoutDocker(t *testing.T) {
 
 func komariTestTask(downloadURL, digest string) DeploymentTask {
 	return DeploymentTask{
-		AppKey: komariKey, Operation: "install",
-		Manifest: catalog.AppManifest{ID: "komari-agent", Version: "1.2.60", Artifacts: []catalog.Artifact{{Name: "komari-agent", OperatingSystem: "linux", Architecture: "amd64", URL: downloadURL, SHA256: digest}}},
-		Config:   []byte(`{"endpoint":"https://komari.example.test/"}`), Secrets: []byte(`{"token":"secret-token"}`),
+		ID: "komari-install", AppKey: komariKey, Operation: "install",
+		Manifest: catalog.AppManifest{
+			ID: "komari-agent", Version: "1.2.60", License: "MIT", HostAccess: true,
+			Name:        catalog.LocalizedText{English: "Komari Agent", SimplifiedChinese: "Komari 探针"},
+			Description: catalog.LocalizedText{English: "Komari monitoring agent.", SimplifiedChinese: "Komari 监控探针。"},
+			Artifacts:   []catalog.Artifact{{Name: "komari-agent", OperatingSystem: "linux", Architecture: "amd64", URL: downloadURL, SHA256: digest}},
+			Config: []catalog.ConfigField{
+				{Key: "endpoint", Type: "string", Label: catalog.LocalizedText{English: "Endpoint", SimplifiedChinese: "面板地址"}, Description: catalog.LocalizedText{English: "Komari endpoint.", SimplifiedChinese: "Komari 面板地址。"}, Required: true},
+				{Key: "token", Type: "string", Label: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}, Description: catalog.LocalizedText{English: "Agent token.", SimplifiedChinese: "探针令牌。"}, Required: true, Secret: true},
+			},
+		},
+		Config: []byte(`{"endpoint":"https://komari.example.test/"}`), Secrets: []byte(`{"token":"secret-token"}`),
 	}
 }
 
@@ -141,7 +150,7 @@ func (handler *testHTTPHandler) ServeHTTP(writer http.ResponseWriter, _ *http.Re
 	_, _ = writer.Write(handler.content)
 }
 
-type fakeHostApplicationManager struct{ applied, removed int }
+type fakeHostApplicationManager struct{ applied, restored, removed int }
 
 func (manager *fakeHostApplicationManager) ApplyKomari(context.Context, DeploymentTask) error {
 	manager.applied++
@@ -151,4 +160,33 @@ func (manager *fakeHostApplicationManager) ApplyKomari(context.Context, Deployme
 func (manager *fakeHostApplicationManager) RemoveKomari(context.Context) error {
 	manager.removed++
 	return nil
+}
+
+func (manager *fakeHostApplicationManager) RestoreKomari(context.Context, DeploymentTask) error {
+	manager.restored++
+	return nil
+}
+
+func TestApplicationRestoreContinuesPastLegacyState(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: "legacy", AppKey: "aaa/legacy", Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
+		t.Fatal(err)
+	}
+	host := &fakeHostApplicationManager{}
+	err = (ApplicationExecutor{Host: host}).Restore(ctx, store)
+	if err == nil || !strings.Contains(err.Error(), "legacy aaa/legacy") {
+		t.Fatalf("restore error = %v", err)
+	}
+	if host.restored != 1 {
+		t.Fatalf("later valid installation restore calls = %d, want 1", host.restored)
+	}
 }

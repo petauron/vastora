@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/petauron/vastora/internal/catalog"
 )
 
@@ -84,6 +85,29 @@ type RegistryCredential struct {
 	Username  string    `json:"username"`
 	TokenSet  bool      `json:"tokenSet"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+func (s *Store) ListRegistryCredentials(ctx context.Context) ([]RegistryCredential, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, host, username, created_at FROM registry_credentials ORDER BY host, username, id`)
+	if err != nil {
+		return nil, fmt.Errorf("center: list Registry credentials: %w", err)
+	}
+	defer rows.Close()
+	credentials := []RegistryCredential{}
+	for rows.Next() {
+		var value RegistryCredential
+		var createdAt string
+		if err := rows.Scan(&value.ID, &value.Host, &value.Username, &createdAt); err != nil {
+			return nil, fmt.Errorf("center: scan Registry credential: %w", err)
+		}
+		value.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("center: parse Registry credential timestamp: %w", err)
+		}
+		value.TokenSet = true
+		credentials = append(credentials, value)
+	}
+	return credentials, rows.Err()
 }
 
 func (s *Store) CreateSource(ctx context.Context, input SourceInput) error {
@@ -657,7 +681,11 @@ func (s *Store) ListApps(ctx context.Context) ([]AppView, error) {
 }
 
 func (s *Store) CreateRegistryCredential(ctx context.Context, host, username, token string) (RegistryCredential, error) {
-	if strings.TrimSpace(host) == "" || strings.TrimSpace(username) == "" || token == "" {
+	host = strings.ToLower(strings.TrimSpace(host))
+	username = strings.TrimSpace(username)
+	probe := host + "/vastora-credential-probe@sha256:" + strings.Repeat("0", 64)
+	named, parseErr := reference.ParseNormalizedNamed(probe)
+	if host == "" || username == "" || token == "" || parseErr != nil || reference.Domain(named) != host {
 		return RegistryCredential{}, errors.New("center: registry host, username, and token are required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -681,6 +709,96 @@ func (s *Store) CreateRegistryCredential(ctx context.Context, host, username, to
 		return RegistryCredential{}, fmt.Errorf("center: commit registry credential: %w", err)
 	}
 	return RegistryCredential{ID: id, Host: host, Username: username, TokenSet: true, CreatedAt: now}, nil
+}
+
+func (s *Store) RotateRegistryCredential(ctx context.Context, id, username, token string) (RegistryCredential, error) {
+	id = strings.TrimSpace(id)
+	username = strings.TrimSpace(username)
+	if id == "" || username == "" || token == "" {
+		return RegistryCredential{}, errors.New("center: Registry credential id, username, and token are required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RegistryCredential{}, fmt.Errorf("center: begin Registry credential rotation: %w", err)
+	}
+	defer tx.Rollback()
+	var host, previousSecretID, createdAt string
+	if err := tx.QueryRowContext(ctx, `SELECT host, secret_id, created_at FROM registry_credentials WHERE id = ?`, id).Scan(&host, &previousSecretID, &createdAt); errors.Is(err, sql.ErrNoRows) {
+		return RegistryCredential{}, errors.New("center: Registry credential was not found")
+	} else if err != nil {
+		return RegistryCredential{}, fmt.Errorf("center: read Registry credential: %w", err)
+	}
+	var inFlight bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM deployments WHERE registry_credential_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1))`, id).Scan(&inFlight); err != nil {
+		return RegistryCredential{}, fmt.Errorf("center: inspect Registry credential use: %w", err)
+	}
+	if inFlight {
+		return RegistryCredential{}, errors.New("center: Registry credential cannot rotate while a deployment is pending, running, or reconciling")
+	}
+	secretID, err := s.putSecret(ctx, tx, []byte(token), "registry-credential:"+id)
+	if err != nil {
+		return RegistryCredential{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE registry_credentials SET username = ?, secret_id = ? WHERE id = ?`, username, secretID, id); err != nil {
+		return RegistryCredential{}, fmt.Errorf("center: rotate Registry credential: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, previousSecretID); err != nil {
+		return RegistryCredential{}, fmt.Errorf("center: delete replaced Registry credential secret: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return RegistryCredential{}, fmt.Errorf("center: commit Registry credential rotation: %w", err)
+	}
+	created, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return RegistryCredential{}, fmt.Errorf("center: parse Registry credential timestamp: %w", err)
+	}
+	return RegistryCredential{ID: id, Host: host, Username: username, TokenSet: true, CreatedAt: created}, nil
+}
+
+func (s *Store) DeleteRegistryCredential(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("center: Registry credential id is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("center: begin Registry credential deletion: %w", err)
+	}
+	defer tx.Rollback()
+	var secretID string
+	if err := tx.QueryRowContext(ctx, `SELECT secret_id FROM registry_credentials WHERE id = ?`, id).Scan(&secretID); errors.Is(err, sql.ErrNoRows) {
+		return errors.New("center: Registry credential was not found")
+	} else if err != nil {
+		return fmt.Errorf("center: read Registry credential: %w", err)
+	}
+	var inUse bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM deployments d WHERE d.registry_credential_id = ?
+		AND (d.state IN ('pending', 'running') OR d.reconciliation_required = 1)
+		UNION ALL
+		SELECT 1 FROM applications a JOIN deployments d ON d.rowid = (
+			SELECT latest.rowid FROM deployments latest WHERE latest.application_id = a.id AND latest.state = 'succeeded'
+			ORDER BY latest.updated_at DESC, latest.rowid DESC LIMIT 1
+		) WHERE d.registry_credential_id = ? AND d.operation IN ('install', 'upgrade', 'configure')
+	)`, id, id).Scan(&inUse); err != nil {
+		return fmt.Errorf("center: inspect Registry credential use: %w", err)
+	}
+	if inUse {
+		return errors.New("center: Registry credential is still bound to an active or reconciling application")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET registry_credential_id = NULL WHERE registry_credential_id = ?`, id); err != nil {
+		return fmt.Errorf("center: detach historical Registry credential: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM registry_credentials WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("center: delete Registry credential: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, secretID); err != nil {
+		return fmt.Errorf("center: delete Registry credential secret: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("center: commit Registry credential deletion: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) SeedOfficialCatalog(ctx context.Context, payload []byte) error {

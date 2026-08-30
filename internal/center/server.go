@@ -1,6 +1,7 @@
 package center
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/deployapi"
 )
 
@@ -145,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agent-enrollments", s.requireAuth(true, s.handleCreateAgentEnrollment))
 	mux.HandleFunc("PATCH /api/v1/agents/{id}", s.requireAuth(true, s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.requireAuth(true, s.handleDisableAgent))
+	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", s.requireAuth(true, s.handleRevokeAgentCredential))
 	mux.HandleFunc("PUT /api/v1/agents/{id}/network-profile", s.requireAuth(true, s.handleConfirmNetworkProfile))
 	mux.HandleFunc("POST /api/v1/agents/enroll", s.handleEnrollAgent)
 	mux.HandleFunc("POST /api/v1/agents/{id}/heartbeat", s.handleAgentHeartbeat)
@@ -159,7 +162,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/catalog/sources/{id}", s.requireAuth(true, s.handleDeleteSource))
 	mux.HandleFunc("POST /api/v1/catalog/sources/{id}/refresh", s.requireAuth(true, s.handleRefreshSource))
 	mux.HandleFunc("GET /api/v1/catalog/apps", s.requireAuth(false, s.handleListApps))
+	mux.HandleFunc("GET /api/v1/registry-credentials", s.requireAuth(false, s.handleListRegistryCredentials))
 	mux.HandleFunc("POST /api/v1/registry-credentials", s.requireAuth(true, s.handleCreateRegistryCredential))
+	mux.HandleFunc("PUT /api/v1/registry-credentials/{id}", s.requireAuth(true, s.handleRotateRegistryCredential))
+	mux.HandleFunc("DELETE /api/v1/registry-credentials/{id}", s.requireAuth(true, s.handleDeleteRegistryCredential))
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.Handle("/", s.staticHandler())
 	return securityHeaders(mux)
@@ -258,7 +264,14 @@ func decodeJSON(request *http.Request, target any) error {
 	if !strings.HasPrefix(request.Header.Get("Content-Type"), "application/json") {
 		return errors.New("center: Content-Type must be application/json")
 	}
-	decoder := json.NewDecoder(io.LimitReader(request.Body, 1<<20))
+	content, err := io.ReadAll(io.LimitReader(request.Body, controlplane.MaxJSONPayload+1))
+	if err != nil {
+		return fmt.Errorf("center: read JSON: %w", err)
+	}
+	if len(content) > controlplane.MaxJSONPayload {
+		return errors.New("center: JSON request exceeds the allowed size")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(content))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("center: decode JSON: %w", err)

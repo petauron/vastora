@@ -1,4 +1,4 @@
-import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
+import type { Action, AgentEnrollment, AgentView, ApplicationCommand, ApplicationCommandKind, AppView, Application, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, PublicationKind, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -79,6 +79,10 @@ export const api = {
   downloadBackup: (password: string) => download("/api/v1/backups", "vastora-center.vastora", { method: "POST", body: JSON.stringify({ password }) }),
   sources: () => request<{ sources: CatalogSource[] }>("/api/v1/catalog/sources"),
   apps: () => request<{ apps: AppView[] }>("/api/v1/catalog/apps"),
+	registryCredentials: () => request<{ credentials: RegistryCredential[] }>("/api/v1/registry-credentials"),
+	createRegistryCredential: (host: string, username: string, token: string) => request<RegistryCredential>("/api/v1/registry-credentials", { method: "POST", body: JSON.stringify({ host, username, token }) }),
+	rotateRegistryCredential: (id: string, username: string, token: string) => request<RegistryCredential>(`/api/v1/registry-credentials/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ username, token }) }),
+	deleteRegistryCredential: (id: string) => request<{ deleted: boolean }>(`/api/v1/registry-credentials/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
 	agents: () => request<{ agents: AgentView[] }>("/api/v1/agents"),
 	createAgentEnrollment: (siteId: string, name: string, centerUrl: string, useHeadscale: boolean, gateway: boolean, tunnel: boolean) => request<AgentEnrollment>("/api/v1/agent-enrollments", { method: "POST", body: JSON.stringify({ siteId, name, centerUrl, useHeadscale, gateway, tunnel }) }),
   deployments: () => request<{ deployments: Deployment[] }>("/api/v1/deployments"),
@@ -110,7 +114,7 @@ export const api = {
 	publications: () => request<{ publications: Publication[] }>("/api/v1/publications"),
 	integrations: () => request<{ integrations: Integration[] }>("/api/v1/integrations"),
 	actions: (limit = 50) => request<{ actions: Action[] }>(`/api/v1/actions?limit=${encodeURIComponent(String(limit))}`),
-  createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation: Deployment["operation"] = "install", deleteData = false, role?: "master" | "worker") => request<Deployment>("/api/v1/deployments", { method: "POST", body: JSON.stringify({ agentId, appKey, config, operation, deleteData, role }) }),
+  createDeployment: (agentId: string, appKey: string, config: Record<string, string | boolean | number>, operation: Deployment["operation"] = "install", deleteData = false, role?: "master" | "worker", registryCredentialId?: string) => request<Deployment>("/api/v1/deployments", { method: "POST", body: JSON.stringify({ agentId, appKey, config, operation, deleteData, role, registryCredentialId }) }),
   confirmNetworkProfile: (agentId: string, profile: NetworkProfile) => request<NetworkProfile>(`/api/v1/agents/${encodeURIComponent(agentId)}/network-profile`, { method: "PUT", body: JSON.stringify(profile) }),
 	createPublication: (input: { serviceId: string; kind: PublicationKind; gatewayNodeId?: string; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; tlsEnabled?: boolean; confirmHighRisk?: boolean }) => request<Publication>("/api/v1/publications", { method: "POST", body: JSON.stringify(input) }),
 	updatePublicationTLS: (id: string, enabled: boolean) => request<Publication>(`/api/v1/publications/${encodeURIComponent(id)}/tls`, { method: "PUT", body: JSON.stringify({ enabled }) }),

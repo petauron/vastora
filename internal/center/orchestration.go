@@ -90,7 +90,7 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 	return applicationID, nil
 }
 
-func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
+func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
 	if operation == "uninstall" {
 		values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
 		if err != nil {
@@ -119,11 +119,10 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		return fmt.Errorf("center: read application site: %w", err)
 	}
 	var manifestJSON []byte
-	var runtimeGeneration int
-	if err := tx.QueryRowContext(ctx, `SELECT manifest_json, runtime_generation FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON, &runtimeGeneration); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', runtime_generation = ?, runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, runtimeGeneration, komariAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', runtime_generation = ?, runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, executedRuntimeGeneration, komariAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
 	}
 	var manifest catalog.AppManifest

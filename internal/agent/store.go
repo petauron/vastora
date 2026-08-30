@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
@@ -32,14 +34,24 @@ type Store struct {
 }
 
 type AppliedInstallation struct {
-	InstanceID     string          `json:"instanceId"`
-	AppKey         string          `json:"appKey"`
-	Version        string          `json:"version"`
-	Config         json.RawMessage `json:"config"`
-	Secrets        json.RawMessage `json:"-"`
-	ServiceAddress string          `json:"serviceAddress"`
-	ConfigHash     string          `json:"configHash"`
-	AppliedAt      time.Time       `json:"appliedAt"`
+	InstanceID      string              `json:"instanceId"`
+	AppKey          string              `json:"appKey"`
+	Version         string              `json:"version"`
+	Config          json.RawMessage     `json:"config"`
+	Secrets         json.RawMessage     `json:"-"`
+	ServiceAddress  string              `json:"serviceAddress"`
+	ConfigHash      string              `json:"configHash"`
+	AppliedAt       time.Time           `json:"appliedAt"`
+	Manifest        catalog.AppManifest `json:"-"`
+	ApplicationRole string              `json:"-"`
+}
+
+type sealedApplicationState struct {
+	Config          json.RawMessage     `json:"config"`
+	Secrets         json.RawMessage     `json:"secrets"`
+	ServiceAddress  string              `json:"serviceAddress"`
+	Manifest        catalog.AppManifest `json:"manifest"`
+	ApplicationRole string              `json:"applicationRole"`
 }
 
 type InstallationStatus struct {
@@ -51,13 +63,15 @@ type InstallationStatus struct {
 }
 
 type Connection struct {
-	AgentID    string `json:"agentId"`
-	Name       string `json:"name"`
-	CenterURL  string `json:"centerUrl"`
-	Credential string `json:"-"`
+	AgentID       string `json:"agentId"`
+	Name          string `json:"name"`
+	CenterURL     string `json:"centerUrl"`
+	Credential    string `json:"-"`
+	PrivateKey    []byte `json:"-"`
+	CAFingerprint string `json:"-"`
 }
 
-const agentSchemaVersion = 3
+const agentSchemaVersion = 8
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -148,6 +162,152 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 3
 		}
+		if version == 3 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`ALTER TABLE control_plane_connection ADD COLUMN sealed_private_key BLOB NOT NULL DEFAULT X''`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`ALTER TABLE control_plane_connection ADD COLUMN ca_fingerprint TEXT NOT NULL DEFAULT ''`)
+			}
+			if migrateErr == nil {
+				var agentID string
+				identityErr := tx.QueryRow(`SELECT agent_id FROM control_plane_connection WHERE id = 1`).Scan(&agentID)
+				if identityErr == nil {
+					privateKey, _, keyErr := controlplane.GenerateKeyPair()
+					if keyErr == nil {
+						var sealedPrivateKey []byte
+						sealedPrivateKey, keyErr = secret.Seal(key, privateKey, []byte("agent-control-plane-key:"+agentID))
+						if keyErr == nil {
+							_, keyErr = tx.Exec(`UPDATE control_plane_connection SET sealed_private_key = ? WHERE id = 1`, sealedPrivateKey)
+						}
+					}
+					migrateErr = keyErr
+				} else if !errors.Is(identityErr, sql.ErrNoRows) {
+					migrateErr = identityErr
+				}
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE task_receipts (
+					task_id TEXT PRIMARY KEY,
+					attempt INTEGER NOT NULL CHECK(attempt > 0),
+					task_hash BLOB NOT NULL,
+					state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged')),
+					sealed_completion BLOB,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				)`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version = 4`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 3 to 4: %w", migrateErr)
+			}
+			version = 4
+		}
+		if version == 4 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				migrateErr = migrateAppliedInstallationsV5(tx, key)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version = 5`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 4 to 5: %w", migrateErr)
+			}
+			version = 5
+		}
+		if version == 5 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE task_receipts_v6 (
+					task_id TEXT PRIMARY KEY,
+					attempt INTEGER NOT NULL CHECK(attempt > 0),
+					task_hash BLOB NOT NULL,
+					state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required')),
+					sealed_completion BLOB,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				INSERT INTO task_receipts_v6 SELECT * FROM task_receipts;
+				DROP TABLE task_receipts;
+				ALTER TABLE task_receipts_v6 RENAME TO task_receipts;
+				PRAGMA user_version = 6`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 5 to 6: %w", migrateErr)
+			}
+			version = 6
+		}
+		if version == 6 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE task_receipts_v7 (
+					task_id TEXT PRIMARY KEY,
+					task_kind TEXT NOT NULL,
+					attempt INTEGER NOT NULL CHECK(attempt > 0),
+					task_hash BLOB NOT NULL,
+					state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required')),
+					sealed_completion BLOB,
+					created_at TEXT NOT NULL,
+					updated_at TEXT NOT NULL
+				);
+				INSERT INTO task_receipts_v7(task_id, task_kind, attempt, task_hash, state, sealed_completion, created_at, updated_at)
+				SELECT task_id, 'legacy', attempt, task_hash, state, sealed_completion, created_at, updated_at FROM task_receipts;
+				DROP TABLE task_receipts;
+				ALTER TABLE task_receipts_v7 RENAME TO task_receipts;
+				PRAGMA user_version = 7`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 6 to 7: %w", migrateErr)
+			}
+			version = 7
+		}
+		if version == 7 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				migrateErr = purgeUnrestorableAppliedInstallations(tx, key)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version = 8`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 7 to 8: %w", migrateErr)
+			}
+			version = 8
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -158,9 +318,7 @@ func Open(dataDir string) (*Store, error) {
 			instance_id TEXT PRIMARY KEY,
 			app_key TEXT NOT NULL,
 			version TEXT NOT NULL,
-			config_json BLOB NOT NULL,
-			sealed_secrets BLOB NOT NULL,
-			service_address TEXT NOT NULL,
+			sealed_state BLOB NOT NULL,
 			config_hash TEXT NOT NULL,
 			applied_at TEXT NOT NULL
 		);
@@ -169,7 +327,19 @@ func Open(dataDir string) (*Store, error) {
 			agent_id TEXT NOT NULL,
 			name TEXT NOT NULL,
 			center_url TEXT NOT NULL,
-			sealed_credential BLOB NOT NULL
+			sealed_credential BLOB NOT NULL,
+			sealed_private_key BLOB NOT NULL,
+			ca_fingerprint TEXT NOT NULL
+		);
+		CREATE TABLE task_receipts (
+			task_id TEXT PRIMARY KEY,
+			task_kind TEXT NOT NULL,
+			attempt INTEGER NOT NULL CHECK(attempt > 0),
+			task_hash BLOB NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('processing', 'completed', 'acknowledged', 'reconciliation_required')),
+			sealed_completion BLOB,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
 		);
 		CREATE TABLE gateway_applied_state (
 			id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -193,11 +363,74 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 3;`); err != nil {
+		PRAGMA user_version = 8;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
 	return store, nil
+}
+
+func migrateAppliedInstallationsV5(tx *sql.Tx, _ []byte) error {
+	if _, err := tx.Exec(`CREATE TABLE applied_installations_v5 (
+		instance_id TEXT PRIMARY KEY,
+		app_key TEXT NOT NULL,
+		version TEXT NOT NULL,
+		sealed_state BLOB NOT NULL,
+		config_hash TEXT NOT NULL,
+		applied_at TEXT NOT NULL
+	)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE applied_installations; ALTER TABLE applied_installations_v5 RENAME TO applied_installations`); err != nil {
+		return err
+	}
+	return nil
+}
+
+func purgeUnrestorableAppliedInstallations(tx *sql.Tx, key []byte) error {
+	rows, err := tx.Query(`SELECT instance_id, sealed_state FROM applied_installations ORDER BY instance_id`)
+	if err != nil {
+		return err
+	}
+	var legacyIDs []string
+	for rows.Next() {
+		var instanceID string
+		var sealedState []byte
+		if err := rows.Scan(&instanceID, &sealedState); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		plain, err := secret.Open(key, sealedState, applicationStateContext(instanceID))
+		if err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("decrypt applied application %s: %w", instanceID, err)
+		}
+		var state sealedApplicationState
+		if json.Unmarshal(plain, &state) != nil {
+			_ = rows.Close()
+			return fmt.Errorf("decode applied application %s", instanceID)
+		}
+		if state.Manifest.ID == "" {
+			legacyIDs = append(legacyIDs, instanceID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, instanceID := range legacyIDs {
+		if _, err := tx.Exec(`DELETE FROM applied_installations WHERE instance_id = ?`, instanceID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applicationStateContext(instanceID string) []byte {
+	return []byte("agent-application-state:" + instanceID)
 }
 
 const localCenterChannelName = "local-center-channel"
@@ -323,11 +556,11 @@ func (s *Store) ClearGatewayState(ctx context.Context) error {
 }
 
 func (s *Store) SaveConnection(ctx context.Context, connection Connection) error {
-	sealed, err := s.sealConnection(connection)
+	sealedCredential, sealedPrivateKey, err := s.sealConnection(connection)
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential) VALUES(1, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, connection.AgentID, connection.Name, connection.CenterURL, sealed)
+	result, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint) VALUES(1, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint))
 	if err != nil {
 		return fmt.Errorf("agent: save Center connection: %w", err)
 	}
@@ -345,47 +578,74 @@ func (s *Store) SaveConnection(ctx context.Context, connection Connection) error
 // gateway, and recovery state remain intact so an explicitly approved Center
 // migration cannot stop or forget locally managed workloads.
 func (s *Store) ReplaceConnection(ctx context.Context, connection Connection) error {
-	sealed, err := s.sealConnection(connection)
+	sealedCredential, sealedPrivateKey, err := s.sealConnection(connection)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential)
-		VALUES(1, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url, sealed_credential = excluded.sealed_credential`, connection.AgentID, connection.Name, connection.CenterURL, sealed); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint)
+		VALUES(1, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url, sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint)); err != nil {
 		return fmt.Errorf("agent: replace Center connection: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) sealConnection(connection Connection) ([]byte, error) {
+func (s *Store) sealConnection(connection Connection) ([]byte, []byte, error) {
 	connection.AgentID = strings.TrimSpace(connection.AgentID)
 	connection.Name = strings.TrimSpace(connection.Name)
 	connection.CenterURL = strings.TrimSpace(connection.CenterURL)
 	if connection.AgentID == "" || connection.Name == "" || connection.CenterURL == "" || connection.Credential == "" {
-		return nil, errors.New("agent: incomplete Center connection")
+		return nil, nil, errors.New("agent: incomplete Center connection")
 	}
-	sealed, err := secret.Seal(s.key, []byte(connection.Credential), []byte("agent-control-plane:"+connection.AgentID))
+	if _, err := controlplane.PublicKey(connection.PrivateKey); err != nil {
+		return nil, nil, errors.New("agent: incomplete Center encryption identity")
+	}
+	if err := validateCAFingerprint(connection.CenterURL, connection.CAFingerprint); err != nil {
+		return nil, nil, err
+	}
+	sealedCredential, err := secret.Seal(s.key, []byte(connection.Credential), []byte("agent-control-plane:"+connection.AgentID))
 	if err != nil {
-		return nil, fmt.Errorf("agent: encrypt Center credential: %w", err)
+		return nil, nil, fmt.Errorf("agent: encrypt Center credential: %w", err)
 	}
-	return sealed, nil
+	sealedPrivateKey, err := secret.Seal(s.key, connection.PrivateKey, []byte("agent-control-plane-key:"+connection.AgentID))
+	if err != nil {
+		return nil, nil, fmt.Errorf("agent: encrypt Center identity: %w", err)
+	}
+	return sealedCredential, sealedPrivateKey, nil
 }
 
 func (s *Store) Connection(ctx context.Context) (Connection, error) {
 	var connection Connection
-	var sealed []byte
-	err := s.db.QueryRowContext(ctx, `SELECT agent_id, name, center_url, sealed_credential FROM control_plane_connection WHERE id = 1`).Scan(&connection.AgentID, &connection.Name, &connection.CenterURL, &sealed)
+	var sealedCredential, sealedPrivateKey []byte
+	err := s.db.QueryRowContext(ctx, `SELECT agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint FROM control_plane_connection WHERE id = 1`).Scan(&connection.AgentID, &connection.Name, &connection.CenterURL, &sealedCredential, &sealedPrivateKey, &connection.CAFingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Connection{}, errors.New("agent: not enrolled")
 	}
 	if err != nil {
 		return Connection{}, fmt.Errorf("agent: read Center connection: %w", err)
 	}
-	credential, err := secret.Open(s.key, sealed, []byte("agent-control-plane:"+connection.AgentID))
+	credential, err := secret.Open(s.key, sealedCredential, []byte("agent-control-plane:"+connection.AgentID))
 	if err != nil {
 		return Connection{}, fmt.Errorf("agent: decrypt Center credential: %w", err)
 	}
 	connection.Credential = string(credential)
+	privateKey, err := secret.Open(s.key, sealedPrivateKey, []byte("agent-control-plane-key:"+connection.AgentID))
+	if err != nil {
+		return Connection{}, fmt.Errorf("agent: decrypt Center identity: %w", err)
+	}
+	if _, err := controlplane.PublicKey(privateKey); err != nil {
+		return Connection{}, errors.New("agent: Center encryption identity is invalid; enroll the Agent again")
+	}
+	connection.PrivateKey = privateKey
+	if connection.CAFingerprint != "" {
+		if err := validateCAFingerprint(connection.CenterURL, connection.CAFingerprint); err != nil {
+			return Connection{}, err
+		}
+	} else if !loopbackCenterURL(connection.CenterURL) {
+		// Schema-3 Agents acquire and persist the verified CA root before their
+		// first post-upgrade request. New enrollments always have a pin.
+		return connection, nil
+	}
 	return connection, nil
 }
 
@@ -412,20 +672,42 @@ func (s *Store) RecordApplied(ctx context.Context, installation AppliedInstallat
 	if err != nil {
 		return InstallationStatus{}, fmt.Errorf("agent: secrets: %w", err)
 	}
+	if installation.Manifest.ID != "" {
+		if err := catalog.ValidateApp(installation.Manifest); err != nil || !strings.HasSuffix(installation.AppKey, "/"+installation.Manifest.ID) || installation.Version != installation.Manifest.Version {
+			return InstallationStatus{}, errors.New("agent: applied application manifest is invalid")
+		}
+	}
 	configHash := sha256.Sum256(canonicalConfig)
-	sealed, err := secret.Seal(s.key, canonicalSecrets, []byte("agent-instance:"+installation.InstanceID))
+	encodedState, err := json.Marshal(sealedApplicationState{
+		Config: canonicalConfig, Secrets: canonicalSecrets, ServiceAddress: installation.ServiceAddress,
+		Manifest: installation.Manifest, ApplicationRole: installation.ApplicationRole,
+	})
 	if err != nil {
-		return InstallationStatus{}, fmt.Errorf("agent: encrypt secrets: %w", err)
+		return InstallationStatus{}, fmt.Errorf("agent: encode applied application state: %w", err)
+	}
+	sealedState, err := secret.Seal(s.key, encodedState, applicationStateContext(installation.InstanceID))
+	if err != nil {
+		return InstallationStatus{}, fmt.Errorf("agent: encrypt applied application state: %w", err)
 	}
 	now := s.now().UTC()
 	status := InstallationStatus{InstanceID: installation.InstanceID, AppKey: installation.AppKey, Version: installation.Version, ConfigHash: hex.EncodeToString(configHash[:]), AppliedAt: now}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO applied_installations(instance_id, app_key, version, config_json, sealed_secrets, service_address, config_hash, applied_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InstallationStatus{}, fmt.Errorf("agent: begin applied state update: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_installations WHERE app_key = ? AND instance_id <> ?`, installation.AppKey, installation.InstanceID); err != nil {
+		return InstallationStatus{}, fmt.Errorf("agent: replace previous applied state: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO applied_installations(instance_id, app_key, version, sealed_state, config_hash, applied_at)
+		VALUES(?, ?, ?, ?, ?, ?)
 		ON CONFLICT(instance_id) DO UPDATE SET app_key=excluded.app_key, version=excluded.version,
-		config_json=excluded.config_json, sealed_secrets=excluded.sealed_secrets, service_address=excluded.service_address, config_hash=excluded.config_hash,
-		applied_at=excluded.applied_at`, status.InstanceID, status.AppKey, status.Version, canonicalConfig, sealed, installation.ServiceAddress, status.ConfigHash, status.AppliedAt.Format(time.RFC3339Nano))
+		sealed_state=excluded.sealed_state, config_hash=excluded.config_hash, applied_at=excluded.applied_at`, status.InstanceID, status.AppKey, status.Version, sealedState, status.ConfigHash, status.AppliedAt.Format(time.RFC3339Nano))
 	if err != nil {
 		return InstallationStatus{}, fmt.Errorf("agent: record applied state: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return InstallationStatus{}, fmt.Errorf("agent: commit applied state: %w", err)
 	}
 	return status, nil
 }
@@ -453,35 +735,95 @@ func (s *Store) ListApplied(ctx context.Context) ([]InstallationStatus, error) {
 }
 
 func (s *Store) AppliedConfig(ctx context.Context, appKey string) (json.RawMessage, error) {
-	var config []byte
-	err := s.db.QueryRowContext(ctx, `SELECT config_json FROM applied_installations WHERE app_key = ? ORDER BY applied_at DESC LIMIT 1`, appKey).Scan(&config)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, errApplicationNotInstalled
-	}
+	installation, err := s.AppliedInstallation(ctx, appKey)
 	if err != nil {
-		return nil, fmt.Errorf("agent: read applied application: %w", err)
+		return nil, err
 	}
-	return json.RawMessage(config), nil
+	return installation.Config, nil
 }
 
 func (s *Store) AppliedInstallation(ctx context.Context, appKey string) (AppliedInstallation, error) {
 	var value AppliedInstallation
-	var sealed []byte
+	var sealedState []byte
 	var appliedAt string
-	err := s.db.QueryRowContext(ctx, `SELECT instance_id, app_key, version, config_json, sealed_secrets, service_address, config_hash, applied_at FROM applied_installations WHERE app_key = ? ORDER BY applied_at DESC LIMIT 1`, appKey).Scan(&value.InstanceID, &value.AppKey, &value.Version, &value.Config, &sealed, &value.ServiceAddress, &value.ConfigHash, &appliedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT instance_id, app_key, version, sealed_state, config_hash, applied_at FROM applied_installations WHERE app_key = ? ORDER BY applied_at DESC LIMIT 1`, appKey).Scan(&value.InstanceID, &value.AppKey, &value.Version, &sealedState, &value.ConfigHash, &appliedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AppliedInstallation{}, errApplicationNotInstalled
 	}
 	if err != nil {
 		return AppliedInstallation{}, fmt.Errorf("agent: read applied application: %w", err)
 	}
-	plain, err := secret.Open(s.key, sealed, []byte("agent-instance:"+value.InstanceID))
+	state, err := s.openApplicationState(value.InstanceID, sealedState)
 	if err != nil {
-		return AppliedInstallation{}, fmt.Errorf("agent: decrypt applied application: %w", err)
+		return AppliedInstallation{}, err
 	}
-	value.Secrets = plain
-	value.AppliedAt, _ = time.Parse(time.RFC3339Nano, appliedAt)
+	value.Config = state.Config
+	value.Secrets = state.Secrets
+	value.ServiceAddress = state.ServiceAddress
+	value.Manifest = state.Manifest
+	value.ApplicationRole = state.ApplicationRole
+	if value.Manifest.ID != "" {
+		if catalog.ValidateApp(value.Manifest) != nil || !strings.HasSuffix(value.AppKey, "/"+value.Manifest.ID) || value.Version != value.Manifest.Version {
+			return AppliedInstallation{}, errors.New("agent: persisted application manifest is invalid")
+		}
+	}
+	value.AppliedAt, err = time.Parse(time.RFC3339Nano, appliedAt)
+	if err != nil {
+		return AppliedInstallation{}, fmt.Errorf("agent: parse applied application time: %w", err)
+	}
 	return value, nil
+}
+
+func (s *Store) openApplicationState(instanceID string, sealedState []byte) (sealedApplicationState, error) {
+	plain, err := secret.Open(s.key, sealedState, applicationStateContext(instanceID))
+	if err != nil {
+		return sealedApplicationState{}, fmt.Errorf("agent: decrypt applied application state: %w", err)
+	}
+	var state sealedApplicationState
+	if json.Unmarshal(plain, &state) != nil {
+		return sealedApplicationState{}, errors.New("agent: applied application state is invalid")
+	}
+	if _, err := canonicalJSONObject(state.Config); err != nil {
+		return sealedApplicationState{}, errors.New("agent: applied application configuration is invalid")
+	}
+	if _, err := canonicalJSONObject(state.Secrets); err != nil {
+		return sealedApplicationState{}, errors.New("agent: applied application secrets are invalid")
+	}
+	return state, nil
+}
+
+// RestorableInstallations returns the encrypted last-known-good application
+// states in deterministic order. Secret bytes are decrypted only into the
+// returned task material and never written to logs or Docker configuration.
+func (s *Store) RestorableInstallations(ctx context.Context) ([]AppliedInstallation, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT app_key FROM applied_installations ORDER BY app_key`)
+	if err != nil {
+		return nil, fmt.Errorf("agent: list restorable applications: %w", err)
+	}
+	defer rows.Close()
+	var appKeys []string
+	for rows.Next() {
+		var appKey string
+		if err := rows.Scan(&appKey); err != nil {
+			return nil, fmt.Errorf("agent: scan restorable application: %w", err)
+		}
+		appKeys = append(appKeys, appKey)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("agent: list restorable applications: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("agent: close restorable application list: %w", err)
+	}
+	installations := make([]AppliedInstallation, 0, len(appKeys))
+	for _, appKey := range appKeys {
+		installation, err := s.AppliedInstallation(ctx, appKey)
+		if err != nil {
+			return nil, err
+		}
+		installations = append(installations, installation)
+	}
+	return installations, nil
 }
 
 func (s *Store) RemoveApplied(ctx context.Context, appKey string) error {
@@ -492,15 +834,15 @@ func (s *Store) RemoveApplied(ctx context.Context, appKey string) error {
 }
 
 func (s *Store) ReadAppliedSecrets(ctx context.Context, instanceID string) (json.RawMessage, error) {
-	var sealed []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT sealed_secrets FROM applied_installations WHERE instance_id = ?`, instanceID).Scan(&sealed); err != nil {
+	var sealedState []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT sealed_state FROM applied_installations WHERE instance_id = ?`, instanceID).Scan(&sealedState); err != nil {
 		return nil, fmt.Errorf("agent: read applied secrets: %w", err)
 	}
-	plain, err := secret.Open(s.key, sealed, []byte("agent-instance:"+instanceID))
+	state, err := s.openApplicationState(instanceID, sealedState)
 	if err != nil {
-		return nil, fmt.Errorf("agent: decrypt applied secrets: %w", err)
+		return nil, err
 	}
-	return plain, nil
+	return state.Secrets, nil
 }
 
 func canonicalJSONObject(raw json.RawMessage) ([]byte, error) {

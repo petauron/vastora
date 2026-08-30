@@ -13,23 +13,41 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 )
 
+func testConnection(t *testing.T, agentID, name, centerURL, credential string) Connection {
+	t.Helper()
+	privateKey, _, err := controlplane.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := ""
+	if strings.HasPrefix(centerURL, "https://") {
+		fingerprint = strings.Repeat("a", 64)
+	}
+	return Connection{AgentID: agentID, Name: name, CenterURL: centerURL, Credential: credential, PrivateKey: privateKey, CAFingerprint: fingerprint}
+}
+
 type fakeHostDecommissioner struct {
-	prepared   bool
-	scheduled  bool
-	deleteData bool
+	prepared      bool
+	scheduled     bool
+	deleteData    bool
+	prepareCalls  int
+	scheduleCalls int
 }
 
 func (d *fakeHostDecommissioner) Prepare(_ context.Context, deleteData bool) error {
 	d.prepared = true
+	d.prepareCalls++
 	d.deleteData = deleteData
 	return nil
 }
 
 func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, deleteData bool) error {
 	d.scheduled = true
+	d.scheduleCalls++
 	if deleteData != d.deleteData {
 		return errors.New("delete-data changed between cleanup phases")
 	}
@@ -43,11 +61,12 @@ func TestEnrollmentReportsNativePlatform(t *testing.T) {
 			Version         string `json:"version"`
 			OperatingSystem string `json:"operatingSystem"`
 			Architecture    string `json:"architecture"`
+			PublicKey       []byte `json:"publicKey"`
 		}
 		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/agents/enroll" || json.NewDecoder(request.Body).Decode(&input) != nil {
 			t.Fatalf("unexpected enrollment request: %s %s", request.Method, request.URL.Path)
 		}
-		if input.Token != "one-time-token" || input.Version != Version || input.OperatingSystem != runtime.GOOS || input.Architecture != runtime.GOARCH {
+		if input.Token != "one-time-token" || input.Version != Version || input.OperatingSystem != runtime.GOOS || input.Architecture != runtime.GOARCH || len(input.PublicKey) != controlplane.KeySize {
 			t.Fatalf("enrollment platform payload = %#v", input)
 		}
 		response.Header().Set("Content-Type", "application/json")
@@ -59,7 +78,7 @@ func TestEnrollmentReportsNativePlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := (Client{HTTPClient: server.Client()}).Enroll(context.Background(), store, server.URL, "one-time-token"); err != nil {
+	if _, err := (Client{HTTPClient: server.Client()}).Enroll(context.Background(), store, server.URL, "one-time-token", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -70,18 +89,19 @@ func TestMigrateEnrollmentReplacesOnlyCenterConnection(t *testing.T) {
 		_, _ = response.Write([]byte(`{"id":"new-agent","credential":"new-credential","name":"moved-node","roles":["worker","gateway"],"capabilities":{"docker":true,"gateway":true}}`))
 	}))
 	defer server.Close()
-	store, err := Open(t.TempDir())
+	directory := t.TempDir()
+	store, err := Open(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "old-agent", Name: "old-node", CenterURL: "https://old-center.example.com", Credential: "old-credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "old-agent", "old-node", "https://old-center.example.com", "old-credential")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "existing-app", AppKey: "vastora-official/cpa", Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`), ServiceAddress: "100.64.0.2"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Client{HTTPClient: server.Client()}).MigrateEnrollment(context.Background(), store, server.URL, "one-time-token"); err != nil {
+	if _, err := (Client{HTTPClient: server.Client()}).MigrateEnrollment(context.Background(), store, server.URL, "one-time-token", ""); err != nil {
 		t.Fatal(err)
 	}
 	connection, err := store.Connection(context.Background())
@@ -204,7 +224,7 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	state := gateway.DesiredState{Revision: 3, Listeners: []gateway.Listener{{Kind: "lan", Address: "192.0.2.10", HTTPPort: 80, HTTPSPort: 443}}}
@@ -239,12 +259,44 @@ func TestTaskClaimUsesBoundedLongPoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	task, err := (Client{}).claimNextTask(context.Background(), store, 10*time.Second)
 	if err != nil || task != nil {
 		t.Fatalf("unexpected task claim result: task=%#v err=%v", task, err)
+	}
+}
+
+func TestTaskClaimDecryptsEnvelopeBoundToAgentAndAttempt(t *testing.T) {
+	connection := testConnection(t, "agent-1", "test", "http://127.0.0.1", "credential")
+	publicKey, err := controlplane.PublicKey(connection.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: "application.apply", ID: "task-1", Attempt: 3, Secrets: json.RawMessage(`{"token":"private"}`)}
+	plaintext, _ := json.Marshal(task)
+	envelope, err := controlplane.Seal(publicKey, plaintext, controlplane.TaskAdditionalData(connection.AgentID, task.ID, task.Attempt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(map[string]any{"task": map[string]any{"id": task.ID, "attempt": task.Attempt, "envelope": envelope}})
+	}))
+	defer server.Close()
+	connection.CenterURL = server.URL
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), connection); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := (Client{}).claimNextTask(context.Background(), store, 0)
+	if err != nil || claimed == nil || claimed.ID != task.ID || string(claimed.Secrets) != string(task.Secrets) {
+		t.Fatalf("decrypted task=%#v err=%v", claimed, err)
 	}
 }
 
@@ -274,7 +326,7 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
@@ -309,7 +361,7 @@ func TestInitialHeartbeatRequestsRealityGuardRevalidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := (Client{}).heartbeatWithStartup(context.Background(), store, true); err != nil {
@@ -346,7 +398,7 @@ func TestHeartbeatSwitchesToVerifiedCenterURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: oldCenter.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", oldCenter.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	observationErr, heartbeatErr := (Client{}).heartbeat(context.Background(), store)
@@ -371,7 +423,7 @@ func TestHeartbeatKeepsExplicitHostOnlyCenterChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	connection := Connection{AgentID: "agent-1", Name: "center-host", CenterURL: "http://127.0.0.1:8080", Credential: "credential"}
+	connection := testConnection(t, "agent-1", "center-host", "http://127.0.0.1:8080", "credential")
 	if err := store.SaveConnection(context.Background(), connection); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +456,7 @@ func TestHeartbeatKeepsCurrentCenterWhenDesiredURLIsNotReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: oldCenter.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", oldCenter.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	_, heartbeatErr := (Client{}).heartbeat(context.Background(), store)
@@ -444,7 +496,7 @@ func TestHeartbeatAppliesCenterTailscaleIsolationState(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "test", CenterURL: server.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	var applied TailscaleIsolationDesiredState
@@ -484,19 +536,118 @@ func TestAgentDecommissionSchedulesFinalRemovalBeforeAcknowledgement(t *testing.
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
-	store, err := Open(t.TempDir())
+	directory := t.TempDir()
+	store, err := Open(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
-	if err := store.SaveConnection(context.Background(), Connection{AgentID: "agent-1", Name: "node", CenterURL: server.URL, Credential: "credential"}); err != nil {
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
 	decommissioner := &fakeHostDecommissioner{}
 	(Client{HTTPClient: server.Client(), Decommissioner: decommissioner}).processTask(context.Background(), store, DeploymentTask{
 		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 1, DeleteData: true,
 	}, func(err error) { t.Errorf("task error: %v", err) })
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	(Client{HTTPClient: server.Client(), Decommissioner: decommissioner}).processTask(context.Background(), store, DeploymentTask{
+		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 1, DeleteData: true,
+	}, func(err error) { t.Errorf("duplicate task error: %v", err) })
 	if !decommissioner.prepared || !decommissioner.scheduled || !acknowledged {
 		t.Fatalf("decommission lifecycle incomplete: %#v acknowledged=%v", decommissioner, acknowledged)
+	}
+	if decommissioner.prepareCalls != 1 || decommissioner.scheduleCalls != 1 {
+		t.Fatalf("duplicate delivery repeated the external effect: %#v", decommissioner)
+	}
+}
+
+func TestProcessingReceiptAfterRestartFailsClosedWithoutRepeatingEffect(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: "application.apply", ID: "uncertain-task", Attempt: 1, AppKey: cpaKey, Operation: "uninstall"}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("initial receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task.Attempt = 2
+	completion, err := store.PrepareTaskReceipt(context.Background(), task)
+	if err != nil || completion == nil || completion.Error == "" || completion.Attempt != 2 || !completion.ReconciliationRequired {
+		t.Fatalf("recovered receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if fenced, err := store.HasProcessingTaskReceipts(context.Background()); err != nil || !fenced {
+		t.Fatalf("unknown task outcome did not keep offline restore fenced: fenced=%t err=%v", fenced, err)
+	}
+	task.Attempt = 3
+	task.Reconcile = true
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("explicit reconciliation did not reopen the same task: completion=%#v err=%v", completion, err)
+	}
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if fenced, err := store.HasProcessingTaskReceipts(context.Background()); err != nil || fenced {
+		t.Fatalf("successful reconciliation did not release offline restore: fenced=%t err=%v", fenced, err)
+	}
+}
+
+func TestStoredApplicationCompletionKeepsExecutedRuntimeGeneration(t *testing.T) {
+	var received struct {
+		ApplicationRuntimeGeneration int `json:"applicationRuntimeGeneration"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"completed":true}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: "application.apply", ID: "lost-result", Attempt: 1, AppKey: cpaKey, Operation: "uninstall", RequiredRuntimeGeneration: 1}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, ApplicationRuntimeGeneration: 1}); err != nil {
+		t.Fatal(err)
+	}
+	task.Attempt = 2
+	completion, err := store.PrepareTaskReceipt(context.Background(), task)
+	if err != nil || completion == nil || completion.ApplicationRuntimeGeneration != 1 {
+		t.Fatalf("stored completion = %#v, err=%v", completion, err)
+	}
+	if err := (Client{}).sendTaskCompletion(context.Background(), store, *completion); err != nil {
+		t.Fatal(err)
+	}
+	if received.ApplicationRuntimeGeneration != 1 {
+		t.Fatalf("replayed runtime generation = %d, want 1", received.ApplicationRuntimeGeneration)
 	}
 }

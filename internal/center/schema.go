@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 27
+const centerSchemaVersion = 30
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -116,6 +116,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			roles_json BLOB NOT NULL,
 			capabilities_json BLOB NOT NULL,
 			bootstrap_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
+			ca_fingerprint TEXT NOT NULL DEFAULT '',
 			expires_at TEXT NOT NULL,
 			used_at TEXT
 		)`,
@@ -123,6 +124,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			credential_hash BLOB NOT NULL UNIQUE,
+			x25519_public_key BLOB NOT NULL DEFAULT X'',
+			credential_revoked_at TEXT NOT NULL DEFAULT '',
 			version TEXT NOT NULL,
 			operating_system TEXT NOT NULL DEFAULT 'linux' CHECK(operating_system = 'linux'),
 			architecture TEXT NOT NULL DEFAULT 'amd64' CHECK(architecture IN ('amd64', 'arm64')),
@@ -422,10 +425,12 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			config_json BLOB NOT NULL,
 			service_address TEXT NOT NULL DEFAULT '',
 			secret_id TEXT REFERENCES secrets(id),
+			registry_credential_id TEXT REFERENCES registry_credentials(id) ON DELETE RESTRICT,
 			operation TEXT NOT NULL CHECK(operation IN ('install', 'upgrade', 'configure', 'uninstall')),
 			delete_data INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'succeeded', 'failed')),
 			reconciliation_required INTEGER NOT NULL DEFAULT 0 CHECK(reconciliation_required IN (0, 1)),
+			reconciliation_requested INTEGER NOT NULL DEFAULT 0 CHECK(reconciliation_requested IN (0, 1)),
 			runtime_generation INTEGER NOT NULL DEFAULT 0,
 			attempt INTEGER NOT NULL DEFAULT 0,
 			lease_expires_at TEXT NOT NULL DEFAULT '',

@@ -103,7 +103,14 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "runtime-migration", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.81", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.81", LANAddress: "10.0.0.81", EnabledKinds: []string{networking.KindLAN}})
 	applicationID := installCPA(t, store, node, "10.0.0.81")
-	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET runtime_generation = 0 WHERE id = ?`, node.ID); err != nil {
+	registryCredential, err := store.CreateRegistryCredential(ctx, "docker.io", "runtime-robot", "runtime-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET registry_credential_id = ? WHERE application_id = ? AND state = 'succeeded'`, registryCredential.ID, applicationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "downgraded-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: 0}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0 WHERE id = ?`, applicationID); err != nil {
@@ -116,7 +123,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if task.Kind != "application.apply" || task.Operation != "configure" || task.AppKey != cpaAppKey || task.ServiceAddress != "10.0.0.81" || len(task.Secrets) == 0 {
+	if task.Kind != "application.apply" || task.Operation != "configure" || task.AppKey != cpaAppKey || task.ServiceAddress != "10.0.0.81" || len(task.Secrets) == 0 || task.RegistryCredential == nil || task.RegistryCredential.Password != "runtime-token" {
 		t.Fatalf("unexpected runtime migration task: %#v", task)
 	}
 	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.81"}]}`)
@@ -135,6 +142,93 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	}
 	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task != nil {
 		t.Fatalf("runtime migration was queued more than once: task=%#v err=%v", task, err)
+	}
+}
+
+func TestAgentRuntimeGenerationFencesClaimsAndResultEvidence(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "runtime-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.83", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.83", LANAddress: "10.0.0.83", EnabledKinds: []string{networking.KindLAN}})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "downgraded-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task != nil {
+		t.Fatalf("generation-zero Agent claim = %#v, err=%v", task, err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "current-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.83"}]}`)
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, 0); err == nil || !strings.Contains(err.Error(), "runtime generation") {
+		t.Fatalf("generation-zero result was accepted: %v", err)
+	}
+	var state string
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM deployments WHERE id = ?`, deployment.ID).Scan(&state); err != nil || state != "running" {
+		t.Fatalf("rejected result changed deployment: state=%q err=%v", state, err)
+	}
+}
+
+func TestNewerAgentCompletesOlderPendingRuntimeTaskAtExecutedGeneration(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "runtime-forward-executor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.85", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.85", LANAddress: "10.0.0.85", EnabledKinds: []string{networking.KindLAN}})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET runtime_generation = 0 WHERE id = ?`, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if task.RequiredRuntimeGeneration != 0 {
+		t.Fatalf("required runtime generation = %d", task.RequiredRuntimeGeneration)
+	}
+	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.85"}]}`)
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	var generation int
+	if err := store.db.QueryRowContext(ctx, `SELECT runtime_generation FROM applications WHERE id = ?`, deployment.ApplicationID).Scan(&generation); err != nil || generation != platform.ApplicationRuntimeGeneration {
+		t.Fatalf("application executed runtime generation = %d, err=%v", generation, err)
+	}
+}
+
+func TestAgentRuntimeMigrationRetriesOnLaterHeartbeatAfterBlockedQueue(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "runtime-level-trigger", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.84", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.84", LANAddress: "10.0.0.84", EnabledKinds: []string{networking.KindLAN}})
+	applicationID := installCPA(t, store, node, "10.0.0.84")
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET runtime_generation = 0 WHERE id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0 WHERE id = ?`, applicationID); err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heartbeat := NodeHeartbeat{Version: "new-runtime", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET state = 'failed' WHERE id = ?`, blocker.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE application_id = ? AND state = 'pending' AND runtime_generation = ?`, applicationID, platform.ApplicationRuntimeGeneration).Scan(&queued); err != nil || queued != 1 {
+		t.Fatalf("level-triggered runtime migrations = %d, err=%v", queued, err)
 	}
 }
 
@@ -541,7 +635,7 @@ func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabiliti
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64")
+	node, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +646,7 @@ func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabiliti
 	if capabilities.Gateway {
 		roles = append(roles, "gateway")
 	}
-	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: roles, Capabilities: capabilities, NetworkCandidates: candidates, GatewayHealthy: capabilities.Gateway}); err != nil {
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: roles, Capabilities: capabilities, NetworkCandidates: candidates, GatewayHealthy: capabilities.Gateway, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, profile); err != nil {
@@ -884,7 +978,7 @@ func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {
 	if enrollment.SiteID != site.ID {
 		t.Fatalf("enrollment site = %q, want %q", enrollment.SiteID, site.ID)
 	}
-	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64"); err != nil {
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t)); err != nil {
 		t.Fatal(err)
 	}
 	agents, err := store.ListAgents(ctx)
@@ -894,7 +988,7 @@ func TestAgentEnrollmentTargetsSelectedSite(t *testing.T) {
 	if len(agents) != 1 || agents[0].SiteID != site.ID || agents[0].Name != "sg-node" || !agents[0].Capabilities.Docker || !containsString(agents[0].Roles, "worker") {
 		t.Fatalf("Agent did not join selected Site: %#v", agents)
 	}
-	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64"); err == nil {
+	if _, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t)); err == nil {
 		t.Fatal("single-use enrollment token was accepted twice")
 	}
 }

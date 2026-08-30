@@ -8,8 +8,13 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/distribution/reference"
+	"github.com/moby/moby/api/pkg/authconfig"
+	"github.com/moby/moby/api/types/registry"
+	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/catalog"
 )
 
@@ -117,4 +122,58 @@ func declaredImage(manifest catalog.AppManifest, name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("agent: image %q is missing from the signed manifest", name)
+}
+
+func pullDeclaredImage(ctx context.Context, docker *client.Client, task DeploymentTask, name string) (string, error) {
+	imageReference, err := declaredImage(task.Manifest, name)
+	if err != nil {
+		return "", err
+	}
+	if task.OfflineRestore {
+		if _, err := docker.ImageInspect(ctx, imageReference); err != nil {
+			return "", fmt.Errorf("agent: offline restore requires cached image %s: %w", imageReference, err)
+		}
+		return imageReference, nil
+	}
+	options, err := declaredImagePullOptions(task, imageReference)
+	if err != nil {
+		return "", err
+	}
+	pull, err := docker.ImagePull(ctx, imageReference, options)
+	if err != nil {
+		return "", redactRegistryPullError(err, task)
+	}
+	defer pull.Close()
+	if err := pull.Wait(ctx); err != nil {
+		return "", redactRegistryPullError(err, task)
+	}
+	return imageReference, nil
+}
+
+func redactRegistryPullError(err error, task DeploymentTask) error {
+	message := err.Error()
+	if task.RegistryCredential != nil && task.RegistryCredential.Password != "" {
+		message = strings.ReplaceAll(message, task.RegistryCredential.Password, "[redacted]")
+	}
+	return errors.New("agent: pull declared image: " + message)
+}
+
+func declaredImagePullOptions(task DeploymentTask, imageReference string) (client.ImagePullOptions, error) {
+	options := client.ImagePullOptions{}
+	if task.RegistryCredential != nil {
+		named, parseErr := reference.ParseNormalizedNamed(imageReference)
+		if parseErr != nil || !strings.EqualFold(reference.Domain(named), strings.TrimSpace(task.RegistryCredential.Host)) {
+			return client.ImagePullOptions{}, errors.New("agent: Registry credential does not match the declared image authority")
+		}
+		registryAuth, err := authconfig.Encode(registry.AuthConfig{
+			ServerAddress: task.RegistryCredential.Host,
+			Username:      task.RegistryCredential.Username,
+			Password:      task.RegistryCredential.Password,
+		})
+		if err != nil {
+			return client.ImagePullOptions{}, errors.New("agent: encode ephemeral Registry credential")
+		}
+		options.RegistryAuth = registryAuth
+	}
+	return options, nil
 }

@@ -1,7 +1,9 @@
 package center
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
@@ -24,12 +27,13 @@ type AgentEnrollment struct {
 }
 
 type AgentEnrollmentSpec struct {
-	SiteID       string
-	Name         string
-	CenterURL    string
-	Gateway      bool
-	Tunnel       bool
-	UseHeadscale bool
+	SiteID        string
+	Name          string
+	CenterURL     string
+	Gateway       bool
+	Tunnel        bool
+	UseHeadscale  bool
+	CAFingerprint string
 }
 
 type AgentEnrollmentInstallProfile struct {
@@ -40,6 +44,7 @@ type AgentEnrollmentInstallProfile struct {
 	HeadscaleCommand   string
 	HeadscaleURL       string
 	HeadscaleAddresses []string
+	CAFingerprint      string
 }
 
 type AgentCredential struct {
@@ -68,6 +73,7 @@ type AgentView struct {
 	NetworkProfile       *networking.Profile    `json:"networkProfile,omitempty"`
 	GatewayHealthy       bool                   `json:"gatewayHealthy"`
 	TailscaleOwnership   string                 `json:"tailscaleOwnership"`
+	CredentialRevoked    bool                   `json:"credentialRevoked"`
 }
 
 func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
@@ -79,6 +85,13 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 	centerURL, err := NormalizeAgentConnectURL(spec.CenterURL)
 	if err != nil {
 		return AgentEnrollment{}, err
+	}
+	spec.CAFingerprint = strings.ToLower(strings.TrimSpace(spec.CAFingerprint))
+	if spec.CAFingerprint != "" {
+		decoded, decodeErr := hex.DecodeString(spec.CAFingerprint)
+		if decodeErr != nil || len(decoded) != sha256.Size {
+			return AgentEnrollment{}, errors.New("center: Agent CA fingerprint must be a SHA-256 public-key fingerprint")
+		}
 	}
 	roles := []string{"worker"}
 	if spec.Gateway {
@@ -136,7 +149,7 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		}
 		bootstrapSecretID = sql.NullString{String: secretID, Valid: true}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, bootstrap_secret_id, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash(token), spec.SiteID, spec.Name, centerURL, rolesJSON, capabilitiesJSON, bootstrapSecretID, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, bootstrap_secret_id, ca_fingerprint, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash(token), spec.SiteID, spec.Name, centerURL, rolesJSON, capabilitiesJSON, bootstrapSecretID, spec.CAFingerprint, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: create agent enrollment: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -154,7 +167,7 @@ func (s *Store) AgentEnrollmentInstallProfile(ctx context.Context, token string)
 	var rolesJSON, capabilitiesJSON []byte
 	var expiresAt string
 	var usedAt, bootstrapSecretID sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT name, center_url, roles_json, capabilities_json, bootstrap_secret_id, expires_at, used_at FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(token)).Scan(&profile.Name, &profile.CenterURL, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID, &expiresAt, &usedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT name, center_url, roles_json, capabilities_json, bootstrap_secret_id, ca_fingerprint, expires_at, used_at FROM agent_enrollment_tokens WHERE token_hash = ?`, tokenHash(token)).Scan(&profile.Name, &profile.CenterURL, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID, &profile.CAFingerprint, &expiresAt, &usedAt)
 	if errors.Is(err, sql.ErrNoRows) || usedAt.Valid {
 		return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token is invalid")
 	}
@@ -212,10 +225,13 @@ func agentEnrollmentSecretContext(token string) string {
 	return "agent-enrollment:" + hex.EncodeToString(tokenHash(token))
 }
 
-func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, operatingSystem, architecture string) (AgentCredential, error) {
+func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, operatingSystem, architecture string, publicKey []byte) (AgentCredential, error) {
 	version = strings.TrimSpace(version)
 	if version == "" || len(version) > 128 {
 		return AgentCredential{}, errors.New("center: agent version is required")
+	}
+	if err := controlplane.ValidatePublicKey(publicKey); err != nil {
+		return AgentCredential{}, errors.New("center: valid Agent X25519 public key is required")
 	}
 	target, err := platform.Parse(operatingSystem, architecture)
 	if err != nil {
@@ -253,7 +269,7 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, opera
 		return AgentCredential{}, err
 	}
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, version, operating_system, architecture, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`, id, name, tokenHash(credential), version, target.OS, target.Architecture, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID, rolesJSON, capabilitiesJSON); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agents(id, name, credential_hash, x25519_public_key, version, operating_system, architecture, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES(?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`, id, name, tokenHash(credential), append([]byte(nil), publicKey...), version, target.OS, target.Architecture, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), siteID, rolesJSON, capabilitiesJSON); err != nil {
 		return AgentCredential{}, fmt.Errorf("center: save agent: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE agent_enrollment_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL`, now.Format(time.RFC3339Nano), tokenHash(enrollmentToken))
@@ -275,7 +291,26 @@ func (s *Store) EnrollAgent(ctx context.Context, enrollmentToken, version, opera
 	return AgentCredential{ID: id, Credential: credential, Name: name, Roles: profile.Roles, Capabilities: profile.Capabilities}, nil
 }
 
+// RevokeAgentCredential immediately closes the Agent control channel without
+// changing workload or topology state. It is intentionally independent from
+// DisableAgent, whose business preconditions may require applications to stop.
+func (s *Store) RevokeAgentCredential(ctx context.Context, agentID string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE agents SET credential_revoked_at = ? WHERE id = ? AND status = 'active' AND credential_revoked_at = ''`, s.now().UTC().Format(time.RFC3339Nano), strings.TrimSpace(agentID))
+	if err != nil {
+		return fmt.Errorf("center: revoke Agent credential: %w", err)
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("center: active Agent credential was not found")
+	}
+	s.taskChanges.notify("agent:" + strings.TrimSpace(agentID))
+	return nil
+}
+
 func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string, heartbeat NodeHeartbeat) error {
+	if len(heartbeat.PublicKey) != 0 && controlplane.ValidatePublicKey(heartbeat.PublicKey) != nil {
+		return errors.New("center: Agent heartbeat requires its X25519 public key")
+	}
 	if heartbeat.AppliedInstallations < 0 || heartbeat.AppliedInstallations > 1_000_000 {
 		return errors.New("center: invalid applied installation count")
 	}
@@ -347,10 +382,17 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	now := s.now().UTC()
 	publicationCleanups := []publicationCleanup{}
 	var previousRuntimeGeneration int
-	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation FROM agents WHERE id = ?`, id).Scan(&previousRuntimeGeneration); err != nil {
+	var storedPublicKey []byte
+	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, x25519_public_key FROM agents WHERE id = ?`, id).Scan(&previousRuntimeGeneration, &storedPublicKey); err != nil {
 		return fmt.Errorf("center: read Agent runtime generation: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agents SET version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = CASE WHEN runtime_generation < ? THEN ? ELSE runtime_generation END, tailscale_ownership = ?, last_seen_at = ? WHERE id = ?`, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), id); err != nil {
+	if len(storedPublicKey) == 0 && len(heartbeat.PublicKey) == 0 {
+		return errors.New("center: Agent heartbeat requires its X25519 public key")
+	}
+	if len(storedPublicKey) != 0 && len(heartbeat.PublicKey) != 0 && !bytes.Equal(storedPublicKey, heartbeat.PublicKey) {
+		return errors.New("center: Agent X25519 identity changed; revoke and enroll it again")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = ?, tailscale_ownership = ?, last_seen_at = ? WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_network_candidates WHERE agent_id = ?`, id); err != nil {
@@ -373,6 +415,10 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if heartbeat.ApplicationRuntimeGeneration > previousRuntimeGeneration {
 		if err := s.queueApplicationRuntimeMigration(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
+			return err
+		}
+	} else if heartbeat.ApplicationRuntimeGeneration > 0 {
+		if err := s.queueRuntimeApplicationDeployments(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
 			return err
 		}
 	}
@@ -494,7 +540,7 @@ func invalidateUnusableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID s
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, tailscale_ownership FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, tailscale_ownership, credential_revoked_at <> '' FROM agents ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
@@ -504,7 +550,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		var enrolledAt, lastSeenAt string
 		var rolesJSON, capabilitiesJSON []byte
 		var gatewayHealthy int
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.TailscaleOwnership); err != nil {
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.TailscaleOwnership, &agent.CredentialRevoked); err != nil {
 			return nil, fmt.Errorf("center: scan agent: %w", err)
 		}
 		var err error
@@ -516,7 +562,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		if err != nil {
 			return nil, fmt.Errorf("center: parse agent heartbeat time: %w", err)
 		}
-		agent.Connected = agent.Status == "active" && agent.LastSeenAt.After(s.now().Add(-45*time.Second))
+		agent.Connected = agent.Status == "active" && !agent.CredentialRevoked && agent.LastSeenAt.After(s.now().Add(-45*time.Second))
 		agent.GatewayHealthy = gatewayHealthy == 1
 		if json.Unmarshal(rolesJSON, &agent.Roles) != nil || json.Unmarshal(capabilitiesJSON, &agent.Capabilities) != nil {
 			return nil, errors.New("center: invalid stored Agent capabilities")

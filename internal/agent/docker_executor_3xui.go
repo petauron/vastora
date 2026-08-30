@@ -33,10 +33,6 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 	if task.Manifest.ID != "3x-ui" || task.Manifest.Version != "3.6.0" {
 		return "", errors.New("agent: unsupported official 3x-ui package")
 	}
-	imageRef, err := declaredImage(task.Manifest, "3x-ui")
-	if err != nil {
-		return "", err
-	}
 	settings, err := decodeThreeXUIConfig(task.Config)
 	if err != nil {
 		return "", err
@@ -73,12 +69,10 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 		}
 		return token, nil
 	}
-	pull, err := docker.ImagePull(ctx, imageRef, client.ImagePullOptions{})
+	imageRef, err := pullDeclaredImage(ctx, docker, task, "3x-ui")
 	if err != nil {
 		return "", fmt.Errorf("agent: pull 3x-ui image: %w", err)
 	}
-	_, _ = io.Copy(io.Discard, pull)
-	_ = pull.Close()
 	exposedPorts, portBindings, err := threeXUIPorts(bindAddress, settings.PanelPort, task.ApplicationRole)
 	if err != nil {
 		return "", err
@@ -113,7 +107,7 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias),
 		Name:             threeXUICandidateContainer,
 	}
-	return replaceThreeXUIContainer(ctx, docker, createOptions, func(containerID string) (string, error) {
+	return replaceThreeXUIContainer(ctx, docker, createOptions, !task.OfflineRestore, func(containerID string) (string, error) {
 		if err := configureThreeXUI(ctx, docker, containerID, bindAddress, settings.PanelPort, credentials); err != nil {
 			return "", err
 		}
