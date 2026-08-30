@@ -957,7 +957,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		err = deferTaskUntilReconciled(err)
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+		_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
 		if err != nil && committedThreeXUI {
 			err = deferTaskUntilReconciled(err)
 		}

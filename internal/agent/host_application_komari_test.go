@@ -117,7 +117,7 @@ func TestApplicationExecutorUsesNativeKomariWithoutDocker(t *testing.T) {
 	if host.applied != 1 || host.removed != 0 {
 		t.Fatalf("native Komari calls after install = apply:%d remove:%d", host.applied, host.removed)
 	}
-	if _, err := executor.Deploy(context.Background(), DeploymentTask{ID: "komari-uninstall", AppKey: komariKey, Operation: "uninstall"}); err != nil {
+	if _, err := executor.Deploy(context.Background(), DeploymentTask{ID: "komari-uninstall", ApplicationID: "komari-application", AppKey: komariKey, Operation: "uninstall"}); err != nil {
 		t.Fatal(err)
 	}
 	if host.removed != 1 {
@@ -127,7 +127,7 @@ func TestApplicationExecutorUsesNativeKomariWithoutDocker(t *testing.T) {
 
 func komariTestTask(downloadURL, digest string) DeploymentTask {
 	return DeploymentTask{
-		ID: "komari-install", AppKey: komariKey, Operation: "install",
+		ID: "komari-install", ApplicationID: "komari-application", AppKey: komariKey, Operation: "install",
 		Manifest: catalog.AppManifest{
 			ID: "komari-agent", Version: "1.2.60", License: "MIT", HostAccess: true,
 			Name:        catalog.LocalizedText{English: "Komari Agent", SimplifiedChinese: "Komari 探针"},
@@ -178,7 +178,7 @@ func TestApplicationRestoreContinuesPastLegacyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
-	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
 		t.Fatal(err)
 	}
 	host := &fakeHostApplicationManager{}

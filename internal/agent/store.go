@@ -35,6 +35,7 @@ type Store struct {
 
 type AppliedInstallation struct {
 	InstanceID      string              `json:"instanceId"`
+	ApplicationID   string              `json:"applicationId"`
 	AppKey          string              `json:"appKey"`
 	Version         string              `json:"version"`
 	Config          json.RawMessage     `json:"config"`
@@ -47,6 +48,7 @@ type AppliedInstallation struct {
 }
 
 type sealedApplicationState struct {
+	ApplicationID   string              `json:"applicationId"`
 	Config          json.RawMessage     `json:"config"`
 	Secrets         json.RawMessage     `json:"secrets"`
 	ServiceAddress  string              `json:"serviceAddress"`
@@ -743,7 +745,7 @@ func (s *Store) RecordApplied(ctx context.Context, installation AppliedInstallat
 	}
 	configHash := sha256.Sum256(canonicalConfig)
 	encodedState, err := json.Marshal(sealedApplicationState{
-		Config: canonicalConfig, Secrets: canonicalSecrets, ServiceAddress: installation.ServiceAddress,
+		ApplicationID: installation.ApplicationID, Config: canonicalConfig, Secrets: canonicalSecrets, ServiceAddress: installation.ServiceAddress,
 		Manifest: installation.Manifest, ApplicationRole: installation.ApplicationRole,
 	})
 	if err != nil {
@@ -822,6 +824,7 @@ func (s *Store) AppliedInstallation(ctx context.Context, appKey string) (Applied
 		return AppliedInstallation{}, err
 	}
 	value.Config = state.Config
+	value.ApplicationID = state.ApplicationID
 	value.Secrets = state.Secrets
 	value.ServiceAddress = state.ServiceAddress
 	value.Manifest = state.Manifest

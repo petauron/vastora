@@ -15,8 +15,7 @@ const (
 	threeXUICleanupContainer   = threeXUIContainer + "-cleanup"
 	threeXUIDurableSnapshot    = "/.vastora-3x-ui-rollback"
 	threeXUIVolumeStateLabel   = "io.vastora.3x-ui.database-state"
-	threeXUIVolumeOwnerLabel   = "io.vastora.3x-ui.database-volume"
-	threeXUIDeploymentIDLabel  = "io.vastora.3x-ui.deployment-id"
+	threeXUIDeploymentIDLabel  = applicationDeploymentIDLabel
 )
 
 var (
@@ -42,6 +41,13 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 	if validate == nil || verifyPromotion == nil {
 		return "", errors.New("agent: 3x-ui replacement validation is missing")
 	}
+	if createOptions.Config == nil || validateApplicationResourceLabels(createOptions.Config.Labels, threeXUIKey, "3x-ui", "", anyApplicationDeployment) != nil {
+		return "", errors.New("agent: 3x-ui candidate ownership is missing")
+	}
+	applicationID := createOptions.Config.Labels[applicationInstallationLabel]
+	if err := validateThreeXUIOwnership(ctx, docker, applicationID); err != nil {
+		return "", err
+	}
 	if err := recoverInterruptedThreeXUIDeploy(ctx, docker); err != nil {
 		return "", err
 	}
@@ -49,10 +55,13 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 	if err != nil {
 		return "", fmt.Errorf("agent: inspect current 3x-ui container: %w", err)
 	}
+	if previousExists && previous.Container.Config.Labels[applicationInstallationLabel] != applicationID {
+		return "", errors.New("agent: refusing to replace a 3x-ui container owned by another application")
+	}
 	if err := removeThreeXUIContainerIfExists(ctx, docker, threeXUICandidateContainer); err != nil {
 		return "", fmt.Errorf("agent: clear stale 3x-ui candidate: %w", err)
 	}
-	databaseVolume, databaseVolumeExists, err := inspectThreeXUIVolume(ctx, docker, threeXUIDatabaseVolume)
+	databaseVolume, databaseVolumeExists, err := inspectOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID)
 	if err != nil {
 		return "", fmt.Errorf("agent: inspect retained 3x-ui database volume: %w", err)
 	}
@@ -61,16 +70,16 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 		if !allowFreshState {
 			return "", errors.New("agent: offline restore cannot create a new 3x-ui database")
 		}
-		createdVolume, createErr := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: threeXUIDatabaseVolume, Labels: map[string]string{threeXUIVolumeOwnerLabel: "true"}})
-		err = createErr
-		if err != nil {
+		if err := ensureOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID); err != nil {
 			return "", fmt.Errorf("agent: create 3x-ui database volume: %w", err)
 		}
-		databaseVolume = client.VolumeInspectResult{Volume: createdVolume.Volume}
-		databaseVolumeFresh = createdVolume.Volume.Labels[threeXUIVolumeOwnerLabel] == "true"
-	}
-	if createOptions.Config == nil {
-		return "", errors.New("agent: 3x-ui candidate configuration is missing")
+		databaseVolume, databaseVolumeExists, err = inspectOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID)
+		if err != nil {
+			return "", fmt.Errorf("agent: verify created 3x-ui database volume: %w", err)
+		}
+		if !databaseVolumeExists {
+			return "", errors.New("agent: created 3x-ui database volume is missing")
+		}
 	}
 	if createOptions.Config.Labels == nil {
 		createOptions.Config.Labels = map[string]string{}
@@ -121,7 +130,7 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 			// A volume explicitly created by a prior interrupted Vastora install is
 			// safe to recycle only when it contains no files at all. An unlabelled
 			// or partially populated keep-data volume fails closed.
-			managedEmptyVolume := !previousExists && errors.Is(err, errThreeXUIVolumeEmpty) && databaseVolume.Volume.Labels[threeXUIVolumeOwnerLabel] == "true"
+			managedEmptyVolume := !previousExists && errors.Is(err, errThreeXUIVolumeEmpty) && validateApplicationResourceLabels(databaseVolume.Volume.Labels, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID, "") == nil
 			if managedEmptyVolume {
 				if !allowFreshState {
 					return "", abortBeforeRename(errors.New("agent: offline restore requires a populated 3x-ui database"))
@@ -129,13 +138,17 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 				if cleanupErr := removeThreeXUIContainerIfExists(ctx, docker, candidateID); cleanupErr != nil {
 					return "", errors.Join(fmt.Errorf("agent: clear empty 3x-ui database candidate: %w", err), cleanupErr)
 				}
-				if _, volumeErr := docker.VolumeRemove(ctx, threeXUIDatabaseVolume, client.VolumeRemoveOptions{Force: true}); volumeErr != nil && !errdefs.IsNotFound(volumeErr) {
+				if volumeErr := removeOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID); volumeErr != nil {
 					createOptions.Config.Labels[threeXUIVolumeStateLabel] = "fresh"
-					_, markerErr := recreateThreeXUICandidateMarker(ctx, docker, createOptions)
+					_, stillExists, inspectErr := inspectOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID)
+					var markerErr error
+					if inspectErr == nil && stillExists {
+						_, markerErr = recreateThreeXUICandidateMarker(ctx, docker, createOptions)
+					}
 					return "", deferTaskCompletion(errors.Join(fmt.Errorf("agent: clear empty 3x-ui database volume: %w", err), volumeErr, markerErr))
 				}
 				databaseVolumeFresh = true
-				if _, createVolumeErr := docker.VolumeCreate(ctx, client.VolumeCreateOptions{Name: threeXUIDatabaseVolume, Labels: map[string]string{threeXUIVolumeOwnerLabel: "true"}}); createVolumeErr != nil {
+				if createVolumeErr := ensureOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID); createVolumeErr != nil {
 					return "", fmt.Errorf("agent: recreate empty 3x-ui database volume: %w", createVolumeErr)
 				}
 				createOptions.Config.Labels[threeXUIVolumeStateLabel] = "fresh"
@@ -211,12 +224,15 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 			}
 		}
 		if rollbackReady && candidateRemoved && databaseVolumeFresh {
-			if _, err := docker.VolumeRemove(ctx, threeXUIDatabaseVolume, client.VolumeRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			if err := removeOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID); err != nil {
 				retryRequired = true
 				failures = append(failures, fmt.Errorf("agent: remove incomplete fresh 3x-ui database volume: %w", err))
-				_, markerErr := recreateThreeXUICandidateMarker(ctx, docker, createOptions)
-				if markerErr != nil {
-					failures = append(failures, fmt.Errorf("agent: retain fresh 3x-ui cleanup marker: %w", markerErr))
+				_, stillExists, inspectErr := inspectOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID)
+				if inspectErr == nil && stillExists {
+					_, markerErr := recreateThreeXUICandidateMarker(ctx, docker, createOptions)
+					if markerErr != nil {
+						failures = append(failures, fmt.Errorf("agent: retain fresh 3x-ui cleanup marker: %w", markerErr))
+					}
 				}
 			}
 		}
@@ -301,11 +317,42 @@ func restartThreeXUIContainerIfNeeded(ctx context.Context, docker threeXUIContai
 }
 
 func inspectThreeXUIVolume(ctx context.Context, docker threeXUIContainerEngine, name string) (client.VolumeInspectResult, bool, error) {
-	result, err := docker.VolumeInspect(ctx, name, client.VolumeInspectOptions{})
-	if errdefs.IsNotFound(err) {
-		return client.VolumeInspectResult{}, false, nil
+	return inspectOwnedApplicationVolume(ctx, docker, name, threeXUIKey, applicationVolumeComponent(name), "")
+}
+
+func validateThreeXUIOwnership(ctx context.Context, docker threeXUIContainerEngine, expectedApplicationID string) error {
+	applicationID := ""
+	for _, name := range []string{threeXUIContainer, threeXUICandidateContainer, threeXUIBackupContainer, threeXUICleanupContainer} {
+		inspected, exists, err := inspectThreeXUIContainer(ctx, docker, name)
+		if err != nil {
+			return fmt.Errorf("agent: verify 3x-ui container ownership: %w", err)
+		}
+		if !exists {
+			continue
+		}
+		value := inspected.Container.Config.Labels[applicationInstallationLabel]
+		if applicationID == "" {
+			applicationID = value
+		} else if applicationID != value {
+			return errors.New("agent: conflicting 3x-ui application ownership markers")
+		}
 	}
-	return result, err == nil, err
+	database, exists, err := inspectThreeXUIVolume(ctx, docker, threeXUIDatabaseVolume)
+	if err != nil {
+		return fmt.Errorf("agent: verify 3x-ui database ownership: %w", err)
+	}
+	if exists {
+		value := database.Volume.Labels[applicationInstallationLabel]
+		if applicationID == "" {
+			applicationID = value
+		} else if applicationID != value {
+			return errors.New("agent: 3x-ui database belongs to another application")
+		}
+	}
+	if expectedApplicationID != "" && applicationID != "" && applicationID != expectedApplicationID {
+		return errors.New("agent: refusing to mutate 3x-ui resources owned by another application")
+	}
+	return nil
 }
 
 func recoverInterruptedThreeXUIDeploy(ctx context.Context, docker threeXUIContainerEngine) error {
@@ -327,6 +374,26 @@ func recoverInterruptedThreeXUIDeploy(ctx context.Context, docker threeXUIContai
 	}
 	if backupExists && cleanupExists {
 		return errors.New("agent: conflicting 3x-ui rollback and cleanup markers")
+	}
+	applicationID := ""
+	for _, inspected := range []struct {
+		value  client.ContainerInspectResult
+		exists bool
+	}{{current, currentExists}, {candidate, candidateExists}, {backup, backupExists}, {cleanup, cleanupExists}} {
+		if !inspected.exists {
+			continue
+		}
+		value := inspected.value.Container.Config.Labels[applicationInstallationLabel]
+		if applicationID == "" {
+			applicationID = value
+		} else if applicationID != value {
+			return errors.New("agent: conflicting 3x-ui application ownership markers")
+		}
+	}
+	if database, exists, volumeErr := inspectThreeXUIVolume(ctx, docker, threeXUIDatabaseVolume); volumeErr != nil {
+		return fmt.Errorf("agent: inspect 3x-ui database ownership: %w", volumeErr)
+	} else if exists && applicationID != "" && database.Volume.Labels[applicationInstallationLabel] != applicationID {
+		return errors.New("agent: 3x-ui database belongs to another application")
 	}
 	if currentExists {
 		// The rollback name is deliberately retained until the promoted canonical
@@ -385,12 +452,16 @@ func recoverInterruptedThreeXUIDeploy(ctx context.Context, docker threeXUIContai
 			return fmt.Errorf("agent: remove interrupted 3x-ui candidate: %w", err)
 		}
 		if snapshotErr != nil && volumeState == "fresh" {
-			if _, err := docker.VolumeRemove(ctx, threeXUIDatabaseVolume, client.VolumeRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			if err := removeOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID); err != nil {
 				markerOptions, markerOptionsErr := candidateMarkerOptions(candidate)
 				if markerOptionsErr != nil {
 					return errors.Join(fmt.Errorf("agent: remove interrupted fresh 3x-ui database volume: %w", err), markerOptionsErr)
 				}
-				_, markerErr := recreateThreeXUICandidateMarker(ctx, docker, markerOptions)
+				_, stillExists, inspectErr := inspectOwnedApplicationVolume(ctx, docker, threeXUIDatabaseVolume, threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), applicationID)
+				var markerErr error
+				if inspectErr == nil && stillExists {
+					_, markerErr = recreateThreeXUICandidateMarker(ctx, docker, markerOptions)
+				}
 				return errors.Join(fmt.Errorf("agent: remove interrupted fresh 3x-ui database volume: %w", err), markerErr)
 			}
 		}
@@ -671,17 +742,9 @@ func stopThreeXUIContainerForRecovery(ctx context.Context, docker threeXUIContai
 }
 
 func inspectThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngine, name string) (client.ContainerInspectResult, bool, error) {
-	inspected, err := docker.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
-	if errdefs.IsNotFound(err) {
-		return client.ContainerInspectResult{}, false, nil
-	}
-	return inspected, err == nil, err
+	return inspectOwnedApplicationContainer(ctx, docker, name, threeXUIKey, "3x-ui", "", anyApplicationDeployment)
 }
 
 func removeThreeXUIContainerIfExists(ctx context.Context, docker threeXUIContainerEngine, name string) error {
-	_, err := docker.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true})
-	if errdefs.IsNotFound(err) {
-		return nil
-	}
-	return err
+	return removeOwnedApplicationContainer(ctx, docker, name, threeXUIKey, "3x-ui", "", anyApplicationDeployment)
 }
