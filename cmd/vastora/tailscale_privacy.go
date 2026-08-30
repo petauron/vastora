@@ -17,7 +17,8 @@ import (
 
 const (
 	tailscalePrivacyOverride      = "[Service]\nEnvironment=TS_NO_LOGS_NO_SUPPORT=true\n"
-	tailscalePrivacyAppliedMarker = "v2\n"
+	tailscalePrivacyPendingMarker = "v3:pending\n"
+	tailscalePrivacyAppliedMarker = "v3:applied\n"
 	tailscaleHostsBeginMarker     = "# BEGIN VASTORA TAILSCALE CONTROL"
 	tailscaleHostsEndMarker       = "# END VASTORA TAILSCALE CONTROL"
 )
@@ -53,7 +54,7 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 	if environment.run == nil {
 		return errors.New("configure Tailscale isolation: host command runner is required")
 	}
-	current, err := tailscaleIsolationCurrent(environment, desired)
+	current, err := tailscaleIsolationCurrent(ctx, environment, desired)
 	if err != nil {
 		return err
 	}
@@ -63,33 +64,30 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 	if err := verifyTailscaleControlEndpoint(ctx, desired, environment.run); err != nil {
 		return err
 	}
-	hostsChanged, err := reconcileTailscaleControlHosts(environment.hostsPath, desired)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(environment.overridePath), 0o755); err != nil {
+		return fmt.Errorf("create Tailscale systemd override directory: %w", err)
+	}
+	if err := writeAtomicHostFile(tailscalePrivacyAppliedPath(environment.overridePath), tailscalePrivacyPendingMarker, 0o644); err != nil {
+		return fmt.Errorf("record pending Tailscale isolation state: %w", err)
+	}
+	if _, err := reconcileTailscaleControlHosts(environment.hostsPath, desired); err != nil {
 		return err
 	}
-	overrideChanged, markerApplied, err := reconcileTailscalePrivacyFiles(environment.overridePath)
-	if err != nil {
+	if _, err := reconcileTailscalePrivacyFiles(environment.overridePath); err != nil {
 		return err
 	}
-	cacheRemoved, err := removeUntrustedDERPCache(environment.derpCache)
-	if err != nil {
+	if _, err := removeUntrustedDERPCache(environment.derpCache); err != nil {
 		return err
 	}
 
 	commandContext, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	if overrideChanged || !markerApplied {
-		if output, runErr := environment.run(commandContext, "systemctl", "daemon-reload"); runErr != nil {
-			return fmt.Errorf("reload systemd for Tailscale isolation: %s: %w", strings.TrimSpace(string(output)), runErr)
-		}
+	if output, runErr := environment.run(commandContext, "systemctl", "daemon-reload"); runErr != nil {
+		return fmt.Errorf("reload systemd for Tailscale isolation: %s: %w", strings.TrimSpace(string(output)), runErr)
 	}
 	if configureOnly {
 		return nil
 	}
-	if !overrideChanged && !hostsChanged && !cacheRemoved && markerApplied {
-		return nil
-	}
-
 	active := true
 	if _, activeErr := environment.run(commandContext, "systemctl", "is-active", "--quiet", "tailscaled.service"); activeErr != nil {
 		active = false
@@ -103,13 +101,16 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 	if err != nil {
 		return fmt.Errorf("start Tailscale with Vastora isolation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
+	if err := verifyTailscaleRuntimePrivacy(commandContext, environment.run); err != nil {
+		return err
+	}
 	if err := writeAtomicHostFile(tailscalePrivacyAppliedPath(environment.overridePath), tailscalePrivacyAppliedMarker, 0o644); err != nil {
 		return fmt.Errorf("record applied Tailscale isolation state: %w", err)
 	}
 	return nil
 }
 
-func tailscaleIsolationCurrent(environment tailscaleIsolationEnvironment, desired agent.TailscaleIsolationDesiredState) (bool, error) {
+func tailscaleIsolationCurrent(ctx context.Context, environment tailscaleIsolationEnvironment, desired agent.TailscaleIsolationDesiredState) (bool, error) {
 	override, err := os.ReadFile(environment.overridePath)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return false, fmt.Errorf("inspect Tailscale privacy override: %w", err)
@@ -130,7 +131,46 @@ func tailscaleIsolationCurrent(environment tailscaleIsolationEnvironment, desire
 	if err != nil {
 		return false, err
 	}
-	return string(override) == tailscalePrivacyOverride && markerErr == nil && string(marker) == tailscalePrivacyAppliedMarker && expectedHosts == string(hosts) && !untrustedCache, nil
+	diskCurrent := string(override) == tailscalePrivacyOverride && markerErr == nil && string(marker) == tailscalePrivacyAppliedMarker && expectedHosts == string(hosts) && !untrustedCache
+	if !diskCurrent {
+		return false, nil
+	}
+	runtimeContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	return tailscaleRuntimePrivacyCurrent(runtimeContext, environment.run), nil
+}
+
+func tailscaleRuntimePrivacyCurrent(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) bool {
+	if _, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service"); err != nil {
+		return false
+	}
+	output, err := run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+	if err != nil {
+		return false
+	}
+	for _, value := range strings.Fields(string(output)) {
+		if strings.Trim(value, "\"") == "TS_NO_LOGS_NO_SUPPORT=true" {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) error {
+	output, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service")
+	if err != nil {
+		return fmt.Errorf("verify Tailscale service is active after isolation: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+	if err != nil {
+		return fmt.Errorf("verify Tailscale privacy environment: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	for _, value := range strings.Fields(string(output)) {
+		if strings.Trim(value, "\"") == "TS_NO_LOGS_NO_SUPPORT=true" {
+			return nil
+		}
+	}
+	return errors.New("verify Tailscale privacy environment: TS_NO_LOGS_NO_SUPPORT=true is not loaded")
 }
 
 func validateTailscaleIsolationDesiredState(desired agent.TailscaleIsolationDesiredState) (agent.TailscaleIsolationDesiredState, error) {
@@ -285,26 +325,21 @@ func replaceTailscaleHostsSection(current string, hostnames, addresses []string)
 	return strings.Join(kept, "\n") + "\n", nil
 }
 
-func reconcileTailscalePrivacyFiles(path string) (changed, applied bool, resultErr error) {
-	appliedPath := tailscalePrivacyAppliedPath(path)
+func reconcileTailscalePrivacyFiles(path string) (changed bool, resultErr error) {
 	current, fileErr := os.ReadFile(path)
-	marker, markerErr := os.ReadFile(appliedPath)
 	if fileErr != nil && !errors.Is(fileErr, os.ErrNotExist) {
-		return false, false, fmt.Errorf("inspect Tailscale privacy override: %w", fileErr)
-	}
-	if markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
-		return false, false, fmt.Errorf("inspect Tailscale isolation marker: %w", markerErr)
+		return false, fmt.Errorf("inspect Tailscale privacy override: %w", fileErr)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return false, false, fmt.Errorf("create Tailscale systemd override directory: %w", err)
+		return false, fmt.Errorf("create Tailscale systemd override directory: %w", err)
 	}
 	if string(current) != tailscalePrivacyOverride {
 		if err := writeAtomicHostFile(path, tailscalePrivacyOverride, 0o644); err != nil {
-			return false, false, fmt.Errorf("install Tailscale privacy override: %w", err)
+			return false, fmt.Errorf("install Tailscale privacy override: %w", err)
 		}
 		changed = true
 	}
-	return changed, markerErr == nil && string(marker) == tailscalePrivacyAppliedMarker, nil
+	return changed, nil
 }
 
 func removeUntrustedDERPCache(path string) (bool, error) {
