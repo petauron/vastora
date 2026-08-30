@@ -169,7 +169,8 @@ if [ -z "$bootstrap_port" ]; then bootstrap_port=8080; fi
 local_center_url="http://127.0.0.1:$bootstrap_port"
 
 echo "Validating the new deployment with the existing configuration..."
-ensure_vastora_runtime_network
+migrate_legacy_vastora_runtime_network "$install_dir"
+ensure_vastora_runtime_network_for_upgrade "$install_dir"
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" config --quiet
 echo "Downloading the immutable Center image..."
 docker compose --env-file "$candidate_env" -f "$source_dir/compose.yaml" pull center deployer
@@ -244,6 +245,7 @@ echo "Starting the updated Center..."
 cd "$install_dir"
 center_started=yes
 docker compose up -d --remove-orphans deployer center
+validate_vastora_runtime_network
 
 attempt=0
 until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do

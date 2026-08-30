@@ -123,6 +123,9 @@ grep -Fq '127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}' "$temporary_dir/comp
 grep -Fq 'name: vastora-runtime' "$temporary_dir/compose.yaml"
 grep -Fq 'external: true' "$temporary_dir/compose.yaml"
 grep -Fq 'ensure_vastora_runtime_network' "$temporary_dir/setup.sh"
+grep -Fq 'io.vastora.component: center' "$temporary_dir/compose.yaml"
+grep -Fq 'io.vastora.component: deployer' "$temporary_dir/compose.yaml"
+grep -Fq 'migrate_legacy_vastora_runtime_network "$install_dir"' "$temporary_dir/upgrade.sh"
 if grep -Fq 'network_mode: host' "$temporary_dir/compose.yaml"; then
   echo "Center install bundle still uses the host network" >&2
   exit 1
@@ -152,6 +155,17 @@ printf '%s\n' 'VASTORA_VERSION=0.1.0-test' 'VASTORA_CENTER_IMAGE=old-image' > "$
 printf '%s\n' 'VASTORA_CENTER_IMAGE=old-image' 'VASTORA_CENTER_BOOTSTRAP_PORT=19090' 'VASTORA_CUSTOM_VALUE=preserved' > "$existing/.env"
 cat > "$fake_bin/docker" <<'EOF'
 #!/bin/sh
+if [ "${1:-}:${2:-}" = "network:inspect" ] && [ "${3:-}" = "--format" ]; then
+  case "$4" in
+    '{{.Driver}}') printf '%s\n' bridge ;;
+    *io.vastora.managed*) printf '%s\n' true ;;
+    *io.vastora.component*) printf '%s\n' runtime-network ;;
+    *io.vastora.network*) printf '%s\n' vastora-runtime ;;
+    *'.Containers'*) : ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
 case "${1:-}" in
   create) printf '%s\n' 'vastora-test-container'; exit 0 ;;
   cp) cp "$FAKE_VASTORA_BINARY" "$3"; exit 0 ;;
