@@ -9,3 +9,4 @@
 - Inspect the capabilities of existing project dependencies before adding a new package or writing custom code. Do not assume the required capability is missing.
 - Make architectural decisions for the long term. Do not introduce temporary designs with the intention of replacing them later.
 - Study how mature products solve the same problem and follow proven patterns instead of inventing a solution from scratch.
+- Do not proactively run local tests, builds, linters, type checks, or browser QA. Only run them when the user explicitly requests local verification. Repository-required CI gates may still run as part of an explicitly requested push, merge, or release workflow.
