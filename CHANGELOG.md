@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.76](https://github.com/petauron/vastora/compare/v0.1.0-alpha.75...v0.1.0-alpha.76) (2026-08-31)
+
+
+### Features
+
+* **network:** detect verified cloud NAT ingress ([#260](https://github.com/petauron/vastora/issues/260)) ([cc433a2](https://github.com/petauron/vastora/commit/cc433a2dcea772272028bbc060de466495a5f3f1))
+
 ## [0.1.0-alpha.75](https://github.com/petauron/vastora/compare/v0.1.0-alpha.74...v0.1.0-alpha.75) (2026-08-31)
 
 
