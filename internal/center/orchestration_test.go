@@ -98,6 +98,23 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	}
 }
 
+func TestCloudflareWebPublicationRequiresConfiguredCenterAccess(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{})
+	node := enrollOrchestrationNode(t, store, "tunnel-node", NodeCapabilities{Docker: true, Tunnel: true}, []networking.Candidate{{Address: "10.0.0.12", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", EnabledKinds: []string{networking.KindLAN}})
+	applicationID := installCPA(t, store, node, "10.0.0.12")
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
+		t.Fatalf("unexpected services: %#v err=%v", services, err)
+	}
+	_, err = store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationCloudflare, GatewayNodeID: node.ID, Hostname: "service-vastora.example.com", DNSProvider: "cloudflare"})
+	if err == nil || !strings.Contains(err.Error(), "enable the Center Cloudflare Access entry") {
+		t.Fatalf("unconfigured Center Access returned the wrong publication error: %v", err)
+	}
+}
+
 func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
