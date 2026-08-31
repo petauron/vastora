@@ -2,7 +2,7 @@
 
 ARG TARGETARCH
 
-FROM --platform=$BUILDPLATFORM node:24.19.0-bookworm-slim AS web-build
+FROM --platform=$BUILDPLATFORM node:24.20.0-bookworm-slim AS web-build
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
