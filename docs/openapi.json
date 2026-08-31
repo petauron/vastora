@@ -4101,6 +4101,12 @@
                   "publicAddress": {
                     "type": "string"
                   },
+                  "publicBindAddress": {
+                    "type": "string"
+                  },
+                  "publicMode": {
+                    "type": "string"
+                  },
                   "enabledKinds": {
                     "type": "array",
                     "items": {
@@ -4109,6 +4115,10 @@
                   },
                   "directPublic": {
                     "type": "boolean"
+                  },
+                  "publicVerifiedAt": {
+                    "type": "string",
+                    "format": "date-time"
                   },
                   "confirmedAt": {
                     "type": "string",
@@ -4123,6 +4133,58 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/agents/{id}/public-entry/detect": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Enable Detected Agent Public Entry",
+        "operationId": "enableDetectedAgentPublicEntry_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
       }
     },
     "/api/v1/agents/enroll": {

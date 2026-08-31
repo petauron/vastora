@@ -262,8 +262,11 @@ export type NetworkProfile = {
   lanAddress?: string;
   headscaleAddress?: string;
   publicAddress?: string;
+  publicBindAddress?: string;
+  publicMode?: "direct" | "nat";
   enabledKinds: NetworkKind[];
   directPublic: boolean;
+  publicVerifiedAt?: string;
   confirmedAt?: string;
   candidateObservedAt?: string;
 };

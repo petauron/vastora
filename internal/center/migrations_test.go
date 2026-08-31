@@ -457,8 +457,17 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 42`); err != nil {
+	if _, err := db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id >= 42`); err != nil {
 		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at`,
+		`ALTER TABLE agent_network_profiles DROP COLUMN public_mode`,
+		`ALTER TABLE agent_network_profiles DROP COLUMN public_bind_address`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 41`); err != nil {
 		t.Fatal(err)
@@ -483,7 +492,7 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 		t.Fatalf("legacy cache=%d immutable history=%d", cacheCount, historyCount)
 	}
 	version, err := sqliteSchemaVersion(ctx, migrated.db)
-	if err != nil || version != 42 {
+	if err != nil || version != centerSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }
@@ -987,6 +996,9 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE agents DROP COLUMN tailscale_ownership`,
 		`ALTER TABLE agents DROP COLUMN x25519_public_key`,
 		`ALTER TABLE agents DROP COLUMN credential_revoked_at`,
+		`ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at`,
+		`ALTER TABLE agent_network_profiles DROP COLUMN public_mode`,
+		`ALTER TABLE agent_network_profiles DROP COLUMN public_bind_address`,
 		`ALTER TABLE applications DROP COLUMN role`,
 		`ALTER TABLE applications DROP COLUMN runtime_generation`,
 		`ALTER TABLE deployments DROP COLUMN executed_runtime_generation`,

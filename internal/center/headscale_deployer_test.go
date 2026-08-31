@@ -139,6 +139,56 @@ func TestSetupVerifiesPublicPortsBeforeInstallingInfrastructure(t *testing.T) {
 	}
 }
 
+func TestDetectedCenterNATPromotesOnlyTheCoLocatedAgentPublicProfile(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 31, 8, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	candidates := []networking.Candidate{
+		{Address: "10.0.0.27", Interface: "enp0s6", Kind: networking.KindLAN},
+		{Address: "100.64.0.1", Interface: "tailscale0", Kind: networking.KindHeadscale},
+	}
+	store.discoverNetworkCandidates = func(observedAt time.Time) ([]networking.Candidate, error) {
+		result := append([]networking.Candidate(nil), candidates...)
+		for index := range result {
+			result[index].ObservedAt = observedAt
+		}
+		return result, nil
+	}
+	store.lookupPublicAddress = func(context.Context) (string, error) { return "198.51.100.27", nil }
+	node := enrollOrchestrationNode(t, store, "Oracle A1", NodeCapabilities{Docker: true, Gateway: true}, candidates, networking.Profile{
+		ServiceAddress: "100.64.0.1", LANAddress: "10.0.0.27", HeadscaleAddress: "100.64.0.1",
+		EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale},
+	})
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"198.51.100.27","bindAddress":"10.0.0.27"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.savePublicEntryVerification(ctx, setupGatewayBinding{PublicAddress: "198.51.100.27", BindAddress: "10.0.0.27"}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, "", false).WithInfrastructureManager(&fakeBuiltinHeadscaleInstaller{})
+	result, err := server.enableDetectedAgentPublicEntry(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := result.Profile
+	if result.Status != "ready" || result.Mode != networking.PublicModeNAT || profile.PublicAddress != "198.51.100.27" || profile.PublicBindAddress != "10.0.0.27" || !profile.DirectPublic || profile.PublicVerifiedAt != now {
+		t.Fatalf("unexpected detected public profile: %#v", result)
+	}
+	if !containsString(profile.EnabledKinds, networking.KindPublic) {
+		t.Fatalf("public network was not enabled: %#v", profile.EnabledKinds)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := validateDirectPublicNode(ctx, tx, node.ID); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Fatalf("NAT mapping was accepted for a raw public port: %v", err)
+	}
+}
+
 func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	headscale := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/v1/user" {

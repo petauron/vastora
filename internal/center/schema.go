@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 42
+const centerSchemaVersion = 43
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -200,8 +200,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			lan_address TEXT NOT NULL DEFAULT '',
 			headscale_address TEXT NOT NULL DEFAULT '',
 			public_address TEXT NOT NULL DEFAULT '',
+			public_bind_address TEXT NOT NULL DEFAULT '',
+			public_mode TEXT NOT NULL DEFAULT '' CHECK(public_mode IN ('', 'direct', 'nat')),
 			enabled_kinds_json BLOB NOT NULL,
 			direct_public INTEGER NOT NULL DEFAULT 0,
+			public_verified_at TEXT NOT NULL DEFAULT '',
 			confirmed_at TEXT NOT NULL,
 			candidate_observed_at TEXT NOT NULL
 		)`,

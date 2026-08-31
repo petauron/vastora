@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppData } from "../App";
-import type { ApplicationCommand } from "../types";
+import type { ApplicationCommand, NetworkProfile } from "../types";
 import { APIError, api } from "../api";
 import { vastoraDomainDefaults } from "../lib/network";
 import { AppsView } from "./AppsView";
@@ -51,7 +51,7 @@ const dashboard = (): AppData => ({
 
 const realityDashboard = () => {
   const data = dashboard();
-  data.agents[0].networkProfile = { serviceAddress: "10.0.0.10", publicAddress: "203.0.113.10", enabledKinds: ["lan", "public"], directPublic: true };
+  data.agents[0].networkProfile = { serviceAddress: "10.0.0.10", publicAddress: "203.0.113.10", publicBindAddress: "203.0.113.10", publicMode: "direct", enabledKinds: ["lan", "public"], directPublic: true };
   data.sites[0].domainSuffix = "vastora.example.com";
   data.apps = [{ key: "vastora-official/3x-ui", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "3x-ui", version: "3.6.0", name: { en: "3x-ui", "zh-CN": "3x-ui" }, description: { en: "Proxy management", "zh-CN": "代理管理" }, hostAccess: true, config: [] } }];
   data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", role: "master", installedVersion: "3.6.0", availableVersion: "3.6.0" }];
@@ -147,6 +147,48 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("私网已连接，待确认");
     expect(container.textContent).toContain("确认推荐配置");
     expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("加入安全私网"))).toBe(false);
+  });
+
+  it("detects and enables a verified cloud NAT entry for the Center host", async () => {
+    const data = dashboard();
+    data.agents[0].networkCandidates.push({ address: "100.64.0.1", interface: "tailscale0", kind: "headscale", observedAt: "2026-08-31T08:00:00Z" });
+    const detectedProfile: NetworkProfile = {
+      ...data.agents[0].networkProfile!,
+      publicAddress: "198.51.100.27",
+      publicBindAddress: "10.0.0.27",
+      publicMode: "nat" as const,
+      publicVerifiedAt: "2026-08-31T08:00:00Z",
+      enabledKinds: ["lan", "public"],
+      directPublic: true
+    };
+    const detect = vi.spyOn(api, "detectAgentPublicEntry").mockResolvedValue({ status: "ready", publicAddress: "198.51.100.27", gatewayAddress: "10.0.0.27", mode: "nat", profile: detectedProfile });
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const nodeButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("修改") && button.closest("div")?.parentElement?.textContent?.includes("home-server"));
+    act(() => nodeButton?.click());
+    const detectButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("自动检测云公网入口"))!;
+    await act(async () => {
+      detectButton.click();
+      await Promise.resolve();
+    });
+    expect(detect).toHaveBeenCalledWith("agent");
+    expect(document.body.textContent).toContain("云 NAT 公网入口已验证");
+    expect(document.body.textContent).toContain("198.51.100.27 → 10.0.0.27");
+    expect(document.body.textContent).toContain("原始 TCP/UDP 端口仍要求网卡直配公网地址");
+  });
+
+  it("explains why cloud public entry detection cannot proceed", async () => {
+    const data = dashboard();
+    vi.spyOn(api, "detectAgentPublicEntry").mockRejectedValue(new APIError("center: active Agent not found", 400, "invalid_request"));
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const nodeButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("修改") && button.closest("div")?.parentElement?.textContent?.includes("home-server"));
+    act(() => nodeButton?.click());
+    const detectButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("自动检测云公网入口"))!;
+    await act(async () => {
+      detectButton.click();
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("节点当前不在线，请等待 Agent 重新连接后再检测");
+    expect(document.body.textContent).not.toContain("填写内容不完整");
   });
 
   it("keeps the fixed Tailscale endpoint off by default and requires explicit UDP confirmation", async () => {
@@ -297,7 +339,7 @@ describe("network and app views", () => {
   it("offers an automatic shared 443 gateway for raw TLS services", () => {
 	const data = dashboard();
 	data.agents[0].networkCandidates = [{ address: "203.0.113.10", interface: "eth0", kind: "public", observedAt: "2026-08-18T00:00:00Z" }];
-	data.agents[0].networkProfile = { serviceAddress: "203.0.113.10", publicAddress: "203.0.113.10", enabledKinds: ["public"], directPublic: true };
+	data.agents[0].networkProfile = { serviceAddress: "203.0.113.10", publicAddress: "203.0.113.10", publicBindAddress: "203.0.113.10", publicMode: "direct", enabledKinds: ["public"], directPublic: true };
 	data.services = [{ id: "vless", applicationId: "running", siteId: "site", name: "VLESS", protocol: "tcp", containerPort: 2443, hostPort: 2443, endpoint: "203.0.113.10:2443", source: "observed", appProtocol: "vless/tcp", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
 	const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 	const add = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"));

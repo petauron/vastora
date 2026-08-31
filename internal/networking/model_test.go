@@ -38,12 +38,13 @@ func TestValidateProfileRequiresConfirmedLocalPublicAddress(t *testing.T) {
 		{Address: "10.0.0.2", Interface: "eth0", Kind: KindLAN},
 		{Address: "203.0.113.2", Interface: "eth1", Kind: KindPublic},
 	}
-	valid := Profile{ServiceAddress: "10.0.0.2", LANAddress: "10.0.0.2", PublicAddress: "203.0.113.2", EnabledKinds: []string{KindLAN, KindPublic}, DirectPublic: true}
+	valid := Profile{ServiceAddress: "10.0.0.2", LANAddress: "10.0.0.2", PublicAddress: "203.0.113.2", PublicBindAddress: "203.0.113.2", PublicMode: PublicModeDirect, EnabledKinds: []string{KindLAN, KindPublic}, DirectPublic: true}
 	if err := ValidateProfile(candidates, valid); err != nil {
 		t.Fatalf("valid profile was rejected: %v", err)
 	}
 	invalid := valid
 	invalid.PublicAddress = "198.51.100.9"
+	invalid.PublicBindAddress = "198.51.100.9"
 	if err := ValidateProfile(candidates, invalid); err == nil {
 		t.Fatal("unreported public address was accepted")
 	}
