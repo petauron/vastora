@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppData } from "../App";
-import type { ApplicationCommand, NetworkProfile } from "../types";
+import type { ApplicationCommand } from "../types";
 import { APIError, api } from "../api";
 import { vastoraDomainDefaults } from "../lib/network";
 import { AppsView } from "./AppsView";
@@ -149,46 +149,33 @@ describe("network and app views", () => {
     expect([...container.querySelectorAll("button")].some((button) => button.textContent?.includes("加入安全私网"))).toBe(false);
   });
 
-  it("detects and enables a verified cloud NAT entry for the Center host", async () => {
+  it("enables an Agent-detected cloud NAT mapping without Center co-location", async () => {
     const data = dashboard();
-    data.agents[0].networkCandidates.push({ address: "100.64.0.1", interface: "tailscale0", kind: "headscale", observedAt: "2026-08-31T08:00:00Z" });
-    const detectedProfile: NetworkProfile = {
-      ...data.agents[0].networkProfile!,
-      publicAddress: "198.51.100.27",
-      publicBindAddress: "10.0.0.27",
-      publicMode: "nat" as const,
-      publicVerifiedAt: "2026-08-31T08:00:00Z",
-      enabledKinds: ["lan", "public"],
-      directPublic: true
-    };
-    const detect = vi.spyOn(api, "detectAgentPublicEntry").mockResolvedValue({ status: "ready", publicAddress: "198.51.100.27", gatewayAddress: "10.0.0.27", mode: "nat", profile: detectedProfile });
+    data.agents[0].publicEgress = { address: "198.51.100.27", bindAddress: "192.168.1.2", mode: "nat", observedAt: "2026-01-01T00:00:00Z" };
+    const confirm = vi.spyOn(api, "confirmNetworkProfile").mockResolvedValue(data.agents[0].networkProfile!);
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
     const nodeButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("修改") && button.closest("div")?.parentElement?.textContent?.includes("home-server"));
     act(() => nodeButton?.click());
-    const detectButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("自动检测云公网入口"))!;
+    const publicSwitch = document.querySelector<HTMLButtonElement>("#public-web-enabled")!;
+    expect(publicSwitch.disabled).toBe(false);
+    act(() => publicSwitch.click());
+    expect(document.body.textContent).toContain("198.51.100.27 → 192.168.1.2 · 云 NAT");
+    const saveButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存配置"))!;
     await act(async () => {
-      detectButton.click();
+      saveButton.click();
       await Promise.resolve();
     });
-    expect(detect).toHaveBeenCalledWith("agent");
-    expect(document.body.textContent).toContain("云 NAT 公网入口已验证");
-    expect(document.body.textContent).toContain("198.51.100.27 → 10.0.0.27");
-    expect(document.body.textContent).toContain("原始 TCP/UDP 端口仍要求网卡直配公网地址");
+    expect(confirm).toHaveBeenCalledWith("agent", expect.objectContaining({ publicAddress: "198.51.100.27", publicBindAddress: "192.168.1.2", publicMode: "nat", directPublic: true, enabledKinds: expect.arrayContaining(["public"]) }));
   });
 
-  it("explains why cloud public entry detection cannot proceed", async () => {
+  it("keeps the public switch disabled until the Agent reports an egress mapping", () => {
     const data = dashboard();
-    vi.spyOn(api, "detectAgentPublicEntry").mockRejectedValue(new APIError("center: active Agent not found", 400, "invalid_request"));
-    const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
     const nodeButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("修改") && button.closest("div")?.parentElement?.textContent?.includes("home-server"));
     act(() => nodeButton?.click());
-    const detectButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("自动检测云公网入口"))!;
-    await act(async () => {
-      detectButton.click();
-      await Promise.resolve();
-    });
-    expect(document.body.textContent).toContain("节点当前不在线，请等待 Agent 重新连接后再检测");
-    expect(document.body.textContent).not.toContain("填写内容不完整");
+    expect(document.querySelector<HTMLButtonElement>("#public-web-enabled")?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("等待 Agent 启动检测公网出口");
+    expect(document.body.textContent).not.toContain("与 Center 同机");
   });
 
   it("keeps the fixed Tailscale endpoint off by default and requires explicit UDP confirmation", async () => {

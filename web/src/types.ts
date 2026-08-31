@@ -248,6 +248,7 @@ export type AgentView = {
   roles: string[];
   capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean };
   networkCandidates: NetworkCandidate[];
+  publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
   gatewayHealthy: boolean;
   tailscaleOwnership?: "managed" | "external" | "";
@@ -257,6 +258,7 @@ export type AgentEnrollment = { token: string; siteId: string; installerUrl: str
 
 export type NetworkKind = "lan" | "headscale" | "public";
 export type NetworkCandidate = { address: string; interface: string; kind: NetworkKind; observedAt: string };
+export type PublicEgress = { address: string; bindAddress: string; mode: "direct" | "nat"; observedAt: string };
 export type NetworkProfile = {
   serviceAddress: string;
   lanAddress?: string;

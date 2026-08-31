@@ -73,11 +73,27 @@ func networkProfile(ctx context.Context, queryer networkQueryer, agentID string)
 	return &value, nil
 }
 
-func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input networking.Profile) (*networking.Profile, error) {
-	return s.confirmNetworkProfile(ctx, agentID, input, time.Time{})
+func agentPublicEgress(ctx context.Context, queryer networkQueryer, agentID string) (*networking.PublicEgress, error) {
+	var value networking.PublicEgress
+	var observed string
+	err := queryer.QueryRowContext(ctx, `SELECT public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at FROM agents WHERE id = ?`, agentID).Scan(&value.Address, &value.BindAddress, &value.Mode, &observed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("center: read Agent public egress: %w", err)
+	}
+	if value.Address == "" && value.BindAddress == "" && value.Mode == "" && observed == "" {
+		return nil, nil
+	}
+	value.ObservedAt, err = time.Parse(time.RFC3339Nano, observed)
+	if err != nil {
+		return nil, errors.New("center: invalid stored Agent public egress timestamp")
+	}
+	return &value, nil
 }
 
-func (s *Store) confirmNetworkProfile(ctx context.Context, agentID string, input networking.Profile, verifiedNATAt time.Time) (*networking.Profile, error) {
+func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input networking.Profile) (*networking.Profile, error) {
 	input.ServiceAddress = strings.TrimSpace(input.ServiceAddress)
 	input.LANAddress = strings.TrimSpace(input.LANAddress)
 	input.HeadscaleAddress = strings.TrimSpace(input.HeadscaleAddress)
@@ -92,12 +108,15 @@ func (s *Store) confirmNetworkProfile(ctx context.Context, agentID string, input
 		return nil, err
 	}
 	defer tx.Rollback()
-	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active'`, agentID).Scan(&active); err != nil {
+	var lastSeenAtValue string
+	if err := tx.QueryRowContext(ctx, `SELECT last_seen_at FROM agents WHERE id = ? AND status = 'active'`, agentID).Scan(&lastSeenAtValue); errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("center: active Agent not found")
+	} else if err != nil {
 		return nil, fmt.Errorf("center: inspect Agent: %w", err)
 	}
-	if active == 0 {
-		return nil, errors.New("center: active Agent not found")
+	lastSeenAt, err := time.Parse(time.RFC3339Nano, lastSeenAtValue)
+	if err != nil {
+		return nil, errors.New("center: invalid Agent heartbeat timestamp")
 	}
 	candidates, err := networkCandidates(ctx, tx, agentID)
 	if err != nil {
@@ -110,25 +129,32 @@ func (s *Store) confirmNetworkProfile(ctx context.Context, agentID string, input
 	if err != nil {
 		return nil, err
 	}
+	if previous != nil && previous.PublicAddress != input.PublicAddress {
+		var publicationCount int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
+			WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
+			return nil, err
+		}
+		if publicationCount != 0 {
+			return nil, errors.New("center: stop direct public publications before changing the public entry address")
+		}
+	}
 	if !input.DirectPublic {
 		input.PublicAddress = ""
 		input.PublicBindAddress = ""
 		input.PublicMode = ""
 	} else {
-		switch input.PublicMode {
-		case networking.PublicModeDirect:
-			input.PublicBindAddress = input.PublicAddress
-		case networking.PublicModeNAT:
-			if !verifiedNATAt.IsZero() {
-				input.PublicVerifiedAt = verifiedNATAt.UTC()
-			} else if previous != nil && previous.DirectPublic && previous.PublicMode == networking.PublicModeNAT && previous.PublicAddress == input.PublicAddress && previous.PublicBindAddress == input.PublicBindAddress {
-				input.PublicVerifiedAt = previous.PublicVerifiedAt
-			} else {
-				return nil, errors.New("center: use automatic public entry detection before enabling a NAT address")
-			}
-		default:
-			return nil, errors.New("center: select a valid public ingress mode")
+		publicEgress, err := agentPublicEgress(ctx, tx, agentID)
+		if err != nil {
+			return nil, err
 		}
+		if publicEgress == nil || !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
+			return nil, errors.New("center: wait for the Agent to detect its current public egress address")
+		}
+		if input.PublicAddress != publicEgress.Address || input.PublicBindAddress != publicEgress.BindAddress || input.PublicMode != publicEgress.Mode {
+			return nil, errors.New("center: public ingress must match the Agent's current public egress mapping")
+		}
+		input.PublicVerifiedAt = publicEgress.ObservedAt.UTC()
 	}
 	if err := networking.ValidateProfile(candidates, input); err != nil {
 		return nil, err
@@ -168,16 +194,6 @@ func (s *Store) confirmNetworkProfile(ctx context.Context, agentID string, input
 			}
 			if publicationCount != 0 {
 				return nil, fmt.Errorf("center: stop %s publications before changing this entry address", check.label)
-			}
-		}
-		if previous.PublicAddress != input.PublicAddress {
-			var publicationCount int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
-				WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
-				return nil, err
-			}
-			if publicationCount != 0 {
-				return nil, errors.New("center: stop direct public publications before changing the public entry address")
 			}
 		}
 	}

@@ -12,41 +12,18 @@ import (
 	"strings"
 
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/networking"
 )
 
-const publicAddressLookupURL = "https://vastora.petauron.com/network/public-address"
 const publicEntryVerificationURL = "https://vastora.petauron.com/network/verify-public-entry"
 
 func vastoraPublicAddressLookup(client *http.Client) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, publicAddressLookupURL, nil)
-		if err != nil {
-			return "", err
-		}
-		request.Header.Set("Accept", "application/json")
-		response, err := client.Do(request)
+		address, err := networking.LookupPublicIPv4(ctx, client, networking.PublicAddressLookupURL)
 		if err != nil {
 			return "", fmt.Errorf("center: detect public address: %w", err)
 		}
-		defer response.Body.Close()
-		raw, err := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-		if err != nil {
-			return "", fmt.Errorf("center: read public address response: %w", err)
-		}
-		if response.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("center: public address service returned HTTP %d", response.StatusCode)
-		}
-		var result struct {
-			Address string `json:"address"`
-		}
-		if err := json.Unmarshal(raw, &result); err != nil {
-			return "", errors.New("center: public address service returned invalid JSON")
-		}
-		address := net.ParseIP(strings.TrimSpace(result.Address))
-		if address == nil || address.To4() == nil || !address.IsGlobalUnicast() || address.IsPrivate() {
-			return "", errors.New("center: public address service returned an invalid address")
-		}
-		return address.String(), nil
+		return address, nil
 	}
 }
 
