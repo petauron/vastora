@@ -56,3 +56,25 @@ func TestFindHeadscaleAPIKeyRecordNormalizesAuthoritativePrefix(t *testing.T) {
 		t.Fatalf("rotation = %#v", rotation)
 	}
 }
+
+func TestValidateHeadscaleAPIKeyRotationCommitNormalizesAuthoritativePrefixes(t *testing.T) {
+	now := time.Date(2026, time.August, 31, 7, 0, 0, 0, time.UTC)
+	records := []headscaleAPIKeyRecord{
+		{
+			Prefix:     "hskey-api-qmjwbNmFsG_f-***",
+			Expiration: json.RawMessage(`"2027-08-28T06:18:12Z"`),
+		},
+		{
+			Prefix:     "hskey-api-7gUIqAqRwtL7-***",
+			Expiration: json.RawMessage(`"2027-08-31T06:53:58Z"`),
+		},
+	}
+
+	previousFound, err := validateHeadscaleAPIKeyRotationCommit(records, "qmjwbNmFsG_f", "7gUIqAqRwtL7", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !previousFound {
+		t.Fatal("expected the previous masked authoritative prefix to be found")
+	}
+}

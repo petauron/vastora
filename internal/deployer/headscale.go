@@ -541,20 +541,9 @@ func (installer DockerHeadscaleInstaller) CommitHeadscaleAPIKeyRotation(ctx cont
 	if err != nil {
 		return err
 	}
-	currentFound := false
-	previousFound := false
-	for _, record := range records {
-		if record.Prefix == input.CurrentPrefix {
-			expiresAt, parseErr := parseHeadscaleAPIKeyExpiration(record.Expiration)
-			if parseErr != nil || !expiresAt.After(time.Now()) {
-				return errors.New("deployer: replacement Headscale API key is expired")
-			}
-			currentFound = true
-		}
-		previousFound = previousFound || record.Prefix == input.PreviousPrefix
-	}
-	if !currentFound {
-		return errors.New("deployer: replacement Headscale API key is not present")
+	previousFound, err := validateHeadscaleAPIKeyRotationCommit(records, input.PreviousPrefix, input.CurrentPrefix, time.Now())
+	if err != nil {
+		return err
 	}
 	if previousFound {
 		if _, err := runHeadscaleCommand(ctx, docker, DefaultHeadscaleContainer, "headscale", "apikeys", "delete", "--prefix", input.PreviousPrefix); err != nil {
@@ -565,6 +554,29 @@ func (installer DockerHeadscaleInstaller) CommitHeadscaleAPIKeyRotation(ctx cont
 		return fmt.Errorf("deployer: clear pending Headscale API key rotation: %w", err)
 	}
 	return nil
+}
+
+func validateHeadscaleAPIKeyRotationCommit(records []headscaleAPIKeyRecord, previousPrefix, currentPrefix string, now time.Time) (bool, error) {
+	currentFound := false
+	previousFound := false
+	for _, record := range records {
+		recordPrefix, err := headscaleAPIKeyPrefix(record.Prefix)
+		if err != nil {
+			return false, err
+		}
+		if recordPrefix == currentPrefix {
+			expiresAt, parseErr := parseHeadscaleAPIKeyExpiration(record.Expiration)
+			if parseErr != nil || !expiresAt.After(now) {
+				return false, errors.New("deployer: replacement Headscale API key is expired")
+			}
+			currentFound = true
+		}
+		previousFound = previousFound || recordPrefix == previousPrefix
+	}
+	if !currentFound {
+		return false, errors.New("deployer: replacement Headscale API key is not present")
+	}
+	return previousFound, nil
 }
 
 func (installer DockerHeadscaleInstaller) apiKeyRotationSettings() (DockerHeadscaleInstaller, error) {
