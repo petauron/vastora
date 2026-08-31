@@ -191,7 +191,7 @@ func (s *Server) applyCenterRemoteAccess(ctx context.Context, client cloudflareC
 	if err := s.store.updateCenterRemoteAccessResource(ctx, "otp_identity_provider_id", identityProviderID); err != nil {
 		return err
 	}
-	applicationID, err := client.createAccessApplication(ctx, record.Hostname, record.AudienceKind, record.AudienceValue, identityProviderID)
+	applicationID, err := client.createAccessApplication(ctx, "Vastora Center", record.Hostname, record.AudienceKind, record.AudienceValue, identityProviderID)
 	if err != nil {
 		return err
 	}

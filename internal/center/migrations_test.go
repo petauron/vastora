@@ -1044,7 +1044,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 			desired_revision INTEGER NOT NULL DEFAULT 0, applied_revision INTEGER NOT NULL DEFAULT 0,
 			last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
 			UNIQUE(publication_id, gateway_node_id))`,
-		`INSERT INTO routes_v3 SELECT * FROM routes`,
+		`INSERT INTO routes_v3(id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, tls_enabled, status, desired_revision, applied_revision, last_error, created_at, updated_at)
+		 SELECT id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, tls_enabled, status, desired_revision, applied_revision, last_error, created_at, updated_at FROM routes`,
 		`DROP TABLE routes`,
 		`DROP TABLE publications`,
 		`ALTER TABLE publications_v3 RENAME TO publications`,

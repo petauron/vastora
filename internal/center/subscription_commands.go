@@ -50,7 +50,7 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	if err != nil {
 		return ApplicationCommandView{}, err
 	}
-	baseURI := (&url.URL{Scheme: "https", Host: input.Hostname, Path: "/sub/"}).String()
+	baseURI := (&url.URL{Scheme: "https", Host: input.Hostname, Path: publicationExternalPath(publication.PathPrefix, "/sub/")}).String()
 	task := SubscriptionCommandTask{Domain: input.Hostname, BaseURI: baseURI, PublicationID: publication.ID}
 	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)

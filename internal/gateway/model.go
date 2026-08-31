@@ -37,6 +37,7 @@ type Route struct {
 	ID           string     `json:"id"`
 	Hostname     string     `json:"hostname"`
 	Path         string     `json:"path,omitempty"`
+	StripPrefix  string     `json:"stripPrefix,omitempty"`
 	Protocol     string     `json:"protocol"`
 	Upstreams    []Upstream `json:"upstreams"`
 	TLSEnabled   bool       `json:"tlsEnabled"`
@@ -224,6 +225,9 @@ func (state DesiredState) Validate() error {
 		}
 		if route.Path != "" && (!strings.HasPrefix(route.Path, "/") || strings.ContainsAny(route.Path, "?#") || len(route.Path) > 2048) {
 			return fmt.Errorf("gateway: route %q has an invalid exact path", route.ID)
+		}
+		if route.StripPrefix != "" && (!strings.HasPrefix(route.StripPrefix, "/") || strings.ContainsAny(route.StripPrefix, "*?#") || len(route.StripPrefix) > 2048 || route.Path == "") {
+			return fmt.Errorf("gateway: route %q has an invalid stripped path prefix", route.ID)
 		}
 		matchKey := route.ListenerKind + "\x00" + route.Hostname + "\x00" + route.Path
 		if _, exists := seenMatches[matchKey]; exists {

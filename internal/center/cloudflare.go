@@ -13,6 +13,9 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 const cloudflareAPIURL = "https://api.cloudflare.com/client/v4"
@@ -203,8 +206,8 @@ func (s *Store) CloudflareZones(ctx context.Context) ([]CloudflareZone, error) {
 }
 
 func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationID string, revision int64) error {
-	var kind, gatewayID, hostname, dnsRecordID string
-	if err := s.db.QueryRowContext(ctx, `SELECT kind, COALESCE(gateway_node_id, ''), hostname, dns_record_id FROM publications WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, publicationID, revision).Scan(&kind, &gatewayID, &hostname, &dnsRecordID); errors.Is(err, sql.ErrNoRows) {
+	var kind, gatewayID, hostname, pathPrefix, dnsRecordID, accessApplicationID string
+	if err := s.db.QueryRowContext(ctx, `SELECT kind, COALESCE(gateway_node_id, ''), hostname, path_prefix, dns_record_id, access_application_id FROM publications WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, publicationID, revision).Scan(&kind, &gatewayID, &hostname, &pathPrefix, &dnsRecordID, &accessApplicationID); errors.Is(err, sql.ErrNoRows) {
 		return errStalePublicationReconcile
 	} else if err != nil {
 		return err
@@ -229,6 +232,12 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			return err
 		}
 		if dnsRecordID == "" {
+			dnsRecordID, err = s.reusePublicationDNSRecord(ctx, publicationID, kind, gatewayID, hostname)
+			if err != nil {
+				return err
+			}
+		}
+		if dnsRecordID == "" {
 			createdRecordID, createErr := client.createDNSRecord(ctx, "CNAME", hostname, tunnelID+".cfargotunnel.com", true)
 			err = createErr
 			if err != nil {
@@ -245,6 +254,11 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 				return errStalePublicationReconcile
 			}
 			dnsRecordID = createdRecordID
+		}
+		if strings.HasPrefix(pathPrefix, "/s/") && accessApplicationID == "" {
+			if err := s.ensureCloudflareServiceAccess(ctx, publicationID, revision, hostname); err != nil {
+				return err
+			}
 		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
@@ -273,6 +287,12 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 		}
 		recordType := "A"
 		if dnsRecordID == "" {
+			dnsRecordID, err = s.reusePublicationDNSRecord(ctx, publicationID, kind, gatewayID, hostname)
+			if err != nil {
+				return err
+			}
+		}
+		if dnsRecordID == "" {
 			createdRecordID, createErr := client.createDNSRecord(ctx, recordType, hostname, ip.String(), false)
 			if createErr != nil {
 				return createErr
@@ -293,6 +313,60 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 	return nil
 }
 
+func (s *Store) reusePublicationDNSRecord(ctx context.Context, publicationID, kind, gatewayID, hostname string) (string, error) {
+	var recordID string
+	err := s.db.QueryRowContext(ctx, `SELECT dns_record_id FROM publications
+		WHERE id <> ? AND kind = ? AND COALESCE(gateway_node_id, '') = ? AND hostname = ?
+		AND status <> 'stopped' AND dns_record_id <> '' ORDER BY created_at LIMIT 1`, publicationID, kind, gatewayID, hostname).Scan(&recordID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, updated_at = ? WHERE id = ? AND dns_record_id = ''`, recordID, s.now().UTC().Format(time.RFC3339Nano), publicationID); err != nil {
+		return "", err
+	}
+	return recordID, nil
+}
+
+func (s *Store) ensureCloudflareServiceAccess(ctx context.Context, publicationID string, revision int64, hostname string) error {
+	var applicationID string
+	err := s.db.QueryRowContext(ctx, `SELECT access_application_id FROM publications
+		WHERE id <> ? AND hostname = ? AND path_prefix LIKE '/s/%' AND status <> 'stopped' AND access_application_id <> ''
+		ORDER BY created_at LIMIT 1`, publicationID, hostname).Scan(&applicationID)
+	if err == nil {
+		_, updateErr := s.db.ExecContext(ctx, `UPDATE publications SET access_application_id = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, applicationID, s.now().UTC().Format(time.RFC3339Nano), publicationID, revision)
+		return updateErr
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	record, exists, err := s.centerRemoteAccessRecord(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists || record.Status != "configured" || record.IdentityProviderID == "" {
+		return errors.New("center: enable the Center Cloudflare Access entry before publishing protected Web services")
+	}
+	client, err := s.cloudflareWithScopes(ctx, cloudflareAccessScopes...)
+	if err != nil {
+		return err
+	}
+	applicationID, err = client.createAccessApplication(ctx, "Vastora services", hostname+"/s/*", record.AudienceKind, record.AudienceValue, record.IdentityProviderID)
+	if err != nil {
+		return err
+	}
+	updated, updateErr := s.db.ExecContext(ctx, `UPDATE publications SET access_application_id = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped' AND access_application_id = ''`, applicationID, s.now().UTC().Format(time.RFC3339Nano), publicationID, revision)
+	if updateErr != nil {
+		return errors.Join(updateErr, client.deleteAccessApplication(context.WithoutCancel(ctx), applicationID))
+	}
+	if changed, _ := updated.RowsAffected(); changed != 1 {
+		return errors.Join(errStalePublicationReconcile, client.deleteAccessApplication(context.WithoutCancel(ctx), applicationID))
+	}
+	return nil
+}
+
 func (s *Store) compensateUntrackedCloudflareDNS(ctx context.Context, client cloudflareClient, publicationID, recordID string) error {
 	if err := client.deleteDNSRecord(ctx, recordID); err != nil {
 		_, saveErr := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, cleanup_pending = CASE WHEN status = 'stopped' THEN 1 ELSE cleanup_pending END, updated_at = ? WHERE id = ? AND dns_record_id = ''`, recordID, s.now().UTC().Format(time.RFC3339Nano), publicationID)
@@ -302,15 +376,56 @@ func (s *Store) compensateUntrackedCloudflareDNS(ctx context.Context, client clo
 }
 
 func (s *Store) removeCloudflarePublication(ctx context.Context, id, kind, gatewayID, dnsRecordID string) error {
+	var accessApplicationID string
+	if err := s.db.QueryRowContext(ctx, `SELECT access_application_id FROM publications WHERE id = ?`, id).Scan(&accessApplicationID); err != nil {
+		return err
+	}
 	client, err := s.cloudflare(ctx)
 	cleanupErrors := []error{}
 	if err != nil {
 		cleanupErrors = append(cleanupErrors, err)
 	} else if dnsRecordID != "" {
-		if err := client.deleteDNSRecord(ctx, dnsRecordID); err != nil {
+		var otherReferences int
+		dnsRemoved := false
+		if countErr := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE id <> ? AND status <> 'stopped' AND dns_record_id = ?`, id, dnsRecordID).Scan(&otherReferences); countErr != nil {
+			cleanupErrors = append(cleanupErrors, countErr)
+		} else if otherReferences == 0 {
+			if deleteErr := client.deleteDNSRecord(ctx, dnsRecordID); deleteErr != nil {
+				cleanupErrors = append(cleanupErrors, deleteErr)
+			} else {
+				dnsRemoved = true
+			}
+		} else {
+			dnsRemoved = true
+		}
+		if dnsRemoved {
+			_, err = s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = '', updated_at = ? WHERE id = ?`, s.now().UTC().Format(time.RFC3339Nano), id)
+		}
+		if err != nil {
 			cleanupErrors = append(cleanupErrors, err)
-		} else if _, err := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = '', updated_at = ? WHERE id = ?`, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
-			cleanupErrors = append(cleanupErrors, err)
+		}
+	}
+	if accessApplicationID != "" {
+		var otherReferences int
+		accessRemoved := false
+		if countErr := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE id <> ? AND status <> 'stopped' AND access_application_id = ?`, id, accessApplicationID).Scan(&otherReferences); countErr != nil {
+			cleanupErrors = append(cleanupErrors, countErr)
+		} else if otherReferences == 0 {
+			accessClient, accessErr := s.cloudflareWithScopes(ctx, cloudflareAccessScopes...)
+			if accessErr != nil {
+				cleanupErrors = append(cleanupErrors, accessErr)
+			} else if deleteErr := accessClient.deleteAccessApplication(ctx, accessApplicationID); deleteErr != nil {
+				cleanupErrors = append(cleanupErrors, deleteErr)
+			} else {
+				accessRemoved = true
+			}
+		} else {
+			accessRemoved = true
+		}
+		if accessRemoved {
+			if _, clearErr := s.db.ExecContext(ctx, `UPDATE publications SET access_application_id = '', updated_at = ? WHERE id = ?`, s.now().UTC().Format(time.RFC3339Nano), id); clearErr != nil {
+				cleanupErrors = append(cleanupErrors, clearErr)
+			}
 		}
 	}
 	if kind != publicationCloudflare {
@@ -343,7 +458,7 @@ func (s *Store) removeCloudflarePublication(ctx context.Context, id, kind, gatew
 }
 
 func (s *Store) cloudflareIngress(ctx context.Context, agentID string) ([]TunnelTaskIngress, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.hostname, s.protocol, s.endpoint FROM publications p JOIN services s ON s.id = p.service_id WHERE p.gateway_node_id = ? AND p.kind = 'cloudflare_tunnel' AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.hostname, p.id`, agentID)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT p.hostname FROM publications p JOIN services s ON s.id = p.service_id WHERE p.gateway_node_id = ? AND p.kind = 'cloudflare_tunnel' AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.hostname`, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -351,11 +466,11 @@ func (s *Store) cloudflareIngress(ctx context.Context, agentID string) ([]Tunnel
 	values := []TunnelTaskIngress{}
 	for rows.Next() {
 		var value TunnelTaskIngress
-		var protocol, endpoint string
-		if err := rows.Scan(&value.Hostname, &protocol, &endpoint); err != nil {
+		if err := rows.Scan(&value.Hostname); err != nil {
 			return nil, err
 		}
-		value.Service = protocol + "://" + endpoint
+		httpPort, _, _ := gatewayruntime.CaddyListenerPorts("system")
+		value.Service = fmt.Sprintf("http://%s:%d", dockerruntime.CaddyAlias, httpPort)
 		values = append(values, value)
 	}
 	return values, rows.Err()
@@ -509,7 +624,7 @@ func (client cloudflareClient) ensureOneTimePINIdentityProvider(ctx context.Cont
 	return created.ID, nil
 }
 
-func (client cloudflareClient) createAccessApplication(ctx context.Context, hostname, audienceKind, audienceValue, identityProviderID string) (string, error) {
+func (client cloudflareClient) createAccessApplication(ctx context.Context, name, domain, audienceKind, audienceValue, identityProviderID string) (string, error) {
 	selector := map[string]any{}
 	switch audienceKind {
 	case "email":
@@ -520,14 +635,14 @@ func (client cloudflareClient) createAccessApplication(ctx context.Context, host
 		return "", errors.New("center: unsupported Cloudflare Access audience")
 	}
 	body := map[string]any{
-		"name":                      "Vastora Center",
-		"domain":                    hostname,
+		"name":                      name,
+		"domain":                    domain,
 		"type":                      "self_hosted",
 		"session_duration":          "24h",
 		"auto_redirect_to_identity": true,
 		"allowed_idps":              []string{identityProviderID},
 		"policies": []map[string]any{{
-			"name":       "Vastora Center administrators",
+			"name":       name + " users",
 			"decision":   "allow",
 			"precedence": 1,
 			"include":    []map[string]any{selector},
