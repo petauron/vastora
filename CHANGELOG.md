@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.81](https://github.com/petauron/vastora/compare/v0.1.0-alpha.80...v0.1.0-alpha.81) (2026-08-31)
+
+
+### Bug Fixes
+
+* **gateway:** route colocated 3x-ui through Docker DNS ([f651096](https://github.com/petauron/vastora/commit/f6510962c599325bfcd79e1e992acee21c1dab27))
+
 ## [0.1.0-alpha.80](https://github.com/petauron/vastora/compare/v0.1.0-alpha.79...v0.1.0-alpha.80) (2026-08-31)
 
 
