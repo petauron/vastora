@@ -19,7 +19,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 export type { AppData, Screen } from "./types";
 type Phase = "loading" | "setup-admin" | "setup-wizard" | "login" | "ready" | "unavailable";
-export type Mutate = (operation: () => Promise<unknown>, success?: string) => Promise<void>;
+export type Mutate = (operation: () => Promise<unknown>, success?: string, options?: { reportError?: boolean }) => Promise<void>;
 
 const preferredLanguage = (): Language => {
   const saved = window.localStorage.getItem("vastora.language");
@@ -202,7 +202,8 @@ export function App() {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [phase, screen, loadScreen]);
 
-  const mutate = useCallback<Mutate>(async (operation, success) => {
+  const mutate = useCallback<Mutate>(async (operation, success, options) => {
+    setNotice(null);
     try {
       await operation();
     } catch (error) {
@@ -214,7 +215,7 @@ export function App() {
         setConnection("reconnecting");
         setConnectionError(error);
       }
-      setNotice({ message: userError(language, error), detail: error instanceof Error ? error.message : undefined, error: true });
+      if (options?.reportError !== false) setNotice({ message: userError(language, error), detail: error instanceof Error ? error.message : undefined, error: true });
       throw error;
     }
     setNotice(success ? { message: success } : null);

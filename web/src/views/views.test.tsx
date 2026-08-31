@@ -336,6 +336,29 @@ describe("network and app views", () => {
 	expect(document.body.textContent).toContain("自动启用 HAProxy");
   });
 
+  it("keeps public access submission errors inside the open sheet", async () => {
+    const data = dashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
+    data.centerRemoteAccess = { available: true, enabled: true, hostname: "center-vastora.example.com", audienceKind: "email", audienceValue: "admin@example.com", status: "configured" };
+    data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const create = vi.spyOn(api, "createPublication").mockRejectedValue(new APIError("center: publication failed", 400, "invalid_request"));
+    const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
+    act(() => document.querySelector<HTMLInputElement>('input[value="public_web"]')?.click());
+    const submit = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("创建访问方式"))!;
+    expect(submit.disabled).toBe(false);
+    await act(async () => {
+      submit.click();
+      await Promise.resolve();
+    });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ kind: "cloudflare_tunnel", hostname: "service-vastora.example.com" }));
+    expect(mutate).toHaveBeenCalledWith(expect.any(Function), "访问入口已创建。", { reportError: false });
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("填写内容不完整或格式不正确");
+  });
+
 	it("shows a failed install with its reason and a retry action", () => {
     const data = dashboard();
     data.deployments = [{ id: "failed-install", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "install", deleteData: false, error: "container could not start", applicationId: "failed", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];

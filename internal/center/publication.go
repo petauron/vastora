@@ -225,7 +225,7 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	cloudflareProtectedWeb := input.Kind == publicationCloudflare && !(appKey == threeXUIAppKey && serviceName == "subscription")
 	if cloudflareProtectedWeb {
 		var accessReady int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM center_remote_access WHERE singleton = 1 AND status = 'configured' AND access_application_id <> '' AND identity_provider_id <> ''`).Scan(&accessReady); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM center_remote_access WHERE id = 1 AND status = 'configured' AND access_application_id <> '' AND otp_identity_provider_id <> ''`).Scan(&accessReady); err != nil {
 			return PublicationView{}, err
 		}
 		if accessReady == 0 {
