@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.74](https://github.com/petauron/vastora/compare/v0.1.0-alpha.73...v0.1.0-alpha.74) (2026-08-31)
+
+
+### Bug Fixes
+
+* **deployer:** normalize Headscale API key prefixes ([95f3554](https://github.com/petauron/vastora/commit/95f35546cdba03df9da39a16a8dee2b5206fa435))
+
 ## [0.1.0-alpha.73](https://github.com/petauron/vastora/compare/v0.1.0-alpha.72...v0.1.0-alpha.73) (2026-08-30)
 
 
