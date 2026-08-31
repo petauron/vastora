@@ -457,7 +457,7 @@ describe("network and app views", () => {
     });
     expect(document.body.textContent).toContain("发布独立订阅服务");
     expect(document.body.textContent).toContain("管理面板仍只在私网开放");
-    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("subscription-3x-ui.home.vastora.example.com");
+    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("service-vastora.example.com");
     expect(document.querySelector<HTMLButtonElement>("#subscription-kind")?.textContent).toContain("Cloudflare Tunnel");
   });
 
