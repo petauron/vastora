@@ -820,7 +820,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if task.Kind != "application.command" || task.SubscriptionCommand == nil || task.ApplicationCommand != nil {
 		t.Fatalf("unexpected subscription task: %#v", task)
 	}
-	if task.SubscriptionCommand.Domain != "subscribe.edge.example.test" || task.SubscriptionCommand.BaseURI != "https://subscribe.edge.example.test/sub/" {
+	if task.SubscriptionCommand.Domain != "subscribe.edge.example.test" || !strings.HasPrefix(task.SubscriptionCommand.BaseURI, "https://subscribe.edge.example.test/u/") || !strings.HasSuffix(task.SubscriptionCommand.BaseURI, "/sub/") {
 		t.Fatalf("unexpected subscription settings: %#v", task.SubscriptionCommand)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{SubscriptionCommand: &SubscriptionCommandResult{Domain: task.SubscriptionCommand.Domain, BaseURI: task.SubscriptionCommand.BaseURI}})
