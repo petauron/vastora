@@ -4322,27 +4322,30 @@
                     }
                   },
                   "publicEgress": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "address": {
-                        "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "bindAddress": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "type": "string"
+                          },
+                          "observedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
                       },
-                      "bindAddress": {
-                        "type": "string"
-                      },
-                      "mode": {
-                        "type": "string",
-                        "enum": [
-                          "direct",
-                          "nat"
-                        ]
-                      },
-                      "observedAt": {
-                        "type": "string",
-                        "format": "date-time"
+                      {
+                        "type": "null"
                       }
-                    }
+                    ]
                   },
                   "applicationEndpoints": {
                     "type": "array",
