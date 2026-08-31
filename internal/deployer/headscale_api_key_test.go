@@ -36,3 +36,23 @@ func TestParseHeadscaleAPIKeyExpirationRejectsMalformedTimestamp(t *testing.T) {
 		}
 	}
 }
+
+func TestFindHeadscaleAPIKeyRecordNormalizesAuthoritativePrefix(t *testing.T) {
+	expiresAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Nanosecond)
+	records := []headscaleAPIKeyRecord{{
+		ID:         json.RawMessage(`1`),
+		Prefix:     "hskey-api-qmjwbNmFsG_f-***",
+		Expiration: json.RawMessage(`"` + expiresAt.Format(time.RFC3339Nano) + `"`),
+	}}
+
+	rotation, found, err := findHeadscaleAPIKeyRecord(records, "qmjwbNmFsG_f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("expected the masked authoritative prefix to match the canonical key prefix")
+	}
+	if rotation.APIKeyID != 1 || rotation.APIKeyPrefix != "qmjwbNmFsG_f" || !rotation.APIKeyExpiresAt.Equal(expiresAt) {
+		t.Fatalf("rotation = %#v", rotation)
+	}
+}

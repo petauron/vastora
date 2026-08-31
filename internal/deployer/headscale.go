@@ -431,7 +431,11 @@ func createHeadscaleAPIKey(ctx context.Context, docker *client.Client, container
 		return deployapi.HeadscaleAPIKeyRotation{}, cleanup(err)
 	}
 	for _, record := range records {
-		if record.Prefix != prefix {
+		recordPrefix, err := headscaleAPIKeyPrefix(record.Prefix)
+		if err != nil {
+			return deployapi.HeadscaleAPIKeyRotation{}, cleanup(err)
+		}
+		if recordPrefix != prefix {
 			continue
 		}
 		id, err := parseHeadscaleAPIKeyID(record.ID)
@@ -687,7 +691,11 @@ func parseHeadscaleAPIKeyExpiration(encoded json.RawMessage) (time.Time, error) 
 
 func findHeadscaleAPIKeyRecord(records []headscaleAPIKeyRecord, prefix string) (deployapi.HeadscaleAPIKeyRotation, bool, error) {
 	for _, record := range records {
-		if record.Prefix != prefix {
+		recordPrefix, err := headscaleAPIKeyPrefix(record.Prefix)
+		if err != nil {
+			return deployapi.HeadscaleAPIKeyRotation{}, false, err
+		}
+		if recordPrefix != prefix {
 			continue
 		}
 		id, err := parseHeadscaleAPIKeyID(record.ID)
@@ -698,7 +706,7 @@ func findHeadscaleAPIKeyRecord(records []headscaleAPIKeyRecord, prefix string) (
 		if err != nil {
 			return deployapi.HeadscaleAPIKeyRotation{}, false, err
 		}
-		return deployapi.HeadscaleAPIKeyRotation{APIKeyID: id, APIKeyPrefix: prefix, APIKeyExpiresAt: expiresAt}, true, nil
+		return deployapi.HeadscaleAPIKeyRotation{APIKeyID: id, APIKeyPrefix: recordPrefix, APIKeyExpiresAt: expiresAt}, true, nil
 	}
 	return deployapi.HeadscaleAPIKeyRotation{}, false, nil
 }
