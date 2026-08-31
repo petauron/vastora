@@ -197,15 +197,15 @@ func validatePublicationOrigin(ctx context.Context, tx *sql.Tx, applicationNodeI
 }
 
 func validateDirectPublicNode(ctx context.Context, tx *sql.Tx, nodeID string) (string, error) {
-	var publicAddress, enabledJSON string
+	var publicAddress, publicMode, enabledJSON string
 	var direct int
-	if err := tx.QueryRowContext(ctx, `SELECT public_address, CAST(enabled_kinds_json AS TEXT), direct_public FROM agent_network_profiles WHERE agent_id = ?`, nodeID).Scan(&publicAddress, &enabledJSON, &direct); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT public_address, public_mode, CAST(enabled_kinds_json AS TEXT), direct_public FROM agent_network_profiles WHERE agent_id = ?`, nodeID).Scan(&publicAddress, &publicMode, &enabledJSON, &direct); errors.Is(err, sql.ErrNoRows) {
 		return "", errors.New("center: application node needs a confirmed public network profile")
 	} else if err != nil {
 		return "", err
 	}
 	var enabled []string
-	if json.Unmarshal([]byte(enabledJSON), &enabled) != nil || direct != 1 || net.ParseIP(publicAddress) == nil {
+	if json.Unmarshal([]byte(enabledJSON), &enabled) != nil || direct != 1 || publicMode != networking.PublicModeDirect || net.ParseIP(publicAddress) == nil {
 		return "", errors.New("center: application node is not approved for direct public ingress")
 	}
 	for _, kind := range enabled {

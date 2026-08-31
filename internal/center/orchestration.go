@@ -266,7 +266,7 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 		return gateway.DesiredState{}, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT r.id, r.hostname, r.protocol, r.upstreams_json, r.tls_enabled, p.kind,
-		n.lan_address, n.headscale_address, n.public_address
+		n.lan_address, n.headscale_address, n.public_address, n.public_bind_address
 		FROM routes r JOIN services s ON s.id = r.service_id JOIN publications p ON p.id = r.publication_id
 		JOIN agent_network_profiles n ON n.agent_id = r.gateway_node_id
 		WHERE r.gateway_node_id = ? AND s.status <> 'stopped' AND p.status <> 'stopped'
@@ -278,8 +278,8 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 		var route gateway.Route
 		var encoded []byte
 		var tlsEnabled int
-		var publicationKind, lanAddress, headscaleAddress, publicAddress string
-		if err := rows.Scan(&route.ID, &route.Hostname, &route.Protocol, &encoded, &tlsEnabled, &publicationKind, &lanAddress, &headscaleAddress, &publicAddress); err != nil {
+		var publicationKind, lanAddress, headscaleAddress, publicAddress, publicBindAddress string
+		if err := rows.Scan(&route.ID, &route.Hostname, &route.Protocol, &encoded, &tlsEnabled, &publicationKind, &lanAddress, &headscaleAddress, &publicAddress, &publicBindAddress); err != nil {
 			return gateway.DesiredState{}, err
 		}
 		route.TLSEnabled = tlsEnabled == 1
@@ -289,7 +289,7 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 			address, route.ListenerKind = headscaleAddress, "headscale"
 		}
 		if publicationKind == publicationPublic {
-			address, route.ListenerKind = publicAddress, "public"
+			address, route.ListenerKind = publicBindAddress, "public"
 		}
 		listeners[route.ListenerKind] = gateway.Listener{Kind: route.ListenerKind, Address: address, HTTPPort: 80, HTTPSPort: 443}
 		var upstreams []string
@@ -313,7 +313,7 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 	if err := rows.Close(); err != nil {
 		return gateway.DesiredState{}, err
 	}
-	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, n.public_address,
+	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, n.public_bind_address,
 		CASE WHEN application.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' AND guard.status = 'ready' THEN 'v2' ELSE '' END
 		FROM publications p JOIN services s ON s.id = p.service_id
 		JOIN applications application ON application.id = s.application_id

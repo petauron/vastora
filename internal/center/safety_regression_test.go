@@ -240,12 +240,14 @@ func TestNetworkEntryAddressChangesAreBlockedByActivePublications(t *testing.T) 
 	defer store.Close()
 	ctx := context.Background()
 	oldProfile := networking.Profile{
-		ServiceAddress:   "10.0.0.94",
-		LANAddress:       "10.0.0.94",
-		HeadscaleAddress: "100.64.0.94",
-		PublicAddress:    "203.0.113.94",
-		EnabledKinds:     []string{networking.KindLAN, networking.KindHeadscale, networking.KindPublic},
-		DirectPublic:     true,
+		ServiceAddress:    "10.0.0.94",
+		LANAddress:        "10.0.0.94",
+		HeadscaleAddress:  "100.64.0.94",
+		PublicAddress:     "203.0.113.94",
+		PublicBindAddress: "203.0.113.94",
+		PublicMode:        networking.PublicModeDirect,
+		EnabledKinds:      []string{networking.KindLAN, networking.KindHeadscale, networking.KindPublic},
+		DirectPublic:      true,
 	}
 	node := enrollOrchestrationNode(t, store, "address-publications", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
 		{Address: "10.0.0.94", Interface: "eth0", Kind: networking.KindLAN},
@@ -280,19 +282,19 @@ func TestNetworkEntryAddressChangesAreBlockedByActivePublications(t *testing.T) 
 		{
 			name: "LAN",
 			profile: networking.Profile{ServiceAddress: oldProfile.ServiceAddress, LANAddress: "10.0.0.95", HeadscaleAddress: oldProfile.HeadscaleAddress, PublicAddress: oldProfile.PublicAddress,
-				EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
+				PublicBindAddress: oldProfile.PublicBindAddress, PublicMode: oldProfile.PublicMode, EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
 			errContains: "stop LAN publications",
 		},
 		{
 			name: "Headscale",
 			profile: networking.Profile{ServiceAddress: oldProfile.ServiceAddress, LANAddress: oldProfile.LANAddress, HeadscaleAddress: "100.64.0.95", PublicAddress: oldProfile.PublicAddress,
-				EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
+				PublicBindAddress: oldProfile.PublicBindAddress, PublicMode: oldProfile.PublicMode, EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
 			errContains: "stop Headscale publications",
 		},
 		{
 			name: "public",
 			profile: networking.Profile{ServiceAddress: oldProfile.ServiceAddress, LANAddress: oldProfile.LANAddress, HeadscaleAddress: oldProfile.HeadscaleAddress, PublicAddress: "203.0.113.95",
-				EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
+				PublicBindAddress: "203.0.113.95", PublicMode: oldProfile.PublicMode, EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
 			errContains: "stop direct public publications",
 		},
 	}

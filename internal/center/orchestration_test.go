@@ -659,6 +659,10 @@ func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabiliti
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: roles, Capabilities: capabilities, NetworkCandidates: candidates, GatewayHealthy: capabilities.Gateway, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
 		t.Fatal(err)
 	}
+	if profile.DirectPublic {
+		profile.PublicMode = networking.PublicModeDirect
+		profile.PublicBindAddress = profile.PublicAddress
+	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, profile); err != nil {
 		t.Fatal(err)
 	}

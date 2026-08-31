@@ -88,7 +88,7 @@ export function gatewaysForKind(data: AppData, service: Service, kind: Publicati
   return data.agents.filter((agent) => {
     if (!agent.connected || agent.siteId !== service.siteId || !agent.networkProfile) return false;
     if (kind === "cloudflare_tunnel") return agent.capabilities.tunnel;
-    if (kind === "public_direct" && service.protocol !== "http" && service.protocol !== "https") return agent.id === app?.nodeId && agent.networkProfile.directPublic && agent.networkProfile.enabledKinds.includes("public");
+    if (kind === "public_direct" && service.protocol !== "http" && service.protocol !== "https") return agent.id === app?.nodeId && agent.networkProfile.directPublic && agent.networkProfile.publicMode === "direct" && agent.networkProfile.enabledKinds.includes("public");
     if (!agent.capabilities.gateway || !site?.gatewayNodes.includes(agent.id)) return false;
     if (kind === "lan_gateway") return agent.networkProfile.enabledKinds.includes("lan");
     if (kind === "headscale_gateway") return agent.networkProfile.enabledKinds.includes("headscale");

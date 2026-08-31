@@ -759,16 +759,16 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	if err := candidateRows.Close(); err != nil {
 		return nil, err
 	}
-	profileRows, err := s.db.QueryContext(ctx, `SELECT agent_id, service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at FROM agent_network_profiles ORDER BY agent_id`)
+	profileRows, err := s.db.QueryContext(ctx, `SELECT agent_id, service_address, lan_address, headscale_address, public_address, public_bind_address, public_mode, enabled_kinds_json, direct_public, public_verified_at, confirmed_at, candidate_observed_at FROM agent_network_profiles ORDER BY agent_id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list network profiles: %w", err)
 	}
 	for profileRows.Next() {
-		var agentID, confirmed, observed string
+		var agentID, verified, confirmed, observed string
 		var enabled []byte
 		var direct int
 		profile := networking.Profile{}
-		if err := profileRows.Scan(&agentID, &profile.ServiceAddress, &profile.LANAddress, &profile.HeadscaleAddress, &profile.PublicAddress, &enabled, &direct, &confirmed, &observed); err != nil {
+		if err := profileRows.Scan(&agentID, &profile.ServiceAddress, &profile.LANAddress, &profile.HeadscaleAddress, &profile.PublicAddress, &profile.PublicBindAddress, &profile.PublicMode, &enabled, &direct, &verified, &confirmed, &observed); err != nil {
 			profileRows.Close()
 			return nil, err
 		}
@@ -777,6 +777,13 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 			return nil, errors.New("center: invalid stored network profile")
 		}
 		profile.DirectPublic = direct == 1
+		if verified != "" {
+			profile.PublicVerifiedAt, err = time.Parse(time.RFC3339Nano, verified)
+			if err != nil {
+				profileRows.Close()
+				return nil, errors.New("center: invalid public ingress verification timestamp")
+			}
+		}
 		profile.ConfirmedAt, err = time.Parse(time.RFC3339Nano, confirmed)
 		if err != nil {
 			profileRows.Close()

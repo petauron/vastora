@@ -328,7 +328,7 @@ function RealityResult({ busy, command, displayName, dnsProvider, error, gateway
 }
 
 function realityGateways(data: AppData, application: Application) {
-  return data.agents.filter((agent) => agent.siteId === application.siteId && agent.connected && agent.capabilities.gateway && agent.networkProfile?.directPublic && agent.networkProfile.enabledKinds.includes("public") && data.sites.some((site) => site.id === application.siteId && site.gatewayNodes.includes(agent.id))).sort((left, right) => Number(right.id === application.nodeId) - Number(left.id === application.nodeId) || left.name.localeCompare(right.name));
+  return data.agents.filter((agent) => agent.siteId === application.siteId && agent.connected && agent.capabilities.gateway && agent.networkProfile?.directPublic && agent.networkProfile.publicMode === "direct" && agent.networkProfile.enabledKinds.includes("public") && data.sites.some((site) => site.id === application.siteId && site.gatewayNodes.includes(agent.id))).sort((left, right) => Number(right.id === application.nodeId) - Number(left.id === application.nodeId) || left.name.localeCompare(right.name));
 }
 
 function emptyDraft(): RealityDraft {

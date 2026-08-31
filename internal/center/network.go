@@ -44,8 +44,8 @@ func networkProfile(ctx context.Context, queryer networkQueryer, agentID string)
 	var value networking.Profile
 	var enabled []byte
 	var direct int
-	var confirmed, observed string
-	err := queryer.QueryRowContext(ctx, `SELECT service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at FROM agent_network_profiles WHERE agent_id = ?`, agentID).Scan(&value.ServiceAddress, &value.LANAddress, &value.HeadscaleAddress, &value.PublicAddress, &enabled, &direct, &confirmed, &observed)
+	var verified, confirmed, observed string
+	err := queryer.QueryRowContext(ctx, `SELECT service_address, lan_address, headscale_address, public_address, public_bind_address, public_mode, enabled_kinds_json, direct_public, public_verified_at, confirmed_at, candidate_observed_at FROM agent_network_profiles WHERE agent_id = ?`, agentID).Scan(&value.ServiceAddress, &value.LANAddress, &value.HeadscaleAddress, &value.PublicAddress, &value.PublicBindAddress, &value.PublicMode, &enabled, &direct, &verified, &confirmed, &observed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -56,6 +56,12 @@ func networkProfile(ctx context.Context, queryer networkQueryer, agentID string)
 		return nil, errors.New("center: invalid stored network profile")
 	}
 	value.DirectPublic = direct == 1
+	if verified != "" {
+		value.PublicVerifiedAt, err = time.Parse(time.RFC3339Nano, verified)
+		if err != nil {
+			return nil, errors.New("center: invalid public ingress verification timestamp")
+		}
+	}
 	value.ConfirmedAt, err = time.Parse(time.RFC3339Nano, confirmed)
 	if err != nil {
 		return nil, errors.New("center: invalid network profile timestamp")
@@ -68,10 +74,17 @@ func networkProfile(ctx context.Context, queryer networkQueryer, agentID string)
 }
 
 func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input networking.Profile) (*networking.Profile, error) {
+	return s.confirmNetworkProfile(ctx, agentID, input, time.Time{})
+}
+
+func (s *Store) confirmNetworkProfile(ctx context.Context, agentID string, input networking.Profile, verifiedNATAt time.Time) (*networking.Profile, error) {
 	input.ServiceAddress = strings.TrimSpace(input.ServiceAddress)
 	input.LANAddress = strings.TrimSpace(input.LANAddress)
 	input.HeadscaleAddress = strings.TrimSpace(input.HeadscaleAddress)
 	input.PublicAddress = strings.TrimSpace(input.PublicAddress)
+	input.PublicBindAddress = strings.TrimSpace(input.PublicBindAddress)
+	input.PublicMode = strings.TrimSpace(input.PublicMode)
+	input.PublicVerifiedAt = time.Time{}
 	input.EnabledKinds = uniqueStrings(input.EnabledKinds)
 	sort.Strings(input.EnabledKinds)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -93,11 +106,31 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if len(candidates) == 0 {
 		return nil, errors.New("center: Agent has not reported any network addresses")
 	}
-	if err := networking.ValidateProfile(candidates, input); err != nil {
-		return nil, err
-	}
 	previous, err := networkProfile(ctx, tx, agentID)
 	if err != nil {
+		return nil, err
+	}
+	if !input.DirectPublic {
+		input.PublicAddress = ""
+		input.PublicBindAddress = ""
+		input.PublicMode = ""
+	} else {
+		switch input.PublicMode {
+		case networking.PublicModeDirect:
+			input.PublicBindAddress = input.PublicAddress
+		case networking.PublicModeNAT:
+			if !verifiedNATAt.IsZero() {
+				input.PublicVerifiedAt = verifiedNATAt.UTC()
+			} else if previous != nil && previous.DirectPublic && previous.PublicMode == networking.PublicModeNAT && previous.PublicAddress == input.PublicAddress && previous.PublicBindAddress == input.PublicBindAddress {
+				input.PublicVerifiedAt = previous.PublicVerifiedAt
+			} else {
+				return nil, errors.New("center: use automatic public entry detection before enabling a NAT address")
+			}
+		default:
+			return nil, errors.New("center: select a valid public ingress mode")
+		}
+	}
+	if err := networking.ValidateProfile(candidates, input); err != nil {
 		return nil, err
 	}
 	if previous == nil || previous.ServiceAddress != input.ServiceAddress {
@@ -183,9 +216,13 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 		}
 	}
 	enabledJSON, _ := json.Marshal(input.EnabledKinds)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_profiles(agent_id, service_address, lan_address, headscale_address, public_address, enabled_kinds_json, direct_public, confirmed_at, candidate_observed_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(agent_id) DO UPDATE SET service_address = excluded.service_address, lan_address = excluded.lan_address, headscale_address = excluded.headscale_address, public_address = excluded.public_address, enabled_kinds_json = excluded.enabled_kinds_json, direct_public = excluded.direct_public, confirmed_at = excluded.confirmed_at, candidate_observed_at = excluded.candidate_observed_at`, agentID, input.ServiceAddress, input.LANAddress, input.HeadscaleAddress, input.PublicAddress, enabledJSON, input.DirectPublic, input.ConfirmedAt.Format(time.RFC3339Nano), input.CandidateObserved.Format(time.RFC3339Nano)); err != nil {
+	verifiedAt := ""
+	if !input.PublicVerifiedAt.IsZero() {
+		verifiedAt = input.PublicVerifiedAt.Format(time.RFC3339Nano)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_profiles(agent_id, service_address, lan_address, headscale_address, public_address, public_bind_address, public_mode, enabled_kinds_json, direct_public, public_verified_at, confirmed_at, candidate_observed_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(agent_id) DO UPDATE SET service_address = excluded.service_address, lan_address = excluded.lan_address, headscale_address = excluded.headscale_address, public_address = excluded.public_address, public_bind_address = excluded.public_bind_address, public_mode = excluded.public_mode, enabled_kinds_json = excluded.enabled_kinds_json, direct_public = excluded.direct_public, public_verified_at = excluded.public_verified_at, confirmed_at = excluded.confirmed_at, candidate_observed_at = excluded.candidate_observed_at`, agentID, input.ServiceAddress, input.LANAddress, input.HeadscaleAddress, input.PublicAddress, input.PublicBindAddress, input.PublicMode, enabledJSON, input.DirectPublic, verifiedAt, input.ConfirmedAt.Format(time.RFC3339Nano), input.CandidateObserved.Format(time.RFC3339Nano)); err != nil {
 		return nil, fmt.Errorf("center: save network profile: %w", err)
 	}
 	if err := s.autoAssignFirstSiteGateway(ctx, tx, agentID, s.now().UTC()); err != nil {

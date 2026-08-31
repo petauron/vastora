@@ -13,9 +13,11 @@ import (
 )
 
 const (
-	KindLAN       = "lan"
-	KindHeadscale = "headscale"
-	KindPublic    = "public"
+	KindLAN          = "lan"
+	KindHeadscale    = "headscale"
+	KindPublic       = "public"
+	PublicModeDirect = "direct"
+	PublicModeNAT    = "nat"
 )
 
 type Candidate struct {
@@ -30,8 +32,11 @@ type Profile struct {
 	LANAddress        string    `json:"lanAddress,omitempty"`
 	HeadscaleAddress  string    `json:"headscaleAddress,omitempty"`
 	PublicAddress     string    `json:"publicAddress,omitempty"`
+	PublicBindAddress string    `json:"publicBindAddress,omitempty"`
+	PublicMode        string    `json:"publicMode,omitempty"`
 	EnabledKinds      []string  `json:"enabledKinds"`
 	DirectPublic      bool      `json:"directPublic"`
+	PublicVerifiedAt  time.Time `json:"publicVerifiedAt,omitempty"`
 	ConfirmedAt       time.Time `json:"confirmedAt"`
 	CandidateObserved time.Time `json:"candidateObservedAt"`
 }
@@ -182,15 +187,31 @@ func ValidateProfile(candidates []Candidate, profile Profile) error {
 			return errors.New("network: direct public ingress requires the public network")
 		}
 		publicIP := net.ParseIP(strings.TrimSpace(profile.PublicAddress))
-		if publicIP == nil {
-			return errors.New("network: direct public ingress requires a discovered local public address")
+		if publicIP == nil || Classify("external", publicIP) != KindPublic {
+			return errors.New("network: direct public ingress requires a valid public IPv4 address")
 		}
-		publicCandidate, exists := byAddress[publicIP.String()]
-		if !exists || publicCandidate.Kind != KindPublic {
-			return errors.New("network: direct public ingress requires a discovered local public address")
+		bindIP := net.ParseIP(strings.TrimSpace(profile.PublicBindAddress))
+		if bindIP == nil {
+			return errors.New("network: direct public ingress requires a local receiving address")
 		}
-	} else if strings.TrimSpace(profile.PublicAddress) != "" {
-		return errors.New("network: public address requires direct public ingress")
+		bindCandidate, exists := byAddress[bindIP.String()]
+		if !exists || bindCandidate.Kind != KindLAN && bindCandidate.Kind != KindPublic {
+			return errors.New("network: public receiving address must be assigned to this node")
+		}
+		switch profile.PublicMode {
+		case PublicModeDirect:
+			if bindCandidate.Kind != KindPublic || bindIP.String() != publicIP.String() {
+				return errors.New("network: direct public address must be assigned to this node")
+			}
+		case PublicModeNAT:
+			if profile.PublicVerifiedAt.IsZero() {
+				return errors.New("network: NAT public ingress requires external verification")
+			}
+		default:
+			return errors.New("network: direct public ingress mode is invalid")
+		}
+	} else if strings.TrimSpace(profile.PublicAddress) != "" || strings.TrimSpace(profile.PublicBindAddress) != "" || strings.TrimSpace(profile.PublicMode) != "" || !profile.PublicVerifiedAt.IsZero() {
+		return errors.New("network: public ingress metadata requires direct public ingress")
 	}
 	return nil
 }
