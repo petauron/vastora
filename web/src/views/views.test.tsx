@@ -746,6 +746,18 @@ describe("network and app views", () => {
     expect(tlsSwitch?.getAttribute("aria-checked")).toBe("true");
   });
 
+  it("shows the complete publication URL including its routed path", () => {
+    const data = dashboard();
+    data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const accessUrl = "https://service-vastora.example.com/s/random-path/";
+    data.publications = [{ id: "public-panel", serviceId: "manager", kind: "cloudflare_tunnel", gatewayNodeId: "agent", hostname: "service-vastora.example.com", pathPrefix: "/s/random-path", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+    const address = container.querySelector<HTMLElement>(`[title="${accessUrl}"]`);
+    expect(address?.textContent).toBe(accessUrl);
+  });
+
   it("upgrades an existing private HTTP access point from its HTTPS switch", async () => {
     const data = dashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];

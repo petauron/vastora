@@ -374,7 +374,7 @@ func TestCaddyConfigurationUsesOnlyGatewayListenersAndMeshUpstreams(t *testing.T
 		t.Fatalf("Caddy Admin API is not using its Unix socket: %#v", admin)
 	}
 	encoded := string(payload)
-	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"dial":"100.64.0.10:3000"`, `"host":["cpa.apps.example.test"]`} {
+	for _, wanted := range []string{`"listen":["0.0.0.0:10080"]`, `"automatic_https":{"disable":true}`, `"dial":"100.64.0.10:3000"`, `"host":["cpa.apps.example.test"]`} {
 		if !strings.Contains(encoded, wanted) {
 			t.Fatalf("Caddy configuration missing %s: %s", wanted, encoded)
 		}
