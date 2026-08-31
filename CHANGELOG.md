@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.78](https://github.com/petauron/vastora/compare/v0.1.0-alpha.77...v0.1.0-alpha.78) (2026-08-31)
+
+
+### Features
+
+* unify public services behind shared gateway ([f503703](https://github.com/petauron/vastora/commit/f503703e9f196bde56f957778f8e152e0ea92982))
+
 ## [0.1.0-alpha.77](https://github.com/petauron/vastora/compare/v0.1.0-alpha.76...v0.1.0-alpha.77) (2026-08-31)
 
 
