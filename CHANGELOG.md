@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.79](https://github.com/petauron/vastora/compare/v0.1.0-alpha.78...v0.1.0-alpha.79) (2026-08-31)
+
+
+### Bug Fixes
+
+* restore protected panel publication ([1d504d2](https://github.com/petauron/vastora/commit/1d504d24da5a7deb5e273ad5edc3eb9cfebfacbf))
+
 ## [0.1.0-alpha.78](https://github.com/petauron/vastora/compare/v0.1.0-alpha.77...v0.1.0-alpha.78) (2026-08-31)
 
 
