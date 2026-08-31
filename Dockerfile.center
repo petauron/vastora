@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY web/ ./
 RUN npm run build
 
-FROM --platform=$BUILDPLATFORM golang:1.26.6-bookworm AS go-source
+FROM --platform=$BUILDPLATFORM golang:1.26.7-bookworm AS go-source
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN GOTOOLCHAIN=go1.26.6 go mod download
