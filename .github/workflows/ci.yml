@@ -39,7 +39,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
-  go:
+  go-race:
+    name: Go race tests
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
@@ -49,12 +50,40 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.6"
-      - run: make go-check
+          cache-dependency-path: go.sum
+      - run: make go-race-check
+
+  go-quality:
+    name: Go quality and security
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache: false
+      - run: make go-format-check go-static-check
       - name: Validate generated Headscale config with pinned binary
         env:
           VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"
         run: go test ./internal/deployer -run '^TestGeneratedHeadscaleConfigAcceptedByPinnedBinary$' -count=1
       - run: make go-security-check
+
+  go-build:
+    name: Go cross-compile
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache: false
       - name: Cross-compile Agent binaries
         run: make agent-binaries
 
@@ -103,6 +132,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26.6"
+          cache-dependency-path: go.sum
       - name: Scan Git history for secrets
         run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -139,6 +169,7 @@ jobs:
         architecture: [amd64, arm64]
     permissions:
       contents: read
+      packages: read
       security-events: write
     env:
       DOCKER_BUILD_RECORD_UPLOAD: "false"
@@ -146,6 +177,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.0.0
+      - name: Log in to GitHub Container Registry for build cache
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.0.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - name: Build Center image for scanning
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.0.0
         with:
@@ -156,7 +193,7 @@ jobs:
           push: false
           build-args: VASTORA_VERSION=0.0.0-ci
           tags: local/vastora-center:${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=gha
+          cache-from: type=registry,ref=ghcr.io/petauron/vastora-center:buildcache
       - name: Scan Center image for vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -178,21 +215,23 @@ jobs:
   gate:
     name: CI / gate
     if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
-    needs: [changes, go, web, deployment, security, release-metadata, container-image-security]
+    needs: [changes, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every applicable CI job
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          GO_RESULT: ${{ needs.go.result }}
+          GO_RACE_RESULT: ${{ needs.go-race.result }}
+          GO_QUALITY_RESULT: ${{ needs.go-quality.result }}
+          GO_BUILD_RESULT: ${{ needs.go-build.result }}
           WEB_RESULT: ${{ needs.web.result }}
           DEPLOYMENT_RESULT: ${{ needs.deployment.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
           CONTAINER_RESULT: ${{ needs.container-image-security.result }}
         run: |
-          for result in "$CHANGES_RESULT" "$GO_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$CONTAINER_RESULT"; do
+          for result in "$CHANGES_RESULT" "$GO_RACE_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$CONTAINER_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) echo "Required CI job did not succeed: $result" >&2; exit 1 ;;

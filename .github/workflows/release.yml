@@ -142,8 +142,8 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ needs.prepare.outputs.release_sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.release_version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=${{ env.CENTER_IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.CENTER_IMAGE }}:buildcache,mode=max,ignore-error=true
           provenance: mode=max
           sbom: true
 

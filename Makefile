@@ -4,7 +4,7 @@ GO_PACKAGES := ./cmd/... ./internal/...
 STATICCHECK_VERSION := v0.7.0
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: bootstrap check go-check web-check deployment-check security-check dependency-security-check go-security-check web-security-check agent-binaries center-install-bundle image-center image-agent
+.PHONY: bootstrap check go-check go-format-check go-race-check go-static-check web-check deployment-check security-check dependency-security-check go-security-check web-security-check agent-binaries center-install-bundle image-center image-agent
 
 bootstrap:
 	$(GO) mod download
@@ -12,11 +12,17 @@ bootstrap:
 
 check: go-check web-check deployment-check
 
-go-check:
+go-check: go-format-check go-race-check go-static-check
+
+go-format-check:
 	@VASTORA_FORMATTED_FILES="$$(gofmt -l cmd internal)"; \
 	/bin/test -z "$$VASTORA_FORMATTED_FILES" || { printf 'Run gofmt on:\n%s\n' "$$VASTORA_FORMATTED_FILES"; exit 1; }
 	node scripts/generate-openapi.mjs --check
+
+go-race-check:
 	$(GO) test -race $(GO_PACKAGES)
+
+go-static-check:
 	$(GO) vet $(GO_PACKAGES)
 	$(GO) run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) $(GO_PACKAGES)
 
