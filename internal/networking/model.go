@@ -27,6 +27,17 @@ type Candidate struct {
 	ObservedAt time.Time `json:"observedAt"`
 }
 
+// PublicEgress is the public IPv4 address observed for an Agent together with
+// the local address selected by the kernel for that outbound route. It
+// describes address mapping only; it does not claim that inbound ports are
+// reachable through a cloud firewall or router.
+type PublicEgress struct {
+	Address     string    `json:"address"`
+	BindAddress string    `json:"bindAddress"`
+	Mode        string    `json:"mode"`
+	ObservedAt  time.Time `json:"observedAt"`
+}
+
 type Profile struct {
 	ServiceAddress    string    `json:"serviceAddress"`
 	LANAddress        string    `json:"lanAddress,omitempty"`
@@ -90,7 +101,7 @@ func DefaultRouteAddress(remoteAddress string) (string, error) {
 	if remote == nil || remote.To4() == nil {
 		return "", errors.New("network: remote address must be IPv4")
 	}
-	connection, err := net.Dial("udp4", "1.1.1.1:53")
+	connection, err := net.Dial("udp4", net.JoinHostPort(remote.String(), "53"))
 	if err != nil {
 		return "", fmt.Errorf("network: select default IPv4 route: %w", err)
 	}

@@ -42,6 +42,7 @@ type Client struct {
 	TailscaleIsolation func(context.Context, TailscaleIsolationDesiredState) error
 	TailscaleEnrolled  bool
 	TailscaleOwnership string
+	PublicEgress       PublicEgressObserver
 }
 
 type TailscaleIsolationDesiredState struct {
@@ -463,9 +464,18 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		return nil, err
 	}
 	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver)
-	candidates, err := networking.Discover(time.Now())
+	now := time.Now()
+	candidates, err := networking.Discover(now)
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
+	}
+	var publicEgress *networking.PublicEgress
+	var publicEgressErr error
+	if startup && c.PublicEgress != nil {
+		publicEgress, publicEgressErr = c.PublicEgress(ctx, candidates, now)
+		if publicEgressErr != nil {
+			publicEgressErr = fmt.Errorf("agent: observe public egress: %w", publicEgressErr)
+		}
 	}
 	endpoints, observeErr := observeThreeXUI(ctx, store)
 	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
@@ -492,19 +502,20 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           c.TailscaleOwnership,
 		"startup":                      startup,
+		"publicEgress":                 publicEgress,
 	}, connection.Credential, connection.CAFingerprint, &response)
 	if err != nil {
-		return observeErr, err
+		return errors.Join(observeErr, publicEgressErr), err
 	}
 	if err := c.applyDesiredCenterURL(ctx, store, connection, response.CenterURL); err != nil {
-		return observeErr, err
+		return errors.Join(observeErr, publicEgressErr), err
 	}
 	if response.TailscaleIsolation != nil && c.TailscaleIsolation != nil {
 		if err := c.TailscaleIsolation(ctx, *response.TailscaleIsolation); err != nil {
-			return observeErr, fmt.Errorf("agent: apply Tailscale isolation: %w", err)
+			return errors.Join(observeErr, publicEgressErr), fmt.Errorf("agent: apply Tailscale isolation: %w", err)
 		}
 	}
-	return observeErr, nil
+	return errors.Join(observeErr, publicEgressErr), nil
 }
 
 func (c Client) applyDesiredCenterURL(ctx context.Context, store *Store, connection Connection, desired string) error {

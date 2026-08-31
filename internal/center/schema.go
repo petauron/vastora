@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 43
+const centerSchemaVersion = 44
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -164,7 +164,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			capabilities_json BLOB NOT NULL DEFAULT '{}',
 			gateway_healthy INTEGER NOT NULL DEFAULT 0,
 			runtime_generation INTEGER NOT NULL DEFAULT 0,
-			tailscale_ownership TEXT NOT NULL DEFAULT '' CHECK(tailscale_ownership IN ('', 'managed', 'external'))
+			tailscale_ownership TEXT NOT NULL DEFAULT '' CHECK(tailscale_ownership IN ('', 'managed', 'external')),
+			public_egress_address TEXT NOT NULL DEFAULT '',
+			public_egress_bind_address TEXT NOT NULL DEFAULT '',
+			public_egress_mode TEXT NOT NULL DEFAULT '' CHECK(public_egress_mode IN ('', 'direct', 'nat')),
+			public_egress_observed_at TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE TABLE agent_enrollment_operations (
 			token_hash BLOB PRIMARY KEY REFERENCES agent_enrollment_tokens(token_hash) ON DELETE CASCADE,

@@ -21,6 +21,7 @@ import (
 )
 
 const agentEnrollmentReplayLifetime = 24 * time.Hour
+const agentConnectedMaxAge = 45 * time.Second
 
 type AgentEnrollment struct {
 	Token        string    `json:"token"`
@@ -59,24 +60,25 @@ type AgentCredential struct {
 }
 
 type AgentView struct {
-	ID                   string                 `json:"id"`
-	Name                 string                 `json:"name"`
-	Version              string                 `json:"version"`
-	OperatingSystem      string                 `json:"operatingSystem"`
-	Architecture         string                 `json:"architecture"`
-	Status               string                 `json:"status"`
-	AppliedInstallations int                    `json:"appliedInstallations"`
-	EnrolledAt           time.Time              `json:"enrolledAt"`
-	LastSeenAt           time.Time              `json:"lastSeenAt"`
-	Connected            bool                   `json:"connected"`
-	SiteID               string                 `json:"siteId"`
-	Roles                []string               `json:"roles"`
-	Capabilities         NodeCapabilities       `json:"capabilities"`
-	NetworkCandidates    []networking.Candidate `json:"networkCandidates"`
-	NetworkProfile       *networking.Profile    `json:"networkProfile,omitempty"`
-	GatewayHealthy       bool                   `json:"gatewayHealthy"`
-	TailscaleOwnership   string                 `json:"tailscaleOwnership"`
-	CredentialRevoked    bool                   `json:"credentialRevoked"`
+	ID                   string                   `json:"id"`
+	Name                 string                   `json:"name"`
+	Version              string                   `json:"version"`
+	OperatingSystem      string                   `json:"operatingSystem"`
+	Architecture         string                   `json:"architecture"`
+	Status               string                   `json:"status"`
+	AppliedInstallations int                      `json:"appliedInstallations"`
+	EnrolledAt           time.Time                `json:"enrolledAt"`
+	LastSeenAt           time.Time                `json:"lastSeenAt"`
+	Connected            bool                     `json:"connected"`
+	SiteID               string                   `json:"siteId"`
+	Roles                []string                 `json:"roles"`
+	Capabilities         NodeCapabilities         `json:"capabilities"`
+	NetworkCandidates    []networking.Candidate   `json:"networkCandidates"`
+	PublicEgress         *networking.PublicEgress `json:"publicEgress,omitempty"`
+	NetworkProfile       *networking.Profile      `json:"networkProfile,omitempty"`
+	GatewayHealthy       bool                     `json:"gatewayHealthy"`
+	TailscaleOwnership   string                   `json:"tailscaleOwnership"`
+	CredentialRevoked    bool                     `json:"credentialRevoked"`
 }
 
 func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
@@ -489,6 +491,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	heartbeat.NetworkCandidates = filteredCandidates
+	if heartbeat.PublicEgress != nil {
+		if err := normalizeAgentPublicEgress(heartbeat.PublicEgress, heartbeat.NetworkCandidates, s.now().UTC()); err != nil {
+			return err
+		}
+	}
 	rolesJSON, _ := json.Marshal(heartbeat.Roles)
 	capabilitiesJSON, _ := json.Marshal(heartbeat.Capabilities)
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -509,7 +516,16 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if len(storedPublicKey) != 0 && len(heartbeat.PublicKey) != 0 && !bytes.Equal(storedPublicKey, heartbeat.PublicKey) {
 		return errors.New("center: Agent X25519 identity changed; revoke and enroll it again")
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = ?, tailscale_ownership = ?, last_seen_at = ? WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), id); err != nil {
+	replacePublicEgress := heartbeat.Startup
+	publicEgress := networking.PublicEgress{}
+	if heartbeat.PublicEgress != nil {
+		publicEgress = *heartbeat.PublicEgress
+	}
+	publicEgressObservedAt := ""
+	if !publicEgress.ObservedAt.IsZero() {
+		publicEgressObservedAt = publicEgress.ObservedAt.Format(time.RFC3339Nano)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = ?, tailscale_ownership = ?, last_seen_at = ?, public_egress_address = CASE WHEN ? THEN ? ELSE public_egress_address END, public_egress_bind_address = CASE WHEN ? THEN ? ELSE public_egress_bind_address END, public_egress_mode = CASE WHEN ? THEN ? ELSE public_egress_mode END, public_egress_observed_at = CASE WHEN ? THEN ? ELSE public_egress_observed_at END WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), replacePublicEgress, publicEgress.Address, replacePublicEgress, publicEgress.BindAddress, replacePublicEgress, publicEgress.Mode, replacePublicEgress, publicEgressObservedAt, id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_network_candidates WHERE agent_id = ?`, id); err != nil {
@@ -695,18 +711,61 @@ func invalidateUnusableNetworkProfile(ctx context.Context, tx *sql.Tx, agentID s
 	return nil
 }
 
+func normalizeAgentPublicEgress(value *networking.PublicEgress, candidates []networking.Candidate, now time.Time) error {
+	value.Address = strings.TrimSpace(value.Address)
+	value.BindAddress = strings.TrimSpace(value.BindAddress)
+	value.Mode = strings.TrimSpace(value.Mode)
+	publicIP := net.ParseIP(value.Address)
+	bindIP := net.ParseIP(value.BindAddress)
+	if publicIP == nil || publicIP.To4() == nil || networking.Classify("external", publicIP) != networking.KindPublic || bindIP == nil || bindIP.To4() == nil {
+		return errors.New("center: Agent reported an invalid public egress mapping")
+	}
+	value.Address = publicIP.String()
+	value.BindAddress = bindIP.String()
+	bindKind := ""
+	for _, candidate := range candidates {
+		if candidate.Address == value.BindAddress && (candidate.Kind == networking.KindLAN || candidate.Kind == networking.KindPublic) {
+			bindKind = candidate.Kind
+			break
+		}
+	}
+	if bindKind == "" {
+		return errors.New("center: Agent public egress does not match a reported local address")
+	}
+	switch value.Mode {
+	case networking.PublicModeDirect:
+		if bindKind != networking.KindPublic || value.Address != value.BindAddress {
+			return errors.New("center: Agent reported an invalid direct public egress")
+		}
+	case networking.PublicModeNAT:
+		if bindKind == networking.KindPublic && value.Address == value.BindAddress {
+			return errors.New("center: Agent reported a direct public address as NAT")
+		}
+	default:
+		return errors.New("center: Agent reported an invalid public egress mode")
+	}
+	if value.ObservedAt.IsZero() {
+		return errors.New("center: Agent reported an invalid public egress observation time")
+	}
+	if value.ObservedAt.After(now.Add(2 * time.Minute)) {
+		return errors.New("center: Agent reported a future public egress observation")
+	}
+	value.ObservedAt = value.ObservedAt.UTC()
+	return nil
+}
+
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, tailscale_ownership, credential_revoked_at <> '' FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at FROM agents ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
 	agents := make([]AgentView, 0)
 	for rows.Next() {
 		var agent AgentView
-		var enrolledAt, lastSeenAt string
+		var enrolledAt, lastSeenAt, publicAddress, publicBindAddress, publicMode, publicObservedAt string
 		var rolesJSON, capabilitiesJSON []byte
 		var gatewayHealthy int
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.TailscaleOwnership, &agent.CredentialRevoked); err != nil {
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.TailscaleOwnership, &agent.CredentialRevoked, &publicAddress, &publicBindAddress, &publicMode, &publicObservedAt); err != nil {
 			return nil, fmt.Errorf("center: scan agent: %w", err)
 		}
 		var err error
@@ -718,8 +777,15 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		if err != nil {
 			return nil, fmt.Errorf("center: parse agent heartbeat time: %w", err)
 		}
-		agent.Connected = agent.Status == "active" && !agent.CredentialRevoked && agent.LastSeenAt.After(s.now().Add(-45*time.Second))
+		agent.Connected = agent.Status == "active" && !agent.CredentialRevoked && agent.LastSeenAt.After(s.now().Add(-agentConnectedMaxAge))
 		agent.GatewayHealthy = gatewayHealthy == 1
+		if publicAddress != "" || publicBindAddress != "" || publicMode != "" || publicObservedAt != "" {
+			observedAt, parseErr := time.Parse(time.RFC3339Nano, publicObservedAt)
+			if parseErr != nil {
+				return nil, errors.New("center: invalid stored Agent public egress timestamp")
+			}
+			agent.PublicEgress = &networking.PublicEgress{Address: publicAddress, BindAddress: publicBindAddress, Mode: publicMode, ObservedAt: observedAt}
+		}
 		if json.Unmarshal(rolesJSON, &agent.Roles) != nil || json.Unmarshal(capabilitiesJSON, &agent.Capabilities) != nil {
 			return nil, errors.New("center: invalid stored Agent capabilities")
 		}

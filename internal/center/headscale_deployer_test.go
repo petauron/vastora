@@ -15,6 +15,7 @@ import (
 
 	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 type fakeBuiltinHeadscaleInstaller struct {
@@ -139,7 +140,7 @@ func TestSetupVerifiesPublicPortsBeforeInstallingInfrastructure(t *testing.T) {
 	}
 }
 
-func TestDetectedCenterNATPromotesOnlyTheCoLocatedAgentPublicProfile(t *testing.T) {
+func TestAgentReportedNATEnablesPublicWebProfileWithoutCenterCoLocation(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -149,35 +150,29 @@ func TestDetectedCenterNATPromotesOnlyTheCoLocatedAgentPublicProfile(t *testing.
 		{Address: "10.0.0.27", Interface: "enp0s6", Kind: networking.KindLAN},
 		{Address: "100.64.0.1", Interface: "tailscale0", Kind: networking.KindHeadscale},
 	}
-	store.discoverNetworkCandidates = func(observedAt time.Time) ([]networking.Candidate, error) {
-		result := append([]networking.Candidate(nil), candidates...)
-		for index := range result {
-			result[index].ObservedAt = observedAt
-		}
-		return result, nil
-	}
-	store.lookupPublicAddress = func(context.Context) (string, error) { return "198.51.100.27", nil }
 	node := enrollOrchestrationNode(t, store, "Oracle A1", NodeCapabilities{Docker: true, Gateway: true}, candidates, networking.Profile{
 		ServiceAddress: "100.64.0.1", LANAddress: "10.0.0.27", HeadscaleAddress: "100.64.0.1",
 		EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale},
 	})
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"198.51.100.27","bindAddress":"10.0.0.27"}`); err != nil {
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, NetworkCandidates: candidates, PublicEgress: &networking.PublicEgress{Address: "198.51.100.27", BindAddress: "10.0.0.27", Mode: networking.PublicModeNAT, ObservedAt: now}, GatewayHealthy: true, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, Startup: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.savePublicEntryVerification(ctx, setupGatewayBinding{PublicAddress: "198.51.100.27", BindAddress: "10.0.0.27"}); err != nil {
-		t.Fatal(err)
-	}
-	server := NewServer(store, "", false).WithInfrastructureManager(&fakeBuiltinHeadscaleInstaller{})
-	result, err := server.enableDetectedAgentPublicEntry(ctx, node.ID)
+	profile, err := store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "100.64.0.1", LANAddress: "10.0.0.27", HeadscaleAddress: "100.64.0.1", PublicAddress: "198.51.100.27", PublicBindAddress: "10.0.0.27", PublicMode: networking.PublicModeNAT, EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale, networking.KindPublic}, DirectPublic: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := result.Profile
-	if result.Status != "ready" || result.Mode != networking.PublicModeNAT || profile.PublicAddress != "198.51.100.27" || profile.PublicBindAddress != "10.0.0.27" || !profile.DirectPublic || profile.PublicVerifiedAt != now {
-		t.Fatalf("unexpected detected public profile: %#v", result)
+	if profile.PublicMode != networking.PublicModeNAT || profile.PublicAddress != "198.51.100.27" || profile.PublicBindAddress != "10.0.0.27" || !profile.DirectPublic || profile.PublicVerifiedAt != now {
+		t.Fatalf("unexpected Agent public profile: %#v", profile)
 	}
 	if !containsString(profile.EnabledKinds, networking.KindPublic) {
 		t.Fatalf("public network was not enabled: %#v", profile.EnabledKinds)
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: []string{"worker", "gateway"}, Capabilities: NodeCapabilities{Docker: true, Gateway: true}, NetworkCandidates: candidates, GatewayHealthy: true, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, Startup: true}); err != nil {
+		t.Fatalf("startup without an egress observation blocked the heartbeat: %v", err)
+	}
+	agents, err := store.ListAgents(ctx)
+	if err != nil || len(agents) != 1 || agents[0].PublicEgress != nil {
+		t.Fatalf("previous-process public egress was not cleared: agents=%#v err=%v", agents, err)
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

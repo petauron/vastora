@@ -39,6 +39,7 @@ type NodeHeartbeat struct {
 	Roles                        []string
 	Capabilities                 NodeCapabilities
 	NetworkCandidates            []networking.Candidate
+	PublicEgress                 *networking.PublicEgress
 	ApplicationEndpoints         []ApplicationEndpointObservation
 	ApplicationEndpointsObserved bool
 	GatewayHealthy               bool

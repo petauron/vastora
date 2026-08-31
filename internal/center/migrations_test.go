@@ -464,6 +464,10 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_mode`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_bind_address`,
+		`ALTER TABLE agents DROP COLUMN public_egress_observed_at`,
+		`ALTER TABLE agents DROP COLUMN public_egress_mode`,
+		`ALTER TABLE agents DROP COLUMN public_egress_bind_address`,
+		`ALTER TABLE agents DROP COLUMN public_egress_address`,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
@@ -996,6 +1000,10 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE agents DROP COLUMN tailscale_ownership`,
 		`ALTER TABLE agents DROP COLUMN x25519_public_key`,
 		`ALTER TABLE agents DROP COLUMN credential_revoked_at`,
+		`ALTER TABLE agents DROP COLUMN public_egress_observed_at`,
+		`ALTER TABLE agents DROP COLUMN public_egress_mode`,
+		`ALTER TABLE agents DROP COLUMN public_egress_bind_address`,
+		`ALTER TABLE agents DROP COLUMN public_egress_address`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_mode`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_bind_address`,

@@ -656,12 +656,14 @@ func enrollOrchestrationNode(t *testing.T, store *Store, name string, capabiliti
 	if capabilities.Gateway {
 		roles = append(roles, "gateway")
 	}
-	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: roles, Capabilities: capabilities, NetworkCandidates: candidates, GatewayHealthy: capabilities.Gateway, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
-		t.Fatal(err)
-	}
+	var publicEgress *networking.PublicEgress
 	if profile.DirectPublic {
 		profile.PublicMode = networking.PublicModeDirect
 		profile.PublicBindAddress = profile.PublicAddress
+		publicEgress = &networking.PublicEgress{Address: profile.PublicAddress, BindAddress: profile.PublicAddress, Mode: networking.PublicModeDirect, ObservedAt: store.now().UTC()}
+	}
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: roles, Capabilities: capabilities, NetworkCandidates: candidates, PublicEgress: publicEgress, GatewayHealthy: capabilities.Gateway, ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, Startup: true}); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, profile); err != nil {
 		t.Fatal(err)

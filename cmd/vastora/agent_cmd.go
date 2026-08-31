@@ -476,6 +476,7 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		client := agent.Client{Roles: roles, Capabilities: capabilities, TailscaleEnrolled: hostState.TailscaleEnrolled, TailscaleOwnership: hostState.TailscaleOwnership}
+		client.PublicEgress = agent.NewPublicEgressObserver(&http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 10 * time.Second})
 		if runtime.GOOS == "linux" {
 			if _, lookupErr := exec.LookPath("tailscale"); lookupErr == nil {
 				client.TailscaleIsolation = func(ctx context.Context, desired agent.TailscaleIsolationDesiredState) error {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
 
@@ -381,6 +382,47 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 	}
 	if observationErr == nil || heartbeats != 1 {
 		t.Fatalf("observation error was not isolated: err=%v heartbeats=%d", observationErr, heartbeats)
+	}
+}
+
+func TestHeartbeatReportsAgentObservedPublicEgress(t *testing.T) {
+	var reported *networking.PublicEgress
+	observations := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var payload struct {
+			PublicEgress *networking.PublicEgress `json:"publicEgress"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		reported = payload.PublicEgress
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	client := Client{PublicEgress: func(_ context.Context, _ []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
+		observations++
+		return &networking.PublicEgress{Address: "198.51.100.22", BindAddress: "10.0.0.22", Mode: networking.PublicModeNAT, ObservedAt: now}, nil
+	}}
+	if observationErr, heartbeatErr := client.heartbeatWithStartup(context.Background(), store, true); observationErr != nil || heartbeatErr != nil {
+		t.Fatalf("heartbeat errors = %v, %v", observationErr, heartbeatErr)
+	}
+	if observations != 1 || reported == nil || reported.Address != "198.51.100.22" || reported.BindAddress != "10.0.0.22" || reported.Mode != networking.PublicModeNAT || reported.ObservedAt.IsZero() {
+		t.Fatalf("reported public egress = %#v", reported)
+	}
+	if observationErr, heartbeatErr := client.heartbeat(context.Background(), store); observationErr != nil || heartbeatErr != nil {
+		t.Fatalf("ordinary heartbeat errors = %v, %v", observationErr, heartbeatErr)
+	}
+	if observations != 1 || reported != nil {
+		t.Fatalf("ordinary heartbeat observed=%d reported=%#v", observations, reported)
 	}
 }
 
