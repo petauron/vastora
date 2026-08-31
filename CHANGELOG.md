@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.80](https://github.com/petauron/vastora/compare/v0.1.0-alpha.79...v0.1.0-alpha.80) (2026-08-31)
+
+
+### Bug Fixes
+
+* **gateway:** keep tunnel origins on plaintext HTTP ([0da66f4](https://github.com/petauron/vastora/commit/0da66f4f21c27998b0fe7ec980df7eebc6dc6f7a))
+
 ## [0.1.0-alpha.79](https://github.com/petauron/vastora/compare/v0.1.0-alpha.78...v0.1.0-alpha.79) (2026-08-31)
 
 
