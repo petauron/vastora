@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.77](https://github.com/petauron/vastora/compare/v0.1.0-alpha.76...v0.1.0-alpha.77) (2026-08-31)
+
+
+### Features
+
+* **network:** detect agent public egress at startup ([5d2ae30](https://github.com/petauron/vastora/commit/5d2ae30f9b5bf9c83a7aa6220a95fa2d4df219f3))
+
 ## [0.1.0-alpha.76](https://github.com/petauron/vastora/compare/v0.1.0-alpha.75...v0.1.0-alpha.76) (2026-08-31)
 
 
