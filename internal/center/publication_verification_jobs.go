@@ -186,7 +186,7 @@ func (s *Store) finishPublicationVerification(ctx context.Context, id string, re
 
 func (s *Store) publicationVerificationTargetsForGateway(ctx context.Context, tx *sql.Tx, gatewayID string) ([]publicationVerificationTarget, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, desired_revision FROM publications
-		WHERE gateway_node_id = ? AND kind IN ('public_direct', 'public_shared_443') AND status <> 'stopped'`, gatewayID)
+		WHERE gateway_node_id = ? AND kind IN ('public_direct', 'public_shared_443', 'cloudflare_tunnel') AND status <> 'stopped'`, gatewayID)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (s *Store) publicationVerificationTargetsForGateway(ctx context.Context, tx
 func (s *Store) resumePublicationVerifications(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT p.id, p.desired_revision FROM publications p
 		WHERE p.kind IN ('public_direct', 'public_shared_443', 'cloudflare_tunnel') AND (
-			p.status IN ('pending', 'applying', 'degraded') OR
+			p.status IN ('pending', 'applying', 'ready', 'degraded') OR
 			(p.status = 'failed' AND p.dns_provider <> 'manual' AND ((p.kind = 'cloudflare_tunnel' AND p.dns_record_id = '') OR
 				p.applied_revision = p.desired_revision OR
 				(p.kind = 'public_direct' AND NOT EXISTS (SELECT 1 FROM routes r WHERE r.publication_id = p.id))
@@ -236,6 +236,9 @@ func (s *Store) resumePublicationVerifications(ctx context.Context) error {
 // serving Center. Offline commands such as backup deliberately do not call it,
 // so opening the database alone never performs external health checks.
 func (s *Store) StartPublicationVerifications(ctx context.Context) error {
+	if err := s.reconcileDockerGatewayEndpoints(ctx); err != nil {
+		return err
+	}
 	if err := s.startRealityGuardHardening(ctx); err != nil {
 		return err
 	}
