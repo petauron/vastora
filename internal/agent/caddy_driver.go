@@ -300,7 +300,11 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			}
 		}
 		if len(httpRoutes) != 0 {
-			servers["vastora-"+listener.Kind+"-http"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPPort))}, "routes": httpRoutes}
+			servers["vastora-"+listener.Kind+"-http"] = map[string]any{
+				"listen":          []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPPort))},
+				"routes":          httpRoutes,
+				"automatic_https": map[string]any{"disable": true},
+			}
 		}
 		if len(httpsRoutes) != 0 {
 			servers["vastora-"+listener.Kind+"-https"] = map[string]any{"listen": []string{net.JoinHostPort("0.0.0.0", strconv.Itoa(internalHTTPSPort))}, "routes": httpsRoutes, "tls_connection_policies": []map[string]any{{}}}
