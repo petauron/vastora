@@ -322,6 +322,7 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 		return gateway.DesiredState{}, err
 	}
 	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, n.public_bind_address,
+		application.node_id, application.runtime, application.app_key, s.container_port,
 		CASE WHEN application.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' AND guard.status = 'ready' THEN 'v2' ELSE '' END
 		FROM publications p JOIN services s ON s.id = p.service_id
 		JOIN applications application ON application.id = s.application_id
@@ -335,11 +336,13 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 	var shared *gateway.SharedHTTPS
 	for sharedRows.Next() {
 		var route gateway.Layer4Route
-		var endpoint, publicAddress string
-		if err := sharedRows.Scan(&route.ID, &route.Hostname, &endpoint, &publicAddress, &route.ProxyProtocol); err != nil {
+		var endpoint, publicAddress, applicationNodeID, runtime, appKey string
+		var containerPort int
+		if err := sharedRows.Scan(&route.ID, &route.Hostname, &endpoint, &publicAddress, &applicationNodeID, &runtime, &appKey, &containerPort, &route.ProxyProtocol); err != nil {
 			sharedRows.Close()
 			return gateway.DesiredState{}, err
 		}
+		endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, gatewayID, containerPort, endpoint)
 		host, portValue, err := net.SplitHostPort(endpoint)
 		if err != nil {
 			sharedRows.Close()
@@ -425,7 +428,7 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 		if _, err := tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision,
 			status = CASE
 				WHEN kind = 'public_direct' AND status = 'failed' AND dns_provider <> 'manual' THEN 'failed'
-				WHEN kind = 'public_direct' THEN 'applying'
+				WHEN kind IN ('public_direct', 'cloudflare_tunnel') THEN 'applying'
 				ELSE 'ready'
 			END,
 			last_error = CASE WHEN status = 'failed' AND dns_provider <> 'manual' THEN last_error ELSE '' END,

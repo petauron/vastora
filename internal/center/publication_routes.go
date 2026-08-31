@@ -7,15 +7,22 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
 
 func (s *Store) upsertPublicationRoute(ctx context.Context, tx *sql.Tx, publicationID, siteID, serviceID, gatewayID, hostname, pathPrefix, protocol, endpoint string, tlsEnabled bool, now time.Time) error {
+	var err error
+	endpoint, err = s.gatewayServiceEndpoint(ctx, tx, serviceID, gatewayID, endpoint)
+	if err != nil {
+		return err
+	}
 	upstreams, _ := json.Marshal([]string{endpoint})
 	var routeID string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM routes WHERE publication_id = ? AND gateway_node_id = ?`, publicationID, gatewayID).Scan(&routeID)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM routes WHERE publication_id = ? AND gateway_node_id = ?`, publicationID, gatewayID).Scan(&routeID)
 	if errors.Is(err, sql.ErrNoRows) {
 		routeID, err = randomToken(18)
 		if err != nil {
@@ -28,6 +35,92 @@ func (s *Store) upsertPublicationRoute(ctx context.Context, tx *sql.Tx, publicat
 	}
 	if err != nil {
 		return fmt.Errorf("center: save publication route: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) gatewayServiceEndpoint(ctx context.Context, tx *sql.Tx, serviceID, gatewayID, endpoint string) (string, error) {
+	var appKey, runtime, applicationNodeID string
+	var containerPort int
+	if err := tx.QueryRowContext(ctx, `SELECT a.app_key, a.runtime, a.node_id, s.container_port
+		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, serviceID).Scan(&appKey, &runtime, &applicationNodeID, &containerPort); err != nil {
+		return "", fmt.Errorf("center: read publication service runtime: %w", err)
+	}
+	return canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, gatewayID, containerPort, endpoint), nil
+}
+
+func canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, gatewayID string, containerPort int, endpoint string) string {
+	if appKey == threeXUIAppKey && runtime == "docker" && applicationNodeID == gatewayID && containerPort > 0 && containerPort <= 65535 {
+		return net.JoinHostPort(dockerruntime.ThreeXUIAlias, strconv.Itoa(containerPort))
+	}
+	return endpoint
+}
+
+// reconcileDockerGatewayEndpoints upgrades persisted same-node routes to the
+// Docker bridge address that the managed gateway can actually reach. It only
+// queues gateways whose canonical upstream changed, so later Center restarts
+// are level-triggered no-ops.
+func (s *Store) reconcileDockerGatewayEndpoints(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	type routeEndpoint struct {
+		routeID, publicationID, gatewayID, appKey, runtime, applicationNodeID, endpoint string
+		containerPort                                                                   int
+		upstreams                                                                       []byte
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT r.id, r.publication_id, r.gateway_node_id, r.upstreams_json,
+		a.app_key, a.runtime, a.node_id, s.container_port, s.endpoint
+		FROM routes r
+		JOIN publications p ON p.id = r.publication_id
+		JOIN services s ON s.id = r.service_id
+		JOIN applications a ON a.id = s.application_id
+		WHERE p.status <> 'stopped' AND s.status <> 'stopped'`)
+	if err != nil {
+		return fmt.Errorf("center: inspect Docker gateway endpoints: %w", err)
+	}
+	values := []routeEndpoint{}
+	for rows.Next() {
+		var value routeEndpoint
+		if err := rows.Scan(&value.routeID, &value.publicationID, &value.gatewayID, &value.upstreams, &value.appKey, &value.runtime, &value.applicationNodeID, &value.containerPort, &value.endpoint); err != nil {
+			rows.Close()
+			return err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	gateways := map[string]bool{}
+	for _, value := range values {
+		canonical := canonicalGatewayServiceEndpoint(value.appKey, value.runtime, value.applicationNodeID, value.gatewayID, value.containerPort, value.endpoint)
+		var current []string
+		if json.Unmarshal(value.upstreams, &current) == nil && len(current) == 1 && current[0] == canonical {
+			continue
+		}
+		encoded, _ := json.Marshal([]string{canonical})
+		if _, err := tx.ExecContext(ctx, `UPDATE routes SET upstreams_json = ?, status = 'pending', last_error = '', updated_at = ? WHERE id = ?`, encoded, now.Format(time.RFC3339Nano), value.routeID); err != nil {
+			return fmt.Errorf("center: reconcile Docker gateway endpoint: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'pending', last_error = '', updated_at = ? WHERE id = ? AND status <> 'stopped'`, now.Format(time.RFC3339Nano), value.publicationID); err != nil {
+			return err
+		}
+		gateways[value.gatewayID] = true
+	}
+	for gatewayID := range gateways {
+		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	return nil
 }
