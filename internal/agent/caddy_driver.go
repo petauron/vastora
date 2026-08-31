@@ -265,6 +265,7 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 		}
 		httpRoutes := make([]caddyRoute, 0)
 		httpsRoutes := make([]caddyRoute, 0)
+		redirectHosts := map[string]bool{}
 		for _, route := range desired.Routes {
 			if route.ListenerKind != listener.Kind {
 				continue
@@ -281,11 +282,19 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			if route.Path != "" {
 				matcher["path"] = []string{route.Path}
 			}
-			candidate := caddyRoute{Match: []map[string][]string{matcher}, Handle: []map[string]any{proxy}, Terminal: true}
+			handlers := make([]map[string]any, 0, 2)
+			if route.StripPrefix != "" {
+				handlers = append(handlers, map[string]any{"handler": "rewrite", "strip_path_prefix": route.StripPrefix})
+			}
+			handlers = append(handlers, proxy)
+			candidate := caddyRoute{Match: []map[string][]string{matcher}, Handle: handlers, Terminal: true}
 			if route.TLSEnabled {
 				httpsRoutes = append(httpsRoutes, candidate)
-				redirect := map[string]any{"handler": "static_response", "status_code": 308, "headers": map[string][]string{"Location": {"https://{http.request.host}{http.request.uri}"}}}
-				httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string][]string{{"host": {route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
+				if !redirectHosts[route.Hostname] {
+					redirect := map[string]any{"handler": "static_response", "status_code": 308, "headers": map[string][]string{"Location": {"https://{http.request.host}{http.request.uri}"}}}
+					httpRoutes = append(httpRoutes, caddyRoute{Match: []map[string][]string{{"host": {route.Hostname}}}, Handle: []map[string]any{redirect}, Terminal: true})
+					redirectHosts[route.Hostname] = true
+				}
 			} else {
 				httpRoutes = append(httpRoutes, candidate)
 			}

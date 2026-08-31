@@ -6,14 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/gatewayruntime"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -24,31 +24,22 @@ func (s *Store) queueTunnelState(ctx context.Context, tx *sql.Tx, agentID string
 	} else if err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT p.hostname, s.protocol, s.endpoint
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT p.hostname
 		FROM publications p JOIN services s ON s.id = p.service_id
 		WHERE p.gateway_node_id = ? AND p.kind = 'cloudflare_tunnel' AND p.status <> 'stopped' AND s.status <> 'stopped'
-		ORDER BY p.hostname, p.id`, agentID)
+		ORDER BY p.hostname`, agentID)
 	if err != nil {
 		return err
 	}
 	ingress := []TunnelTaskIngress{}
 	for rows.Next() {
-		var hostname, protocol, endpoint string
-		if err := rows.Scan(&hostname, &protocol, &endpoint); err != nil {
+		var hostname string
+		if err := rows.Scan(&hostname); err != nil {
 			rows.Close()
 			return err
 		}
-		if protocol != "http" && protocol != "https" {
-			rows.Close()
-			return errors.New("center: Cloudflare Tunnel only supports Web services")
-		}
-		host, portValue, err := net.SplitHostPort(endpoint)
-		if err != nil || net.ParseIP(host) == nil {
-			rows.Close()
-			return errors.New("center: stored Tunnel upstream is invalid")
-		}
-		port, _ := strconv.Atoi(portValue)
-		serviceURL := (&url.URL{Scheme: protocol, Host: net.JoinHostPort(host, strconv.Itoa(port))}).String()
+		httpPort, _, _ := gatewayruntime.CaddyListenerPorts("system")
+		serviceURL := fmt.Sprintf("http://%s:%d", dockerruntime.CaddyAlias, httpPort)
 		ingress = append(ingress, TunnelTaskIngress{Hostname: hostname, Service: serviceURL})
 	}
 	if err := rows.Close(); err != nil {

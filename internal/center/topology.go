@@ -147,6 +147,7 @@ type RouteView struct {
 	ServiceID       string    `json:"serviceId"`
 	GatewayNodeID   string    `json:"gatewayNodeId"`
 	Hostname        string    `json:"hostname"`
+	PathPrefix      string    `json:"pathPrefix,omitempty"`
 	Protocol        string    `json:"protocol"`
 	Upstreams       []string  `json:"upstreams"`
 	TLSEnabled      bool      `json:"tlsEnabled"`

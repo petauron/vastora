@@ -316,7 +316,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     setIntent(preferred?.intent ?? (service.protocol === "http" || service.protocol === "https" ? "private" : "protocol"));
     setKind(nextKind);
     setGatewayID(gatewaysForKind(data, service, nextKind)[0]?.id ?? "");
-    setHostname(defaultPublicationHostname(data, service));
+    setHostname(defaultPublicationHostname(data, service, nextKind));
     setSNIHostname("");
     setDNSProvider(defaultDNS(nextKind));
     setTLSEnabled(cloudflareReady && (nextKind === "lan_gateway" || nextKind === "headscale_gateway"));
@@ -325,6 +325,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
   const selectKind = (next: PublicationKind) => {
     setKind(next); const nodes = service ? gatewaysForKind(data, service, next) : [];
     setGatewayID(nodes[0]?.id ?? "");
+    if (service) setHostname(defaultPublicationHostname(data, service, next));
     setDNSProvider(defaultDNS(next));
     setTLSEnabled(cloudflareReady && (next === "lan_gateway" || next === "headscale_gateway"));
     setHighRisk(false);
@@ -336,8 +337,9 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     if (preferred) selectKind(preferred);
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!service) return; setBusy(true); setError(""); try { await onSubmit({ serviceId: service.id, kind, gatewayNodeId: gatewayID || undefined, hostname, sniHostname: kind === "public_shared_443" ? sniHostname : undefined, dnsProvider, tlsEnabled: (kind === "lan_gateway" || kind === "headscale_gateway") && tlsEnabled, confirmHighRisk: highRisk }); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
-  const highRiskRequired = Boolean(service?.management && (kind === "public_direct" || kind === "cloudflare_tunnel"));
-  const canSubmit = Boolean(selectedOption?.enabled && hostname && gatewayID && (kind !== "public_shared_443" || sniHostname) && (!tlsEnabled || cloudflareReady) && (!highRiskRequired || highRisk));
+  const highRiskRequired = Boolean(service?.management && kind === "public_direct");
+  const cloudflareAccessRequired = kind === "cloudflare_tunnel" && data.centerRemoteAccess?.status !== "configured";
+  const canSubmit = Boolean(selectedOption?.enabled && hostname && gatewayID && (kind !== "public_shared_443" || sniHostname) && (!tlsEnabled || cloudflareReady) && !cloudflareAccessRequired && (!highRiskRequired || highRisk));
   return (
     <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(service)}>
       <SheetContent className="sm:max-w-lg">
@@ -361,12 +363,13 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
                 ))}
               </FieldSet>
               <Field>
-                <FieldLabel htmlFor="publication-hostname">{copy(language, "访问域名", "Access hostname")}</FieldLabel>
+                <FieldLabel htmlFor="publication-hostname">{copy(language, kind === "public_direct" || kind === "cloudflare_tunnel" ? "公网入口域名（可自定义）" : "访问域名", kind === "public_direct" || kind === "cloudflare_tunnel" ? "Public hostname (customizable)" : "Access hostname")}</FieldLabel>
                 <Input id="publication-hostname" onChange={(event) => setHostname(event.target.value.toLowerCase())} placeholder="service.example.com" required value={hostname} />
-                <FieldDescription>{copy(language, "这是以后在浏览器或客户端中使用的地址。", "This is the address used by browsers or clients.")}</FieldDescription>
+                <FieldDescription>{kind === "public_direct" || kind === "cloudflare_tunnel" ? copy(language, "默认共用 service-vastora 域名，并为每个服务生成独立随机路径。", "Defaults to the shared service-vastora hostname with a separate random path for each service.") : copy(language, "这是以后在浏览器或客户端中使用的地址。", "This is the address used by browsers or clients.")}</FieldDescription>
               </Field>
               {kind === "public_shared_443" ? <Field><FieldLabel htmlFor="publication-sni">{copy(language, "协议 SNI", "Protocol SNI")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="publication-sni" onChange={(event) => setSNIHostname(event.target.value.toLowerCase())} placeholder="www.example.com" required spellCheck={false} value={sniHostname} /><FieldDescription>{copy(language, "客户端握手中使用的 SNI；它与上面的连接域名是两个不同地址。", "The SNI sent in the client handshake. It is different from the connection hostname above.")}</FieldDescription></Field> : null}
               {intent === "protocol" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "这是高级公网入口", "This is an advanced public access method")}</AlertTitle><AlertDescription>{copy(language, "应用负责协议和端口配置；Vastora 只检查公网能力与运行状态。", "The app controls protocol and ports. Vastora only checks public reachability and runtime status.")}</AlertDescription></Alert> : null}
+              {cloudflareAccessRequired ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "请先启用 Center 远程入口", "Enable the Center remote entry first")}</AlertTitle><AlertDescription>{copy(language, "Cloudflare 模式会复用相同的 Access 登录限制；请先在网络页面完成配置。", "Cloudflare mode reuses the same Access login restriction. Configure it on the Network page first.")}</AlertDescription></Alert> : null}
               {highRiskRequired ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "管理页面公网发布风险较高", "Publishing an admin page publicly is high risk")}</AlertTitle><AlertDescription>{copy(language, "请确认应用已设置强密码。Vastora 第一版不会代管额外的访问认证。", "Confirm that the app has a strong password. Vastora v1 does not manage an additional access login.")}<Field className="mt-3" orientation="horizontal"><FieldLabel htmlFor="confirm-high-risk">{copy(language, "我确认继续公网发布", "I understand and want to publish")}</FieldLabel><Switch checked={highRisk} id="confirm-high-risk" onCheckedChange={setHighRisk} /></Field></AlertDescription></Alert> : null}
               {kind === "lan_gateway" || kind === "headscale_gateway" ? <Field className="rounded-xl border p-3" orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="publication-tls">HTTPS</FieldLabel><FieldDescription>{cloudflareReady ? copy(language, "默认开启。使用 Cloudflare DNS 验证申请可信证书，服务仍只在私网开放。", "On by default. Cloudflare DNS validation issues a trusted certificate while the service remains private.") : copy(language, "连接 Cloudflare 后可以开启；当前入口将使用私网 HTTP。", "Connect Cloudflare to enable it. This access point will use private HTTP for now.")}</FieldDescription></div><Switch aria-label={copy(language, "使用 HTTPS", "Use HTTPS")} checked={tlsEnabled} disabled={!cloudflareReady} id="publication-tls" onCheckedChange={setTLSEnabled} /></Field> : null}
               <details className="rounded-xl border p-3">
@@ -422,7 +425,7 @@ function SubscriptionSheet({ application, data, language, mutate, onClose }: { a
     const preferredGateways = preferredKind === "cloudflare_tunnel" ? tunnelGateways : directGateways;
     setKind(preferredKind);
     setGatewayID(publication?.gatewayNodeId ?? preferredGateways[0]?.id ?? "");
-    setHostname(publication?.hostname ?? defaultPublicationHostname(data, service));
+    setHostname(publication?.hostname ?? defaultPublicationHostname(data, service, preferredKind));
     setCommand(null); setBusyAction(null); setError("");
     if (!publication) return;
     let cancelled = false;
@@ -439,6 +442,7 @@ function SubscriptionSheet({ application, data, language, mutate, onClose }: { a
     setKind(next);
     const nextGateways = next === "cloudflare_tunnel" ? tunnelGateways : directGateways;
     setGatewayID(nextGateways[0]?.id ?? "");
+    if (service) setHostname(defaultPublicationHostname(data, service, next));
   };
   const configure = async () => {
     if (!application) return;

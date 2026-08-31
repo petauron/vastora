@@ -105,7 +105,7 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	if publication.TLSEnabled {
 		scheme = "https"
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+publication.Hostname+"/", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+publication.Hostname+publicationExternalPath(publication.PathPrefix, "/"), nil)
 	if err != nil {
 		return PublicationView{}, err
 	}
@@ -117,7 +117,7 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	_ = response.Body.Close()
-	if response.StatusCode >= 300 && response.StatusCode < 400 {
+	if response.StatusCode >= 300 && response.StatusCode < 400 && publication.Kind != publicationCloudflare {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, "service health check redirect was not accepted")
 	}
 	if response.StatusCode >= 500 {

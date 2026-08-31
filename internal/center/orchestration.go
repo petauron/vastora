@@ -103,7 +103,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
-			cleanup_pending = CASE WHEN dns_record_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
+			cleanup_pending = CASE WHEN dns_record_id <> '' OR access_application_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
 			cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ?
 			WHERE service_id IN (SELECT id FROM services WHERE application_id = ?) AND status <> 'stopped'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
@@ -193,7 +193,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped', desired_revision = desired_revision + 1,
-			cleanup_pending = CASE WHEN dns_record_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
+			cleanup_pending = CASE WHEN dns_record_id <> '' OR access_application_id <> '' OR kind = 'cloudflare_tunnel' OR dns_provider = 'headscale' THEN 1 ELSE 0 END,
 			cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE service_id = ? AND status <> 'stopped'`, now.Format(time.RFC3339Nano), service.id); err != nil {
 			return err
 		}
@@ -265,7 +265,7 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 	if err := s.appendSystemGatewayRoutes(ctx, tx, gatewayID, &state, listeners); err != nil {
 		return gateway.DesiredState{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT r.id, r.hostname, r.protocol, r.upstreams_json, r.tls_enabled, p.kind,
+	rows, err := tx.QueryContext(ctx, `SELECT r.id, r.hostname, r.path_prefix, r.protocol, r.upstreams_json, r.tls_enabled, p.kind,
 		n.lan_address, n.headscale_address, n.public_address, n.public_bind_address
 		FROM routes r JOIN services s ON s.id = r.service_id JOIN publications p ON p.id = r.publication_id
 		JOIN agent_network_profiles n ON n.agent_id = r.gateway_node_id
@@ -279,7 +279,8 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 		var encoded []byte
 		var tlsEnabled int
 		var publicationKind, lanAddress, headscaleAddress, publicAddress, publicBindAddress string
-		if err := rows.Scan(&route.ID, &route.Hostname, &route.Protocol, &encoded, &tlsEnabled, &publicationKind, &lanAddress, &headscaleAddress, &publicAddress, &publicBindAddress); err != nil {
+		var pathPrefix string
+		if err := rows.Scan(&route.ID, &route.Hostname, &pathPrefix, &route.Protocol, &encoded, &tlsEnabled, &publicationKind, &lanAddress, &headscaleAddress, &publicAddress, &publicBindAddress); err != nil {
 			return gateway.DesiredState{}, err
 		}
 		route.TLSEnabled = tlsEnabled == 1
@@ -290,6 +291,13 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 		}
 		if publicationKind == publicationPublic {
 			address, route.ListenerKind = publicBindAddress, "public"
+		}
+		if publicationKind == publicationCloudflare {
+			address, route.ListenerKind, route.TLSEnabled = "127.0.0.1", "system", false
+		}
+		if pathPrefix != "" {
+			route.Path = strings.TrimSuffix(pathPrefix, "/") + "/*"
+			route.StripPrefix = strings.TrimSuffix(pathPrefix, "/")
 		}
 		listeners[route.ListenerKind] = gateway.Listener{Kind: route.ListenerKind, Address: address, HTTPPort: 80, HTTPSPort: 443}
 		var upstreams []string
@@ -562,7 +570,7 @@ func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 }
 
 func (s *Store) ListRoutes(ctx context.Context) ([]RouteView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, tls_enabled, status, desired_revision, applied_revision, last_error, created_at, updated_at FROM routes ORDER BY hostname, gateway_node_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, publication_id, site_id, service_id, gateway_node_id, hostname, path_prefix, protocol, upstreams_json, tls_enabled, status, desired_revision, applied_revision, last_error, created_at, updated_at FROM routes ORDER BY hostname, gateway_node_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -573,7 +581,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]RouteView, error) {
 		var upstreams []byte
 		var tls int
 		var created, updated string
-		if err := rows.Scan(&value.ID, &value.PublicationID, &value.SiteID, &value.ServiceID, &value.GatewayNodeID, &value.Hostname, &value.Protocol, &upstreams, &tls, &value.Status, &value.DesiredRevision, &value.AppliedRevision, &value.LastError, &created, &updated); err != nil {
+		if err := rows.Scan(&value.ID, &value.PublicationID, &value.SiteID, &value.ServiceID, &value.GatewayNodeID, &value.Hostname, &value.PathPrefix, &value.Protocol, &upstreams, &tls, &value.Status, &value.DesiredRevision, &value.AppliedRevision, &value.LastError, &created, &updated); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(upstreams, &value.Upstreams)
