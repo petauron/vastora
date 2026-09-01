@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/distribution/reference"
+	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/catalog"
 )
 
@@ -802,11 +803,15 @@ func (s *Store) DeleteRegistryCredential(ctx context.Context, id string) error {
 }
 
 func (s *Store) SeedOfficialCatalog(ctx context.Context, payload []byte) error {
-	if _, err := catalog.ParseCatalog(payload); err != nil {
+	parsed, err := catalog.ParseCatalog(payload)
+	if err != nil {
+		return fmt.Errorf("center: official catalog: %w", err)
+	}
+	if err := agent.ValidateOfficialCatalog(parsed); err != nil {
 		return fmt.Errorf("center: official catalog: %w", err)
 	}
 	var secretID string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'official_catalog_signing_key'`).Scan(&secretID)
+	err = s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'official_catalog_signing_key'`).Scan(&secretID)
 	if errors.Is(err, sql.ErrNoRows) {
 		publicKey, privateKey, keyErr := ed25519.GenerateKey(rand.Reader)
 		if keyErr != nil {

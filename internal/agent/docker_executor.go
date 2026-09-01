@@ -147,6 +147,10 @@ func validateApplicationTask(task DeploymentTask) error {
 	if !strings.HasSuffix(task.AppKey, "/"+task.Manifest.ID) {
 		return errors.New("agent: application task does not match its signed manifest")
 	}
+	expectedVersion, official := OfficialAppVersion(task.Manifest.ID)
+	if !official || task.Manifest.Version != expectedVersion {
+		return errors.New("agent: unsupported official app package version")
+	}
 	if task.AppKey != threeXUIKey && task.ApplicationRole != "" {
 		return errors.New("agent: application topology role is only valid for 3x-ui")
 	}
@@ -172,9 +176,6 @@ func validateApplicationTask(task DeploymentTask) error {
 	}
 	switch task.AppKey {
 	case threeXUIKey:
-		if task.Manifest.Version != "3.6.0" {
-			return errors.New("agent: unsupported official 3x-ui package")
-		}
 		config, err := decodeThreeXUIConfig(task.Config)
 		if err != nil {
 			return err
@@ -186,23 +187,14 @@ func validateApplicationTask(task DeploymentTask) error {
 			return err
 		}
 	case cpaKey:
-		if task.Manifest.Version != "7.2.128" {
-			return errors.New("agent: unsupported official CPA package")
-		}
 		if _, _, err := decodeCPAConfig(task.Config, task.Secrets); err != nil {
 			return err
 		}
 	case keeperKey:
-		if task.Manifest.Version != "1.14.1" {
-			return errors.New("agent: unsupported Keeper package")
-		}
 		if _, _, err := decodeKeeperConfig(task.Config, task.Secrets); err != nil {
 			return err
 		}
 	case komariKey:
-		if task.Manifest.Version != "1.2.60" {
-			return errors.New("agent: unsupported Komari Agent package")
-		}
 		var config struct {
 			Endpoint string `json:"endpoint"`
 		}

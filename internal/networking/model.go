@@ -97,11 +97,15 @@ func Discover(now time.Time) ([]Candidate, error) {
 // ordinary outbound traffic. A UDP connect performs route selection without
 // sending a packet.
 func DefaultRouteAddress(remoteAddress string) (string, error) {
+	return defaultRouteAddress(remoteAddress, net.Dial)
+}
+
+func defaultRouteAddress(remoteAddress string, dial func(string, string) (net.Conn, error)) (string, error) {
 	remote := net.ParseIP(strings.TrimSpace(remoteAddress))
 	if remote == nil || remote.To4() == nil {
 		return "", errors.New("network: remote address must be IPv4")
 	}
-	connection, err := net.Dial("udp4", net.JoinHostPort(remote.String(), "53"))
+	connection, err := dial("udp4", net.JoinHostPort(remote.String(), "53"))
 	if err != nil {
 		return "", fmt.Errorf("network: select default IPv4 route: %w", err)
 	}

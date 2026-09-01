@@ -29,7 +29,8 @@ const (
 )
 
 func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentTask, bindAddress string) (string, error) {
-	if task.Manifest.ID != "3x-ui" || task.Manifest.Version != "3.6.0" {
+	expectedVersion, official := OfficialAppVersion("3x-ui")
+	if task.Manifest.ID != "3x-ui" || !official || task.Manifest.Version != expectedVersion {
 		return "", errors.New("agent: unsupported official 3x-ui package")
 	}
 	settings, err := decodeThreeXUIConfig(task.Config)

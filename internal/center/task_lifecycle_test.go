@@ -570,13 +570,17 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "already at version") {
 		t.Fatalf("same-version upgrade was accepted: %v", err)
 	}
-	seedCatalogVersion(t, store, "7.2.129")
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET installed_version = '7.2.127' WHERE app_key = ?`, cpaAppKey); err != nil {
+		t.Fatal(err)
+	}
 	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"})
-	if err != nil || upgrade.AppVersion != "7.2.129" {
+	if err != nil || upgrade.AppVersion != "7.2.128" {
 		t.Fatalf("newer version was not accepted: %#v err=%v", upgrade, err)
 	}
 	completeNextTask(t, store, node, "application.apply", result)
-	seedCatalogVersion(t, store, "7.2.127")
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET installed_version = '7.2.129' WHERE app_key = ?`, cpaAppKey); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "downgrade is not allowed") {
 		t.Fatalf("downgrade was accepted: %v", err)
 	}
@@ -622,18 +626,6 @@ func TestInstalledAppCanBeUninstalledAfterCatalogRemoval(t *testing.T) {
 	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall"})
 	if err != nil || uninstall.AppVersion != "7.2.128" {
 		t.Fatalf("installed app became unmanageable after catalog removal: %#v err=%v", uninstall, err)
-	}
-}
-
-func seedCatalogVersion(t *testing.T, store *Store, version string) {
-	t.Helper()
-	payload, err := os.ReadFile("../../catalog/catalog.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload = bytes.Replace(payload, []byte(`"version": "7.2.128"`), []byte(`"version": "`+version+`"`), 1)
-	if err := store.SeedOfficialCatalog(context.Background(), payload); err != nil {
-		t.Fatal(err)
 	}
 }
 

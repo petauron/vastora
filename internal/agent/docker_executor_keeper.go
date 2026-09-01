@@ -32,7 +32,8 @@ func decodeKeeperConfig(rawConfig, rawSecrets json.RawMessage) (keeperConfig, ke
 }
 
 func deployKeeper(ctx context.Context, docker *client.Client, task DeploymentTask, bindAddress string) error {
-	if task.Manifest.ID != "keeper" || task.Manifest.Version != "1.14.1" {
+	expectedVersion, official := OfficialAppVersion("keeper")
+	if task.Manifest.ID != "keeper" || !official || task.Manifest.Version != expectedVersion {
 		return errors.New("agent: unsupported Keeper package")
 	}
 	imageRef, err := pullDeclaredImage(ctx, docker, task, "keeper")

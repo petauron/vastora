@@ -1,6 +1,7 @@
 package center
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -228,6 +229,74 @@ func TestHeadscaleBootstrapDoesNotRequireAnEnrolledAgent(t *testing.T) {
 	var remaining int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM secrets WHERE id = ?`, bootstrapSecretID).Scan(&remaining); err != nil || remaining != 0 {
 		t.Fatalf("consumed bootstrap secret count = %d, err = %v", remaining, err)
+	}
+}
+
+func TestFirstPrivateEnrollmentUsesConfiguredCoLocatedCenterURL(t *testing.T) {
+	headscale := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/api/v1/user":
+			_, _ = response.Write([]byte(`[{"id":"42","name":"vastora"}]`))
+		case request.Method == http.MethodPost && request.URL.Path == "/api/v1/preauthkey":
+			_, _ = response.Write([]byte(`{"preAuthKey":{"key":"bootstrap-one-time-key"}}`))
+		default:
+			t.Fatalf("unexpected Headscale request: %s %s", request.Method, request.URL.Path)
+		}
+	}))
+	defer headscale.Close()
+	store, err := Open(t.TempDir(), headscale.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.headscaleHTTPClient = headscale.Client()
+	store.builtinHeadscaleDialAddress = headscale.Listener.Addr().String()
+	tx, err := store.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	secretID, err := store.putSecret(context.Background(), tx, []byte("headscale-bootstrap-secret"), "integration:headscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at) VALUES('headscale', 'external', ?, ?, 'configured', ?, ?)`, headscale.URL, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"siteId":       testSiteID(t, store),
+		"name":         "co-located",
+		"centerUrl":    "https://public-center.example.com",
+		"useHeadscale": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/agent-enrollments", bytes.NewReader(payload))
+	response := httptest.NewRecorder()
+	NewServer(store, "", false).WithCoLocatedAgentURL("http://127.0.0.1:19090").handleCreateAgentEnrollment(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create enrollment status = %d, body = %q", response.Code, response.Body.String())
+	}
+	var enrollment AgentEnrollment
+	if err := json.NewDecoder(response.Body).Decode(&enrollment); err != nil {
+		t.Fatal(err)
+	}
+	if enrollment.CenterURL != "http://127.0.0.1:19090" {
+		t.Fatalf("enrollment Center URL = %q", enrollment.CenterURL)
+	}
+	profile, err := store.AgentEnrollmentInstallProfile(context.Background(), enrollment.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.CenterURL != "http://127.0.0.1:19090" {
+		t.Fatalf("installer Center URL = %q", profile.CenterURL)
 	}
 }
 
