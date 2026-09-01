@@ -757,7 +757,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	}
 }
 
-func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
+func TestRealityCommandAutoDiscoversTargetAndCreatesSeparateSNIEntry(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -768,13 +768,16 @@ func TestRealityCommandCreatesObservedInboundAndSeparateSNIEntry(t *testing.T) {
 	}
 	installTask := claimTask(t, store, node)
 	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.61", "edge-api-token")
-	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
+	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
 	if task.Kind != "application.command" || task.ApplicationCommand == nil {
 		t.Fatalf("unexpected command task: %#v", task)
+	}
+	if task.ApplicationCommand.TargetHost != "" || task.ApplicationCommand.ServerName != "" {
+		t.Fatalf("automatic REALITY target was not preserved: %#v", task.ApplicationCommand)
 	}
 	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge"
 	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 20000, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, CompanionInboundID: 10, CompanionTag: task.ApplicationCommand.InboundTag + "-guard", CompanionPort: 21000, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
