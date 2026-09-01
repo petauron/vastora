@@ -85,10 +85,10 @@ func TestTaskEncryptionFailureReleasesTheCommittedLease(t *testing.T) {
 	if err := store.RevokeAgentCredential(ctx, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.EncryptAgentTask(ctx, node.ID, task); err == nil {
+	if _, err := store.EncryptAgentTask(ctx, node.ID, *task); err == nil {
 		t.Fatal("revoked Agent encryption identity remained usable")
 	}
-	if err := store.releaseClaimedTask(ctx, node.ID, task); err != nil {
+	if err := store.releaseClaimedTask(ctx, node.ID, *task); err != nil {
 		t.Fatal(err)
 	}
 	var state, lease, applicationStatus string

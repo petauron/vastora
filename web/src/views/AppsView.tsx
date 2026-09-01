@@ -515,7 +515,10 @@ function SubscriptionSheet({ application, data, language, mutate, onClose }: { a
     setBusyAction("configure"); setError("");
     try {
       let created: ApplicationCommand | undefined;
-      await mutate(async () => { created = await api.createSubscriptionCommand({ applicationId: application.id, gatewayNodeId: gatewayID, hostname: hostname || undefined, kind, dnsProvider: publication?.dnsProvider ?? (kind === "cloudflare_tunnel" || cloudflareReady ? "cloudflare" : "manual") }); }, copy(language, "公网订阅配置已开始。", "Public subscription setup started."));
+      const dnsProvider = publication?.dnsProvider === "manual" || publication?.dnsProvider === "cloudflare"
+        ? publication.dnsProvider
+        : (kind === "cloudflare_tunnel" || cloudflareReady ? "cloudflare" : "manual");
+      await mutate(async () => { created = await api.createSubscriptionCommand({ applicationId: application.id, gatewayNodeId: gatewayID, hostname: hostname || undefined, kind, dnsProvider }); }, copy(language, "公网订阅配置已开始。", "Public subscription setup started."));
       if (created) {
         const completed = await execute(() => Promise.resolve(created!), setCommand);
         if (completed?.state === "failed") throw new Error(completed.error || "The 3x-ui subscription configuration failed");

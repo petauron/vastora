@@ -359,7 +359,10 @@ func TestCatalogRedirectTargetChangeCannotRevalidateOldCache(t *testing.T) {
 	if err != nil || len(sources) != 1 {
 		t.Fatalf("initial source = %#v err=%v", sources, err)
 	}
-	verifiedFetchedAt := sources[0].FetchedAt
+	if sources[0].FetchedAt == nil {
+		t.Fatal("initial source has no verified fetch time")
+	}
+	verifiedFetchedAt := *sources[0].FetchedAt
 
 	now = now.Add(11 * time.Minute)
 	if _, err := server.RefreshCatalogSource(ctx, "redirecting-source"); err == nil || !strings.Contains(err.Error(), "304 after a redirect") {
@@ -369,7 +372,7 @@ func TestCatalogRedirectTargetChangeCannotRevalidateOldCache(t *testing.T) {
 		t.Fatalf("target C received target B validators: %q", targetCValidators)
 	}
 	sources, err = store.ListSources(ctx)
-	if err != nil || len(sources) != 1 || sources[0].Status != "stale" || !sources[0].FetchedAt.Equal(verifiedFetchedAt) {
+	if err != nil || len(sources) != 1 || sources[0].Status != "stale" || sources[0].FetchedAt == nil || !sources[0].FetchedAt.Equal(verifiedFetchedAt) {
 		t.Fatalf("redirect-target failure advanced the verified cache: %#v err=%v", sources, err)
 	}
 	apps, err := store.ListApps(ctx)

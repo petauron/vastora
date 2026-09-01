@@ -870,7 +870,7 @@ func (s *Store) SaveConnection(ctx context.Context, connection Connection) error
 	connection.CAFingerprint = fingerprint
 	connection.CACertificatePEM = certificatePEM
 	if err := validateCAFingerprint(connection.CenterURL, connection.CAFingerprint); err != nil {
-		return nil, nil, err
+		return err
 	}
 	sealedCredential, sealedPrivateKey, err := s.sealConnection(connection)
 	if err != nil {
