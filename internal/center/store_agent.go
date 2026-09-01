@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -24,20 +26,22 @@ const agentEnrollmentReplayLifetime = 24 * time.Hour
 const agentConnectedMaxAge = 45 * time.Second
 
 type AgentEnrollment struct {
-	Token        string    `json:"token"`
-	SiteID       string    `json:"siteId"`
-	InstallerURL string    `json:"installerUrl"`
-	ExpiresAt    time.Time `json:"expiresAt"`
+	Token            string    `json:"token"`
+	SiteID           string    `json:"siteId"`
+	InstallerURL     string    `json:"installerUrl"`
+	CACertificatePEM string    `json:"caCertificatePem,omitempty"`
+	ExpiresAt        time.Time `json:"expiresAt"`
 }
 
 type AgentEnrollmentSpec struct {
-	SiteID        string
-	Name          string
-	CenterURL     string
-	Gateway       bool
-	Tunnel        bool
-	UseHeadscale  bool
-	CAFingerprint string
+	SiteID           string
+	Name             string
+	CenterURL        string
+	Gateway          bool
+	Tunnel           bool
+	UseHeadscale     bool
+	CAFingerprint    string
+	CACertificatePEM string
 }
 
 type AgentEnrollmentInstallProfile struct {
@@ -49,6 +53,7 @@ type AgentEnrollmentInstallProfile struct {
 	HeadscaleURL       string
 	HeadscaleAddresses []string
 	CAFingerprint      string
+	CACertificatePEM   string
 }
 
 type AgentCredential struct {
@@ -94,6 +99,29 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		return AgentEnrollment{}, err
 	}
 	spec.CAFingerprint = strings.ToLower(strings.TrimSpace(spec.CAFingerprint))
+	spec.CACertificatePEM = strings.TrimSpace(spec.CACertificatePEM)
+	if spec.CACertificatePEM != "" && !strings.HasPrefix(centerURL, "https://") {
+		return AgentEnrollment{}, errors.New("center: Agent CA certificate can be used only with an HTTPS Center URL")
+	}
+	if spec.CACertificatePEM != "" {
+		block, rest := pem.Decode([]byte(spec.CACertificatePEM))
+		if block == nil || block.Type != "CERTIFICATE" || strings.TrimSpace(string(rest)) != "" {
+			return AgentEnrollment{}, errors.New("center: Agent CA certificate must contain exactly one PEM certificate")
+		}
+		certificate, parseErr := x509.ParseCertificate(block.Bytes)
+		if parseErr != nil || !certificate.IsCA || !certificate.BasicConstraintsValid {
+			return AgentEnrollment{}, errors.New("center: Agent CA certificate is invalid")
+		}
+		digest := sha256.Sum256(certificate.RawSubjectPublicKeyInfo)
+		certificateFingerprint := hex.EncodeToString(digest[:])
+		if spec.CAFingerprint != "" && spec.CAFingerprint != certificateFingerprint {
+			return AgentEnrollment{}, errors.New("center: Agent CA certificate does not match its expected fingerprint")
+		}
+		spec.CAFingerprint = certificateFingerprint
+		spec.CACertificatePEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}))
+	} else if spec.CAFingerprint != "" {
+		return AgentEnrollment{}, errors.New("center: Agent CA certificate is required with a private CA fingerprint")
+	}
 	if spec.CAFingerprint != "" {
 		decoded, decodeErr := hex.DecodeString(spec.CAFingerprint)
 		if decodeErr != nil || len(decoded) != sha256.Size {
@@ -135,7 +163,7 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 			return AgentEnrollment{}, errors.New("center: Headscale is not configured for public Agent bootstrap")
 		}
 	}
-	enrollment := AgentEnrollment{Token: token, SiteID: spec.SiteID, InstallerURL: installerURL, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
+	enrollment := AgentEnrollment{Token: token, SiteID: spec.SiteID, InstallerURL: installerURL, CACertificatePEM: spec.CACertificatePEM, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: begin agent enrollment: %w", err)
@@ -161,7 +189,7 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 		}
 		bootstrapSecretID = sql.NullString{String: secretID, Valid: true}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, bootstrap_secret_id, ca_fingerprint, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash(token), spec.SiteID, spec.Name, centerURL, rolesJSON, capabilitiesJSON, bootstrapSecretID, spec.CAFingerprint, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, bootstrap_secret_id, ca_fingerprint, ca_certificate_pem, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, tokenHash(token), spec.SiteID, spec.Name, centerURL, rolesJSON, capabilitiesJSON, bootstrapSecretID, spec.CAFingerprint, spec.CACertificatePEM, enrollment.ExpiresAt.Format(time.RFC3339Nano)); err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: create agent enrollment: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -180,10 +208,10 @@ func (s *Store) AgentEnrollmentInstallProfile(ctx context.Context, token string)
 	var expiresAt string
 	var usedAt, bootstrapSecretID, recoveryExpiresAt sql.NullString
 	err := s.db.QueryRowContext(ctx, `SELECT tokens.name, tokens.center_url, tokens.roles_json, tokens.capabilities_json,
-		tokens.bootstrap_secret_id, tokens.ca_fingerprint, tokens.expires_at, tokens.used_at, operations.expires_at
+		tokens.bootstrap_secret_id, tokens.ca_fingerprint, tokens.ca_certificate_pem, tokens.expires_at, tokens.used_at, operations.expires_at
 		FROM agent_enrollment_tokens tokens
 		LEFT JOIN agent_enrollment_operations operations ON operations.token_hash = tokens.token_hash
-		WHERE tokens.token_hash = ?`, tokenHash(token)).Scan(&profile.Name, &profile.CenterURL, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID, &profile.CAFingerprint, &expiresAt, &usedAt, &recoveryExpiresAt)
+		WHERE tokens.token_hash = ?`, tokenHash(token)).Scan(&profile.Name, &profile.CenterURL, &rolesJSON, &capabilitiesJSON, &bootstrapSecretID, &profile.CAFingerprint, &profile.CACertificatePEM, &expiresAt, &usedAt, &recoveryExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentEnrollmentInstallProfile{}, errors.New("center: agent enrollment token is invalid")
 	}

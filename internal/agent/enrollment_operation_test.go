@@ -19,7 +19,7 @@ func TestInspectInstallOperationFindsPendingFreshInstallWithoutMigration(t *test
 	if operation, exists, err := InspectInstallOperation(directory); err != nil || exists {
 		t.Fatalf("empty installation state: operation=%#v exists=%v err=%v", operation, exists, err)
 	}
-	started, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8080", "one-time-token", "", false)
+	started, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8080", "one-time-token", "", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestEnrollmentOperationReusesIdentityAfterLostResponseAndRestart(t *testing
 		t.Fatal(err)
 	}
 	client := Client{HTTPClient: server.Client()}
-	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", ""); err == nil {
+	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err == nil {
 		t.Fatal("lost response was reported as successful")
 	}
 	if err := store.Close(); err != nil {
@@ -84,7 +84,7 @@ func TestEnrollmentOperationReusesIdentityAfterLostResponseAndRestart(t *testing
 		t.Fatal(err)
 	}
 	defer store.Close()
-	result, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", "")
+	result, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,13 +114,13 @@ func TestEnrollmentOperationRetriesLocalConnectionCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := Client{HTTPClient: server.Client()}
-	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", ""); err == nil {
+	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err == nil {
 		t.Fatal("local connection failure was not reported")
 	}
 	if _, err := store.db.Exec(`DROP TRIGGER fail_connection_insert`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", ""); err != nil {
+	if _, err := client.Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(operationIDs) != 2 || operationIDs[0] == "" || operationIDs[0] != operationIDs[1] {
@@ -138,7 +138,7 @@ func TestReplacementEnrollmentRollbackRestoresPreviousConnection(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), previous); err != nil {
 		t.Fatal(err)
 	}
-	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://new-center.example.com", "one-time-token", strings.Repeat("b", 64), true)
+	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://new-center.example.com", "one-time-token", strings.Repeat("b", 64), "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestFreshEnrollmentRollbackRemovesOnlyOwnedConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://center.example.com", "one-time-token", strings.Repeat("c", 64), false)
+	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://center.example.com", "one-time-token", strings.Repeat("c", 64), "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

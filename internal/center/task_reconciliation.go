@@ -42,7 +42,7 @@ func (s *Store) RetryTaskReconciliation(ctx context.Context, taskID string) (Tas
 		if appKey != threeXUIAppKey || state != "failed" || reconciliationRequired != 1 {
 			return TaskReconciliationRetry{}, errors.New("center: task does not require reconciliation")
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', reconciliation_required = 0, lease_expires_at = '', error = '', updated_at = ? WHERE id = ? AND state = 'failed' AND reconciliation_required = 1`, now, taskID)
+		result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', reconciliation_required = 0, reconciliation_requested = 1, lease_expires_at = '', error = '', updated_at = ? WHERE id = ? AND state = 'failed' AND reconciliation_required = 1`, now, taskID)
 		if err != nil {
 			return TaskReconciliationRetry{}, fmt.Errorf("center: retry application operation reconciliation: %w", err)
 		}

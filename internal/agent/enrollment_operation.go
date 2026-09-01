@@ -18,18 +18,19 @@ import (
 )
 
 type InstallOperation struct {
-	OperationID     string
-	CenterURL       string
-	CAFingerprint   string
-	ReplaceExisting bool
-	Phase           string
-	LastError       string
-	Enrollment      Enrollment
-	Token           string
-	PrivateKey      []byte
+	OperationID      string
+	CenterURL        string
+	CAFingerprint    string
+	CACertificatePEM string
+	ReplaceExisting  bool
+	Phase            string
+	LastError        string
+	Enrollment       Enrollment
+	Token            string
+	PrivateKey       []byte
 }
 
-func (s *Store) BeginEnrollmentOperation(ctx context.Context, centerURL, token, caFingerprint string, replace bool) (InstallOperation, error) {
+func (s *Store) BeginEnrollmentOperation(ctx context.Context, centerURL, token, caFingerprint, caCertificatePEM string, replace bool) (InstallOperation, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return InstallOperation{}, errors.New("agent: enrollment token is required")
@@ -38,7 +39,7 @@ func (s *Store) BeginEnrollmentOperation(ctx context.Context, centerURL, token, 
 	if operation, exists, err := s.installOperation(ctx, true); err != nil {
 		return InstallOperation{}, err
 	} else if exists {
-		if operation.CenterURL != centerURL || operation.CAFingerprint != caFingerprint || operation.ReplaceExisting != replace {
+		if operation.CenterURL != centerURL || operation.CAFingerprint != caFingerprint || operation.CACertificatePEM != caCertificatePEM || operation.ReplaceExisting != replace {
 			return InstallOperation{}, errors.New("agent: another installation operation is pending; rerun it with the original Center options")
 		}
 		var storedTokenHash []byte
@@ -78,8 +79,8 @@ func (s *Store) BeginEnrollmentOperation(ctx context.Context, centerURL, token, 
 	var previous Connection
 	previousSealedCredential := []byte{}
 	previousSealedPrivateKey := []byte{}
-	connectionErr := tx.QueryRowContext(ctx, `SELECT agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint
-		FROM control_plane_connection WHERE id = 1`).Scan(&previous.AgentID, &previous.Name, &previous.CenterURL, &previousSealedCredential, &previousSealedPrivateKey, &previous.CAFingerprint)
+	connectionErr := tx.QueryRowContext(ctx, `SELECT agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem
+		FROM control_plane_connection WHERE id = 1`).Scan(&previous.AgentID, &previous.Name, &previous.CenterURL, &previousSealedCredential, &previousSealedPrivateKey, &previous.CAFingerprint, &previous.CACertificatePEM)
 	if connectionErr != nil && !errors.Is(connectionErr, sql.ErrNoRows) {
 		return InstallOperation{}, fmt.Errorf("agent: inspect existing Center enrollment: %w", connectionErr)
 	}
@@ -90,27 +91,27 @@ func (s *Store) BeginEnrollmentOperation(ctx context.Context, centerURL, token, 
 		return InstallOperation{}, errors.New("agent: cannot replace a Center enrollment because no existing enrollment was found")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_install_operations(
-		id, operation_id, center_url, token_hash, sealed_token, sealed_private_key, ca_fingerprint,
+		id, operation_id, center_url, token_hash, sealed_token, sealed_private_key, ca_fingerprint, ca_certificate_pem,
 		replace_existing, phase, previous_agent_id, previous_name, previous_center_url,
-		previous_sealed_credential, previous_sealed_private_key, previous_ca_fingerprint, created_at, updated_at
-	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, 'enrollment_pending', ?, ?, ?, ?, ?, ?, ?, ?)`, operationID, centerURL, tokenDigest[:], sealedToken, sealedPrivateKey, caFingerprint, replace,
-		previous.AgentID, previous.Name, previous.CenterURL, previousSealedCredential, previousSealedPrivateKey, previous.CAFingerprint, now, now); err != nil {
+		previous_sealed_credential, previous_sealed_private_key, previous_ca_fingerprint, previous_ca_certificate_pem, created_at, updated_at
+	) VALUES(1, ?, ?, ?, ?, ?, ?, ?, ?, 'enrollment_pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)`, operationID, centerURL, tokenDigest[:], sealedToken, sealedPrivateKey, caFingerprint, caCertificatePEM, replace,
+		previous.AgentID, previous.Name, previous.CenterURL, previousSealedCredential, previousSealedPrivateKey, previous.CAFingerprint, previous.CACertificatePEM, now, now); err != nil {
 		return InstallOperation{}, fmt.Errorf("agent: persist enrollment operation before contacting Center: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return InstallOperation{}, fmt.Errorf("agent: commit enrollment operation: %w", err)
 	}
-	return InstallOperation{OperationID: operationID, CenterURL: centerURL, CAFingerprint: caFingerprint, ReplaceExisting: replace, Phase: "enrollment_pending", Token: token, PrivateKey: privateKey}, nil
+	return InstallOperation{OperationID: operationID, CenterURL: centerURL, CAFingerprint: caFingerprint, CACertificatePEM: caCertificatePEM, ReplaceExisting: replace, Phase: "enrollment_pending", Token: token, PrivateKey: privateKey}, nil
 }
 
 func (s *Store) installOperation(ctx context.Context, includeSecrets bool) (InstallOperation, bool, error) {
 	var operation InstallOperation
 	var replace bool
 	var sealedToken, sealedPrivateKey, rolesJSON, capabilitiesJSON []byte
-	err := s.db.QueryRowContext(ctx, `SELECT operation_id, center_url, sealed_token, sealed_private_key, ca_fingerprint,
+	err := s.db.QueryRowContext(ctx, `SELECT operation_id, center_url, sealed_token, sealed_private_key, ca_fingerprint, ca_certificate_pem,
 		replace_existing, phase, agent_id, name, roles_json, capabilities_json, last_error
 		FROM agent_install_operations WHERE id = 1`).Scan(
-		&operation.OperationID, &operation.CenterURL, &sealedToken, &sealedPrivateKey, &operation.CAFingerprint,
+		&operation.OperationID, &operation.CenterURL, &sealedToken, &sealedPrivateKey, &operation.CAFingerprint, &operation.CACertificatePEM,
 		&replace, &operation.Phase, &operation.Enrollment.ID, &operation.Enrollment.Name, &rolesJSON, &capabilitiesJSON, &operation.LastError,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -154,7 +155,7 @@ func (s *Store) CompleteEnrollmentOperation(ctx context.Context, operation Insta
 	if operation.Phase != "enrollment_pending" || response.ID == "" || response.Credential == "" || response.Name == "" || len(response.Roles) == 0 {
 		return errors.New("agent: incomplete enrollment operation")
 	}
-	connection := Connection{AgentID: response.ID, Name: response.Name, CenterURL: operation.CenterURL, Credential: response.Credential, PrivateKey: operation.PrivateKey, CAFingerprint: operation.CAFingerprint}
+	connection := Connection{AgentID: response.ID, Name: response.Name, CenterURL: operation.CenterURL, Credential: response.Credential, PrivateKey: operation.PrivateKey, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
 	sealedCredential, sealedPrivateKey, err := s.sealConnection(connection)
 	if err != nil {
 		return err
@@ -173,16 +174,16 @@ func (s *Store) CompleteEnrollmentOperation(ctx context.Context, operation Insta
 	}
 	defer tx.Rollback()
 	if operation.ReplaceExisting {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint)
-			VALUES(1, ?, ?, ?, ?, ?, ?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem)
+			VALUES(1, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url,
-			sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint`,
-			connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint)); err != nil {
+			sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint, ca_certificate_pem = excluded.ca_certificate_pem`,
+			connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint), strings.TrimSpace(connection.CACertificatePEM)); err != nil {
 			return fmt.Errorf("agent: replace Center connection: %w", err)
 		}
 	} else {
-		result, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint)
-			VALUES(1, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint))
+		result, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem)
+			VALUES(1, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint), strings.TrimSpace(connection.CACertificatePEM))
 		if err != nil {
 			return fmt.Errorf("agent: save Center connection: %w", err)
 		}
@@ -270,10 +271,10 @@ func (s *Store) RollbackInstallOperation(ctx context.Context) error {
 	var previousSealedCredential, previousSealedPrivateKey []byte
 	err = tx.QueryRowContext(ctx, `SELECT operation_id, phase, agent_id, replace_existing,
 		previous_agent_id, previous_name, previous_center_url, previous_sealed_credential,
-		previous_sealed_private_key, previous_ca_fingerprint
+		previous_sealed_private_key, previous_ca_fingerprint, previous_ca_certificate_pem
 		FROM agent_install_operations WHERE id = 1`).Scan(&operationID, &phase, &agentID, &replace,
 		&previous.AgentID, &previous.Name, &previous.CenterURL, &previousSealedCredential,
-		&previousSealedPrivateKey, &previous.CAFingerprint)
+		&previousSealedPrivateKey, &previous.CAFingerprint, &previous.CACertificatePEM)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -284,11 +285,11 @@ func (s *Store) RollbackInstallOperation(ctx context.Context) error {
 		if previous.AgentID == "" || previous.Name == "" || previous.CenterURL == "" || len(previousSealedCredential) == 0 || len(previousSealedPrivateKey) == 0 {
 			return errors.New("agent: previous Center enrollment snapshot is incomplete; refusing destructive rollback")
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint)
-			VALUES(1, ?, ?, ?, ?, ?, ?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem)
+			VALUES(1, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url,
-			sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint`,
-			previous.AgentID, previous.Name, previous.CenterURL, previousSealedCredential, previousSealedPrivateKey, previous.CAFingerprint); err != nil {
+			sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint, ca_certificate_pem = excluded.ca_certificate_pem`,
+			previous.AgentID, previous.Name, previous.CenterURL, previousSealedCredential, previousSealedPrivateKey, previous.CAFingerprint, previous.CACertificatePEM); err != nil {
 			return fmt.Errorf("agent: restore previous Center enrollment: %w", err)
 		}
 	} else if phase != "enrollment_pending" {

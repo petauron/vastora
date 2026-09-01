@@ -40,7 +40,7 @@ func (d systemHostDecommissioner) ScheduleFinalRemoval(ctx context.Context, requ
 	}
 	operation := hostDecommissionOperation{
 		Version: 1, TaskID: request.TaskID, Attempt: request.Attempt, DeleteData: request.DeleteData, DataDir: d.dataDir,
-		AgentID: request.Connection.AgentID, CenterURL: request.Connection.CenterURL, Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint,
+		AgentID: request.Connection.AgentID, CenterURL: request.Connection.CenterURL, Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint, CACertificatePEM: request.Connection.CACertificatePEM,
 	}
 	if err := persistHostDecommission(executable, operation); err != nil {
 		return err
@@ -55,15 +55,16 @@ func (d systemHostDecommissioner) ScheduleFinalRemoval(ctx context.Context, requ
 }
 
 type hostDecommissionOperation struct {
-	Version       int    `json:"version"`
-	TaskID        string `json:"taskId"`
-	Attempt       int64  `json:"attempt"`
-	DeleteData    bool   `json:"deleteData"`
-	DataDir       string `json:"dataDir"`
-	AgentID       string `json:"agentId"`
-	CenterURL     string `json:"centerUrl"`
-	Credential    string `json:"credential"`
-	CAFingerprint string `json:"caFingerprint"`
+	Version          int    `json:"version"`
+	TaskID           string `json:"taskId"`
+	Attempt          int64  `json:"attempt"`
+	DeleteData       bool   `json:"deleteData"`
+	DataDir          string `json:"dataDir"`
+	AgentID          string `json:"agentId"`
+	CenterURL        string `json:"centerUrl"`
+	Credential       string `json:"credential"`
+	CAFingerprint    string `json:"caFingerprint"`
+	CACertificatePEM string `json:"caCertificatePem,omitempty"`
 }
 
 func persistHostDecommission(executable string, operation hostDecommissionOperation) error {
@@ -114,7 +115,7 @@ func runPersistentHostDecommission(ctx context.Context, operationPath string) er
 	if err != nil {
 		return err
 	}
-	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint}
+	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
 	client := agent.Client{}
 	requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	err = client.BeginHostDecommission(requestContext, connection, operation.TaskID, operation.Attempt)

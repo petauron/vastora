@@ -396,17 +396,17 @@ type ApplicationEndpointObservation struct {
 	InboundTotalBytes int64  `json:"inboundTotalBytes,omitempty"`
 }
 
-func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint string) (Enrollment, error) {
-	return c.enroll(ctx, store, centerURL, enrollmentToken, caFingerprint, false)
+func (c Client) Enroll(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint, caCertificatePEM string) (Enrollment, error) {
+	return c.enroll(ctx, store, centerURL, enrollmentToken, caFingerprint, caCertificatePEM, false)
 }
 
 // MigrateEnrollment explicitly replaces an existing Center identity while
 // preserving all workload state held by the Agent store.
-func (c Client) MigrateEnrollment(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint string) (Enrollment, error) {
-	return c.enroll(ctx, store, centerURL, enrollmentToken, caFingerprint, true)
+func (c Client) MigrateEnrollment(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint, caCertificatePEM string) (Enrollment, error) {
+	return c.enroll(ctx, store, centerURL, enrollmentToken, caFingerprint, caCertificatePEM, true)
 }
 
-func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint string, replace bool) (Enrollment, error) {
+func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentToken, caFingerprint, caCertificatePEM string, replace bool) (Enrollment, error) {
 	baseURL, err := normalizeCenterURL(centerURL)
 	if err != nil {
 		return Enrollment{}, err
@@ -414,7 +414,10 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if strings.TrimSpace(enrollmentToken) == "" {
 		return Enrollment{}, errors.New("agent: enrollment token is required")
 	}
-	caFingerprint = normalizeCAFingerprint(caFingerprint)
+	caFingerprint, caCertificatePEM, err = normalizeCenterTrust(baseURL, caFingerprint, caCertificatePEM)
+	if err != nil {
+		return Enrollment{}, err
+	}
 	if caFingerprint == "" && !loopbackCenterURL(baseURL) {
 		caFingerprint, err = c.probeCenterCAFingerprint(ctx, baseURL)
 		if err != nil {
@@ -424,7 +427,7 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	if err := validateCAFingerprint(baseURL, caFingerprint); err != nil {
 		return Enrollment{}, err
 	}
-	operation, err := store.BeginEnrollmentOperation(ctx, baseURL, enrollmentToken, caFingerprint, replace)
+	operation, err := store.BeginEnrollmentOperation(ctx, baseURL, enrollmentToken, caFingerprint, caCertificatePEM, replace)
 	if err != nil {
 		return Enrollment{}, err
 	}
@@ -438,7 +441,7 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 	var response Enrollment
 	if err := c.post(ctx, baseURL+"/api/v1/agents/enroll", map[string]any{
 		"token": operation.Token, "operationId": operation.OperationID, "version": Version, "operatingSystem": runtime.GOOS, "architecture": runtime.GOARCH, "publicKey": publicKey,
-	}, "", caFingerprint, &response); err != nil {
+	}, "", caFingerprint, caCertificatePEM, &response); err != nil {
 		return Enrollment{}, err
 	}
 	if response.ID == "" || response.Credential == "" || strings.TrimSpace(response.Name) == "" || len(response.Roles) == 0 {
@@ -518,7 +521,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"tailscaleOwnership":           c.TailscaleOwnership,
 		"startup":                      startup,
 		"publicEgress":                 publicEgress,
-	}, connection.Credential, connection.CAFingerprint, &response)
+	}, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response)
 	if err != nil {
 		return errors.Join(observeErr, publicEgressErr), err
 	}
@@ -564,6 +567,7 @@ func (c Client) applyDesiredCenterURL(ctx context.Context, store *Store, connect
 	previous := connection
 	connection.CenterURL = normalized
 	connection.CAFingerprint = fingerprint
+	connection.CACertificatePEM = ""
 	if err := store.ReplaceConnection(ctx, connection); err != nil {
 		return fmt.Errorf("agent: save new Center URL: %w", err)
 	}
@@ -595,16 +599,20 @@ func loopbackCenterURL(value string) bool {
 // VerifyCenterURL validates a user- or Center-supplied control-plane address
 // and confirms that it serves a healthy Center before local state is changed.
 type VerifiedCenter struct {
-	URL           string
-	CAFingerprint string
+	URL              string
+	CAFingerprint    string
+	CACertificatePEM string
 }
 
-func (c Client) VerifyCenterURL(ctx context.Context, desired, expectedCAFingerprint string) (VerifiedCenter, error) {
+func (c Client) VerifyCenterURL(ctx context.Context, desired, expectedCAFingerprint, caCertificatePEM string) (VerifiedCenter, error) {
 	normalized, err := normalizeCenterURL(desired)
 	if err != nil {
 		return VerifiedCenter{}, err
 	}
-	fingerprint := normalizeCAFingerprint(expectedCAFingerprint)
+	fingerprint, caCertificatePEM, err := normalizeCenterTrust(normalized, expectedCAFingerprint, caCertificatePEM)
+	if err != nil {
+		return VerifiedCenter{}, err
+	}
 	if fingerprint == "" && !loopbackCenterURL(normalized) {
 		fingerprint, err = c.probeCenterCAFingerprint(ctx, normalized)
 		if err != nil {
@@ -617,13 +625,13 @@ func (c Client) VerifyCenterURL(ctx context.Context, desired, expectedCAFingerpr
 	var health struct {
 		Status string `json:"status"`
 	}
-	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, &health); err != nil {
+	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, caCertificatePEM, &health); err != nil {
 		return VerifiedCenter{}, err
 	}
 	if health.Status != "ok" {
 		return VerifiedCenter{}, errors.New("health check is not OK")
 	}
-	return VerifiedCenter{URL: normalized, CAFingerprint: fingerprint}, err
+	return VerifiedCenter{URL: normalized, CAFingerprint: fingerprint, CACertificatePEM: caCertificatePEM}, err
 }
 
 func (c Client) verifyCenterURL(ctx context.Context, desired string) (string, string, error) {
@@ -638,7 +646,7 @@ func (c Client) verifyCenterURL(ctx context.Context, desired string) (string, st
 	var health struct {
 		Status string `json:"status"`
 	}
-	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, &health); err != nil {
+	if err := c.get(ctx, normalized+"/healthz", "", fingerprint, "", &health); err != nil {
 		return "", "", err
 	}
 	if health.Status != "ok" {
@@ -1234,7 +1242,7 @@ func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Durat
 	if len(requiredTaskIDs) != 0 && strings.TrimSpace(requiredTaskIDs[0]) != "" {
 		endpoint += "&taskId=" + url.QueryEscape(strings.TrimSpace(requiredTaskIDs[0]))
 	}
-	if err := c.get(ctx, endpoint, connection.Credential, connection.CAFingerprint, &response); err != nil {
+	if err := c.get(ctx, endpoint, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
 		return nil, err
 	}
 	if response.Task == nil {
@@ -1270,7 +1278,7 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 	if deploymentErr != nil {
 		payload["error"] = deploymentErr.Error()
 	}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
 // BeginHostDecommission transfers responsibility for a claimed cleanup from
@@ -1280,7 +1288,7 @@ func (c Client) BeginHostDecommission(ctx context.Context, connection Connection
 		return errors.New("agent: invalid host decommission handoff")
 	}
 	payload := map[string]any{"taskId": taskID, "attempt": attempt}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/decommission/start", payload, connection.Credential, connection.CAFingerprint, nil)
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/decommission/start", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
 // CompleteHostDecommission reports the actual helper outcome without relying
@@ -1290,7 +1298,7 @@ func (c Client) CompleteHostDecommission(ctx context.Context, connection Connect
 		return errors.New("agent: invalid host decommission completion")
 	}
 	payload := map[string]any{"attempt": attempt, "succeeded": cleanupErr == nil, "error": safeTaskError(cleanupErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
 // BeginHostUpdate transfers a claimed update from the Agent lease to the
@@ -1300,7 +1308,7 @@ func (c Client) BeginHostUpdate(ctx context.Context, connection Connection, task
 		return errors.New("agent: invalid host update handoff")
 	}
 	payload := map[string]any{"attempt": attempt}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/updates/"+url.PathEscape(taskID)+"/start", payload, connection.Credential, connection.CAFingerprint, nil)
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/updates/"+url.PathEscape(taskID)+"/start", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
 // CompleteHostUpdate reports the persistent helper outcome. Center accepts a
@@ -1310,7 +1318,7 @@ func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, t
 		return errors.New("agent: invalid host update completion")
 	}
 	payload := map[string]any{"attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
 func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string, attempt int64) error {
@@ -1323,10 +1331,10 @@ func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string,
 		return err
 	}
 	payload := map[string]any{"attempt": attempt}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/lease", payload, connection.Credential, connection.CAFingerprint, nil)
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/lease", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
-func (c Client) post(ctx context.Context, endpoint string, payload any, credential, caFingerprint string, target any) error {
+func (c Client) post(ctx context.Context, endpoint string, payload any, credential, caFingerprint, caCertificatePEM string, target any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("agent: encode Center request: %w", err)
@@ -1342,7 +1350,7 @@ func (c Client) post(ctx context.Context, endpoint string, payload any, credenti
 	if credential != "" {
 		request.Header.Set("Authorization", "Bearer "+credential)
 	}
-	client, err := c.clientFor(caFingerprint, 15*time.Second)
+	client, err := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
 	if err != nil {
 		return err
 	}
@@ -1371,13 +1379,13 @@ func (c Client) post(ctx context.Context, endpoint string, payload any, credenti
 	return nil
 }
 
-func (c Client) get(ctx context.Context, endpoint, credential, caFingerprint string, target any) error {
+func (c Client) get(ctx context.Context, endpoint, credential, caFingerprint, caCertificatePEM string, target any) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("agent: create Center request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+credential)
-	client, err := c.clientFor(caFingerprint, 15*time.Second)
+	client, err := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
 	if err != nil {
 		return err
 	}

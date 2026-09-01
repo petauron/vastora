@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,6 +33,42 @@ func validateCAFingerprint(centerURL, value string) error {
 		return errors.New("agent: Center CA fingerprint is invalid; enroll the Agent again")
 	}
 	return nil
+}
+
+func normalizeCenterTrust(centerURL, fingerprint, certificatePEM string) (string, string, error) {
+	fingerprint = normalizeCAFingerprint(fingerprint)
+	certificatePEM = strings.TrimSpace(certificatePEM)
+	if certificatePEM != "" {
+		certificate, err := parseCACertificate(certificatePEM)
+		if err != nil {
+			return "", "", err
+		}
+		certificateFingerprint := certificatePublicKeyFingerprint(certificate)
+		if fingerprint != "" && fingerprint != certificateFingerprint {
+			return "", "", errors.New("agent: Center CA certificate does not match its expected fingerprint")
+		}
+		fingerprint = certificateFingerprint
+		certificatePEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}))
+	}
+	if fingerprint == "" && certificatePEM == "" && !loopbackCenterURL(centerURL) {
+		return "", "", nil
+	}
+	if err := validateCAFingerprint(centerURL, fingerprint); err != nil {
+		return "", "", err
+	}
+	return fingerprint, certificatePEM, nil
+}
+
+func parseCACertificate(value string) (*x509.Certificate, error) {
+	block, rest := pem.Decode([]byte(strings.TrimSpace(value)))
+	if block == nil || block.Type != "CERTIFICATE" || strings.TrimSpace(string(rest)) != "" {
+		return nil, errors.New("agent: Center CA certificate must contain exactly one PEM certificate")
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || !certificate.IsCA || !certificate.BasicConstraintsValid {
+		return nil, errors.New("agent: Center CA certificate is invalid")
+	}
+	return certificate, nil
 }
 
 func (c Client) probeCenterCAFingerprint(ctx context.Context, centerURL string) (string, error) {
@@ -68,12 +105,36 @@ func certificatePublicKeyFingerprint(certificate *x509.Certificate) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func pinnedHTTPClient(fingerprint string, timeout time.Duration) (*http.Client, error) {
+func pinnedHTTPClient(fingerprint, certificatePEM string, timeout time.Duration) (*http.Client, error) {
 	fingerprint = normalizeCAFingerprint(fingerprint)
 	if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != sha256.Size*2 {
 		return nil, errors.New("agent: invalid Center CA fingerprint")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if strings.TrimSpace(certificatePEM) != "" {
+		certificate, err := parseCACertificate(certificatePEM)
+		if err != nil {
+			return nil, err
+		}
+		if certificatePublicKeyFingerprint(certificate) != fingerprint {
+			return nil, errors.New("agent: Center CA certificate does not match its expected fingerprint")
+		}
+		roots := x509.NewCertPool()
+		roots.AddCert(certificate)
+		transport.TLSClientConfig = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    roots,
+			VerifyConnection: func(state tls.ConnectionState) error {
+				for _, chain := range state.VerifiedChains {
+					if len(chain) != 0 && certificatePublicKeyFingerprint(chain[len(chain)-1]) == fingerprint {
+						return nil
+					}
+				}
+				return errors.New("agent: Center CA fingerprint mismatch")
+			},
+		}
+		return &http.Client{Transport: transport, Timeout: timeout}, nil
+	}
 	transport.TLSClientConfig = &tls.Config{
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true, // Verification is performed below against the pinned CA.
@@ -115,26 +176,29 @@ func verifyPinnedCA(state tls.ConnectionState, fingerprint string) error {
 	return errors.New("agent: Center CA fingerprint mismatch")
 }
 
-func (c Client) clientFor(fingerprint string, timeout time.Duration) (*http.Client, error) {
+func (c Client) clientFor(fingerprint, certificatePEM string, timeout time.Duration) (*http.Client, error) {
 	if strings.TrimSpace(fingerprint) == "" {
 		if c.HTTPClient != nil {
 			return c.HTTPClient, nil
 		}
 		return &http.Client{Timeout: timeout}, nil
 	}
-	return pinnedHTTPClient(fingerprint, timeout)
+	return pinnedHTTPClient(fingerprint, certificatePEM, timeout)
 }
 
 // CenterHTTPClient returns a client that enforces the persisted Center CA pin.
 // It is used by command paths outside Client, including binary updates.
 func CenterHTTPClient(connection Connection, timeout time.Duration) (*http.Client, error) {
+	if _, _, err := normalizeCenterTrust(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM); err != nil {
+		return nil, err
+	}
 	if err := validateCAFingerprint(connection.CenterURL, connection.CAFingerprint); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(connection.CAFingerprint) == "" {
 		return &http.Client{Timeout: timeout}, nil
 	}
-	return pinnedHTTPClient(connection.CAFingerprint, timeout)
+	return pinnedHTTPClient(connection.CAFingerprint, connection.CACertificatePEM, timeout)
 }
 
 func (c Client) ensureConnectionPinned(ctx context.Context, store *Store, connection Connection) (Connection, error) {

@@ -96,7 +96,7 @@ func TestEnrollmentReportsNativePlatform(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if _, err := (Client{HTTPClient: server.Client()}).Enroll(context.Background(), store, server.URL, "one-time-token", ""); err != nil {
+	if _, err := (Client{HTTPClient: server.Client()}).Enroll(context.Background(), store, server.URL, "one-time-token", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -119,7 +119,7 @@ func TestMigrateEnrollmentReplacesOnlyCenterConnection(t *testing.T) {
 	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "existing-app", AppKey: "vastora-official/cpa", Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`), ServiceAddress: "100.64.0.2"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Client{HTTPClient: server.Client()}).MigrateEnrollment(context.Background(), store, server.URL, "one-time-token", ""); err != nil {
+	if _, err := (Client{HTTPClient: server.Client()}).MigrateEnrollment(context.Background(), store, server.URL, "one-time-token", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	connection, err := store.Connection(context.Background())
@@ -911,6 +911,67 @@ func TestProcessingReceiptAfterRestartFailsClosedWithoutRepeatingEffect(t *testi
 	}
 	if fenced, err := store.HasProcessingTaskReceipts(context.Background()); err != nil || fenced {
 		t.Fatalf("successful reconciliation did not release offline restore: fenced=%t err=%v", fenced, err)
+	}
+}
+
+func TestProcessingApplicationCommandReceiptRequiresExplicitReconciliation(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: "application.command", ID: "uncertain-command", Attempt: 1, ApplicationCommand: &RealityCommandTask{Action: "rename", InboundID: 7, DisplayName: "🇺🇸 美国edge"}}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("initial command receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task.Attempt = 2
+	completion, err := store.PrepareTaskReceipt(context.Background(), task)
+	if err != nil || completion == nil || !completion.ReconciliationRequired {
+		t.Fatalf("uncertain command completion = %#v, err=%v", completion, err)
+	}
+	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	task.Attempt = 3
+	task.Reconcile = true
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("explicit command reconciliation did not reopen the receipt: completion=%#v err=%v", completion, err)
+	}
+}
+
+func TestLegacyTaskReceiptRequiresExplicitOperatorResolution(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO task_receipts(task_id, task_kind, runtime_generation, attempt, task_hash, state, created_at, updated_at)
+		VALUES('legacy-task', 'legacy', 0, 1, X'01', 'processing', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	taskID, kind, err := store.UnresolvedApplicationTaskReceipt(ctx)
+	if err != nil || taskID != "legacy-task" || kind != "legacy" {
+		t.Fatalf("unresolved receipt = %q %q, err=%v", taskID, kind, err)
+	}
+	if err := store.ResolveLegacyTaskReceipt(ctx, "legacy-task"); err != nil {
+		t.Fatal(err)
+	}
+	taskID, kind, err = store.UnresolvedApplicationTaskReceipt(ctx)
+	if err != nil || taskID != "" || kind != "" {
+		t.Fatalf("resolved receipt still fenced startup = %q %q, err=%v", taskID, kind, err)
+	}
+	if err := store.ResolveLegacyTaskReceipt(ctx, "legacy-task"); err == nil {
+		t.Fatal("already resolved legacy receipt was accepted twice")
 	}
 }
 

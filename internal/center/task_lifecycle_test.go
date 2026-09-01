@@ -72,6 +72,34 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 	}
 }
 
+func TestTaskEncryptionFailureReleasesTheCommittedLease(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "encryption-race", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := claimTask(t, store, node)
+	if err := store.RevokeAgentCredential(ctx, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.EncryptAgentTask(ctx, node.ID, task); err == nil {
+		t.Fatal("revoked Agent encryption identity remained usable")
+	}
+	if err := store.releaseClaimedTask(ctx, node.ID, task); err != nil {
+		t.Fatal(err)
+	}
+	var state, lease, applicationStatus string
+	if err := store.db.QueryRowContext(ctx, `SELECT deployment.state, deployment.lease_expires_at, application.status FROM deployments deployment JOIN applications application ON application.id = deployment.application_id WHERE deployment.id = ?`, created.ID).Scan(&state, &lease, &applicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending" || lease != "" || applicationStatus != "pending" {
+		t.Fatalf("released task state=%q lease=%q application=%q", state, lease, applicationStatus)
+	}
+}
+
 func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -125,7 +153,7 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 		t.Fatalf("retried command was not reset safely: %#v err=%v", command, err)
 	}
 	replayed := claimTask(t, store, node)
-	if replayed.ID != commandID || replayed.Attempt != task.Attempt+1 {
+	if replayed.ID != commandID || replayed.Attempt != task.Attempt+1 || !replayed.Reconcile {
 		t.Fatalf("command reconciliation did not preserve task identity and attempt history: first=%#v replay=%#v", task, replayed)
 	}
 }
@@ -200,7 +228,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 		t.Fatalf("reconciliation retry = %#v, err=%v", retry, err)
 	}
 	replayed := claimTask(t, store, previousController)
-	if replayed.ID != command.ID || replayed.Attempt != first.Attempt+1 {
+	if replayed.ID != command.ID || replayed.Attempt != first.Attempt+1 || !replayed.Reconcile {
 		t.Fatalf("reconciliation changed task identity or attempt history: first=%#v replay=%#v", first, replayed)
 	}
 	if err := store.CompleteTask(ctx, previousController.ID, previousController.Credential, replayed.ID, replayed.Attempt, false, "remote mutation was compensated", nil, replayed.RequiredRuntimeGeneration); err != nil {

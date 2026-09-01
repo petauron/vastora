@@ -91,7 +91,7 @@ func (c Client) uploadThreeXUIBackup(ctx context.Context, store *Store, applicat
 	}
 	request.Header.Set("Authorization", "Bearer "+connection.Credential)
 	request.Header.Set("Content-Type", "application/octet-stream")
-	client, err := c.clientFor(connection.CAFingerprint, 2*time.Minute)
+	client, err := c.clientFor(connection.CAFingerprint, connection.CACertificatePEM, 2*time.Minute)
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func (c Client) downloadThreeXUIMigrationBackup(ctx context.Context, store *Stor
 		return nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+connection.Credential)
-	client, err := c.clientFor(connection.CAFingerprint, 2*time.Minute)
+	client, err := c.clientFor(connection.CAFingerprint, connection.CACertificatePEM, 2*time.Minute)
 	if err != nil {
 		return nil, err
 	}

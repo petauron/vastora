@@ -75,11 +75,12 @@ Usage:
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE
   vastora deployer serve --socket /run/vastora-deployer/deployer.sock
   vastora agent init --data-dir DIR
-  vastora agent enroll --data-dir DIR --center-url URL --token-file FILE
-  vastora agent install --center-url URL --token-file FILE [--replace-existing]
+  vastora agent enroll --data-dir DIR --center-url URL --token-file FILE [--ca-certificate FILE]
+  vastora agent install --center-url URL --token-file FILE [--ca-certificate FILE] [--replace-existing]
   vastora agent status [--data-dir /var/lib/vastora/agent]
   vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
-  vastora agent configure-center --center-url URL
+  vastora agent configure-center --center-url URL [--ca-certificate FILE]
+  vastora agent resolve-legacy-task --task-id ID --confirm-external-state-reviewed
   vastora agent adopt-tailscale --confirm-vastora-ownership
   vastora agent update [--data-dir /var/lib/vastora/agent] [--center-url URL]
   vastora agent uninstall --purge

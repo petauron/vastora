@@ -176,6 +176,9 @@ func makeLegacyUnboundAgent(t *testing.T, directory string) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`DROP TABLE storage_key_binding;
+		ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
+		ALTER TABLE agent_install_operations DROP COLUMN ca_certificate_pem;
+		ALTER TABLE agent_install_operations DROP COLUMN previous_ca_certificate_pem;
 		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
 		PRAGMA user_version = 10`); err != nil {
 		_ = db.Close()
