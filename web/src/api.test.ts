@@ -58,6 +58,7 @@ describe("Center API client", () => {
   it("reauthenticates for application credentials and uses an idempotency key for rotation", async () => {
     document.cookie = "vastora_csrf=csrf-value; Path=/";
     const reauthentication = ["test", "reauth"].join("-");
+    const operationIdentifier = ["rotation", "operation", "test"].join("-");
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ kind: "cpa", managementKey: "management", clientApiKey: "client" }), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: "rotation-1", state: "pending" }), { status: 202, headers: { "Content-Type": "application/json" } }))
@@ -65,7 +66,7 @@ describe("Center API client", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await api.revealApplicationCredentials("cpa-1", reauthentication);
-    await api.rotateApplicationCredentials("cpa-1", "management", reauthentication, "rotation-operation-key-0001");
+    await api.rotateApplicationCredentials("cpa-1", "management", reauthentication, operationIdentifier);
     await api.applicationCredentialRotation("cpa-1", "rotation-1");
 
     const [revealPath, revealInit] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -73,7 +74,7 @@ describe("Center API client", () => {
     expect(JSON.parse(String(revealInit.body))).toEqual({ currentPassword: reauthentication });
     const [rotationPath, rotationInit] = fetchMock.mock.calls[1] as [string, RequestInit];
     expect(rotationPath).toBe("/api/v1/applications/cpa-1/credentials/rotate");
-    expect(new Headers(rotationInit.headers).get("Idempotency-Key")).toBe("rotation-operation-key-0001");
+    expect(new Headers(rotationInit.headers).get("Idempotency-Key")).toBe(operationIdentifier);
     expect(JSON.parse(String(rotationInit.body))).toEqual({ target: "management", currentPassword: reauthentication, confirm: true });
     const [statusPath, statusInit] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(statusPath).toBe("/api/v1/applications/cpa-1/credentials/rotations/rotation-1");

@@ -305,9 +305,14 @@ describe("network and app views", () => {
     const reveal = vi.spyOn(api, "revealApplicationCredentials").mockResolvedValue({ kind: "cpa", managementKey: "management-value", clientApiKey: "client-value" });
     const rotate = vi.spyOn(api, "rotateApplicationCredentials").mockResolvedValue({ id: "rotation-1", applicationId: "cpa-application", target: "management", state: "pending", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" });
     act(() => root?.render(<ThemeProvider><AppsView data={data} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "已安装")?.click());
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "凭据")?.click());
-    const revealPassword = document.querySelector<HTMLInputElement>("#application-credential-reauthentication")!;
+    const installedTab = [...container.querySelectorAll("button")].find((button) => button.textContent?.startsWith("已安装"));
+    expect(installedTab).toBeDefined();
+    act(() => installedTab?.click());
+    const credentialsButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "凭据");
+    expect(credentialsButton).toBeDefined();
+    act(() => credentialsButton?.click());
+    const revealPassword = document.querySelector<HTMLInputElement>("#application-credential-reauthentication");
+    if (!revealPassword) throw new Error("credential reauthentication input was not rendered");
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(revealPassword, reauthentication);
       revealPassword.dispatchEvent(new Event("input", { bubbles: true }));
@@ -320,7 +325,8 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#cpa-management-key")?.type).toBe("password");
     expect(document.querySelector<HTMLInputElement>("#cpa-client-api-key")?.type).toBe("password");
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("轮换管理密钥"))?.click());
-    const rotationPassword = document.querySelector<HTMLInputElement>("#application-credential-rotation-password")!;
+    const rotationPassword = document.querySelector<HTMLInputElement>("#application-credential-rotation-password");
+    if (!rotationPassword) throw new Error("credential rotation password input was not rendered");
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(rotationPassword, reauthentication);
       rotationPassword.dispatchEvent(new Event("input", { bubbles: true }));
