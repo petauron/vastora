@@ -49,9 +49,19 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	if active != 0 {
 		return ApplicationCommandView{}, errors.New("center: this 3x-ui application already has an operation in progress")
 	}
-	publication, err := s.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: input.Kind, GatewayNodeID: input.GatewayNodeID, Hostname: input.Hostname, DNSProvider: input.DNSProvider})
+	publication, found, err := s.activeSubscriptionPublication(ctx, serviceID)
 	if err != nil {
 		return ApplicationCommandView{}, err
+	}
+	if found {
+		if publication.Kind != input.Kind || publication.GatewayNodeID != input.GatewayNodeID || publication.DNSProvider != input.DNSProvider || input.Hostname != "" && publication.Hostname != input.Hostname {
+			return ApplicationCommandView{}, errors.New("center: stop the existing public subscription before changing its access settings")
+		}
+	} else {
+		publication, err = s.createPublication(ctx, PublicationInput{ServiceID: serviceID, Kind: input.Kind, GatewayNodeID: input.GatewayNodeID, Hostname: input.Hostname, DNSProvider: input.DNSProvider}, true)
+		if err != nil {
+			return ApplicationCommandView{}, err
+		}
 	}
 	baseURI := (&url.URL{Scheme: "https", Host: publication.Hostname, Path: "/sub/"}).String()
 	task := SubscriptionCommandTask{Domain: publication.Hostname, BaseURI: baseURI, PublicationID: publication.ID}
@@ -84,4 +94,34 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 		return ApplicationCommandView{}, err
 	}
 	return s.ApplicationCommand(ctx, id)
+}
+
+func (s *Store) activeSubscriptionPublication(ctx context.Context, serviceID string) (PublicationView, bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM publications WHERE service_id = ? AND kind IN ('cloudflare_tunnel', 'public_direct') AND status <> 'stopped' ORDER BY created_at DESC LIMIT 2`, serviceID)
+	if err != nil {
+		return PublicationView{}, false, err
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return PublicationView{}, false, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return PublicationView{}, false, err
+	}
+	if err := rows.Close(); err != nil {
+		return PublicationView{}, false, err
+	}
+	if len(ids) == 0 {
+		return PublicationView{}, false, nil
+	}
+	if len(ids) != 1 {
+		return PublicationView{}, false, errors.New("center: multiple active public subscription entries require cleanup")
+	}
+	publication, err := s.Publication(ctx, ids[0])
+	return publication, err == nil, err
 }

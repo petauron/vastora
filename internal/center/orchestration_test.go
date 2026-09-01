@@ -835,6 +835,9 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET domain_suffix = 'example.test' WHERE id = ?`, testSiteID(t, store)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "three-x-ui-subscription", Kind: publicationPublic, GatewayNodeID: node.ID, Hostname: "wrong.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "public subscription workflow") {
+		t.Fatalf("generic subscription publication error = %v", err)
+	}
 	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Kind: publicationPublic, DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
@@ -858,6 +861,17 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	publication, err := store.Publication(ctx, completed.PublicationID)
 	if err != nil || publication.ServiceID != "three-x-ui-subscription" || publication.TLSEnabled != true {
 		t.Fatalf("subscription publication = %#v, err=%v", publication, err)
+	}
+	resync, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Hostname: publication.Hostname, Kind: publicationPublic, DNSProvider: "manual"})
+	if err != nil || resync.PublicationID != publication.ID {
+		t.Fatalf("subscription resync = %#v, err=%v", resync, err)
+	}
+	var subscriptionPublications int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id = 'three-x-ui-subscription' AND status <> 'stopped'`).Scan(&subscriptionPublications); err != nil {
+		t.Fatal(err)
+	}
+	if subscriptionPublications != 1 {
+		t.Fatalf("active subscription publications = %d", subscriptionPublications)
 	}
 	var panelPublications int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id = 'three-x-ui-panel' AND status <> 'stopped'`).Scan(&panelPublications); err != nil {

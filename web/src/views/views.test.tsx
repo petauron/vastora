@@ -493,6 +493,7 @@ describe("network and app views", () => {
     data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "添加入口")).toBe(false);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("开启订阅"))?.click();
       await Promise.resolve();
@@ -502,6 +503,25 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("");
     expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.placeholder).toBe("留空时自动生成");
     expect(document.querySelector<HTMLButtonElement>("#subscription-kind")?.textContent).toContain("Cloudflare Tunnel");
+  });
+
+  it("resynchronizes an existing public subscription without replacing its address", async () => {
+    const data = realityDashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
+    data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", gatewayNodeId: "agent", hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "ready", accessUrl: "https://subscription.example.test/sub/", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
+    vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
+    const create = vi.spyOn(api, "createSubscriptionCommand").mockResolvedValue({ id: "subscription-resync", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: "subscription.example.test", dnsProvider: "cloudflare", publicationId: "subscription-publication", resultAvailable: false, createdAt: "2026-08-24T00:00:02Z", updatedAt: "2026-08-24T00:00:03Z" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("公网订阅"))?.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("同步订阅设置"))?.click();
+      await Promise.resolve();
+    });
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", gatewayNodeId: "agent", hostname: "subscription.example.test", kind: "cloudflare_tunnel", dnsProvider: "cloudflare" });
   });
 
   it("turns a completed subscription command into an actionable access check", async () => {
