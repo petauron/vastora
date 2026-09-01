@@ -202,6 +202,7 @@ func makeLegacyUnboundCenter(t *testing.T, directory string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	restoreLegacyInboundPlanSchemaForTest(t, db)
 	if _, err := db.Exec(`DROP TRIGGER secret_deliveries_delete_with_deployment;
 		DROP TRIGGER secret_deliveries_delete_with_application_command;
 		DROP TABLE assistant_audit_events;
