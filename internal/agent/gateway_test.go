@@ -240,6 +240,21 @@ func TestGatewayRestoresAfterAgentOrCaddyRestartWithoutCenter(t *testing.T) {
 	}
 }
 
+func TestGatewayStartupWithoutAppliedStateDoesNotRequireRuntime(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	driver := &fakeGatewayDriver{healthFail: true}
+	if err := restoreGatewayState(context.Background(), store, driver); err != nil {
+		t.Fatalf("unused gateway capability required a running gateway: %v", err)
+	}
+	if err := store.requireGatewayStartup(); err != nil {
+		t.Fatalf("unused gateway capability blocked the control plane: %v", err)
+	}
+}
+
 func TestGatewayStartupRestoreFencesNewerRevisionUntilRestoreFinishes(t *testing.T) {
 	assertGatewayStartupFence(t, gatewayState(7, 3000), nil, gatewayState(8, 3100), nil)
 }

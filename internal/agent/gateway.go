@@ -71,8 +71,10 @@ func restoreGatewayState(ctx context.Context, store *Store, driver GatewayDriver
 	state, err := store.GatewayState(ctx)
 	if err != nil {
 		if errors.Is(err, errNoAppliedGatewayState) {
-			restoreErr = driver.Health(ctx)
-			return restoreErr
+			// Gateway capability only means this node may be selected as an
+			// entry later. Until the first desired state is applied there is no
+			// managed Caddy runtime to restore or health-check.
+			return nil
 		}
 		restoreErr = err
 		return restoreErr
