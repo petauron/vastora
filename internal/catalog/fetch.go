@@ -55,6 +55,7 @@ func Fetch(ctx context.Context, config FetchConfig) (FetchResult, error) {
 		}
 		transport.TLSClientConfig.RootCAs = roots
 	}
+	redirected := false
 	client := &http.Client{
 		Transport: transport,
 		Timeout:   config.Timeout,
@@ -65,6 +66,9 @@ func Fetch(ctx context.Context, config FetchConfig) (FetchResult, error) {
 			if request.URL == nil || request.URL.Scheme != "https" || request.URL.Host == "" || request.URL.User != nil {
 				return errors.New("catalog: redirect target must be absolute HTTPS without credentials")
 			}
+			redirected = true
+			request.Header.Del("If-None-Match")
+			request.Header.Del("If-Modified-Since")
 			if len(via) > 0 && !sameOrigin(request.URL, via[len(via)-1].URL) {
 				request.Header.Del("Authorization")
 			}
@@ -91,6 +95,9 @@ func Fetch(ctx context.Context, config FetchConfig) (FetchResult, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotModified {
+		if redirected {
+			return FetchResult{}, errors.New("catalog: source returned 304 after a redirect")
+		}
 		if config.ETag == "" && config.LastModified == "" {
 			return FetchResult{}, errors.New("catalog: source returned 304 without a conditional request")
 		}
