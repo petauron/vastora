@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 46
+const centerSchemaVersion = 47
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -299,7 +299,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
 			inbound_tag TEXT NOT NULL,
 			total_bytes INTEGER NOT NULL DEFAULT 0 CHECK(total_bytes >= 0),
-			reset_days INTEGER NOT NULL DEFAULT 0 CHECK(reset_days >= 0),
+			reset_day INTEGER NOT NULL DEFAULT 0 CHECK(reset_day BETWEEN 0 AND 31),
 			next_reset_at TEXT NOT NULL DEFAULT '',
 			last_reset_at TEXT NOT NULL DEFAULT '',
 			revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
@@ -309,7 +309,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			last_error TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE INDEX three_x_ui_inbound_plans_due_idx ON three_x_ui_inbound_plans(status, next_reset_at, retry_at) WHERE reset_days > 0`,
+		`CREATE INDEX three_x_ui_inbound_plans_due_idx ON three_x_ui_inbound_plans(status, next_reset_at, retry_at) WHERE reset_day > 0`,
 		`CREATE TABLE three_x_ui_reality_guards (
 			service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
 			target_host TEXT NOT NULL,

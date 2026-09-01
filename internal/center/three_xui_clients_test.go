@@ -31,7 +31,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 		('subscription-publication', 'subscription-service', 'public_direct', ?, 'subscription.example.test', '', 'manual', 1, 'ready', ?, ?)`, node.ID, now, now, node.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_days, next_reset_at, revision, status, updated_at)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_day, next_reset_at, revision, status, updated_at)
 		VALUES('reality-service', 'vastora-node-9', 0, 0, '', 1, 'active', ?)`, now); err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestThreeXUIClientCommandSelectsMultipleSiteNodes(t *testing.T) {
 		('reality-10', 'three-x-ui-controller', ?, 'inbound-10', 'tcp', 30010, 30010, '10.0.0.80:30010', 'observed', 'vless/tcp/reality', 0, '10.0.0.80', 'ready', ?, ?)`, siteID, now, now, siteID, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_days, next_reset_at, revision, status, updated_at)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_day, next_reset_at, revision, status, updated_at)
 		VALUES('reality-9', 'vastora-node-9', 0, 0, '', 1, 'active', ?),
 		('reality-10', 'vastora-node-10', 0, 0, '', 1, 'active', ?)`, now, now); err != nil {
 		t.Fatal(err)

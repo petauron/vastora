@@ -9,18 +9,21 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestThreeXUIResetBoundaryUsesSiteLocalMidnight(t *testing.T) {
+func TestThreeXUIResetBoundaryUsesMonthlySiteLocalMidnight(t *testing.T) {
 	location, err := time.LoadLocation("Asia/Singapore")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 23, 18, 30, 0, 0, time.UTC)
-	if got := threeXUIResetBoundary(now, 1, location); got != "2026-08-24T16:00:00Z" {
-		t.Fatalf("next local midnight boundary = %q", got)
+	if got := threeXUIResetBoundary(now, 1, location); got != "2026-08-31T16:00:00Z" {
+		t.Fatalf("next monthly boundary = %q", got)
 	}
-	advanced, err := advanceThreeXUIResetBoundary("2026-08-23T16:00:00Z", 1, now, location)
-	if err != nil || advanced != "2026-08-24T16:00:00Z" {
+	advanced, err := advanceThreeXUIResetBoundary("2026-07-31T16:00:00Z", 1, now, location)
+	if err != nil || advanced != "2026-08-31T16:00:00Z" {
 		t.Fatalf("advanced boundary = %q, err=%v", advanced, err)
+	}
+	if got := threeXUIResetBoundary(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), 31, time.UTC); got != "2026-02-28T00:00:00Z" {
+		t.Fatalf("month-end boundary = %q", got)
 	}
 }
 
@@ -44,7 +47,7 @@ func TestDueThreeXUIInboundPlanResetAdvancesWithRevisionCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	boundary := clock.Add(-time.Hour).Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_days, next_reset_at, revision, status, updated_at)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_day, next_reset_at, revision, status, updated_at)
 		VALUES(?, 'vastora-node-9', 10737418240, 30, ?, 4, 'active', ?)`, serviceID, boundary, now); err != nil {
 		t.Fatal(err)
 	}

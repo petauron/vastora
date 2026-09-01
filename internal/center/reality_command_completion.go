@@ -92,9 +92,9 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, ta
 				}
 			}
 			if succeeded {
-				nextResetAt, planErr := nextThreeXUIInboundResetAt(ctx, tx, serviceID, now, input.InboundResetDays)
+				nextResetAt, planErr := nextThreeXUIInboundResetAt(ctx, tx, serviceID, now, input.InboundResetDay)
 				if planErr == nil {
-					planErr = upsertThreeXUIInboundPlan(ctx, tx, serviceID, result.InboundTag, input.InboundTotalBytes, input.InboundResetDays, nextResetAt, 1, now)
+					planErr = upsertThreeXUIInboundPlan(ctx, tx, serviceID, result.InboundTag, input.InboundTotalBytes, input.InboundResetDay, nextResetAt, 1, now)
 				}
 				if planErr != nil {
 					succeeded = false

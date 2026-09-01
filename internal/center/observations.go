@@ -166,7 +166,7 @@ func adoptObservedThreeXUIInboundPlan(ctx context.Context, tx *sql.Tx, serviceID
 	}
 	updatedAt := now.UTC().Format(time.RFC3339Nano)
 	result, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(
-		service_id, inbound_tag, total_bytes, reset_days, next_reset_at, last_reset_at,
+		service_id, inbound_tag, total_bytes, reset_day, next_reset_at, last_reset_at,
 		revision, status, retry_at, attempt, last_error, updated_at
 	) VALUES(?, ?, ?, 0, '', '', 1, 'active', '', 0, '', ?)
 	ON CONFLICT(service_id) DO NOTHING`, serviceID, observation.InboundTag, observation.InboundTotalBytes, updatedAt)

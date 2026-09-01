@@ -176,7 +176,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		return guardedRealityResult(result, verification, companion), nil
 	}
 	manualTarget := strings.TrimSpace(command.TargetHost) != "" || strings.TrimSpace(command.ServerName) != ""
-	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || manualTarget && (!validThreeXUIShareHostname(command.TargetHost) || !validThreeXUIShareHostname(command.ServerName)) || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 {
+	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || manualTarget && (!validThreeXUIShareHostname(command.TargetHost) || !validThreeXUIShareHostname(command.ServerName)) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > 31 || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 {
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
 	}
 	listen := strings.TrimSpace(command.TargetAddress)

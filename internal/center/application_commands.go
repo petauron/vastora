@@ -41,7 +41,7 @@ type RealityCommandInput struct {
 	TargetHost        string `json:"targetHost"`
 	ServerName        string `json:"serverName"`
 	InboundTotalBytes int64  `json:"inboundTotalBytes"`
-	InboundResetDays  int    `json:"inboundResetDays"`
+	InboundResetDay   int    `json:"inboundResetDay"`
 	ClientTotalBytes  int64  `json:"clientTotalBytes"`
 	ClientResetDays   int    `json:"clientResetDays"`
 	ClientExpiryTime  int64  `json:"clientExpiryTime"`
@@ -78,7 +78,7 @@ type RealityCommandTask struct {
 	CreateInitialClient bool     `json:"createInitialClient"`
 	InboundTag          string   `json:"inboundTag"`
 	InboundTotalBytes   int64    `json:"inboundTotalBytes"`
-	InboundResetDays    int      `json:"inboundResetDays"`
+	InboundResetDay     int      `json:"inboundResetDay"`
 	ClientTotalBytes    int64    `json:"clientTotalBytes"`
 	ClientResetDays     int      `json:"clientResetDays"`
 	ClientExpiryTime    int64    `json:"clientExpiryTime"`
@@ -148,7 +148,7 @@ type ThreeXUIClientCommandInput struct {
 	LimitIP           int    `json:"limitIp"`
 	ServiceID         string `json:"serviceId,omitempty"`
 	InboundTotalBytes int64  `json:"inboundTotalBytes"`
-	InboundResetDays  int    `json:"inboundResetDays"`
+	InboundResetDay   int    `json:"inboundResetDay"`
 }
 
 type ThreeXUIClientInbound struct {
@@ -164,7 +164,7 @@ type ThreeXUIClientInbound struct {
 	Enabled         bool   `json:"enabled"`
 	TotalBytes      int64  `json:"totalBytes"`
 	UsedBytes       int64  `json:"usedBytes"`
-	ResetDays       int    `json:"resetDays"`
+	ResetDay        int    `json:"resetDay"`
 	NextResetAt     string `json:"nextResetAt,omitempty"`
 	PlanStatus      string `json:"planStatus"`
 	PlanError       string `json:"planError,omitempty"`
@@ -185,7 +185,7 @@ type ThreeXUIClientCommandTask struct {
 	LimitIP             int                     `json:"limitIp"`
 	ServiceID           string                  `json:"serviceId,omitempty"`
 	InboundTotalBytes   int64                   `json:"inboundTotalBytes"`
-	InboundResetDays    int                     `json:"inboundResetDays"`
+	InboundResetDay     int                     `json:"inboundResetDay"`
 	ExpectedNextResetAt string                  `json:"expectedNextResetAt,omitempty"`
 	PlanRevision        int64                   `json:"planRevision,omitempty"`
 	OperationKey        string                  `json:"operationKey,omitempty"`
@@ -284,7 +284,7 @@ type ApplicationCommandView struct {
 	InboundID              int                     `json:"inboundId,omitempty"`
 	ClientCreated          bool                    `json:"clientCreated,omitempty"`
 	InboundTotalBytes      int64                   `json:"inboundTotalBytes,omitempty"`
-	InboundResetDays       int                     `json:"inboundResetDays,omitempty"`
+	InboundResetDay        int                     `json:"inboundResetDay,omitempty"`
 	InboundNextResetAt     string                  `json:"inboundNextResetAt,omitempty"`
 	Clients                []ThreeXUIClientView    `json:"clients,omitempty"`
 	ClientsObserved        bool                    `json:"clientsObserved,omitempty"`
@@ -311,7 +311,7 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
 	input.TargetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.TargetHost), "."))
 	input.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.ServerName), "."))
-	if input.InboundTotalBytes < 0 || input.InboundResetDays < 0 || input.InboundResetDays > maxThreeXUIResetDays || input.ClientTotalBytes < 0 || input.ClientResetDays < 0 || input.ClientResetDays > maxThreeXUIResetDays || input.ClientExpiryTime < 0 {
+	if input.InboundTotalBytes < 0 || input.InboundResetDay < 0 || input.InboundResetDay > maxThreeXUIResetDay || input.ClientTotalBytes < 0 || input.ClientResetDays < 0 || input.ClientResetDays > maxThreeXUIResetDays || input.ClientExpiryTime < 0 {
 		return input, "", errors.New("center: REALITY node or subscription traffic plan is invalid")
 	}
 	if input.ApplicationID == "" || input.GatewayNodeID == "" || !domainSuffixPattern.MatchString(input.Hostname) {
@@ -553,7 +553,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPublicAddress: targetPublicAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID,
 		CreateInitialClient: createInitialClient,
 		InboundTag:          realityCommandInboundTag(id),
-		InboundTotalBytes:   input.InboundTotalBytes, InboundResetDays: input.InboundResetDays}
+		InboundTotalBytes:   input.InboundTotalBytes, InboundResetDay: input.InboundResetDay}
 	if createInitialClient {
 		task.ClientName = input.ClientName
 		task.ClientTotalBytes = input.ClientTotalBytes
@@ -700,7 +700,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		}
 		value.Action, value.RegionCode, value.DisplayName, value.InboundID = input.Action, input.RegionCode, input.DisplayName, input.InboundID
 		value.InboundTotalBytes = input.InboundTotalBytes
-		value.InboundResetDays = input.InboundResetDays
+		value.InboundResetDay = input.InboundResetDay
 		if result.InboundID > 0 {
 			value.InboundID = result.InboundID
 			value.ClientCreated = result.ClientCreated

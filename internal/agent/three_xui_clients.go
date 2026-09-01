@@ -44,7 +44,7 @@ type threeXUIClientDetail struct {
 }
 
 func applyThreeXUIClientCommand(ctx context.Context, store *Store, command ThreeXUIClientCommandTask) (ThreeXUIClientCommandResult, error) {
-	if command.TotalBytes < 0 || command.ResetDays < 0 || command.ResetDays > maxThreeXUIResetDays || command.ExpiryTime < 0 || command.InboundTotalBytes < 0 || command.InboundResetDays < 0 || command.InboundResetDays > maxThreeXUIResetDays || ((command.Action == "create" || command.Action == "update") && command.ResetDays > 0 && command.ExpiryTime <= store.now().UTC().UnixMilli()) {
+	if command.TotalBytes < 0 || command.ResetDays < 0 || command.ResetDays > maxThreeXUIResetDays || command.ExpiryTime < 0 || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > 31 || ((command.Action == "create" || command.Action == "update") && command.ResetDays > 0 && command.ExpiryTime <= store.now().UTC().UnixMilli()) {
 		return ThreeXUIClientCommandResult{}, errors.New("agent: invalid 3x-ui traffic plan")
 	}
 	baseURL, token, err := threeXUIClientAPIConnection(ctx, store)

@@ -108,24 +108,24 @@ type RenewingTrafficPlanFieldsProps = {
   idPrefix: string;
   language: Language;
   quota: string;
-  resetDays: string;
+  resetValue: string;
   renewalDate: string;
   onQuotaChange: (value: string) => void;
-  onResetDaysChange: (value: string) => void;
+  onResetValueChange: (value: string) => void;
   onRenewalDateChange?: (value: string) => void;
   minimumDate?: string;
   level: "inbound" | "subscription";
   compact?: boolean;
 };
 
-function RenewingTrafficPlanFields({ idPrefix, language, quota, resetDays, renewalDate, onQuotaChange, onResetDaysChange, onRenewalDateChange, level, compact = false, minimumDate }: RenewingTrafficPlanFieldsProps) {
+function RenewingTrafficPlanFields({ idPrefix, language, quota, resetValue, renewalDate, onQuotaChange, onResetValueChange, onRenewalDateChange, level, compact = false, minimumDate }: RenewingTrafficPlanFieldsProps) {
   const inbound = level === "inbound";
-  const renewalEnabled = Number(resetDays) > 0;
+  const renewalEnabled = Number(resetValue) > 0;
   const Icon = inbound ? GaugeIcon : CalendarSyncIcon;
-  const title = inbound ? copy(language, "当前节点套餐", "Current node plan") : copy(language, "此客户端的订阅总额度（所有节点合计）", "This client's subscription allowance (all nodes combined)");
+  const title = inbound ? copy(language, "VPS 月流量套餐", "VPS monthly traffic plan") : copy(language, "客户端额度（可选）", "Client allowance (optional)");
   const description = inbound
-    ? copy(language, "只统计这个 VLESS 入站的流量。其他节点使用各自的独立套餐。", "Only traffic on this VLESS inbound counts here. Other nodes keep independent plans.")
-    : copy(language, "这个额度只属于当前客户端，由订阅主机统一管理；它会合并计算该客户端在所有 VLESS 节点上的用量。", "This allowance belongs only to this client. The subscription controller combines this client's usage across every VLESS node.");
+    ? copy(language, "填写 VPS 服务商提供的月度总流量。Vastora 按上传 + 下载合计用量，并在每月账单日只清零这个节点。", "Enter the VPS provider's monthly allowance. Vastora counts upload plus download and resets only this node on its monthly billing day.")
+    : copy(language, "这是额外的用户级限制，不是 VPS 套餐。订阅会自动携带上传、下载、总额度和到期信息，支持的客户端会显示已用与剩余流量。", "This is an optional user-level cap, not the VPS plan. The subscription automatically includes upload, download, total, and expiry metadata for compatible clients.");
   return <FieldSet className={compact ? "grid gap-4" : "rounded-2xl border bg-muted/20 p-4"}>
     {!compact ? <>
       <FieldLegend className="flex items-center gap-2"><Icon className="size-4 text-muted-foreground" aria-hidden="true" />{title}</FieldLegend>
@@ -135,38 +135,40 @@ function RenewingTrafficPlanFields({ idPrefix, language, quota, resetDays, renew
       <Field>
         <FieldLabel htmlFor={`${idPrefix}-quota`}>{inbound ? copy(language, "节点总流量（GB）", "Node traffic allowance (GB)") : copy(language, "订阅总流量（GB）", "Total subscription traffic (GB)")}</FieldLabel>
         <Input id={`${idPrefix}-quota`} inputMode="decimal" min="0" onChange={(event) => onQuotaChange(event.target.value)} placeholder={copy(language, "留空表示不限", "Leave empty for unlimited")} step="0.1" type="number" value={quota} />
+        {inbound ? <FieldDescription>{copy(language, "按服务商标注填写；上下行流量合计计费。", "Use the provider's advertised quota; upload and download are billed together.")}</FieldDescription> : null}
       </Field>
       <Field>
-        <FieldLabel htmlFor={`${idPrefix}-reset-days`}>{copy(language, "自动续期（天）", "Auto-renew every (days)")}</FieldLabel>
-        <Input id={`${idPrefix}-reset-days`} inputMode="numeric" max="3650" min="0" onChange={(event) => onResetDaysChange(event.target.value)} placeholder={copy(language, "0 表示不自动续期", "0 disables auto-renewal")} step="1" type="number" value={resetDays} />
+        <FieldLabel htmlFor={`${idPrefix}-${inbound ? "reset-day" : "reset-days"}`}>{inbound ? copy(language, "每月重置日", "Monthly reset day") : copy(language, "自动续期（天）", "Auto-renew every (days)")}</FieldLabel>
+        <Input id={`${idPrefix}-${inbound ? "reset-day" : "reset-days"}`} inputMode="numeric" max={inbound ? "31" : "3650"} min="0" onChange={(event) => onResetValueChange(event.target.value)} placeholder={inbound ? copy(language, "例如 1；留空不重置", "For example, 1; blank disables reset") : copy(language, "0 表示不自动续期", "0 disables auto-renewal")} step="1" type="number" value={resetValue} />
+        {inbound ? <FieldDescription>{copy(language, "按节点所在地时区执行；填 31 时，短月份使用最后一天。", "Uses the node location timezone; day 31 means the last day in shorter months.")}</FieldDescription> : null}
       </Field>
     </div>
-    <Field>
-      <FieldLabel htmlFor={`${idPrefix}-renewal-date`}>{inbound || renewalEnabled ? copy(language, "下次续期日", "Next renewal date") : copy(language, "到期日期", "Expiry date")}</FieldLabel>
-      <Input className="sm:max-w-64" id={`${idPrefix}-renewal-date`} min={minimumDate ?? localDateInputValue(new Date())} onChange={onRenewalDateChange ? (event) => onRenewalDateChange(event.target.value) : undefined} readOnly={!onRenewalDateChange} required={Boolean(onRenewalDateChange) && renewalEnabled} type="date" value={renewalDate} />
-      <FieldDescription>{renewalEnabled
-        ? inbound
-          ? renewalDate
+    {inbound && !renewalDate ? <FieldDescription>{renewalEnabled
+      ? copy(language, "保存后，Center 会按节点所在地时区计算首次重置日期。", "After saving, Center calculates the first reset date in the node location timezone.")
+      : copy(language, "未开启每月重置；这个节点的已用流量不会自动清零。", "Monthly reset is off, so this node's usage will not reset automatically.")}</FieldDescription> : <Field>
+        <FieldLabel htmlFor={`${idPrefix}-renewal-date`}>{inbound || renewalEnabled ? copy(language, "下次重置日", "Next reset date") : copy(language, "到期日期", "Expiry date")}</FieldLabel>
+        <Input className="sm:max-w-64" id={`${idPrefix}-renewal-date`} min={minimumDate ?? localDateInputValue(new Date())} onChange={onRenewalDateChange ? (event) => onRenewalDateChange(event.target.value) : undefined} readOnly={!onRenewalDateChange} required={Boolean(onRenewalDateChange) && renewalEnabled} type="date" value={renewalDate} />
+        <FieldDescription>{renewalEnabled
+          ? inbound
             ? copy(language, "该日期由 Center 按位置时区计算。到期后 Vastora 只重置这个入站，不会清零订阅用户流量。", "Center calculated this date in the location timezone. Vastora resets only this inbound without clearing subscriber usage.")
-            : copy(language, "保存后，Center 会按位置时区计算首次续期日；不会使用当前浏览器时区推测。", "After saving, Center calculates the first renewal date in the location timezone instead of guessing from the browser timezone.")
-          : copy(language, "到达该日期后，3x-ui 会清零用户用量、重新启用客户端，并把日期向后顺延。", "On this date, 3x-ui clears subscriber usage, re-enables the client, and advances the date.")
-        : inbound
-          ? copy(language, "未开启自动续期；这个节点的已用流量不会自动清零。", "Auto-renewal is off, so this node's usage will not reset automatically.")
-          : copy(language, "留空表示永不过期。", "Leave empty to never expire.")}</FieldDescription>
-    </Field>
+            : copy(language, "到达该日期后，3x-ui 会清零用户用量、重新启用客户端，并把日期向后顺延。", "On this date, 3x-ui clears subscriber usage, re-enables the client, and advances the date.")
+          : inbound
+            ? copy(language, "未开启每月重置；这个节点的已用流量不会自动清零。", "Monthly reset is off, so this node's usage will not reset automatically.")
+            : copy(language, "留空表示永不过期。", "Leave empty to never expire.")}</FieldDescription>
+      </Field>}
   </FieldSet>;
 }
 
-export function InboundTrafficPlanFields({ idPrefix, language, quota, resetDays, nextResetAt, onQuotaChange, onResetDaysChange }: {
+export function InboundTrafficPlanFields({ idPrefix, language, quota, resetDay, nextResetAt, onQuotaChange, onResetDayChange }: {
   idPrefix: string;
   language: Language;
   quota: string;
-  resetDays: string;
+  resetDay: string;
   nextResetAt: string;
   onQuotaChange: (value: string) => void;
-  onResetDaysChange: (value: string) => void;
+  onResetDayChange: (value: string) => void;
 }) {
-  return <RenewingTrafficPlanFields idPrefix={idPrefix} language={language} level="inbound" onQuotaChange={onQuotaChange} onResetDaysChange={onResetDaysChange} quota={quota} renewalDate={nextResetAt} resetDays={resetDays} />;
+  return <RenewingTrafficPlanFields idPrefix={idPrefix} language={language} level="inbound" onQuotaChange={onQuotaChange} onResetValueChange={onResetDayChange} quota={quota} renewalDate={nextResetAt} resetValue={resetDay} />;
 }
 
 export function SubscriptionTrafficPlanFields({ idPrefix, language, quota, resetDays, expiry, onQuotaChange, onResetDaysChange, onExpiryChange, compact = false, minimumDate }: {
@@ -181,5 +183,5 @@ export function SubscriptionTrafficPlanFields({ idPrefix, language, quota, reset
   compact?: boolean;
   minimumDate?: string;
 }) {
-  return <RenewingTrafficPlanFields compact={compact} idPrefix={idPrefix} language={language} level="subscription" minimumDate={minimumDate} onQuotaChange={onQuotaChange} onRenewalDateChange={onExpiryChange} onResetDaysChange={onResetDaysChange} quota={quota} renewalDate={expiry} resetDays={resetDays} />;
+  return <RenewingTrafficPlanFields compact={compact} idPrefix={idPrefix} language={language} level="subscription" minimumDate={minimumDate} onQuotaChange={onQuotaChange} onRenewalDateChange={onExpiryChange} onResetValueChange={onResetDaysChange} quota={quota} renewalDate={expiry} resetValue={resetDays} />;
 }
