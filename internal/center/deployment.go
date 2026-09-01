@@ -260,6 +260,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 					return DeploymentView{}, err
 				}
 			}
+			if request.AppKey == "vastora-official/keeper" {
+				deploymentConfig, err = removeJSONObjectKeys(deploymentConfig, "cpa_management_key")
+				if err != nil {
+					return DeploymentView{}, err
+				}
+			}
 		}
 		config, secrets, err = normalizeDeploymentConfig(manifest, deploymentConfig)
 		if err != nil {
