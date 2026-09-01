@@ -42,6 +42,7 @@ const dashboard = (): AppData => ({
   agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true, remoteUpdateSupported: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
   registryCredentials: [],
+  centerRemoteAccess: { available: true, enabled: false, status: "disabled" },
   applications: [
     { id: "running", name: "Komari Agent", nodeId: "agent", siteId: "site", appKey: "vastora-official/komari-agent", image: "", status: "running", runtime: "host", installedVersion: "1.2.60", availableVersion: "1.2.60", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" },
     { id: "failed", name: "Failed", nodeId: "agent", siteId: "site", appKey: "vastora-official/failed", image: "image", status: "failed", runtime: "docker", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }
@@ -359,6 +360,26 @@ describe("network and app views", () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ kind: "cloudflare_tunnel", hostname: undefined }));
     expect(mutate).toHaveBeenCalledWith(expect.any(Function), "访问入口已创建。", { reportError: false });
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("填写内容不完整或格式不正确");
+  });
+
+  it.each([
+    [{ available: true, enabled: false, status: "disabled" as const }, undefined, "请先启用 Center 远程入口"],
+    [{ available: true, enabled: true, status: "pending" as const }, undefined, "Center 远程入口正在配置"],
+    [{ available: true, enabled: true, status: "failed" as const, lastError: "Access application is missing" }, undefined, "Center 远程入口配置失败"],
+    [null, "status unavailable", "无法读取 Center 远程入口状态"]
+  ])("blocks Cloudflare publication with an accurate remote entry status", (remoteAccess, loadError, expected) => {
+    const data = dashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
+    data.centerRemoteAccess = remoteAccess;
+    data.centerRemoteAccessError = loadError;
+    data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
+    act(() => document.querySelector<HTMLInputElement>('input[value="public_web"]')?.click());
+
+    expect(document.body.textContent).toContain(expected);
+    expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("创建访问方式"))?.disabled).toBe(true);
   });
 
 	it("shows a failed install with its reason and a retry action", () => {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "./api";
+import { APIError, api } from "./api";
 import { loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import type { CenterStatus } from "./types";
 
@@ -51,13 +51,36 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
 	vi.spyOn(api, "registryCredentials").mockResolvedValue({ credentials: [] });
 	vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
+    const centerRemoteAccess = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, status: "configured" });
     const actions = vi.spyOn(api, "actions");
 
     const result = await loadScreenData("apps");
 
     expect(result.apps).toEqual([]);
     expect(result.deployments).toEqual([]);
+    expect(result.centerRemoteAccess).toEqual({ available: true, enabled: true, status: "configured" });
+    expect(centerRemoteAccess).toHaveBeenCalledWith(undefined);
     expect(actions).not.toHaveBeenCalled();
+  });
+
+  it("keeps the application workspace fail closed when remote entry status cannot be loaded", async () => {
+    vi.spyOn(api, "status").mockResolvedValue(status);
+    vi.spyOn(api, "apps").mockResolvedValue({ apps: [] });
+    vi.spyOn(api, "registryCredentials").mockResolvedValue({ credentials: [] });
+    vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
+    vi.spyOn(api, "deployments").mockResolvedValue({ deployments: [] });
+    vi.spyOn(api, "applications").mockResolvedValue({ applications: [] });
+    vi.spyOn(api, "services").mockResolvedValue({ services: [] });
+    vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
+    vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
+    vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
+    vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
+    vi.spyOn(api, "centerRemoteAccess").mockRejectedValue(new APIError("status unavailable", 503));
+
+    const result = await loadScreenData("apps");
+
+    expect(result.centerRemoteAccess).toBeNull();
+    expect(result.centerRemoteAccessError).toBe("status unavailable");
   });
 
   it("maps navigation to stable deep links", () => {
