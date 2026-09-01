@@ -47,7 +47,7 @@ func TestCreateDeploymentRequiresConfirmedServiceAddress(t *testing.T) {
 	_, err = store.CreateDeployment(ctx, DeploymentRequest{
 		AgentID: node.ID,
 		AppKey:  cpaAppKey,
-		Config:  json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`),
+		Config:  json.RawMessage(`{"debug":false}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "confirm the Agent private service address") {
 		t.Fatalf("deployment without a confirmed service address was accepted: %v", err)

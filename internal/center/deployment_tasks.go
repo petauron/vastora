@@ -504,6 +504,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	s.resumeCredentialRotationForDeployment(ctx, taskID)
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}

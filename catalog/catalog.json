@@ -26,49 +26,6 @@
       "homepage": {"service":"api","path":"/management.html"},
       "config": [
         {
-          "key": "timezone",
-          "type": "string",
-          "label": {
-            "en": "Timezone",
-            "zh-CN": "时区"
-          },
-          "description": {
-            "en": "IANA timezone for application logs.",
-            "zh-CN": "应用日志使用的 IANA 时区。"
-          },
-          "required": true,
-          "secret": false,
-          "default": "UTC"
-        },
-        {
-          "key": "management_key",
-          "type": "string",
-          "label": {
-            "en": "Management key",
-            "zh-CN": "管理密钥"
-          },
-          "description": {
-            "en": "Required for the local Management API. Stored encrypted by the control plane and Agent.",
-            "zh-CN": "本地管理 API 必需；由控制平面和 Agent 加密保存。"
-          },
-          "required": true,
-          "secret": true
-        },
-        {
-          "key": "api_key",
-          "type": "string",
-          "label": {
-            "en": "Client API key",
-            "zh-CN": "客户端 API 密钥"
-          },
-          "description": {
-            "en": "Required by clients calling the proxy. Stored encrypted by the control plane and Agent.",
-            "zh-CN": "代理客户端调用必需；由控制平面和 Agent 加密保存。"
-          },
-          "required": true,
-          "secret": true
-        },
-        {
           "key": "debug",
           "type": "boolean",
           "label": {

@@ -42,6 +42,7 @@ type Store struct {
 	assistantProposalMu            sync.Mutex
 	assistantResolve               func(context.Context, string) ([]net.IPAddr, error)
 	certificateMu                  sync.Mutex
+	credentialRotationMu           sync.Mutex
 	deploymentCreateMu             sync.Mutex
 	domainSwitchMu                 sync.Mutex
 	initialSetupMu                 sync.Mutex

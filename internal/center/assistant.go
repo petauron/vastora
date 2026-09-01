@@ -67,8 +67,15 @@ type AssistantProposalView struct {
 	Status           string          `json:"status"`
 	ExpiresAt        time.Time       `json:"expiresAt"`
 	DeploymentID     string          `json:"deploymentId,omitempty"`
+	ExecutionID      string          `json:"executionId,omitempty"`
 	CreatedAt        time.Time       `json:"createdAt"`
 	UpdatedAt        time.Time       `json:"updatedAt"`
+}
+
+type AssistantExecutionView struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	State string `json:"state"`
 }
 
 type AssistantEventView struct {
@@ -371,8 +378,8 @@ func (s *Store) DecideAssistantProposal(ctx context.Context, adminID, proposalID
 		_, _ = s.db.ExecContext(ctx, `UPDATE change_proposals SET status = 'expired', updated_at = ? WHERE id = ? AND status = 'pending'`, s.now().UTC().Format(time.RFC3339Nano), proposalID)
 		return AssistantProposalView{}, errors.New("center: assistant proposal has expired")
 	}
-	current, err := s.PreviewAssistantInstall(ctx, request)
-	if err != nil || current.Digest != proposal.Digest || current.ExpectedRevision != proposal.ExpectedRevision || current.PolicyVersion != proposal.PolicyVersion {
+	currentDigest, currentRevision, currentPolicy, err := s.currentAssistantProposalRevision(ctx, proposal.Kind, request)
+	if err != nil || currentDigest != proposal.Digest || currentRevision != proposal.ExpectedRevision || currentPolicy != proposal.PolicyVersion {
 		return AssistantProposalView{}, errors.New("center: assistant proposal target or policy changed; create a new proposal")
 	}
 	now := s.now().UTC()
@@ -407,57 +414,83 @@ func (s *Store) DecideAssistantProposal(ctx context.Context, adminID, proposalID
 	return proposal, nil
 }
 
-func (s *Store) ApplyAssistantProposal(ctx context.Context, adminID, proposalID, digest string) (DeploymentView, error) {
+func (s *Store) ApplyAssistantProposal(ctx context.Context, adminID, proposalID, digest string) (AssistantExecutionView, error) {
 	s.assistantProposalMu.Lock()
 	defer s.assistantProposalMu.Unlock()
 	proposal, request, owner, err := s.assistantProposalByID(ctx, proposalID)
 	if err != nil || owner != adminID {
-		return DeploymentView{}, errors.New("center: assistant proposal not found")
+		return AssistantExecutionView{}, errors.New("center: assistant proposal not found")
 	}
-	if proposal.Status == "applied" && proposal.DeploymentID != "" {
-		return s.CreateDeployment(ctx, DeploymentRequest{ChangeProposalID: proposalID})
+	if proposal.Status == "applied" && proposal.ExecutionID != "" {
+		if proposal.Kind == "install_application" {
+			deployment, replayErr := s.CreateDeployment(ctx, DeploymentRequest{ChangeProposalID: proposalID})
+			return AssistantExecutionView{ID: deployment.ID, Kind: proposal.Kind, State: deployment.State}, replayErr
+		}
+		rotation, replayErr := s.refreshCredentialRotation(ctx, proposal.ExecutionID)
+		return AssistantExecutionView{ID: rotation.ID, Kind: proposal.Kind, State: rotation.State}, replayErr
 	}
 	if proposal.Status != "approved" || proposal.Digest != digest || !proposal.ExpiresAt.After(s.now()) {
-		return DeploymentView{}, errors.New("center: assistant proposal is not an approved current grant")
+		return AssistantExecutionView{}, errors.New("center: assistant proposal is not an approved current grant")
 	}
 	var approvedDigest, approver string
 	if err := s.db.QueryRowContext(ctx, `SELECT digest, admin_id FROM change_approvals WHERE proposal_id = ? AND decision = 'approved'`, proposalID).Scan(&approvedDigest, &approver); err != nil || approvedDigest != digest || approver != adminID {
-		return DeploymentView{}, errors.New("center: assistant approval grant is invalid")
+		return AssistantExecutionView{}, errors.New("center: assistant approval grant is invalid")
 	}
-	current, err := s.PreviewAssistantInstall(ctx, request)
-	if err != nil || current.Digest != digest || current.ExpectedRevision != proposal.ExpectedRevision || current.PolicyVersion != proposal.PolicyVersion {
-		return DeploymentView{}, errors.New("center: assistant proposal became stale before execution")
+	currentDigest, currentRevision, currentPolicy, err := s.currentAssistantProposalRevision(ctx, proposal.Kind, request)
+	if err != nil || currentDigest != digest || currentRevision != proposal.ExpectedRevision || currentPolicy != proposal.PolicyVersion {
+		return AssistantExecutionView{}, errors.New("center: assistant proposal became stale before execution")
 	}
-	deployment, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: request.AgentID, AppKey: request.AppKey, Role: request.Role, Config: request.Config, Operation: "install", ChangeProposalID: proposalID, SecretOperationOwner: "assistant:" + adminID, SecretOperationKey: proposalID})
-	if err != nil {
-		return DeploymentView{}, err
+	execution := AssistantExecutionView{Kind: proposal.Kind}
+	linkedDeploymentID := ""
+	switch proposal.Kind {
+	case "install_application":
+		var install assistantInstallRequest
+		if json.Unmarshal(request, &install) != nil {
+			return AssistantExecutionView{}, errors.New("center: assistant install proposal request is invalid")
+		}
+		deployment, createErr := s.CreateDeployment(ctx, DeploymentRequest{AgentID: install.AgentID, AppKey: install.AppKey, Role: install.Role, Config: install.Config, Operation: "install", ChangeProposalID: proposalID, SecretOperationOwner: "assistant:" + adminID, SecretOperationKey: proposalID})
+		if createErr != nil {
+			return AssistantExecutionView{}, createErr
+		}
+		execution.ID, execution.State, linkedDeploymentID = deployment.ID, deployment.State, deployment.ID
+	case "rotate_cpa_credential":
+		var rotationRequest assistantCredentialRotationRequest
+		if json.Unmarshal(request, &rotationRequest) != nil {
+			return AssistantExecutionView{}, errors.New("center: assistant CPA rotation proposal request is invalid")
+		}
+		rotation, rotateErr := s.RotateApplicationCredentialsFromApprovedProposal(ctx, rotationRequest.ApplicationID, adminID, proposalID, rotationRequest.Target)
+		if rotateErr != nil {
+			return AssistantExecutionView{}, rotateErr
+		}
+		execution.ID, execution.State = rotation.ID, rotation.State
+	default:
+		return AssistantExecutionView{}, errors.New("center: unsupported assistant proposal kind")
 	}
 	now := s.now().UTC()
-	if _, err := s.db.ExecContext(ctx, `UPDATE change_proposals SET status = 'applied', deployment_id = ?, updated_at = ? WHERE id = ? AND status IN ('approved', 'applied')`, deployment.ID, now.Format(time.RFC3339Nano), proposalID); err != nil {
-		return DeploymentView{}, fmt.Errorf("center: link assistant deployment: %w", err)
+	if _, err := s.db.ExecContext(ctx, `UPDATE change_proposals SET status = 'applied', deployment_id = ?, execution_id = ?, updated_at = ? WHERE id = ? AND status IN ('approved', 'applied')`, nullableString(linkedDeploymentID), execution.ID, now.Format(time.RFC3339Nano), proposalID); err != nil {
+		return AssistantExecutionView{}, fmt.Errorf("center: link assistant execution: %w", err)
 	}
-	_ = s.appendAssistantEvent(ctx, proposal.ConversationID, proposal.RunID, "execution.queued", map[string]string{"proposalId": proposalID, "deploymentId": deployment.ID})
-	_ = s.recordAssistantAudit(ctx, adminID, proposal.ConversationID, proposal.RunID, "", proposalID, deployment.ID, "proposal.applied", map[string]string{"digest": digest})
-	return deployment, nil
+	_ = s.appendAssistantEvent(ctx, proposal.ConversationID, proposal.RunID, "execution.queued", map[string]string{"proposalId": proposalID, "executionId": execution.ID, "kind": execution.Kind})
+	_ = s.recordAssistantAudit(ctx, adminID, proposal.ConversationID, proposal.RunID, "", proposalID, linkedDeploymentID, "proposal.applied", map[string]string{"digest": digest, "executionId": execution.ID, "kind": execution.Kind})
+	return execution, nil
 }
 
-func (s *Store) assistantProposalByID(ctx context.Context, proposalID string) (AssistantProposalView, assistantInstallRequest, string, error) {
+func (s *Store) assistantProposalByID(ctx context.Context, proposalID string) (AssistantProposalView, json.RawMessage, string, error) {
 	var proposal AssistantProposalView
-	var request assistantInstallRequest
-	var requestJSON []byte
+	var requestJSON json.RawMessage
 	var owner, expiresAt, createdAt, updatedAt string
-	err := s.db.QueryRowContext(ctx, `SELECT conversation_id, run_id, admin_id, kind, request_json, summary_json, digest, targets_json, expected_revision, policy_version, risk, status, expires_at, COALESCE(deployment_id, ''), created_at, updated_at FROM change_proposals WHERE id = ?`, proposalID).Scan(&proposal.ConversationID, &proposal.RunID, &owner, &proposal.Kind, &requestJSON, &proposal.Summary, &proposal.Digest, &proposal.Targets, &proposal.ExpectedRevision, &proposal.PolicyVersion, &proposal.Risk, &proposal.Status, &expiresAt, &proposal.DeploymentID, &createdAt, &updatedAt)
+	err := s.db.QueryRowContext(ctx, `SELECT conversation_id, run_id, admin_id, kind, request_json, summary_json, digest, targets_json, expected_revision, policy_version, risk, status, expires_at, COALESCE(deployment_id, ''), execution_id, created_at, updated_at FROM change_proposals WHERE id = ?`, proposalID).Scan(&proposal.ConversationID, &proposal.RunID, &owner, &proposal.Kind, &requestJSON, &proposal.Summary, &proposal.Digest, &proposal.Targets, &proposal.ExpectedRevision, &proposal.PolicyVersion, &proposal.Risk, &proposal.Status, &expiresAt, &proposal.DeploymentID, &proposal.ExecutionID, &createdAt, &updatedAt)
 	if err != nil {
-		return proposal, request, owner, err
+		return proposal, requestJSON, owner, err
 	}
 	proposal.ID = proposalID
 	proposal.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expiresAt)
 	proposal.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	proposal.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
-	if json.Unmarshal(requestJSON, &request) != nil {
-		return proposal, request, owner, errors.New("center: assistant proposal request is invalid")
+	if !json.Valid(requestJSON) {
+		return proposal, requestJSON, owner, errors.New("center: assistant proposal request is invalid")
 	}
-	return proposal, request, owner, nil
+	return proposal, requestJSON, owner, nil
 }
 
 func (s *Store) assistantProposals(ctx context.Context, conversationID string) ([]AssistantProposalView, error) {

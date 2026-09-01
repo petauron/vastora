@@ -179,13 +179,17 @@ func (s *Server) handleApplyAssistantProposal(writer http.ResponseWriter, reques
 		writeError(writer, http.StatusNotFound, fmt.Errorf("center: assistant proposal not found"))
 		return
 	}
-	deployment, err := s.store.ApplyAssistantProposal(request.Context(), adminID, proposal.ID, strings.TrimSpace(input.Digest))
+	execution, err := s.store.ApplyAssistantProposal(request.Context(), adminID, proposal.ID, strings.TrimSpace(input.Digest))
 	if err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
 	}
-	s.watchAssistantDeployment(proposal, deployment, adminID)
-	writeJSON(writer, http.StatusAccepted, deployment)
+	if execution.Kind == "rotate_cpa_credential" {
+		s.watchAssistantCredentialRotation(proposal, execution, adminID)
+	} else {
+		s.watchAssistantDeployment(proposal, execution, adminID)
+	}
+	writeJSON(writer, http.StatusAccepted, execution)
 }
 
 func (s *Server) handleAssistantEvents(writer http.ResponseWriter, request *http.Request) {

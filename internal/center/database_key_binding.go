@@ -70,6 +70,7 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 		{"cloudflare_tunnel_operations", []string{"agent_id", "tunnel_secret_id"}, `SELECT tunnel_secret_id, 'cloudflare-tunnel-operation:' || agent_id FROM cloudflare_tunnel_operations`},
 		{"center_remote_access", []string{"tunnel_token_secret_id"}, `SELECT tunnel_token_secret_id, 'center-remote-access-tunnel' FROM center_remote_access WHERE tunnel_token_secret_id IS NOT NULL`},
 		{"deployments", []string{"id", "secret_id"}, `SELECT secret_id, 'deployment:' || id FROM deployments WHERE secret_id IS NOT NULL`},
+		{"application_credential_rotations", []string{"id", "secret_id"}, `SELECT secret_id, 'credential-rotation:' || id FROM application_credential_rotations WHERE secret_id IS NOT NULL`},
 		{"application_commands", []string{"id", "result_secret_id"}, `SELECT result_secret_id, 'application-command:' || id FROM application_commands WHERE result_secret_id IS NOT NULL`},
 		{"settings", []string{"key", "value"}, `SELECT value, CASE key WHEN 'official_catalog_signing_key' THEN 'official-catalog-signing-key' WHEN 'system_center_certificate_secret_id' THEN 'system-certificate:center' END FROM settings WHERE key IN ('official_catalog_signing_key', 'system_center_certificate_secret_id')`},
 	}

@@ -73,6 +73,33 @@
   errors redact credential-shaped material, and an encrypted local result
   outbox makes disconnect and restart acknowledgement replay safe. Immediate
   credential revocation is separate from workload-aware node disable.
+- CPA management and client credentials are generated independently with the
+  Center cryptographic token facility. They are removed from the Catalog form,
+  encrypted in deployment state, preserved unchanged during ordinary upgrades
+  and configuration changes, and delivered only inside the Agent's sealed task
+  payload. CPA's routine timezone comes from the selected Agent's Site.
+- The application credential endpoint is shared by CPA and the 3x-ui controller
+  but remains application-aware. Every reveal reauthenticates the current Center
+  administrator, returns only that application's current fields with
+  `Cache-Control: no-store`, records a secret-free audit event, and the browser
+  clears its temporary values when the sheet closes. Application lists,
+  diagnostics, task events, assistant context, tool results, and approval
+  payloads never include these values.
+- CPA management-key and client-key rotations are independent durable operations
+  bound to an administrator and idempotency key. The generated replacement is
+  encrypted while pending and deleted from transient rotation storage after the
+  successful CPA deployment becomes the current encrypted source of truth. A
+  management rotation configures CPA before Keeper with exactly the same value;
+  CPA failure is closed, while a failed dependent update remains visibly
+  `action_required` and can retry without generating another replacement. The
+  browser polls only this non-secret operation state, so it does not retain the
+  administrator password while waiting for the Agent.
+- The embedded Assistant can preview a CPA credential rotation and create a
+  high-risk proposal containing only application identity, target credential,
+  impact, and resource revision. It cannot execute the rotation until the exact
+  proposal is approved through the trusted approval control, and neither model
+  tools, proposal records, events, nor audit payloads receive the old or new
+  credential value.
 - Headscale API requests can target only exact HTTPS origins authorized when
   Center starts. Browser administrators select from that operator-controlled
   boundary and cannot send the stored Bearer token to arbitrary network hosts.

@@ -81,7 +81,83 @@ func (s *Store) mergePreviousDeploymentConfig(ctx context.Context, agentID, appK
 	return result, nil
 }
 
-func (s *Store) withCPASecret(ctx context.Context, agentID string, raw json.RawMessage) (json.RawMessage, error) {
+type cpaCredentialValues struct {
+	ManagementKey string `json:"management_key"`
+	APIKey        string `json:"api_key"`
+}
+
+func decodeCPACredentialValues(raw []byte) (cpaCredentialValues, error) {
+	var values cpaCredentialValues
+	if json.Unmarshal(raw, &values) != nil || strings.TrimSpace(values.ManagementKey) == "" || strings.TrimSpace(values.APIKey) == "" || values.ManagementKey == values.APIKey {
+		return cpaCredentialValues{}, errors.New("center: stored CPA credentials are invalid")
+	}
+	return values, nil
+}
+
+func (s *Store) currentCPACredentials(ctx context.Context, agentID string) (cpaCredentialValues, error) {
+	var deploymentID, secretID string
+	if err := s.db.QueryRowContext(ctx, `SELECT id, secret_id FROM deployments WHERE agent_id = ? AND app_key = ? AND state = 'succeeded' AND operation IN ('install', 'upgrade', 'configure') AND secret_id IS NOT NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1`, agentID, cpaAppKey).Scan(&deploymentID, &secretID); errors.Is(err, sql.ErrNoRows) {
+		return cpaCredentialValues{}, errors.New("center: previous CPA credentials were not found")
+	} else if err != nil {
+		return cpaCredentialValues{}, fmt.Errorf("center: read CPA deployment: %w", err)
+	}
+	plain, err := s.getSecret(ctx, secretID, "deployment:"+deploymentID)
+	if err != nil {
+		return cpaCredentialValues{}, err
+	}
+	return decodeCPACredentialValues(plain)
+}
+
+func (s *Store) withCPACredentials(ctx context.Context, agentID, operation string, overrides *cpaCredentialValues) ([]byte, error) {
+	var values cpaCredentialValues
+	var err error
+	if operation == "install" {
+		managementKey, tokenErr := randomToken(32)
+		if tokenErr != nil {
+			return nil, tokenErr
+		}
+		apiKey, tokenErr := randomToken(32)
+		if tokenErr != nil {
+			return nil, tokenErr
+		}
+		values = cpaCredentialValues{ManagementKey: managementKey, APIKey: apiKey}
+	} else {
+		values, err = s.currentCPACredentials(ctx, agentID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if overrides != nil {
+		values = *overrides
+	}
+	if strings.TrimSpace(values.ManagementKey) == "" || strings.TrimSpace(values.APIKey) == "" || values.ManagementKey == values.APIKey {
+		return nil, errors.New("center: CPA management and client credentials must be distinct non-empty values")
+	}
+	return json.Marshal(values)
+}
+
+func (s *Store) withCPASiteTimezone(ctx context.Context, agentID string, raw json.RawMessage) (json.RawMessage, error) {
+	values, err := decodeJSONObject(raw, "center: CPA configuration must be a JSON object")
+	if err != nil {
+		return nil, err
+	}
+	var timezone string
+	if err := s.db.QueryRowContext(ctx, `SELECT site.timezone FROM agents agent JOIN sites site ON site.id = agent.site_id WHERE agent.id = ?`, agentID).Scan(&timezone); err != nil {
+		return nil, fmt.Errorf("center: read CPA Site timezone: %w", err)
+	}
+	timezone = strings.TrimSpace(timezone)
+	if timezone == "" {
+		return nil, errors.New("center: CPA Site timezone is unavailable")
+	}
+	encodedTimezone, err := json.Marshal(timezone)
+	if err != nil {
+		return nil, err
+	}
+	values["timezone"] = encodedTimezone
+	return json.Marshal(values)
+}
+
+func (s *Store) withCPASecret(ctx context.Context, agentID string, raw json.RawMessage, managementOverride string) (json.RawMessage, error) {
 	installed, err := s.HasActiveDeployment(ctx, agentID, cpaAppKey)
 	if err != nil {
 		return nil, err
@@ -89,22 +165,23 @@ func (s *Store) withCPASecret(ctx context.Context, agentID string, raw json.RawM
 	if !installed {
 		return nil, errors.New("center: Keeper requires a successful CPA installation on this Agent")
 	}
-	var deploymentID, secretID string
-	if err := s.db.QueryRowContext(ctx, `SELECT id, secret_id FROM deployments WHERE agent_id = ? AND app_key = ? AND state = 'succeeded' AND operation IN ('install', 'upgrade', 'configure') AND secret_id IS NOT NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1`, agentID, cpaAppKey).Scan(&deploymentID, &secretID); errors.Is(err, sql.ErrNoRows) {
-		return nil, errors.New("center: Keeper requires a successful CPA installation on this Agent")
-	} else if err != nil {
-		return nil, fmt.Errorf("center: read CPA deployment: %w", err)
-	}
-	cpaSecrets, err := s.getSecret(ctx, secretID, "deployment:"+deploymentID)
+	cpa, err := s.currentCPACredentials(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
 	values, valuesErr := decodeJSONObject(raw, "center: CPA management key is unavailable")
-	cpa, cpaErr := decodeJSONObject(cpaSecrets, "center: CPA management key is unavailable")
-	if valuesErr != nil || cpaErr != nil || cpa["management_key"] == nil {
+	if valuesErr != nil {
 		return nil, errors.New("center: CPA management key is unavailable")
 	}
-	values["cpa_management_key"] = cpa["management_key"]
+	managementKey := cpa.ManagementKey
+	if strings.TrimSpace(managementOverride) != "" {
+		managementKey = managementOverride
+	}
+	encodedManagementKey, err := json.Marshal(managementKey)
+	if err != nil {
+		return nil, err
+	}
+	values["cpa_management_key"] = encodedManagementKey
 	return json.Marshal(values)
 }
 
