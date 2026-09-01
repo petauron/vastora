@@ -381,6 +381,15 @@
                           },
                           "apiKey": {
                             "type": "string"
+                          },
+                          "dnsPolicy": {
+                            "type": "string"
+                          },
+                          "dnsResolvers": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
                           }
                         }
                       },
@@ -3352,6 +3361,15 @@
                   },
                   "apiKey": {
                     "type": "string"
+                  },
+                  "dnsPolicy": {
+                    "type": "string"
+                  },
+                  "dnsResolvers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   }
                 }
               }

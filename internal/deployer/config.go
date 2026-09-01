@@ -69,7 +69,21 @@ func validDNSName(value string) bool {
 	return true
 }
 
-func renderHeadscaleConfig(endpoint string) []byte {
+func renderHeadscaleConfig(endpoint, dnsPolicy string, dnsResolvers []string) ([]byte, error) {
+	dnsPolicy, dnsResolvers, err := deployapi.NormalizeHeadscaleDNS(dnsPolicy, dnsResolvers)
+	if err != nil {
+		return nil, fmt.Errorf("deployer: Headscale DNS: %w", err)
+	}
+	overrideLocalDNS := "false"
+	globalResolvers := "[]"
+	if dnsPolicy == deployapi.HeadscaleDNSPolicyCustom {
+		overrideLocalDNS = "true"
+		values := make([]string, 0, len(dnsResolvers))
+		for _, resolver := range dnsResolvers {
+			values = append(values, "      - "+resolver)
+		}
+		globalResolvers = "\n" + strings.Join(values, "\n")
+	}
 	return []byte(fmt.Sprintf(`server_url: %s
 listen_addr: 0.0.0.0:8081
 metrics_listen_addr: ""
@@ -115,11 +129,9 @@ database:
 dns:
   magic_dns: true
   base_domain: vastora.internal
-  override_local_dns: true
+  override_local_dns: %s
   nameservers:
-    global:
-      - 1.1.1.1
-      - 1.0.0.1
+    global: %s
     split: {}
   search_domains: []
   extra_records_path: /var/lib/vastora-shared/headscale-extra-records.json
@@ -143,7 +155,7 @@ auto_update:
 
 node:
   expiry: 0
-`, endpoint))
+`, endpoint, overrideLocalDNS, globalResolvers)), nil
 }
 
 func renderHeadscaleDERPMap() []byte {

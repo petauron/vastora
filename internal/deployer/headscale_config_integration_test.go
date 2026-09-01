@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/deployapi"
 )
 
 func TestGeneratedHeadscaleConfigAcceptedByPinnedBinary(t *testing.T) {
@@ -29,8 +30,12 @@ func TestGeneratedHeadscaleConfigAcceptedByPinnedBinary(t *testing.T) {
 	_, _ = io.Copy(io.Discard, pull)
 	_ = pull.Close()
 	installer := DockerHeadscaleInstaller{HeadscaleImage: DefaultHeadscaleImage}
+	headscaleConfig, err := renderHeadscaleConfig("https://headscale.example.com", deployapi.HeadscaleDNSPolicySystem, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	files := map[string][]byte{
-		"config.yaml":   renderHeadscaleConfig("https://headscale.example.com"),
+		"config.yaml":   headscaleConfig,
 		"derp.yaml":     renderHeadscaleDERPMap(),
 		"policy.hujson": renderHeadscalePolicy(),
 	}

@@ -80,6 +80,7 @@ func TestSwitchSystemDomainMovesPrimaryEndpointsAndKeepsAliases(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	storeBuiltinHeadscaleDNSForTest(t, store, "system", nil)
 	installer := &fakeBuiltinHeadscaleInstaller{}
 	server := NewServer(store, "", false).WithInfrastructureManager(installer)
 	var previousSecretID string
