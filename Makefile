@@ -37,7 +37,10 @@ deployment-check:
 	sh -n deploy/center/upgrade.sh
 	sh -n deploy/center/uninstall.sh
 	sh -n scripts/package-center-install.sh
+	sh -n scripts/create-installer-release-manifest.sh
+	sh -n scripts/github-installer-release-assets.sh
 	sh -n scripts/publish-installer-r2.sh
+	sh -n scripts/reconcile-installer-r2.sh
 	sh -n scripts/verify-installer-release.sh
 	sh -n scripts/validate-release-metadata.sh
 	sh -n scripts/assert-image-platforms.sh
@@ -50,13 +53,17 @@ deployment-check:
 	sh -n scripts/test-release-workflow.sh
 	sh -n scripts/test-ci-workflows.sh
 	sh -n scripts/test-publish-installer-r2.sh
+	sh -n scripts/test-github-installer-release-assets.sh
 	node scripts/test-installer-worker.mjs
 	./install.sh --help >/dev/null
 	deploy/center/setup.sh --help >/dev/null
 	deploy/center/upgrade.sh --help >/dev/null
 	deploy/center/uninstall.sh --help >/dev/null
 	scripts/package-center-install.sh --help >/dev/null
+	scripts/create-installer-release-manifest.sh --help >/dev/null
+	scripts/github-installer-release-assets.sh --help >/dev/null
 	scripts/publish-installer-r2.sh --help >/dev/null
+	scripts/reconcile-installer-r2.sh --help >/dev/null
 	scripts/verify-installer-release.sh --help >/dev/null
 	scripts/test-center-install.sh
 	scripts/test-runtime-network.sh
@@ -66,6 +73,7 @@ deployment-check:
 	scripts/test-release-workflow.sh
 	scripts/test-ci-workflows.sh
 	scripts/test-publish-installer-r2.sh
+	scripts/test-github-installer-release-assets.sh
 
 security-check:
 	gitleaks detect --no-git --redact --source .

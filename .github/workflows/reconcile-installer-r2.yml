@@ -1,0 +1,72 @@
+name: Reconcile installer R2
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List stale Vastora release objects without deleting them
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: vastora-installer-r2
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME }}
+      R2_ENDPOINT: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+    steps:
+      - name: Check out reconciliation tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            scripts/reconcile-installer-r2.sh
+            scripts/verify-installer-release.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Validate R2 release destination
+        run: |
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+          test -n "$R2_BUCKET_NAME"
+          test -n "${{ vars.CLOUDFLARE_ACCOUNT_ID }}"
+          aws --cli-connect-timeout 10 --cli-read-timeout 30 s3api head-bucket \
+            --bucket "$R2_BUCKET_NAME" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --no-cli-pager
+
+      - name: Reconcile stale release objects
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}
+        run: |
+          sh scripts/reconcile-installer-r2.sh \
+            --bucket "$R2_BUCKET_NAME" \
+            --endpoint "$R2_ENDPOINT" \
+            --version-out "$RUNNER_TEMP/vastora-active-version" \
+            $DRY_RUN
+
+      - name: Verify active installer endpoints
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+        run: |
+          active_version="$(cat "$RUNNER_TEMP/vastora-active-version")"
+          scripts/verify-installer-release.sh \
+            --base-url "https://vastora.petauron.com/releases/v$active_version" \
+            --expected-version "$active_version"
+          scripts/verify-installer-release.sh \
+            --base-url https://vastora.petauron.com \
+            --expected-version "$active_version" \
+            --attempts 6 \
+            --retry-delay 5

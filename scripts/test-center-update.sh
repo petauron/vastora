@@ -50,12 +50,18 @@ while [ "$#" -gt 0 ]; do
     --proto) shift 2 ;;
     --tlsv1.2) shift ;;
     --dump-header) headers="$2"; shift 2 ;;
+    --write-out) shift 2 ;;
     -o) output="$2"; shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
 done
 [ "$url" = "https://vastora.petauron.com/releases/v$FAKE_TARGET_VERSION/install.sh" ]
+status="${FAKE_RESPONSE_STATUS:-200}"
+if [ "$status" != "200" ]; then
+  printf '%s' "$status"
+  exit 22
+fi
 cp "$FAKE_INSTALLER_SOURCE" "$output"
 digest="$(sha256sum "$output" | awk 'NR == 1 {print $1}')"
 {
@@ -63,6 +69,7 @@ digest="$(sha256sum "$output" | awk 'NR == 1 {print $1}')"
   printf 'X-Vastora-Version: %s\r\n' "${FAKE_RESPONSE_VERSION:-$FAKE_TARGET_VERSION}"
   printf 'X-Vastora-SHA256: %s\r\n\r\n' "$digest"
 } > "$headers"
+printf '%s' "$status"
 EOF
 chmod 0755 "$fake_bin/id" "$fake_bin/curl" "$temporary_dir/installer.sh"
 
@@ -73,6 +80,7 @@ run_update() {
   FAKE_INSTALLER_LOG="$temporary_dir/installer.log" \
   FAKE_INSTALLER_SOURCE="$temporary_dir/installer.sh" \
   FAKE_RESPONSE_VERSION="$response_version" \
+  FAKE_RESPONSE_STATUS="${3:-200}" \
   FAKE_TARGET_VERSION="$target_version" \
   PATH="$fake_bin:$PATH" \
     "$project_dir/deploy/center/update-center.sh" --install-dir "$install_dir"
@@ -91,6 +99,14 @@ if run_update 0.1.0-alpha.59 0.1.0-alpha.58 >/dev/null 2>&1; then
 fi
 grep -Fq '"state":"failed"' "$install_dir/.update-status.json"
 grep -Fq 'installer version did not match' "$install_dir/.update-status.json"
+test ! -e "$install_dir/.update-request"
+
+if run_update 0.1.0-alpha.60 0.1.0-alpha.60 404 >/dev/null 2>&1; then
+  echo "Center updater accepted a pruned immutable release." >&2
+  exit 1
+fi
+grep -Fq 'release is no longer active' "$install_dir/.update-status.json"
+grep -Fq 'Refresh Settings' "$install_dir/.update-status.json"
 test ! -e "$install_dir/.update-request"
 
 echo "Center automatic update tests: OK"

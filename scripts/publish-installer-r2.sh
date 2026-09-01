@@ -7,11 +7,10 @@ version=""
 bucket=""
 endpoint=""
 source_dir="dist"
-installer=""
 
 usage() {
   cat <<'EOF'
-Usage: publish-installer-r2.sh stage --version VERSION --bucket BUCKET --endpoint HTTPS_URL [--source-dir DIR] [--installer FILE]
+Usage: publish-installer-r2.sh stage --version VERSION --bucket BUCKET --endpoint HTTPS_URL [--source-dir DIR]
        publish-installer-r2.sh activate --version VERSION --bucket BUCKET --endpoint HTTPS_URL
 
 Stages immutable Center installer assets in R2, or atomically activates an
@@ -30,7 +29,6 @@ while [ "$#" -gt 0 ]; do
     --bucket) bucket="${2:-}"; shift 2 ;;
     --endpoint) endpoint="${2:-}"; shift 2 ;;
     --source-dir) source_dir="${2:-}"; shift 2 ;;
-    --installer) installer="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -137,7 +135,10 @@ verify_manifest() {
     --arg prefix "$verify_manifest_prefix" \
     '(.schema == 1) and (.version == $version) and
      ((.assets | keys | sort) == ["install.sh", "vastora-center-install.tar.gz", "vastora-center-install.tar.gz.sha256"]) and
-     (all(.assets[]; (.key | startswith($prefix)) and (.sha256 | test("^[0-9a-f]{64}$"))))' \
+     (.assets["install.sh"].key == ($prefix + "install.sh")) and
+     (.assets["vastora-center-install.tar.gz"].key == ($prefix + "vastora-center-install.tar.gz")) and
+     (.assets["vastora-center-install.tar.gz.sha256"].key == ($prefix + "vastora-center-install.tar.gz.sha256")) and
+     (all(.assets[]; .sha256 | test("^[0-9a-f]{64}$")))' \
     "$verify_manifest_path" >/dev/null
 }
 
@@ -159,11 +160,11 @@ if [ "$command_name" = "stage" ]; then
       exit 1
     fi
   done
-  project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
-  if [ -z "$installer" ]; then installer="$project_dir/install.sh"; fi
+  installer="$source_dir/install.sh"
   bundle="$source_dir/vastora-center-install.tar.gz"
   checksum="$source_dir/vastora-center-install.tar.gz.sha256"
-  for required_file in "$installer" "$bundle" "$checksum"; do
+  manifest="$source_dir/vastora-release-manifest.json"
+  for required_file in "$installer" "$bundle" "$checksum" "$manifest"; do
     if [ ! -f "$required_file" ]; then
       echo "Release asset is missing: $required_file" >&2
       exit 1
@@ -185,24 +186,19 @@ if [ "$command_name" = "stage" ]; then
     exit 1
   fi
 
-  installer_digest="$(upload_immutable "$installer" "$prefix/install.sh" 'text/x-shellscript; charset=utf-8')"
-  bundle_digest="$(upload_immutable "$bundle" "$prefix/vastora-center-install.tar.gz" 'application/gzip')"
-  checksum_digest="$(upload_immutable "$checksum" "$prefix/vastora-center-install.tar.gz.sha256" 'text/plain; charset=utf-8')"
-  manifest="$temporary_dir/manifest.json"
-  jq -n -S \
-    --arg version "$version" \
-    --arg installer_key "$prefix/install.sh" \
-    --arg installer_digest "$installer_digest" \
-    --arg bundle_key "$prefix/vastora-center-install.tar.gz" \
-    --arg bundle_digest "$bundle_digest" \
-    --arg checksum_key "$prefix/vastora-center-install.tar.gz.sha256" \
-    --arg checksum_digest "$checksum_digest" \
-    '{schema: 1, version: $version, assets: {
-      "install.sh": {key: $installer_key, sha256: $installer_digest},
-      "vastora-center-install.tar.gz": {key: $bundle_key, sha256: $bundle_digest},
-      "vastora-center-install.tar.gz.sha256": {key: $checksum_key, sha256: $checksum_digest}
-    }}' > "$manifest"
   verify_manifest "$manifest"
+  for asset in install.sh vastora-center-install.tar.gz vastora-center-install.tar.gz.sha256; do
+    expected_digest="$(jq -r --arg asset "$asset" '.assets[$asset].sha256' "$manifest")"
+    actual_digest="$(sha256sum "$source_dir/$asset" | awk 'NR == 1 {print tolower($1)}')"
+    if [ "$actual_digest" != "$expected_digest" ]; then
+      echo "The release manifest digest does not match $asset." >&2
+      exit 1
+    fi
+  done
+
+  upload_immutable "$installer" "$prefix/install.sh" 'text/x-shellscript; charset=utf-8' >/dev/null
+  upload_immutable "$bundle" "$prefix/vastora-center-install.tar.gz" 'application/gzip' >/dev/null
+  upload_immutable "$checksum" "$prefix/vastora-center-install.tar.gz.sha256" 'text/plain; charset=utf-8' >/dev/null
   upload_immutable "$manifest" "$manifest_key" 'application/json; charset=utf-8' >/dev/null
   verify_remote_assets "$manifest"
   echo "Staged Vastora $version installer assets in R2."

@@ -75,9 +75,18 @@ trap cleanup EXIT HUP INT TERM
 write_status applying "$target_version" "Downloading the verified release metadata."
 release_base="https://vastora.petauron.com/releases/v$target_version"
 failure_message="The immutable Center installer could not be downloaded."
-if ! curl --proto '=https' --tlsv1.2 -fsS \
+installer_status=""
+if ! installer_status="$(curl --proto '=https' --tlsv1.2 -fsS \
   --dump-header "$installer_headers" \
-  "$release_base/install.sh" -o "$installer"; then
+  --write-out '%{http_code}' \
+  "$release_base/install.sh" -o "$installer")"; then
+  if [ "$installer_status" = "404" ]; then
+    failure_message="The requested Center release is no longer active. Refresh Settings and request the current release."
+  fi
+  exit 1
+fi
+if [ "$installer_status" != "200" ]; then
+  failure_message="The immutable Center installer returned HTTP $installer_status."
   exit 1
 fi
 write_status applying "$target_version" "Verifying the immutable release."
