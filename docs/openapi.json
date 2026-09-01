@@ -1535,6 +1535,75 @@
         }
       }
     },
+    "/api/v1/applications/{id}/credentials/reveal": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Reveal Stored Three XUICredentials",
+        "operationId": "revealStoredThreeXUICredentials_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "currentPassword": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/applications/{id}/3xui-node/reconcile": {
       "post": {
         "tags": [

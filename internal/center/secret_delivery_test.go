@@ -120,6 +120,68 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	}
 }
 
+func TestStoredThreeXUICredentialsRequireAdministratorReauthenticationAndAreAudited(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	session, _, err := store.CreateFirstAdmin(ctx, "admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminID, err := store.SessionAdminID(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalogPayload, err := os.ReadFile("../../catalog/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SeedOfficialCatalog(ctx, catalogPayload); err != nil {
+		t.Fatal(err)
+	}
+	node := enrollOrchestrationNode(t, store, "stored-credential-reveal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
+	request := DeploymentRequest{
+		AgentID:              node.ID,
+		AppKey:               threeXUIAppKey,
+		Role:                 threeXUIRoleMaster,
+		Config:               json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`),
+		Operation:            "install",
+		SecretOperationOwner: adminID,
+		SecretOperationKey:   "stored-credential-operation-key",
+	}
+	deployment, err := store.CreateDeployment(ctx, request)
+	if err != nil || deployment.OneTimeCredentials == nil {
+		t.Fatalf("create deployment = %#v err=%v", deployment, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET state = 'succeeded' WHERE id = ?`, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AcknowledgeDeploymentCredentials(ctx, deployment.ID, adminID, request.SecretOperationKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RevealStoredThreeXUICredentials(ctx, deployment.ApplicationID, adminID, "incorrect-password"); err == nil || !strings.Contains(err.Error(), "current password is incorrect") {
+		t.Fatalf("stored credentials accepted incorrect reauthentication: %v", err)
+	}
+	revealed, err := store.RevealStoredThreeXUICredentials(ctx, deployment.ApplicationID, adminID, "correct-horse-battery-staple")
+	if err != nil || revealed != *deployment.OneTimeCredentials {
+		t.Fatalf("stored credentials = %#v err=%v", revealed, err)
+	}
+	actions, err := store.ListActions(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encodedActions, _ := json.Marshal(actions)
+	if len(actions) == 0 || actions[0].Kind != "security.credentials.reveal" || actions[0].TaskID != deployment.ApplicationID {
+		t.Fatalf("credential reveal audit event missing: %#v", actions)
+	}
+	if bytes.Contains(encodedActions, []byte(revealed.Username)) || bytes.Contains(encodedActions, []byte(revealed.Password)) {
+		t.Fatalf("credential reveal audit event exposed credentials: %s", encodedActions)
+	}
+}
+
 func TestApplicationResultSurvivesFailedResponseAndRestartUntilAcknowledged(t *testing.T) {
 	ctx := context.Background()
 	dataDir := t.TempDir()

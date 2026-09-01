@@ -50,6 +50,27 @@ func (s *Server) handleAcknowledgeDeploymentCredentials(writer http.ResponseWrit
 	writeJSON(writer, http.StatusOK, map[string]bool{"acknowledged": true})
 }
 
+func (s *Server) handleRevealStoredThreeXUICredentials(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	credentials, err := s.store.RevealStoredThreeXUICredentials(request.Context(), request.PathValue("id"), adminID, input.CurrentPassword)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, credentials)
+}
+
 func (s *Server) handleRetryTaskReconciliation(writer http.ResponseWriter, request *http.Request) {
 	result, err := s.store.RetryTaskReconciliation(request.Context(), request.PathValue("id"))
 	if err != nil {

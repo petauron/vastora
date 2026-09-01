@@ -132,6 +132,22 @@ func (s *Store) SessionAdminID(ctx context.Context, sessionToken string) (string
 	return adminID, nil
 }
 
+func (s *Store) ReauthenticateAdmin(ctx context.Context, adminID, password string) error {
+	adminID = strings.TrimSpace(adminID)
+	if adminID == "" || password == "" {
+		return errors.New("center: current password is incorrect")
+	}
+	var passwordHash string
+	err := s.db.QueryRowContext(ctx, `SELECT password_hash FROM admins WHERE id = ?`, adminID).Scan(&passwordHash)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !verifyPassword(password, passwordHash)) {
+		return errors.New("center: current password is incorrect")
+	}
+	if err != nil {
+		return fmt.Errorf("center: read administrator: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) Logout(ctx context.Context, sessionToken string) error {
 	if sessionToken == "" {
 		return errors.New("center: authentication required")
