@@ -161,10 +161,12 @@ func (s *Server) configureHeadscaleOperation(ctx context.Context, input Headscal
 	if strings.TrimSpace(input.APIKey) != "" {
 		return IntegrationView{}, errors.New("center: built-in Headscale creates its API key automatically")
 	}
-	input.DNSPolicy, input.DNSResolvers, err := deployapi.NormalizeHeadscaleDNS(input.DNSPolicy, input.DNSResolvers)
+	dnsPolicy, dnsResolvers, err := deployapi.NormalizeHeadscaleDNS(input.DNSPolicy, input.DNSResolvers)
 	if err != nil {
 		return IntegrationView{}, fmt.Errorf("center: Headscale DNS: %w", err)
 	}
+	input.DNSPolicy = dnsPolicy
+	input.DNSResolvers = dnsResolvers
 	s.store.domainSwitchMu.Lock()
 	defer s.store.domainSwitchMu.Unlock()
 
