@@ -459,8 +459,8 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#reality-name")?.value).toBe("home-server");
     expect(document.body.textContent).toContain("🇺🇸 美国home-server");
     expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
-    expect(document.body.textContent).toContain("当前节点套餐");
-    expect(document.body.textContent).toContain("订阅总额度");
+    expect(document.body.textContent).toContain("VPS 月流量套餐");
+    expect(document.body.textContent).toContain("客户端额度（可选）");
     expect(document.querySelector<HTMLInputElement>("#reality-inbound-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-subscription-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
@@ -470,6 +470,21 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.required).toBe(false);
     expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.required).toBe(false);
     expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("自动创建"))).toBe(true);
+  });
+
+  it("offers an approved NAT-mapped site Gateway for REALITY", async () => {
+    const data = realityDashboard();
+    data.agents[0].networkProfile = { ...data.agents[0].networkProfile!, publicBindAddress: "10.0.0.10", publicMode: "nat" };
+    vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
+    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector<HTMLButtonElement>("#reality-gateway")?.textContent).toContain("home-server");
   });
 
   it("offers a separate one-click public 3x-ui subscription", async () => {
@@ -614,7 +629,7 @@ describe("network and app views", () => {
 
   it("manages 3x-ui clients and reveals links without opening the panel", async () => {
     const data = realityDashboard();
-    const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, resetDays: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDays: 30, nextResetAt: "2026-09-22T00:00:00Z" }, { id: 10, serviceId: "reality-service-2", name: "inbound-10", nodeName: "oracle-worker", connectHostname: "reality.oracle.example.test", totalBytes: 0, usedBytes: 0, resetDays: 0 }], inboundsObserved: true, subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
+    const baseCommand: ApplicationCommand = { id: "client-command-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list", clients: [{ email: "MacBook", enabled: true, totalBytes: 10 * 1024 ** 3, usedBytes: 1024, expiryTime: 0, resetDays: 0, limitIp: 2, inboundIds: [9], hasSubscription: true }], clientsObserved: true, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", nodeName: "edge-worker", connectHostname: "reality.example.test", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z" }, { id: 10, serviceId: "reality-service-2", name: "inbound-10", nodeName: "oracle-worker", connectHostname: "reality.oracle.example.test", totalBytes: 0, usedBytes: 0, resetDay: 0 }], inboundsObserved: true, subscriptionAvailable: true, resultAvailable: false, createdAt: "2026-08-22T00:00:00Z", updatedAt: "2026-08-22T00:00:01Z" };
     const create = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action.startsWith("reveal_") ? { ...baseCommand, id: `client-command-${input.action}`, action: input.action, resultAvailable: true } : baseCommand);
     const reveal = vi.spyOn(api, "revealApplicationCommand").mockImplementation(async (id) => ({ shareUri: id.includes("subscription") ? "https://subscription.example.test/sub/client-id" : "vless://one-time-client-link" }));
     const acknowledge = vi.spyOn(api, "acknowledgeApplicationCommand").mockResolvedValue({ acknowledged: true });
@@ -629,10 +644,10 @@ describe("network and app views", () => {
     expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "list" });
     expect(document.body.textContent).toContain("MacBook");
     expect(document.body.textContent).toContain("已接入 1 个节点：edge-worker");
-    expect(document.body.textContent).toContain("全节点已用");
+    expect(document.body.textContent).toContain("订阅已用（上下行）");
     expect(document.body.textContent).toContain("日常管理");
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("编辑") || button.querySelector(".sr-only")?.textContent === "编辑")?.click());
-    expect(document.body.textContent).toContain("此客户端的订阅总额度（所有节点合计）");
+    expect(document.body.textContent).toContain("客户端额度（可选）");
     expect(document.querySelector<HTMLInputElement>("#three-x-ui-client-quota")?.value).toBe("10");
     expect(document.querySelector<HTMLInputElement>("#three-x-ui-client-reset-days")?.value).toBe("0");
     expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存修改"))?.disabled).toBe(true);
@@ -916,7 +931,7 @@ describe("network and app views", () => {
 			await Promise.resolve();
 		});
 		expect(verify).toHaveBeenCalledWith("three-x-ui", "www.example.com", "www.example.com");
-		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", regionCode: "US", name: "Oracle", clientName: "我的设备", gatewayNodeId: "agent", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDays: 0, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
+		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", regionCode: "US", name: "Oracle", clientName: "我的设备", gatewayNodeId: "agent", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
 		});
 
   it("keeps subscriber quotas on the controller even when a worker creates the first VLESS node", async () => {
@@ -934,7 +949,7 @@ describe("network and app views", () => {
       [...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("创建 VLESS"))[1]?.click();
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("当前节点套餐");
+    expect(document.body.textContent).toContain("VPS 月流量套餐");
     expect(document.body.textContent).toContain("订阅额度在主订阅机管理");
     expect(document.body.textContent).toContain("如果还没有用户");
     expect(document.querySelector("#reality-client-name")).toBeNull();
@@ -953,7 +968,7 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
     expect(verify).toHaveBeenCalledWith("three-x-ui-worker", "www.example.com", "www.example.com");
-    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", regionCode: "US", name: "oracle-worker", gatewayNodeId: "worker", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDays: 0 });
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", regionCode: "US", name: "oracle-worker", gatewayNodeId: "worker", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1 });
     expect(document.body.textContent).not.toContain("客户端链接只显示一次");
   });
 
@@ -974,8 +989,8 @@ describe("network and app views", () => {
     const data = realityDashboard();
     const service = { id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp" as const, containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed" as const, appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
     data.services = [service];
-    const current: ApplicationCommand = { id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDays: 30, nextResetAt: "2026-09-22T00:00:00Z", planStatus: "active" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
-    const updated = { ...current, id: "traffic-update", action: "update_inbound" as const, inbounds: [{ ...current.inbounds![0], totalBytes: 300 * 1024 ** 3, resetDays: 31 }] };
+    const current: ApplicationCommand = { id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z", planStatus: "active" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+    const updated = { ...current, id: "traffic-update", action: "update_inbound" as const, inbounds: [{ ...current.inbounds![0], totalBytes: 300 * 1024 ** 3, resetDay: 31 }] };
     const command = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action === "update_inbound" ? updated : current);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -988,30 +1003,30 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("200.0 GB");
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("修改节点套餐"))?.click());
     const quota = document.querySelector<HTMLInputElement>("#inbound-plan-quota")!;
-    const resetDays = document.querySelector<HTMLInputElement>("#inbound-plan-reset-days")!;
+    const resetDay = document.querySelector<HTMLInputElement>("#inbound-plan-reset-day")!;
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(quota, "300");
       quota.dispatchEvent(new Event("input", { bubbles: true }));
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(resetDays, "31");
-      resetDays.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(resetDay, "31");
+      resetDay.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("取消"))?.click());
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("修改节点套餐"))?.click());
     const restoredQuota = document.querySelector<HTMLInputElement>("#inbound-plan-quota")!;
-    const restoredResetDays = document.querySelector<HTMLInputElement>("#inbound-plan-reset-days")!;
+    const restoredResetDay = document.querySelector<HTMLInputElement>("#inbound-plan-reset-day")!;
     expect(restoredQuota.value).toBe("200");
-    expect(restoredResetDays.value).toBe("30");
+    expect(restoredResetDay.value).toBe("22");
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(restoredQuota, "300");
       restoredQuota.dispatchEvent(new Event("input", { bubbles: true }));
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(restoredResetDays, "31");
-      restoredResetDays.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(restoredResetDay, "31");
+      restoredResetDay.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("保存套餐"))?.click();
       await Promise.resolve();
     });
-    expect(command).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "update_inbound", serviceId: "reality-service", inboundId: 9, inboundTotalBytes: 300 * 1024 ** 3, inboundResetDays: 31 });
+    expect(command).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "update_inbound", serviceId: "reality-service", inboundId: 9, inboundTotalBytes: 300 * 1024 ** 3, inboundResetDay: 31 });
     expect(document.body.textContent).toContain("节点套餐已保存");
   });
 
@@ -1025,7 +1040,7 @@ describe("network and app views", () => {
     vi.stubGlobal("EventSource", IdleEventSource);
     const data = realityDashboard();
     data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
-    const cached: ApplicationCommand = { id: "cached-traffic", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDays: 30, nextResetAt: "2026-09-22T00:00:00Z" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+    const cached: ApplicationCommand = { id: "cached-traffic", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(cached);
     vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ ...cached, id: "refresh-traffic", state: "pending", inbounds: undefined, inboundsObserved: false });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -1050,16 +1065,16 @@ describe("network and app views", () => {
     expect(details?.textContent).toContain("tcp · 10.0.0.10:30443");
   });
 
-  it("shows a recovery path when a node plan renewal fails", async () => {
+  it("shows a recovery path when a monthly node reset fails", async () => {
     const data = realityDashboard();
     data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
-    vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", totalBytes: 200 * 1024 ** 3, usedBytes: 200 * 1024 ** 3, resetDays: 30, nextResetAt: "2026-08-23T00:00:00Z", planStatus: "failed", planError: "Agent did not confirm the inbound reset" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
+    vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", totalBytes: 200 * 1024 ** 3, usedBytes: 200 * 1024 ** 3, resetDay: 23, nextResetAt: "2026-08-23T00:00:00Z", planStatus: "failed", planError: "Agent did not confirm the inbound reset" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("节点套餐"))?.click();
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("节点套餐续期失败");
+    expect(document.body.textContent).toContain("节点月度重置失败");
     expect(document.body.textContent).toContain("Agent did not confirm the inbound reset");
     expect(document.querySelector<HTMLAnchorElement>('a[href="/activity"]')?.textContent).toContain("前往活动查看详情");
   });
@@ -1683,6 +1698,20 @@ describe("network and app views", () => {
     expect(startOAuth).not.toHaveBeenCalled();
   });
 
+  it("keeps domain-switch blockers inside the switch workflow", async () => {
+    const data = dashboard();
+    data.systemDomain.activePublications = 1;
+    const listZones = vi.spyOn(api, "cloudflareZones");
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    expect(container.textContent).not.toContain("请先停止 1 个访问入口");
+    const changeDomain = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("切换域名"));
+    expect(changeDomain?.disabled).toBe(false);
+    await act(async () => { changeDomain?.click(); });
+    expect(document.body.textContent).toContain("请先停止 1 个访问入口，再回来切换域名");
+    expect(document.body.textContent).toContain("管理访问入口");
+    expect(listZones).not.toHaveBeenCalled();
+  });
+
   it("shows a confirmed Center update instead of exposing Docker access", () => {
     const data = dashboard();
     data.centerUpdate = { currentVersion: "0.1.0-alpha.47", latestVersion: "0.1.0-alpha.48", updateAvailable: true, automatic: true, state: "idle", checkedAt: "2026-08-25T00:00:00Z" };
@@ -1704,14 +1733,16 @@ describe("network and app views", () => {
     expect(container.textContent?.match(/0\.1\.0-alpha\.51/g)).toHaveLength(2);
   });
 
-  it("refreshes the complete settings data as soon as a Center update succeeds", async () => {
+  it("refreshes the settings data and reloads the page when a Center update succeeds", async () => {
     const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.51", updateAvailable: true, state: "applying" as const };
     const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const onReload = vi.fn();
     const onStatusChange = vi.fn();
     vi.spyOn(api, "centerUpdate").mockResolvedValue({ ...status, currentVersion: "0.1.0-alpha.51", updateAvailable: false, state: "succeeded" });
-    render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onStatusChange={onStatusChange} status={status} />);
+    render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
     await act(async () => { await Promise.resolve(); });
     expect(onRefresh).toHaveBeenCalledOnce();
+    expect(onReload).toHaveBeenCalledOnce();
     expect(onStatusChange).not.toHaveBeenCalled();
   });
 
