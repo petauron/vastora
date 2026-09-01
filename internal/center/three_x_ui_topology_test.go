@@ -111,6 +111,9 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if observedPlan.TotalBytes != 2147483648 || observedPlan.ResetDay != 15 || observedPlan.Revision != 2 {
 		t.Fatalf("heartbeat overwrote a Center-managed REALITY plan: %#v", observedPlan)
 	}
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC", GatewayNodes: []string{master.ID, worker.ID}}); err != nil {
+		t.Fatal(err)
+	}
 	// Retire the previously observed unmanaged inbound before asking Vastora to
 	// create this host's single managed 443 node.
 	if _, err := store.db.ExecContext(ctx, `UPDATE services SET status = 'stopped' WHERE application_id = ? AND app_protocol = 'vless/tcp/reality'`, workerDeployment.ApplicationID); err != nil {
