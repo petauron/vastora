@@ -191,16 +191,23 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     const clientTotalBytes = bytesFromGB(draft.clientQuota);
     const clientRenewalDays = Number(draft.clientResetDays || 0);
     const clientExpiryTime = draft.clientExpiry ? endOfDayEpochInTimeZone(draft.clientExpiry, siteTimezone) : 0;
+    const manualTarget = Boolean(draft.targetHost.trim() || draft.serverName.trim());
     if (!Number.isFinite(inboundTotalBytes) || inboundTotalBytes < 0 || !Number.isInteger(inboundRenewalDays) || inboundRenewalDays < 0 || collectInitialClient && (!Number.isFinite(clientTotalBytes) || clientTotalBytes < 0 || !Number.isInteger(clientRenewalDays) || clientRenewalDays < 0 || clientRenewalDays > 0 && !clientExpiryTime)) {
       setError(copy(language, "请检查订阅额度和节点套餐。", "Check the subscription allowance and node plan."));
+      return;
+    }
+    if (manualTarget && (!draft.targetHost.trim() || !draft.serverName.trim())) {
+      setError(copy(language, "手动指定 REALITY 目标时，需要同时填写目标域名和 SNI；也可以全部留空让 Agent 自动选择。", "When setting a REALITY target manually, enter both the target hostname and SNI, or leave both empty for automatic selection."));
       return;
     }
     setBusy(true);
     setError("");
     try {
-      const checked = await execute(() => api.verifyRealityTarget(application.id, draft.targetHost, draft.serverName), setVerification);
-      if (!checked || checked.state !== "succeeded" || !checked.targetIp || checked.nodeAsn !== checked.targetAsn) {
-        throw new Error(checked?.error || copy(language, "伪装目标未通过节点侧安全校验。", "The camouflage target did not pass node-side security validation."));
+      if (manualTarget) {
+        const checked = await execute(() => api.verifyRealityTarget(application.id, draft.targetHost, draft.serverName), setVerification);
+        if (!checked || checked.state !== "succeeded" || !checked.targetIp || checked.nodeAsn !== checked.targetAsn) {
+          throw new Error(checked?.error || copy(language, "伪装目标未通过节点侧安全校验。", "The camouflage target did not pass node-side security validation."));
+        }
       }
       await execute(() => api.createRealityCommand({
         applicationId: application.id,
@@ -226,7 +233,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     <SheetContent className="sm:max-w-xl">
       <SheetHeader>
         <SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle>
-        <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、共享 443 网关和 DNS。", "Vastora is configuring 3x-ui, the shared 443 gateway, and DNS on the node.") : copy(language, "选择公网入口后，Vastora 会自动识别地区并生成标准节点名。", "After choosing a public entry, Vastora detects its region and creates a standard node name.")}</SheetDescription>
+        <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、共享 443 网关和 DNS。", "Vastora is configuring 3x-ui, the shared 443 gateway, and DNS on the node.") : copy(language, "填写名称即可。入口、地区、域名、DNS 和安全目标会自动处理。", "Enter a name. The entry, region, hostname, DNS, and secure target are handled automatically.")}</SheetDescription>
       </SheetHeader>
 		{command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onAcknowledge={() => void acknowledgeShareURI()} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
       {command ? <SheetFooter><Button onClick={requestClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
@@ -253,57 +260,42 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
   targetPublicAddress?: string;
   verification: ApplicationCommand | null;
 }) {
+  const manualTarget = Boolean(draft.targetHost.trim() || draft.serverName.trim());
   return <form className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
     <div className="flex-1 overflow-y-auto px-4">
       <FieldGroup>
         <Field>
-          <FieldLabel htmlFor="reality-gateway">{copy(language, "公网入口", "Public entry")}</FieldLabel>
-          <SelectControl id="reality-gateway" onValueChange={(value) => onField("gatewayID", value)} options={[{ value: "", label: copy(language, "没有可用的公网网关", "No public gateway available"), disabled: true }, ...gateways.map((agent) => ({ value: agent.id, label: agent.name }))]} required value={draft.gatewayID} />
-          <FieldDescription>{copy(language, "按这个入口的真实公网 IP 自动识别节点地区。", "The node region is detected from this entry's confirmed public IP.")}</FieldDescription>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="reality-region">{copy(language, "地区前缀", "Region prefix")}</FieldLabel>
-          <RegionCombobox id="reality-region" language={language} onValueChange={onRegion} value={draft.regionCode} />
-          <FieldDescription aria-live="polite">{regionMatch === "matching" ? copy(language, "正在根据公网 IP 识别…", "Detecting from the public IP…") : regionMatch === "matched" ? copy(language, `已根据 ${gateway?.networkProfile?.publicAddress ?? "公网 IP"} 自动匹配，可手动修改。`, `Matched from ${gateway?.networkProfile?.publicAddress ?? "the public IP"}; you can change it.`) : regionMatch === "unavailable" ? copy(language, "未能自动识别，请搜索并选择地区。", "Automatic detection was unavailable. Search and choose a region.") : copy(language, "支持搜索中文、英文和 ISO 国家/地区代码。", "Search by localized name, English name, or ISO code.")}</FieldDescription>
-        </Field>
-        <Field>
           <FieldLabel htmlFor="reality-name">{copy(language, "节点名称", "Node name")}</FieldLabel>
-          <Input id="reality-name" maxLength={48} onChange={(event) => onField("name", event.target.value)} required value={draft.name} />
-          <FieldDescription>{copy(language, "只填写线路或主机名，例如“Oracle 9929”。", "Enter only the route or host name, for example “Oracle 9929”.")}</FieldDescription>
+          <Input autoFocus id="reality-name" maxLength={48} onChange={(event) => onField("name", event.target.value)} required value={draft.name} />
+          <FieldDescription>{copy(language, "默认使用当前主机名，也可以改成容易识别的名称。", "The current host name is used by default; change it only if you want a friendlier label.")}</FieldDescription>
         </Field>
-        {displayName ? <div className="rounded-xl border bg-muted/40 p-3"><p className="text-xs text-muted-foreground">{copy(language, "订阅中显示", "Shown in subscriptions")}</p><p className="mt-1 font-medium">{displayName}</p></div> : null}
-        <InboundTrafficPlanFields idPrefix="reality-inbound" language={language} nextResetAt="" onQuotaChange={(value) => onField("inboundQuota", value)} onResetDaysChange={(value) => onField("inboundResetDays", value)} quota={draft.inboundQuota} resetDays={draft.inboundResetDays} />
         {collectInitialClient ? <>
           <Field>
-            <FieldLabel htmlFor="reality-client-name">{copy(language, "初始客户端名称", "Initial client name")}</FieldLabel>
+            <FieldLabel htmlFor="reality-client-name">{copy(language, "这台设备", "This device")}</FieldLabel>
             <Input id="reality-client-name" maxLength={64} onChange={(event) => onField("clientName", event.target.value)} required value={draft.clientName} />
-            <FieldDescription>{copy(language, "用于第一台设备，例如手机、MacBook 或家庭路由器。", "Used for the first device, for example Phone, MacBook, or Home router.")}</FieldDescription>
+            <FieldDescription>{copy(language, "创建完成后会直接给出可复制到 Mac 客户端的链接。", "After creation, Vastora shows a link ready to copy into your Mac client.")}</FieldDescription>
           </Field>
-          <SubscriptionTrafficPlanFields expiry={draft.clientExpiry} idPrefix="reality-subscription" language={language} minimumDate={dateInputValueInTimeZone(new Date(), siteTimezone)} onExpiryChange={(value) => onField("clientExpiry", value)} onQuotaChange={(value) => onField("clientQuota", value)} onResetDaysChange={(value) => { onField("clientResetDays", value); onField("clientExpiry", nextRenewalDateInTimeZone(Number(value), siteTimezone)); }} quota={draft.clientQuota} resetDays={draft.clientResetDays} />
-        </> : <Alert><UsersIcon /><AlertTitle>{copy(language, "订阅额度在主订阅机管理", "Manage subscriber limits on the controller")}</AlertTitle><AlertDescription>{copy(language, "这里只配置当前节点套餐。创建完成后，请在订阅主机的“管理客户端”中配置用户和订阅总额度；如果还没有用户，也可以在那里添加。", "Only the current node plan is configured here. After creation, use Manage clients on the subscription controller to configure subscribers and their total allowances, or add the first subscriber if none exists.")}</AlertDescription></Alert>}
-        <Field>
-          <FieldLabel htmlFor="reality-hostname">{copy(language, "连接域名", "Connection hostname")}</FieldLabel>
-          <Input autoCapitalize="none" autoCorrect="off" id="reality-hostname" onChange={(event) => onField("hostname", event.target.value.toLowerCase())} required spellCheck={false} value={draft.hostname} />
-          <FieldDescription>{copy(language, "按“reality.节点.位置.域名空间”自动生成。", "Generated as “reality.node.location.domain-namespace”.")}</FieldDescription>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="reality-dns">DNS</FieldLabel>
-          <SelectControl id="reality-dns" onValueChange={(value) => onField("dnsProvider", value as RealityDraft["dnsProvider"])} options={[{ value: "manual", label: copy(language, "手动添加 A 记录", "Add an A record manually") }, ...(cloudflareReady ? [{ value: "cloudflare", label: copy(language, "Cloudflare 自动管理", "Manage with Cloudflare") }] : [])]} value={draft.dnsProvider} />
-        </Field>
-        <div className="rounded-xl border p-4">
-          <div className="mb-4 flex items-start gap-3"><ShieldCheckIcon aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted-foreground" /><div><p className="text-sm font-medium">{copy(language, "REALITY 防盗目标", "Protected REALITY target")}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{copy(language, "目标固定使用 443。Agent 会校验同 ASN、拒绝共享 CDN/WAF，并验证 TLS 1.3、X25519、HTTP/2 与证书。", "Port 443 is fixed. The Agent verifies the same ASN, rejects shared CDN/WAF addresses, and checks TLS 1.3, X25519, HTTP/2, and the certificate.")}</p></div></div>
-          <div className="flex flex-col gap-4">
-            <Field><FieldLabel htmlFor="reality-target-host">Target host</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-target-host" onChange={(event) => onField("targetHost", event.target.value.toLowerCase())} placeholder="www.example.com" required spellCheck={false} value={draft.targetHost} /><FieldDescription>{targetPublicAddress ? <>{copy(language, "先确认目标与节点属于同一 ASN：", "First confirm the target belongs to the same ASN as the node: ")}<a className="underline underline-offset-4" href={`https://bgp.he.net/ip/${encodeURIComponent(targetPublicAddress)}`} rel="noreferrer" target="_blank">bgp.he.net · {targetPublicAddress}</a></> : copy(language, "节点缺少已确认公网 IP，校验会失败关闭。", "The node has no confirmed public IP, so validation will fail closed.")}</FieldDescription></Field>
-            <Field><FieldLabel htmlFor="reality-server-name">Server name (SNI)</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-server-name" onChange={(event) => onField("serverName", event.target.value.toLowerCase())} placeholder="www.example.com" required spellCheck={false} value={draft.serverName} /><FieldDescription>{copy(language, "必须被固定目标的证书精确覆盖；不会接受备用 SNI。", "It must be covered by the pinned target certificate; alternate SNI values are not accepted.")}</FieldDescription></Field>
-            {verification?.state === "pending" || verification?.state === "running" ? <Alert><Spinner /><AlertTitle>{copy(language, "正在节点侧校验", "Validating on the node")}</AlertTitle><AlertDescription>{copy(language, "正在解析单个目标 IP，并检查 ASN、CDN/WAF 与 TLS 能力。", "Resolving one target IP and checking ASN, CDN/WAF, and TLS capabilities.")}</AlertDescription></Alert> : null}
-            {verification?.state === "succeeded" ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "目标校验通过", "Target verified")}</AlertTitle><AlertDescription><code className="break-all">{verification.targetHost} → {verification.targetIp}</code><span className="mt-1 block">ASN {verification.targetAsn} · TLS 1.3 · X25519 · H2 · {copy(language, "证书有效", "certificate valid")}</span></AlertDescription></Alert> : null}
-          </div>
-        </div>
+        </> : null}
+        <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "其余配置自动完成", "Everything else is automatic")}</AlertTitle><AlertDescription><dl className="mt-1 grid gap-1 text-xs"><div><dt className="inline text-muted-foreground">{copy(language, "公网入口：", "Public entry: ")}</dt><dd className="inline">{gateway?.name ?? copy(language, "等待可用入口", "Waiting for an available entry")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "订阅名称：", "Subscription name: ")}</dt><dd className="inline">{displayName || copy(language, "正在识别地区", "Detecting region")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "安全目标：", "Secure target: ")}</dt><dd className="inline">{manualTarget ? copy(language, "使用手动设置", "Use manual settings") : copy(language, "Agent 自动发现并校验", "Agent discovers and verifies it")}</dd></div></dl></AlertDescription></Alert>
+        <details className="group rounded-xl border p-3">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center text-sm font-medium">{copy(language, "高级设置", "Advanced settings")}<span className="ml-auto text-xs font-normal text-muted-foreground">{copy(language, "通常无需修改", "Usually leave unchanged")}</span></summary>
+          <FieldGroup className="border-t pt-4">
+            <Field><FieldLabel htmlFor="reality-gateway">{copy(language, "公网入口", "Public entry")}</FieldLabel><SelectControl id="reality-gateway" onValueChange={(value) => onField("gatewayID", value)} options={[{ value: "", label: copy(language, "没有可用的公网网关", "No public gateway available"), disabled: true }, ...gateways.map((agent) => ({ value: agent.id, label: agent.name }))]} required value={draft.gatewayID} /><FieldDescription>{copy(language, "默认选择当前地点最合适的入口。", "The best available entry for this location is selected by default.")}</FieldDescription></Field>
+            <Field><FieldLabel htmlFor="reality-region">{copy(language, "地区", "Region")}</FieldLabel><RegionCombobox id="reality-region" language={language} onValueChange={onRegion} value={draft.regionCode} /><FieldDescription aria-live="polite">{regionMatch === "matching" ? copy(language, "正在根据公网 IP 识别…", "Detecting from the public IP…") : regionMatch === "matched" ? copy(language, `已根据 ${gateway?.networkProfile?.publicAddress ?? "公网 IP"} 自动匹配。`, `Matched from ${gateway?.networkProfile?.publicAddress ?? "the public IP"}.`) : regionMatch === "unavailable" ? copy(language, "未能自动识别，请手动选择。", "Automatic detection was unavailable. Select it manually.") : copy(language, "只在自动识别不正确时修改。", "Change only when automatic detection is incorrect.")}</FieldDescription></Field>
+            <Field><FieldLabel htmlFor="reality-hostname">{copy(language, "连接域名", "Connection hostname")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-hostname" onChange={(event) => onField("hostname", event.target.value.toLowerCase())} required spellCheck={false} value={draft.hostname} /><FieldDescription>{copy(language, "已按节点与位置自动生成。", "Generated automatically from the node and location.")}</FieldDescription></Field>
+            <Field><FieldLabel htmlFor="reality-dns">DNS</FieldLabel><SelectControl id="reality-dns" onValueChange={(value) => onField("dnsProvider", value as RealityDraft["dnsProvider"])} options={[{ value: "manual", label: copy(language, "手动添加 A 记录", "Add an A record manually") }, ...(cloudflareReady ? [{ value: "cloudflare", label: copy(language, "Cloudflare 自动管理", "Manage with Cloudflare") }] : [])]} value={draft.dnsProvider} /></Field>
+            <InboundTrafficPlanFields idPrefix="reality-inbound" language={language} nextResetAt="" onQuotaChange={(value) => onField("inboundQuota", value)} onResetDaysChange={(value) => onField("inboundResetDays", value)} quota={draft.inboundQuota} resetDays={draft.inboundResetDays} />
+            {collectInitialClient ? <SubscriptionTrafficPlanFields expiry={draft.clientExpiry} idPrefix="reality-subscription" language={language} minimumDate={dateInputValueInTimeZone(new Date(), siteTimezone)} onExpiryChange={(value) => onField("clientExpiry", value)} onQuotaChange={(value) => onField("clientQuota", value)} onResetDaysChange={(value) => { onField("clientResetDays", value); onField("clientExpiry", nextRenewalDateInTimeZone(Number(value), siteTimezone)); }} quota={draft.clientQuota} resetDays={draft.clientResetDays} /> : <Alert><UsersIcon /><AlertTitle>{copy(language, "订阅额度在主订阅机管理", "Manage subscriber limits on the controller")}</AlertTitle><AlertDescription>{copy(language, "这里只配置当前节点套餐。创建完成后，请在订阅主机的“管理客户端”中配置用户和订阅总额度；如果还没有用户，也可以在那里添加。", "Only the current node plan is configured here. After creation, use Manage clients on the subscription controller to configure subscribers and their total allowances, or add the first subscriber if none exists.")}</AlertDescription></Alert>}
+            <div className="rounded-xl border p-4"><div className="mb-4 flex items-start gap-3"><ShieldCheckIcon aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-muted-foreground" /><div><p className="text-sm font-medium">{copy(language, "手动指定 REALITY 安全目标", "Manual REALITY secure target")}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{copy(language, "默认留空。只有自动发现失败时，才同时填写目标域名和 SNI。", "Leave both empty by default. Enter a target hostname and SNI only if automatic discovery fails.")}</p></div></div><div className="flex flex-col gap-4"><Field><FieldLabel htmlFor="reality-target-host">Target host</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-target-host" onChange={(event) => onField("targetHost", event.target.value.toLowerCase())} placeholder={copy(language, "留空自动发现", "Leave empty for automatic discovery")} spellCheck={false} value={draft.targetHost} /><FieldDescription>{targetPublicAddress ? <>{copy(language, "Agent 会按节点公网网络进行安全校验：", "The Agent validates it against the node's public network: ")}<a className="underline underline-offset-4" href={`https://bgp.he.net/ip/${encodeURIComponent(targetPublicAddress)}`} rel="noreferrer" target="_blank">bgp.he.net · {targetPublicAddress}</a></> : copy(language, "节点缺少已确认公网 IP，无法创建。", "The node has no confirmed public IP, so creation is unavailable.")}</FieldDescription></Field><Field><FieldLabel htmlFor="reality-server-name">Server name (SNI)</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-server-name" onChange={(event) => onField("serverName", event.target.value.toLowerCase())} placeholder={copy(language, "留空自动发现", "Leave empty for automatic discovery")} spellCheck={false} value={draft.serverName} /></Field>{verification?.state === "pending" || verification?.state === "running" ? <Alert><Spinner /><AlertTitle>{copy(language, "正在节点侧校验", "Validating on the node")}</AlertTitle><AlertDescription>{copy(language, "正在检查 ASN、CDN/WAF 与 TLS 能力。", "Checking ASN, CDN/WAF, and TLS capabilities.")}</AlertDescription></Alert> : null}{verification?.state === "succeeded" ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "目标校验通过", "Target verified")}</AlertTitle><AlertDescription><code className="break-all">{verification.targetHost} → {verification.targetIp}</code><span className="mt-1 block">ASN {verification.targetAsn} · TLS 1.3 · X25519 · H2 · {copy(language, "证书有效", "certificate valid")}</span></AlertDescription></Alert> : null}</div></div>
+          </FieldGroup>
+        </details>
         {gateways.length === 0 ? <FieldError>{copy(language, "此位置还没有已确认公网能力的网关。请先在“网络”中确认公网地址并允许直接公网。", "This location has no gateway with confirmed public ingress. Confirm its public address and direct-public permission in Network first.")}</FieldError> : null}
+        {!targetPublicAddress ? <FieldError>{copy(language, "当前 3x-ui 节点还没有已确认的公网 IPv4，请先在“网络”中确认。", "The current 3x-ui node has no confirmed public IPv4 address. Confirm it in Network first.")}</FieldError> : null}
+        {regionMatch === "unavailable" && !draft.regionCode ? <FieldError>{copy(language, "地区自动识别失败，请在高级设置中选择地区。", "Automatic region detection failed. Select a region in Advanced settings.")}</FieldError> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
       </FieldGroup>
     </div>
-    <SheetFooter><Button onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !draft.regionCode || !draft.name.trim() || collectInitialClient && !draft.clientName.trim() || !draft.gatewayID || !draft.hostname || !draft.targetHost.trim() || !draft.serverName.trim() || !targetPublicAddress} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{copy(language, "校验并创建", "Verify and create")}</Button></SheetFooter>
+    <SheetFooter><Button onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !draft.regionCode || !draft.name.trim() || collectInitialClient && !draft.clientName.trim() || !draft.gatewayID || !draft.hostname || manualTarget && (!draft.targetHost.trim() || !draft.serverName.trim()) || !targetPublicAddress} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{manualTarget ? copy(language, "校验并创建", "Verify and create") : copy(language, "自动创建", "Create automatically")}</Button></SheetFooter>
   </form>;
 }
 
