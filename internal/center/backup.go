@@ -14,11 +14,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/petauron/vastora/internal/secret"
 	"golang.org/x/crypto/scrypt"
@@ -26,21 +28,25 @@ import (
 
 const (
 	backupMagic   = "VASTORA1"
-	backupVersion = byte(1)
+	backupVersion = byte(2)
 	saltSize      = 16
+
+	backupPasswordMinimumLength = 12
 )
 
 type backupMetadata struct {
-	CreatedAt time.Time         `json:"createdAt"`
-	Files     map[string]string `json:"files"`
+	CenterVersion string            `json:"centerVersion"`
+	SchemaVersion int64             `json:"schemaVersion"`
+	CreatedAt     time.Time         `json:"createdAt"`
+	Files         map[string]string `json:"files"`
 }
 
 // Backup writes a password-encrypted archive containing a transactionally
 // consistent Center SQLite snapshot and its root key. It never includes Agent
 // runtime data, application volumes, logs, or registry credentials in cleartext.
 func (s *Store) Backup(ctx context.Context, outputPath, password string) error {
-	if strings.TrimSpace(password) == "" {
-		return errors.New("center: backup password is required")
+	if err := ValidateBackupPassword(password); err != nil {
+		return err
 	}
 	if strings.TrimSpace(outputPath) == "" {
 		return errors.New("center: backup output path is required")
@@ -63,6 +69,16 @@ func (s *Store) Backup(ctx context.Context, outputPath, password string) error {
 	if err := verifyCenterEncryptedState(ctx, s.db, rootKey); err != nil {
 		return fmt.Errorf("center: verify encrypted state before backup: %w", err)
 	}
+	schemaVersion, err := sqliteSchemaVersion(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	if schemaVersion != centerSchemaVersion {
+		return fmt.Errorf("center: backup requires SQLite schema %d, found %d", centerSchemaVersion, schemaVersion)
+	}
+	if strings.TrimSpace(Version) == "" {
+		return errors.New("center: backup requires a Center release version")
+	}
 	snapshot, err := compactSnapshot(ctx, s.db, s.dataDir)
 	if err != nil {
 		return err
@@ -72,7 +88,10 @@ func (s *Store) Backup(ctx context.Context, outputPath, password string) error {
 	if err != nil {
 		return fmt.Errorf("center: read SQLite backup snapshot: %w", err)
 	}
-	plain, err := archiveFiles(map[string][]byte{"center.db": snapshotData, "center.key": rootKey})
+	plain, err := archiveFiles(map[string][]byte{"center.db": snapshotData, "center.key": rootKey}, backupMetadata{
+		CenterVersion: Version,
+		SchemaVersion: schemaVersion,
+	})
 	if err != nil {
 		return err
 	}
@@ -87,8 +106,8 @@ func (s *Store) Backup(ctx context.Context, outputPath, password string) error {
 // backup. It refuses a non-empty destination so invoking it cannot overwrite
 // a running control plane.
 func Restore(backupPath, destination, password string) error {
-	if strings.TrimSpace(password) == "" {
-		return errors.New("center: backup password is required")
+	if err := ValidateBackupPassword(password); err != nil {
+		return err
 	}
 	if strings.TrimSpace(destination) == "" {
 		return errors.New("center: restore destination is required")
@@ -116,19 +135,94 @@ func Restore(backupPath, destination, password string) error {
 	if len(files) != 3 {
 		return errors.New("center: backup contains unexpected files")
 	}
-	if err := verifyMetadata(files); err != nil {
+	metadata, err := verifyMetadata(files)
+	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(destination, 0o700); err != nil {
-		return fmt.Errorf("center: create restore destination: %w", err)
+	if metadata.CenterVersion != Version {
+		return fmt.Errorf("center: backup requires Center %s, running %s", metadata.CenterVersion, Version)
 	}
-	if err := os.Chmod(destination, 0o700); err != nil {
-		return fmt.Errorf("center: protect restore destination: %w", err)
+	if metadata.SchemaVersion != centerSchemaVersion {
+		return fmt.Errorf("center: backup schema %d is incompatible with schema %d", metadata.SchemaVersion, centerSchemaVersion)
 	}
+	destination = filepath.Clean(destination)
+	parent := filepath.Dir(destination)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return fmt.Errorf("center: create restore parent: %w", err)
+	}
+	staging, err := os.MkdirTemp(parent, "."+filepath.Base(destination)+".restore-*")
+	if err != nil {
+		return fmt.Errorf("center: create restore staging directory: %w", err)
+	}
+	defer os.RemoveAll(staging)
 	for _, name := range []string{"center.db", "center.key"} {
-		if err := writePrivateFile(filepath.Join(destination, name), files[name]); err != nil {
+		if err := writePrivateFile(filepath.Join(staging, name), files[name]); err != nil {
 			return fmt.Errorf("center: restore %s: %w", name, err)
 		}
+	}
+	if err := validateRestoreStaging(staging, metadata); err != nil {
+		return err
+	}
+	if err := syncDirectory(staging); err != nil {
+		return fmt.Errorf("center: sync restore staging directory: %w", err)
+	}
+	if err := os.Rename(staging, destination); err != nil {
+		return fmt.Errorf("center: publish restored directory: %w", err)
+	}
+	if err := syncDirectory(parent); err != nil {
+		return fmt.Errorf("center: sync restored directory publication: %w", err)
+	}
+	return nil
+}
+
+// ValidateBackupPassword applies the single password policy shared by the web,
+// CLI, backup, and restore entry points.
+func ValidateBackupPassword(password string) error {
+	if utf8.RuneCountInString(strings.TrimSpace(password)) < backupPasswordMinimumLength {
+		return fmt.Errorf("center: backup password must be at least %d characters", backupPasswordMinimumLength)
+	}
+	return nil
+}
+
+func validateRestoreStaging(directory string, metadata backupMetadata) error {
+	rootKey, err := secret.LoadKey(filepath.Join(directory, "center.key"))
+	if err != nil {
+		return fmt.Errorf("center: validate restored root key: %w", err)
+	}
+	databaseDSN := (&url.URL{Scheme: "file", Path: filepath.Join(directory, "center.db"), RawQuery: "mode=ro&immutable=1"}).String()
+	database, err := sql.Open("sqlite", databaseDSN)
+	if err != nil {
+		return fmt.Errorf("center: open restored SQLite database: %w", err)
+	}
+	database.SetMaxOpenConns(1)
+	defer database.Close()
+	ctx := context.Background()
+	if _, err := database.ExecContext(ctx, `PRAGMA query_only = ON`); err != nil {
+		return fmt.Errorf("center: protect restored SQLite validation: %w", err)
+	}
+	var integrity string
+	if err := database.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity); err != nil {
+		return fmt.Errorf("center: check restored SQLite integrity: %w", err)
+	}
+	if integrity != "ok" {
+		return fmt.Errorf("center: restored SQLite integrity check failed: %s", integrity)
+	}
+	schemaVersion, err := sqliteSchemaVersion(ctx, database)
+	if err != nil {
+		return err
+	}
+	if schemaVersion != metadata.SchemaVersion || schemaVersion != centerSchemaVersion {
+		return fmt.Errorf("center: restored SQLite schema %d does not match backup schema %d and current schema %d", schemaVersion, metadata.SchemaVersion, centerSchemaVersion)
+	}
+	bound, err := inspectCenterDatabaseKeyBinding(ctx, database, rootKey)
+	if err != nil {
+		return fmt.Errorf("center: validate restored database key binding: %w", err)
+	}
+	if !bound {
+		return errors.New("center: restored database is not bound to its root key")
+	}
+	if err := verifyCenterEncryptedState(ctx, database, rootKey); err != nil {
+		return fmt.Errorf("center: validate restored encrypted state: %w", err)
 	}
 	return nil
 }
@@ -141,8 +235,9 @@ func compactSnapshot(ctx context.Context, database *sql.DB, dataDir string) (str
 	return snapshot, nil
 }
 
-func archiveFiles(files map[string][]byte) ([]byte, error) {
-	metadata := backupMetadata{CreatedAt: time.Now().UTC(), Files: make(map[string]string, len(files))}
+func archiveFiles(files map[string][]byte, metadata backupMetadata) ([]byte, error) {
+	metadata.CreatedAt = time.Now().UTC()
+	metadata.Files = make(map[string]string, len(files))
 	names := make([]string, 0, len(files))
 	for name, content := range files {
 		metadata.Files[name] = fileHash(content)
@@ -197,20 +292,22 @@ func readArchive(raw []byte) (map[string][]byte, error) {
 	}
 }
 
-func verifyMetadata(files map[string][]byte) error {
+func verifyMetadata(files map[string][]byte) (backupMetadata, error) {
 	var metadata backupMetadata
-	if err := json.Unmarshal(files["metadata.json"], &metadata); err != nil {
-		return errors.New("center: backup metadata is invalid")
+	decoder := json.NewDecoder(bytes.NewReader(files["metadata.json"]))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&metadata); err != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return backupMetadata{}, errors.New("center: backup metadata is invalid")
 	}
-	if metadata.CreatedAt.IsZero() || len(metadata.Files) != 2 {
-		return errors.New("center: backup metadata is incomplete")
+	if strings.TrimSpace(metadata.CenterVersion) == "" || metadata.SchemaVersion <= 0 || metadata.CreatedAt.IsZero() || len(metadata.Files) != 2 {
+		return backupMetadata{}, errors.New("center: backup metadata is incomplete")
 	}
 	for _, name := range []string{"center.db", "center.key"} {
 		if metadata.Files[name] != fileHash(files[name]) {
-			return fmt.Errorf("center: backup integrity check failed for %s", name)
+			return backupMetadata{}, fmt.Errorf("center: backup integrity check failed for %s", name)
 		}
 	}
-	return nil
+	return metadata, nil
 }
 
 func encryptBackup(plain []byte, password string) ([]byte, error) {
@@ -282,10 +379,17 @@ func fileHash(content []byte) string {
 }
 
 func requireEmptyDirectory(path string) error {
-	entries, err := os.ReadDir(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("center: inspect restore destination: %w", err)
+	}
+	if !info.Mode().IsDir() {
+		return errors.New("center: restore destination must be an empty directory path")
+	}
+	entries, err := os.ReadDir(path)
 	if err != nil {
 		return fmt.Errorf("center: inspect restore destination: %w", err)
 	}
@@ -314,8 +418,21 @@ func writePrivateFile(path string, content []byte) error {
 		_ = temporary.Close()
 		return err
 	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
 	if err := temporary.Close(); err != nil {
 		return err
 	}
 	return os.Rename(temporaryName, path)
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }

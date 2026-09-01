@@ -304,8 +304,8 @@ func readPrivatePassword(path string) (string, error) {
 		return "", fmt.Errorf("read password file: %w", err)
 	}
 	password := strings.TrimRight(string(content), "\r\n")
-	if password == "" {
-		return "", errors.New("password file is empty")
+	if err := center.ValidateBackupPassword(password); err != nil {
+		return "", err
 	}
 	return password, nil
 }

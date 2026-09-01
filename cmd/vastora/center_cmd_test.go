@@ -30,12 +30,12 @@ func TestReadPrivatePasswordRequiresARestrictedRegularFile(t *testing.T) {
 	}
 }
 
-func TestReadPrivatePasswordRejectsAnEmptyFile(t *testing.T) {
+func TestReadPrivatePasswordRejectsPasswordsBelowTheSharedMinimum(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "backup-password")
-	if err := os.WriteFile(path, []byte("\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("too-short\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readPrivatePassword(path); err == nil || !strings.Contains(err.Error(), "empty") {
-		t.Fatalf("empty password file was accepted: %v", err)
+	if _, err := readPrivatePassword(path); err == nil || !strings.Contains(err.Error(), "at least 12 characters") {
+		t.Fatalf("short password file was accepted: %v", err)
 	}
 }
