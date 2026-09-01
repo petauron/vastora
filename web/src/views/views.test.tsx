@@ -1474,6 +1474,18 @@ describe("network and app views", () => {
     expect(command).not.toContain("--capabilities");
   });
 
+  it("applies an independently supplied private CA before the enrollment token is sent", () => {
+    const certificate = "-----BEGIN CERTIFICATE-----\nprivate-ca\n-----END CERTIFICATE-----";
+    const command = agentInstallCommand({
+      centerURL: "https://center.example.com",
+      enrollment: { token: "one-time-token", siteId: "site", installerUrl: "https://center.example.com", caCertificatePem: certificate, expiresAt: "2026-08-18T00:10:00Z" },
+      installerAvailable: true
+    });
+    expect(command.indexOf("vastora-center-ca.pem")).toBeLessThan(command.indexOf("one-time-token"));
+    expect(command).toContain("curl --cacert /tmp/vastora-center-ca.pem -fsSL");
+    expect(command).toContain("'one-time-token' '/tmp/vastora-center-ca.pem' 1");
+  });
+
   it("queues supported Agent updates through Center and keeps purpose changes explicit", async () => {
     const data = dashboard();
     data.agents[0].version = "old";

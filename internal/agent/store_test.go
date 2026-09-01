@@ -121,6 +121,7 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 	if _, err := store.db.Exec(`DROP TABLE three_x_ui_reset_journal;
 		DROP TABLE task_receipts;
 		DROP TABLE agent_install_operations;
+		ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
 		ALTER TABLE control_plane_connection DROP COLUMN sealed_private_key;
 		ALTER TABLE control_plane_connection DROP COLUMN ca_fingerprint;
 		ALTER TABLE applied_installations RENAME TO applied_installations_v5_test;
@@ -183,6 +184,7 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`DROP TABLE agent_install_operations;
+		ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
 		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
 		PRAGMA user_version = 7`); err != nil {
 		t.Fatal(err)
@@ -228,6 +230,9 @@ func TestAgentSchemaV10PreservesPendingCompletionOutbox(t *testing.T) {
 	SELECT task_id, task_kind, attempt, task_hash, state, sealed_completion, created_at, updated_at FROM task_receipts;
 	DROP TABLE task_receipts;
 	ALTER TABLE task_receipts_v9 RENAME TO task_receipts;
+	ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
+	ALTER TABLE agent_install_operations DROP COLUMN ca_certificate_pem;
+	ALTER TABLE agent_install_operations DROP COLUMN previous_ca_certificate_pem;
 	PRAGMA user_version = 9`); err != nil {
 		t.Fatal(err)
 	}

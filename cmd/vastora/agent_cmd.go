@@ -36,6 +36,7 @@ func runAgent(arguments []string) error {
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
 		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
 		caFingerprint := flags.String("ca-fingerprint", "", "expected Center CA SHA-256 public-key fingerprint")
+		caCertificate := flags.String("ca-certificate", "", "PEM certificate for a private Center CA")
 		replaceExisting := flags.Bool("replace-existing", false, "replace an existing Center enrollment after explicit confirmation")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
@@ -76,11 +77,15 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		client := agent.Client{}
+		caCertificatePEM, err := readOptionalCACertificate(*caCertificate)
+		if err != nil {
+			return err
+		}
 		var enrollment agent.Enrollment
 		if *replaceExisting {
-			enrollment, err = client.MigrateEnrollment(context.Background(), store, *centerURL, token, *caFingerprint)
+			enrollment, err = client.MigrateEnrollment(context.Background(), store, *centerURL, token, *caFingerprint, caCertificatePEM)
 		} else {
-			enrollment, err = client.Enroll(context.Background(), store, *centerURL, token, *caFingerprint)
+			enrollment, err = client.Enroll(context.Background(), store, *centerURL, token, *caFingerprint, caCertificatePEM)
 		}
 		if err != nil {
 			return err
@@ -179,6 +184,7 @@ func runAgent(arguments []string) error {
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
 		caFingerprint := flags.String("ca-fingerprint", "", "expected Center CA SHA-256 public-key fingerprint")
+		caCertificate := flags.String("ca-certificate", "", "PEM certificate for a private Center CA")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -188,10 +194,39 @@ func runAgent(arguments []string) error {
 		if *centerURL == "" || flags.NArg() != 0 {
 			return errors.New("--center-url is required")
 		}
-		if err := configureAgentCenter(context.Background(), *dataDir, *centerURL, *caFingerprint); err != nil {
+		caCertificatePEM, err := readOptionalCACertificate(*caCertificate)
+		if err != nil {
+			return err
+		}
+		if err := configureAgentCenter(context.Background(), *dataDir, *centerURL, *caFingerprint, caCertificatePEM); err != nil {
 			return err
 		}
 		fmt.Println("Agent Center connection updated")
+		return nil
+	case "resolve-legacy-task":
+		flags := flag.NewFlagSet("agent resolve-legacy-task", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
+		taskID := flags.String("task-id", "", "legacy task receipt ID reported by the Agent")
+		confirmed := flags.Bool("confirm-external-state-reviewed", false, "confirm that the task's external effect was inspected before releasing the fence")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if err := requireLinuxRoot("agent resolve-legacy-task"); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*taskID) == "" || !*confirmed || flags.NArg() != 0 {
+			return errors.New("usage: vastora agent resolve-legacy-task --task-id ID --confirm-external-state-reviewed")
+		}
+		store, err := agent.Open(*dataDir)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if err := store.ResolveLegacyTaskReceipt(context.Background(), *taskID); err != nil {
+			return err
+		}
+		fmt.Printf("Legacy task %s acknowledged; Agent task processing can resume\n", *taskID)
 		return nil
 	case "update":
 		flags := flag.NewFlagSet("agent update", flag.ContinueOnError)
@@ -199,6 +234,7 @@ func runAgent(arguments []string) error {
 		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
 		centerURL := flags.String("center-url", "", "current Center HTTPS URL or loopback HTTP URL")
 		caFingerprint := flags.String("ca-fingerprint", "", "expected CA fingerprint when changing the Center URL")
+		caCertificate := flags.String("ca-certificate", "", "PEM certificate for a private Center CA")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -215,13 +251,18 @@ func runAgent(arguments []string) error {
 			return errors.New("agent must be enrolled before it can update")
 		}
 		if strings.TrimSpace(*centerURL) != "" {
-			verified, verifyErr := (agent.Client{}).VerifyCenterURL(context.Background(), *centerURL, *caFingerprint)
+			caCertificatePEM, readErr := readOptionalCACertificate(*caCertificate)
+			if readErr != nil {
+				return readErr
+			}
+			verified, verifyErr := (agent.Client{}).VerifyCenterURL(context.Background(), *centerURL, *caFingerprint, caCertificatePEM)
 			if verifyErr != nil {
 				return fmt.Errorf("verify requested Center URL: %w", verifyErr)
 			}
-			if verified.URL != connection.CenterURL || verified.CAFingerprint != connection.CAFingerprint {
+			if verified.URL != connection.CenterURL || verified.CAFingerprint != connection.CAFingerprint || verified.CACertificatePEM != connection.CACertificatePEM {
 				connection.CenterURL = verified.URL
 				connection.CAFingerprint = verified.CAFingerprint
+				connection.CACertificatePEM = verified.CACertificatePEM
 				if err := store.ReplaceConnection(context.Background(), connection); err != nil {
 					return fmt.Errorf("save requested Center URL: %w", err)
 				}
@@ -332,6 +373,7 @@ func runAgent(arguments []string) error {
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
 		tokenFile := flags.String("token-file", "", "0600 enrollment token file, or - for standard input")
 		caFingerprint := flags.String("ca-fingerprint", "", "expected Center CA SHA-256 public-key fingerprint")
+		caCertificate := flags.String("ca-certificate", "", "PEM certificate for a private Center CA")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -347,7 +389,11 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		defer store.Close()
-		enrollment, err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, token, *caFingerprint)
+		caCertificatePEM, err := readOptionalCACertificate(*caCertificate)
+		if err != nil {
+			return err
+		}
+		enrollment, err := (agent.Client{}).Enroll(context.Background(), store, *centerURL, token, *caFingerprint, caCertificatePEM)
 		if err != nil {
 			return err
 		}
@@ -571,7 +617,7 @@ func runAgent(arguments []string) error {
 	}
 }
 
-func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint string) error {
+func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint, caCertificatePEM string) error {
 	store, err := agent.Open(dataDir)
 	if err != nil {
 		return err
@@ -581,11 +627,11 @@ func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint
 	if err != nil {
 		return errors.New("agent must be enrolled before its Center can be changed")
 	}
-	verified, err := (agent.Client{}).VerifyCenterURL(ctx, centerURL, caFingerprint)
+	verified, err := (agent.Client{}).VerifyCenterURL(ctx, centerURL, caFingerprint, caCertificatePEM)
 	if err != nil {
 		return fmt.Errorf("verify requested Center URL: %w", err)
 	}
-	if verified.URL == connection.CenterURL && verified.CAFingerprint == connection.CAFingerprint {
+	if verified.URL == connection.CenterURL && verified.CAFingerprint == connection.CAFingerprint && verified.CACertificatePEM == connection.CACertificatePEM {
 		if agentLoopbackCenterURL(verified.URL) {
 			return store.SetLocalCenterChannel(verified.URL)
 		}
@@ -594,6 +640,7 @@ func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint
 	previous := connection
 	connection.CenterURL = verified.URL
 	connection.CAFingerprint = verified.CAFingerprint
+	connection.CACertificatePEM = verified.CACertificatePEM
 	if err := store.ReplaceConnection(ctx, connection); err != nil {
 		return fmt.Errorf("save requested Center URL: %w", err)
 	}
@@ -992,6 +1039,25 @@ func containsValue(values []string, wanted string) bool {
 		}
 	}
 	return false
+}
+
+func readOptionalCACertificate(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("read Center CA certificate: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1024*1024 {
+		return "", errors.New("Center CA certificate must be a regular PEM file no larger than 1 MiB")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read Center CA certificate: %w", err)
+	}
+	return strings.TrimSpace(string(content)), nil
 }
 
 func readPrivateToken(path string) (string, error) {

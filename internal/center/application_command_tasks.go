@@ -22,10 +22,11 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var id, kind string
 	var inputJSON []byte
 	var attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt FROM application_commands
+	var reconciliationRequested int
+	err := tx.QueryRowContext(ctx, `SELECT id, kind, input_json, attempt, reconciliation_requested FROM application_commands
 		WHERE agent_id = ? AND state = 'pending'
 		ORDER BY CASE WHEN kind = ? AND COALESCE(json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END, '$.migrationId'), '') = '' THEN 1 ELSE 0 END,
-		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt)
+		created_at, rowid LIMIT 1`, agentID, controllerCommandKind).Scan(&id, &kind, &inputJSON, &attempt, &reconciliationRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -148,7 +149,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -276,7 +277,7 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 			return errInvalidReconciliationDisposition
 		}
 		now := s.now().UTC().Format(time.RFC3339Nano)
-		result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', reconciliation_required = 1, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, taskError, now, taskID, agentID, expectedAttempt)
+		result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', reconciliation_required = 1, reconciliation_requested = 0, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, taskError, now, taskID, agentID, expectedAttempt)
 		if err != nil {
 			return err
 		}
@@ -288,7 +289,7 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 		}
 		return tx.Commit()
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required = 0 WHERE id = ?`, taskID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required = 0, reconciliation_requested = 0 WHERE id = ?`, taskID); err != nil {
 		return err
 	}
 	if kind == subscriptionCommandKind {

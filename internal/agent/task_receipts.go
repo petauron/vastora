@@ -65,6 +65,30 @@ func (s *Store) HasProcessingTaskReceipts(ctx context.Context) (bool, error) {
 	return taskID != "", err
 }
 
+// ResolveLegacyTaskReceipt releases the startup fence left by a receipt whose
+// task kind could not be recovered from an older Agent schema. The caller must
+// first inspect the external application state because the Agent cannot infer
+// whether the original effect completed.
+func (s *Store) ResolveLegacyTaskReceipt(ctx context.Context, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("agent: legacy task ID is required")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE task_receipts
+		SET state = 'acknowledged', updated_at = ?
+		WHERE task_id = ? AND task_kind = 'legacy'
+			AND state IN ('processing', 'reconciliation_required', 'reconciliation_acknowledged')`,
+		s.now().UTC().Format(time.RFC3339Nano), taskID)
+	if err != nil {
+		return fmt.Errorf("agent: resolve legacy task receipt: %w", err)
+	}
+	changed, _ := result.RowsAffected()
+	if changed != 1 {
+		return errors.New("agent: unresolved legacy task receipt was not found")
+	}
+	return nil
+}
+
 // PrepareTaskReceipt writes durable intent before an external effect begins.
 // A completed receipt is an outbox entry: duplicate delivery reuses its result
 // instead of repeating the effect, including after an Agent restart.
@@ -148,6 +172,14 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		}
 		return nil, nil
 	}
+	if task.Kind == "gateway.routes.apply" || task.Kind == "gateway.component.apply" || task.Kind == "tunnel.state.apply" {
+		// These tasks reconcile complete desired state. Reapplying that state is
+		// the recovery mechanism when the previous acknowledgement was lost.
+		if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, updated_at = ? WHERE task_id = ? AND state = 'processing'`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID); err != nil {
+			return nil, fmt.Errorf("agent: resume desired-state receipt: %w", err)
+		}
+		return nil, nil
+	}
 	if resumable, err := s.resumableThreeXUIControllerPromotion(ctx, task); err != nil {
 		return nil, err
 	} else if resumable {
@@ -162,7 +194,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		TaskID:                 task.ID,
 		Attempt:                task.Attempt,
 		Error:                  "agent: previous task outcome is unknown; operator reconciliation is required",
-		ReconciliationRequired: task.Kind == "application.apply",
+		ReconciliationRequired: task.Kind == "application.apply" || task.Kind == "application.command",
 	}
 	if task.Kind == "application.apply" {
 		completion.ApplicationRuntimeGeneration = executorRuntimeGeneration

@@ -20,7 +20,7 @@ func TestSystemdAgentInstallResumesEveryHostPhaseAfterRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			operation, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8080", "one-time-token", "", false)
+			operation, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8080", "one-time-token", "", "", false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestReplacementSystemdInstallWaitsForHostSwitchCommit(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), agent.Connection{AgentID: "old", Name: "old", CenterURL: "http://127.0.0.1:8080", Credential: "old-credential", PrivateKey: privateKey}); err != nil {
 		t.Fatal(err)
 	}
-	operation, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8081", "token", "", true)
+	operation, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8081", "token", "", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,6 +21,8 @@ const agentInstallLoaderScript = `#!/bin/sh
 set -eu
 
 token="${1:-}"
+ca_certificate="${2:-}"
+bootstrap_uses_ca="${3:-0}"
 if [ -z "$token" ]; then
   echo "Usage: ./vastora-agent-install.sh <one-time-token>" >&2
   exit 1
@@ -31,7 +33,7 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "Root privileges are required and sudo is not installed." >&2
     exit 1
   fi
-  exec sudo "$0" "$token"
+  exec sudo "$0" "$token" "$ca_certificate" "$bootstrap_uses_ca"
 fi
 
 bootstrap_url=@@CENTER_URL@@
@@ -43,10 +45,17 @@ esac
 
 installer="$(mktemp -t vastora-agent-installer.XXXXXX)"
 trap 'rm -f "$installer"' EXIT HUP INT TERM
-curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
+bootstrap_curl() {
+  if [ "$bootstrap_uses_ca" -eq 1 ]; then
+    curl --cacert "$ca_certificate" "$@"
+  else
+    curl "$@"
+  fi
+}
+bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
   -H "Authorization: Bearer $token" \
   "${bootstrap_url%/}/install/agent.sh" -o "$installer"
-printf '%s\n' "$token" | sh "$installer"
+printf '%s\n' "$token" | sh "$installer" "$ca_certificate" "$bootstrap_uses_ca"
 `
 
 const agentInstallScript = `#!/bin/sh
@@ -55,6 +64,8 @@ set -eu
 center_url=@@CENTER_URL@@
 bootstrap_url=@@BOOTSTRAP_URL@@
 ca_fingerprint=@@CA_FINGERPRINT@@
+ca_certificate="${1:-}"
+bootstrap_uses_ca="${2:-0}"
 tailscale_enrolled=@@TAILSCALE_ENROLLED@@
 IFS= read -r token
 if [ -z "$token" ]; then
@@ -109,8 +120,22 @@ case "$bootstrap_url" in
   http://127.0.0.1:*|http://127.0.0.1|http://localhost:*|http://localhost) curl_protocol="http" ;;
   *) echo "Center must use HTTPS; only loopback development addresses may use HTTP." >&2; exit 1 ;;
 esac
+bootstrap_curl() {
+  if [ "$bootstrap_uses_ca" -eq 1 ]; then
+    curl --cacert "$ca_certificate" "$@"
+  else
+    curl "$@"
+  fi
+}
+center_curl() {
+  if [ -n "$ca_certificate" ]; then
+    curl --cacert "$ca_certificate" "$@"
+  else
+    curl "$@"
+  fi
+}
 echo "Downloading the Vastora Agent for $arch..."
-curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 268435456 -fsS \
+bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 268435456 -fsS \
   -D "$headers" -H "Authorization: Bearer $token" \
   "${bootstrap_url%/}/api/v1/agent-binaries/linux/$arch" -o "$temporary"
 expected_digest="$(awk 'tolower($1) == "x-vastora-sha256:" {gsub("\\r", "", $2); value=tolower($2)} END {print value}' "$headers")"
@@ -191,7 +216,7 @@ echo "Waiting for the requested Center to become reachable..."
 center_ready=0
 attempt=1
 while [ "$attempt" -le 15 ]; do
-  if curl --proto "=$center_protocol" --tlsv1.2 --max-filesize 1048576 -fs \
+  if center_curl --proto "=$center_protocol" --tlsv1.2 --max-filesize 1048576 -fs \
     -H "Authorization: Bearer $token" "${center_url%/}/install/agent.sh" -o /dev/null 2>/dev/null; then
     center_ready=1
     break
@@ -207,11 +232,11 @@ fi
 install -m 0755 "$temporary" /usr/local/bin/vastora
 echo "Registering this node and starting the system service..."
 if [ "$replace_existing" -eq 1 ]; then
-  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint" --replace-existing
+  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint" --ca-certificate "$ca_certificate" --replace-existing
   /usr/local/bin/vastora agent switch-control-plane commit --data-dir /var/lib/vastora/agent --tailscale-ownership auto --tailscale-enrolled="$tailscale_enrolled"
   switch_started=0
 else
-  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint"
+  printf '%s' "$token" | /usr/local/bin/vastora agent install --center-url "$center_url" --token-file - --ca-fingerprint "$ca_fingerprint" --ca-certificate "$ca_certificate"
 fi
 `
 

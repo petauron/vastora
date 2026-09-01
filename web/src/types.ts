@@ -264,7 +264,7 @@ export type AgentUpdate = {
   updatedAt: string;
 };
 
-export type AgentEnrollment = { token: string; siteId: string; installerUrl: string; expiresAt: string };
+export type AgentEnrollment = { token: string; siteId: string; installerUrl: string; caCertificatePem?: string; expiresAt: string };
 
 export type NetworkKind = "lan" | "headscale" | "public";
 export type NetworkCandidate = { address: string; interface: string; kind: NetworkKind; observedAt: string };

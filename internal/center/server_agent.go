@@ -1,6 +1,7 @@
 package center
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -60,13 +61,14 @@ func (s *Server) handleListAgents(writer http.ResponseWriter, request *http.Requ
 
 func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
-		SiteID        string `json:"siteId"`
-		Name          string `json:"name"`
-		CenterURL     string `json:"centerUrl"`
-		UseHeadscale  bool   `json:"useHeadscale"`
-		Gateway       bool   `json:"gateway"`
-		Tunnel        bool   `json:"tunnel"`
-		CAFingerprint string `json:"caFingerprint"`
+		SiteID           string `json:"siteId"`
+		Name             string `json:"name"`
+		CenterURL        string `json:"centerUrl"`
+		UseHeadscale     bool   `json:"useHeadscale"`
+		Gateway          bool   `json:"gateway"`
+		Tunnel           bool   `json:"tunnel"`
+		CAFingerprint    string `json:"caFingerprint"`
+		CACertificatePEM string `json:"caCertificatePem"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -75,7 +77,7 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), AgentEnrollmentSpec{
 		SiteID: input.SiteID, Name: input.Name, CenterURL: input.CenterURL,
 		UseHeadscale: input.UseHeadscale, Gateway: input.Gateway, Tunnel: input.Tunnel,
-		CAFingerprint: input.CAFingerprint,
+		CAFingerprint: input.CAFingerprint, CACertificatePEM: input.CACertificatePEM,
 	})
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -241,7 +243,13 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 	}
 	encrypted, err := s.store.EncryptAgentTask(request.Context(), request.PathValue("id"), *task)
 	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
+		releaseContext, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 10*time.Second)
+		releaseErr := s.store.releaseClaimedTask(releaseContext, request.PathValue("id"), *task)
+		cancel()
+		if releaseErr != nil {
+			err = errors.Join(err, releaseErr)
+		}
+		writeError(writer, http.StatusServiceUnavailable, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"task": encrypted})

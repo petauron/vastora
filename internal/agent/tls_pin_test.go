@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"math/big"
 	"net"
 	"net/http"
@@ -36,7 +37,7 @@ func TestPinnedHTTPClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	client, err := pinnedHTTPClient(certificatePublicKeyFingerprint(issuer), time.Second)
+	client, err := pinnedHTTPClient(certificatePublicKeyFingerprint(issuer), "", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,13 +48,35 @@ func TestPinnedHTTPClientTrustsPresentedPrivateIssuingCA(t *testing.T) {
 	response.Body.Close()
 
 	_, wrongIssuer := testPrivateCenterTLSCertificate(t)
-	wrongClient, err := pinnedHTTPClient(certificatePublicKeyFingerprint(wrongIssuer), time.Second)
+	wrongClient, err := pinnedHTTPClient(certificatePublicKeyFingerprint(wrongIssuer), "", time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := wrongClient.Get(server.URL); err == nil || !strings.Contains(err.Error(), "fingerprint mismatch") {
 		t.Fatalf("wrong private CA pin passed a real TLS handshake: %v", err)
 	}
+}
+
+func TestPinnedHTTPClientTrustsIndependentlySuppliedPrivateCAWhenServerOmitsIt(t *testing.T) {
+	certificate, issuer := testPrivateCenterTLSCertificate(t)
+	certificate.Certificate = certificate.Certificate[:1]
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
+	server.StartTLS()
+	defer server.Close()
+
+	issuerPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Raw}))
+	client, err := pinnedHTTPClient(certificatePublicKeyFingerprint(issuer), issuerPEM, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("independently supplied private CA failed a real TLS handshake: %v", err)
+	}
+	response.Body.Close()
 }
 
 func testPrivateCenterTLSCertificate(t *testing.T) (tls.Certificate, *x509.Certificate) {

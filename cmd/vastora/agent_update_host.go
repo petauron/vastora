@@ -31,17 +31,18 @@ type systemHostUpdater struct {
 }
 
 type hostUpdateOperation struct {
-	Version       int    `json:"version"`
-	TaskID        string `json:"taskId"`
-	Attempt       int64  `json:"attempt"`
-	TargetVersion string `json:"targetVersion"`
-	SourceVersion string `json:"sourceVersion"`
-	DataDir       string `json:"dataDir"`
-	Executable    string `json:"executable"`
-	AgentID       string `json:"agentId"`
-	CenterURL     string `json:"centerUrl"`
-	Credential    string `json:"credential"`
-	CAFingerprint string `json:"caFingerprint"`
+	Version          int    `json:"version"`
+	TaskID           string `json:"taskId"`
+	Attempt          int64  `json:"attempt"`
+	TargetVersion    string `json:"targetVersion"`
+	SourceVersion    string `json:"sourceVersion"`
+	DataDir          string `json:"dataDir"`
+	Executable       string `json:"executable"`
+	AgentID          string `json:"agentId"`
+	CenterURL        string `json:"centerUrl"`
+	Credential       string `json:"credential"`
+	CAFingerprint    string `json:"caFingerprint"`
+	CACertificatePEM string `json:"caCertificatePem,omitempty"`
 }
 
 type hostUpdateResult struct {
@@ -78,7 +79,7 @@ func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.Hos
 	operation := hostUpdateOperation{
 		Version: 1, TaskID: request.TaskID, Attempt: request.Attempt, TargetVersion: version, SourceVersion: agent.Version,
 		DataDir: u.dataDir, Executable: executable, AgentID: request.Connection.AgentID, CenterURL: request.Connection.CenterURL,
-		Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint,
+		Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint, CACertificatePEM: request.Connection.CACertificatePEM,
 	}
 	if err := persistHostUpdate(candidate, operation); err != nil {
 		return err
@@ -136,7 +137,7 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 	if err != nil {
 		return err
 	}
-	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint}
+	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
 	client := agent.Client{}
 	requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	err = client.BeginHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt)

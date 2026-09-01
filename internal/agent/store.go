@@ -71,15 +71,16 @@ type InstallationStatus struct {
 }
 
 type Connection struct {
-	AgentID       string `json:"agentId"`
-	Name          string `json:"name"`
-	CenterURL     string `json:"centerUrl"`
-	Credential    string `json:"-"`
-	PrivateKey    []byte `json:"-"`
-	CAFingerprint string `json:"-"`
+	AgentID          string `json:"agentId"`
+	Name             string `json:"name"`
+	CenterURL        string `json:"centerUrl"`
+	Credential       string `json:"-"`
+	PrivateKey       []byte `json:"-"`
+	CAFingerprint    string `json:"-"`
+	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 14
+const agentSchemaVersion = 15
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -537,6 +538,25 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 14
 		}
+		if version == 14 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`ALTER TABLE control_plane_connection ADD COLUMN ca_certificate_pem TEXT NOT NULL DEFAULT '';
+					ALTER TABLE agent_install_operations ADD COLUMN ca_certificate_pem TEXT NOT NULL DEFAULT '';
+					ALTER TABLE agent_install_operations ADD COLUMN previous_ca_certificate_pem TEXT NOT NULL DEFAULT '';
+					PRAGMA user_version = 15`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 14 to 15: %w", migrateErr)
+			}
+			version = 15
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -566,7 +586,8 @@ func Open(dataDir string) (*Store, error) {
 			center_url TEXT NOT NULL,
 			sealed_credential BLOB NOT NULL,
 			sealed_private_key BLOB NOT NULL,
-			ca_fingerprint TEXT NOT NULL
+			ca_fingerprint TEXT NOT NULL,
+			ca_certificate_pem TEXT NOT NULL
 		);
 		CREATE TABLE agent_install_operations (
 			id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -576,6 +597,7 @@ func Open(dataDir string) (*Store, error) {
 			sealed_token BLOB NOT NULL,
 			sealed_private_key BLOB NOT NULL,
 			ca_fingerprint TEXT NOT NULL,
+			ca_certificate_pem TEXT NOT NULL,
 			replace_existing INTEGER NOT NULL CHECK(replace_existing IN (0, 1)),
 			phase TEXT NOT NULL CHECK(phase IN ('enrollment_pending', 'enrolled', 'unit_written', 'reloaded', 'enabled', 'started', 'healthy')),
 			agent_id TEXT NOT NULL DEFAULT '',
@@ -588,6 +610,7 @@ func Open(dataDir string) (*Store, error) {
 			previous_sealed_credential BLOB NOT NULL DEFAULT X'',
 			previous_sealed_private_key BLOB NOT NULL DEFAULT X'',
 			previous_ca_fingerprint TEXT NOT NULL DEFAULT '',
+			previous_ca_certificate_pem TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
@@ -637,7 +660,7 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 14;`); err != nil {
+		PRAGMA user_version = 15;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
@@ -840,11 +863,20 @@ func (s *Store) ClearGatewayState(ctx context.Context) error {
 }
 
 func (s *Store) SaveConnection(ctx context.Context, connection Connection) error {
+	fingerprint, certificatePEM, err := normalizeCenterTrust(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM)
+	if err != nil {
+		return err
+	}
+	connection.CAFingerprint = fingerprint
+	connection.CACertificatePEM = certificatePEM
+	if err := validateCAFingerprint(connection.CenterURL, connection.CAFingerprint); err != nil {
+		return nil, nil, err
+	}
 	sealedCredential, sealedPrivateKey, err := s.sealConnection(connection)
 	if err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint) VALUES(1, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint))
+	result, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem) VALUES(1, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint), strings.TrimSpace(connection.CACertificatePEM))
 	if err != nil {
 		return fmt.Errorf("agent: save Center connection: %w", err)
 	}
@@ -862,13 +894,19 @@ func (s *Store) SaveConnection(ctx context.Context, connection Connection) error
 // gateway, and recovery state remain intact so an explicitly approved Center
 // migration cannot stop or forget locally managed workloads.
 func (s *Store) ReplaceConnection(ctx context.Context, connection Connection) error {
+	fingerprint, certificatePEM, err := normalizeCenterTrust(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM)
+	if err != nil {
+		return err
+	}
+	connection.CAFingerprint = fingerprint
+	connection.CACertificatePEM = certificatePEM
 	sealedCredential, sealedPrivateKey, err := s.sealConnection(connection)
 	if err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint)
-		VALUES(1, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url, sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO control_plane_connection(id, agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem)
+		VALUES(1, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET agent_id = excluded.agent_id, name = excluded.name, center_url = excluded.center_url, sealed_credential = excluded.sealed_credential, sealed_private_key = excluded.sealed_private_key, ca_fingerprint = excluded.ca_fingerprint, ca_certificate_pem = excluded.ca_certificate_pem`, connection.AgentID, connection.Name, connection.CenterURL, sealedCredential, sealedPrivateKey, normalizeCAFingerprint(connection.CAFingerprint), strings.TrimSpace(connection.CACertificatePEM)); err != nil {
 		return fmt.Errorf("agent: replace Center connection: %w", err)
 	}
 	return nil
@@ -896,9 +934,12 @@ func (s *Store) sealConnection(connection Connection) ([]byte, []byte, error) {
 	if _, err := controlplane.PublicKey(connection.PrivateKey); err != nil {
 		return nil, nil, errors.New("agent: incomplete Center encryption identity")
 	}
-	if err := validateCAFingerprint(connection.CenterURL, connection.CAFingerprint); err != nil {
+	fingerprint, certificatePEM, err := normalizeCenterTrust(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM)
+	if err != nil {
 		return nil, nil, err
 	}
+	connection.CAFingerprint = fingerprint
+	connection.CACertificatePEM = certificatePEM
 	sealedCredential, err := secret.Seal(s.key, []byte(connection.Credential), []byte("agent-control-plane:"+connection.AgentID))
 	if err != nil {
 		return nil, nil, fmt.Errorf("agent: encrypt Center credential: %w", err)
@@ -913,7 +954,7 @@ func (s *Store) sealConnection(connection Connection) ([]byte, []byte, error) {
 func (s *Store) Connection(ctx context.Context) (Connection, error) {
 	var connection Connection
 	var sealedCredential, sealedPrivateKey []byte
-	err := s.db.QueryRowContext(ctx, `SELECT agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint FROM control_plane_connection WHERE id = 1`).Scan(&connection.AgentID, &connection.Name, &connection.CenterURL, &sealedCredential, &sealedPrivateKey, &connection.CAFingerprint)
+	err := s.db.QueryRowContext(ctx, `SELECT agent_id, name, center_url, sealed_credential, sealed_private_key, ca_fingerprint, ca_certificate_pem FROM control_plane_connection WHERE id = 1`).Scan(&connection.AgentID, &connection.Name, &connection.CenterURL, &sealedCredential, &sealedPrivateKey, &connection.CAFingerprint, &connection.CACertificatePEM)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Connection{}, errors.New("agent: not enrolled")
 	}
@@ -934,7 +975,7 @@ func (s *Store) Connection(ctx context.Context) (Connection, error) {
 	}
 	connection.PrivateKey = privateKey
 	if connection.CAFingerprint != "" {
-		if err := validateCAFingerprint(connection.CenterURL, connection.CAFingerprint); err != nil {
+		if _, _, err := normalizeCenterTrust(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM); err != nil {
 			return Connection{}, err
 		}
 	} else if !loopbackCenterURL(connection.CenterURL) {

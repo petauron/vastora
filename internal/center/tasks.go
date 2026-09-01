@@ -17,6 +17,59 @@ const (
 
 var errStaleTaskLease = errors.New("center: task lease is stale or expired")
 
+func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task AgentTask) error {
+	if strings.TrimSpace(agentID) == "" || strings.TrimSpace(task.ID) == "" || task.Attempt <= 0 {
+		return errors.New("center: claimed task identity is invalid")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	var result sql.Result
+	switch task.Kind {
+	case "application.command":
+		result, err = tx.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', lease_expires_at = '', updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, now, task.ID, agentID, task.Attempt)
+		if err == nil && task.NodeCommand != nil {
+			_, err = tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'pending', updated_at = ? WHERE worker_application_id = ? AND status = 'applying'`, now, task.NodeCommand.WorkerApplicationID)
+		}
+	case "agent.decommission":
+		result, err = tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'pending', lease_expires_at = '', updated_at = ? WHERE agent_id = ? AND state = 'running' AND attempt = ?`, now, agentID, task.Attempt)
+	case "agent.update":
+		result, err = tx.ExecContext(ctx, `UPDATE agent_updates SET state = 'pending', lease_expires_at = '', updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, now, task.ID, agentID, task.Attempt)
+	case "gateway.routes.apply":
+		result, err = tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'pending', lease_expires_at = '', updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ?`, now, agentID, task.Revision, task.Attempt)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE routes SET status = 'pending', updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND status = 'applying'`, now, agentID, task.Revision)
+		}
+	case "tunnel.state.apply":
+		result, err = tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'pending', lease_expires_at = '', updated_at = ? WHERE agent_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ?`, now, agentID, task.Revision, task.Attempt)
+	case "gateway.component.apply":
+		result, err = tx.ExecContext(ctx, `UPDATE gateway_components SET status = 'pending', lease_expires_at = '', updated_at = ? WHERE gateway_node_id = ? AND generation = ? AND status = 'applying' AND attempt = ?`, now, agentID, task.Revision, task.Attempt)
+	case "application.apply":
+		result, err = tx.ExecContext(ctx, `UPDATE deployments SET state = 'pending', lease_expires_at = '', updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, now, task.ID, agentID, task.Attempt)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', updated_at = ? WHERE id = ? AND status = 'deploying'`, now, task.ApplicationID)
+		}
+	default:
+		return fmt.Errorf("center: cannot release unsupported claimed task kind %q", task.Kind)
+	}
+	if err != nil {
+		return fmt.Errorf("center: release claimed task: %w", err)
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		if err != nil {
+			return fmt.Errorf("center: inspect released task: %w", err)
+		}
+		return errors.New("center: claimed task changed before its lease could be released")
+	}
+	if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, task.Revision, "released", "task encryption failed before delivery"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64) (time.Time, error) {
 	if expectedAttempt <= 0 || strings.TrimSpace(taskID) == "" {
 		return time.Time{}, errStaleTaskLease

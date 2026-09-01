@@ -85,7 +85,7 @@ func TestControlPlaneSwitchRollbackRestoresExternalTailscaleAndAgent(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://new.example.com", "token", strings.Repeat("b", 64), true)
+	operation, err := store.BeginEnrollmentOperation(context.Background(), "https://new.example.com", "token", strings.Repeat("b", 64), "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestControlPlaneSwitchCommitIsReplayableAfterDurableDecision(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8081", "token", "", true)
+	operation, err := store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8081", "token", "", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestControlPlaneSwitchCommitIsReplayableAfterDurableDecision(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation, err = store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8082", "next-token", "", true)
+	operation, err = store.BeginEnrollmentOperation(context.Background(), "http://127.0.0.1:8082", "next-token", "", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}

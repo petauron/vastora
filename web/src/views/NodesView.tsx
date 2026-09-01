@@ -17,15 +17,22 @@ import { SelectControl } from "@/components/SelectControl";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 
 export { validCenterURL } from "../lib/network";
 
 export function agentInstallCommand({ centerURL, enrollment, installerAvailable }: { centerURL: string; enrollment: AgentEnrollment; installerAvailable: boolean }) {
+  const caCertificate = enrollment.caCertificatePem?.trim() ?? "";
+  const caPath = caCertificate ? "/tmp/vastora-center-ca.pem" : "";
+  const writeCA = caCertificate ? `printf '%s' ${shellQuote(caCertificate)} > ${caPath} && chmod 0600 ${caPath} && ` : "";
   if (installerAvailable) {
     const installer = "/tmp/vastora-agent-install.sh";
-    return `curl -fsSL ${shellQuote(`${enrollment.installerUrl.replace(/\/$/, "")}/install/agent.sh`)} -o ${installer} && chmod +x ${installer} && ${installer} ${shellQuote(enrollment.token)}`;
+    const bootstrapUsesCA = Boolean(caCertificate) && enrollment.installerUrl.replace(/\/$/, "") === centerURL.replace(/\/$/, "");
+    const bootstrapTrust = bootstrapUsesCA ? `--cacert ${caPath} ` : "";
+    return `${writeCA}curl ${bootstrapTrust}-fsSL ${shellQuote(`${enrollment.installerUrl.replace(/\/$/, "")}/install/agent.sh`)} -o ${installer} && chmod +x ${installer} && ${installer} ${shellQuote(enrollment.token)} ${shellQuote(caPath)} ${bootstrapUsesCA ? "1" : "0"}`;
   }
-  return `printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file -`;
+  const caArgument = caPath ? ` --ca-certificate ${caPath}` : "";
+  return `${writeCA}printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(centerURL)} --token-file -${caArgument}`;
 }
 
 export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNavigate, startAdding = false }: { data: AppData; language: Language; mutate: Mutate; onAddFirstNodeHandled?: () => void; onNavigate: (screen: Screen) => void; startAdding?: boolean }) {
@@ -57,6 +64,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
   const [centerURL, setCenterURL] = useState("");
   const [gateway, setGateway] = useState(true);
   const [tunnel, setTunnel] = useState(false);
+  const [caCertificate, setCACertificate] = useState("");
   const [useHeadscale, setUseHeadscale] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -78,7 +86,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
     return agentInstallCommand({ centerURL, enrollment, installerAvailable: data.status.agentInstallerAvailable });
   }, [enrollment, data.status.agentInstallerAvailable, centerURL]);
   const joinedAgent = enrollment ? data.agents.find((agent) => agent.status === "active" && agent.name === name && !existingAgentIDs.includes(agent.id)) : undefined;
-  const close = () => { initialized.current = false; setName(""); setSiteID(""); setCenterURL(""); setGateway(true); setTunnel(false); setEnrollment(null); setExistingAgentIDs([]); setUseHeadscale(false); setError(""); setBusy(false); onClose(); };
+  const close = () => { initialized.current = false; setName(""); setSiteID(""); setCenterURL(""); setGateway(true); setTunnel(false); setCACertificate(""); setEnrollment(null); setExistingAgentIDs([]); setUseHeadscale(false); setError(""); setBusy(false); onClose(); };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setError("");
     if (!validCenterURL(centerURL)) { setError(copy(language, "Center 必须使用 HTTPS；只有 127.0.0.1 或 localhost 可以使用 HTTP。", "Center must use HTTPS. Only 127.0.0.1 or localhost may use HTTP.")); return; }
@@ -86,7 +94,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
     try {
       setExistingAgentIDs(data.agents.map((agent) => agent.id));
       const connectionURL = firstPrivateNode ? "http://127.0.0.1:8080" : centerURL;
-      setEnrollment(await api.createAgentEnrollment(siteID, name, connectionURL, useHeadscale && headscaleReady, gateway, tunnel));
+      setEnrollment(await api.createAgentEnrollment(siteID, name, connectionURL, useHeadscale && headscaleReady, gateway, tunnel, connectionURL.startsWith("https://") ? caCertificate : ""));
     } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
   };
   return (
@@ -113,6 +121,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
                   <summary className="cursor-pointer text-sm font-medium">{copy(language, "高级设置", "Advanced settings")}</summary>
                   <div className="mt-4 flex flex-col gap-4">
                     <Field><FieldLabel htmlFor="new-node-center">{copy(language, "Center 地址", "Center address")}</FieldLabel><Input id="new-node-center" onChange={(event) => setCenterURL(event.target.value)} placeholder="https://center.example.com" required type="url" value={centerURL} /><FieldDescription>{copy(language, "仅当此节点需要使用不同的连接地址时修改。", "Change only when this node needs a different connection address.")}</FieldDescription></Field>
+                    <Field><FieldLabel htmlFor="new-node-ca">{copy(language, "私有 CA 证书（可选）", "Private CA certificate (optional)")}</FieldLabel><Textarea id="new-node-ca" onChange={(event) => setCACertificate(event.target.value)} placeholder="-----BEGIN CERTIFICATE-----" value={caCertificate} /><FieldDescription>{copy(language, "仅当 Center 使用系统不信任的私有证书时填写根 CA；它会在令牌首次发送前建立信任。", "Provide the root CA only when Center uses a private certificate not trusted by the system. It is applied before the token is first sent.")}</FieldDescription></Field>
                     {headscaleReady ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="new-node-headscale">{copy(language, "先加入安全私网", "Join the secure private network first")}</FieldLabel><FieldDescription>{copy(language, "目标节点无法直接访问 Center 时开启；脚本会自动安装 Tailscale。", "Enable when the target cannot reach Center directly. The script installs Tailscale automatically.")}</FieldDescription></div><Switch checked={useHeadscale} id="new-node-headscale" onCheckedChange={setUseHeadscale} /></Field> : null}
                     <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="new-node-gateway">{copy(language, "可提供服务入口", "Can provide service access")}</FieldLabel><FieldDescription>{copy(language, "推荐开启；只有实际使用时才会安装网关组件。", "Recommended. Gateway components are installed only when used.")}</FieldDescription></div><Switch checked={gateway} id="new-node-gateway" onCheckedChange={setGateway} /></Field>
                     <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="new-node-tunnel">Cloudflare Tunnel</FieldLabel><FieldDescription>{copy(language, "允许以后通过该节点发布网页；现在不会安装。", "Allows this node to publish websites later. Nothing is installed now.")}</FieldDescription></div><Switch checked={tunnel} id="new-node-tunnel" onCheckedChange={setTunnel} /></Field>
