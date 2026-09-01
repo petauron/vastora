@@ -318,7 +318,7 @@ func TestTaskClaimDecryptsEnvelopeBoundToAgentAndAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := DeploymentTask{Kind: "application.apply", ID: "task-1", Attempt: 3, Secrets: json.RawMessage(`{"token":"private"}`)}
-	plaintext, _ := json.Marshal(task)
+	plaintext := []byte(`{"kind":"application.apply","id":"task-1","attempt":3,"secrets":{"token":"private"},"applicationCommand":{"action":"create","regionCode":"US"}}`)
 	envelope, err := controlplane.Seal(publicKey, plaintext, controlplane.TaskAdditionalData(connection.AgentID, task.ID, task.Attempt))
 	if err != nil {
 		t.Fatal(err)
@@ -338,7 +338,7 @@ func TestTaskClaimDecryptsEnvelopeBoundToAgentAndAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimed, err := (Client{}).claimNextTask(context.Background(), store, 0)
-	if err != nil || claimed == nil || claimed.ID != task.ID || string(claimed.Secrets) != string(task.Secrets) {
+	if err != nil || claimed == nil || claimed.ID != task.ID || string(claimed.Secrets) != string(task.Secrets) || claimed.ApplicationCommand == nil || claimed.ApplicationCommand.RegionCode != "US" {
 		t.Fatalf("decrypted task=%#v err=%v", claimed, err)
 	}
 }

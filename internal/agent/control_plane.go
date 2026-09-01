@@ -200,6 +200,7 @@ type ApplicationTaskResult struct {
 
 type RealityCommandTask struct {
 	Action              string   `json:"action"`
+	RegionCode          string   `json:"regionCode"`
 	DisplayName         string   `json:"displayName"`
 	ClientName          string   `json:"clientName,omitempty"`
 	InboundID           int      `json:"inboundId,omitempty"`
