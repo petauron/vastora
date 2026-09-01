@@ -457,6 +457,7 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	restoreLegacyInboundPlanSchemaForTest(t, db)
 	if _, err := db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id >= 42`); err != nil {
 		t.Fatal(err)
 	}
@@ -607,6 +608,46 @@ func TestVersion47MigrationConvertsInboundPlansToMonthlyBillingDay(t *testing.T)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans SET reset_day = 32 WHERE service_id = 'service-v3'`); err == nil {
 		t.Fatal("monthly reset day accepted a value above 31")
+	}
+}
+
+func restoreLegacyInboundPlanSchemaForTest(t *testing.T, db *sql.DB) {
+	t.Helper()
+	statements := []string{
+		`DROP INDEX three_x_ui_inbound_plans_due_idx`,
+		`CREATE TABLE three_x_ui_inbound_plans_legacy (
+			service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+			inbound_tag TEXT NOT NULL,
+			total_bytes INTEGER NOT NULL DEFAULT 0 CHECK(total_bytes >= 0),
+			reset_days INTEGER NOT NULL DEFAULT 0 CHECK(reset_days >= 0),
+			next_reset_at TEXT NOT NULL DEFAULT '',
+			last_reset_at TEXT NOT NULL DEFAULT '',
+			revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+			status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'resetting', 'failed')),
+			retry_at TEXT NOT NULL DEFAULT '',
+			attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt >= 0),
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
+		`INSERT INTO three_x_ui_inbound_plans_legacy(
+			service_id, inbound_tag, total_bytes, reset_days, next_reset_at,
+			last_reset_at, revision, status, retry_at, attempt, last_error, updated_at
+		)
+		SELECT service_id, inbound_tag, total_bytes,
+			CASE WHEN reset_day > 0 THEN 30 ELSE 0 END,
+			next_reset_at, last_reset_at, revision, status, retry_at, attempt,
+			last_error, updated_at
+		FROM three_x_ui_inbound_plans`,
+		`DROP TABLE three_x_ui_inbound_plans`,
+		`ALTER TABLE three_x_ui_inbound_plans_legacy RENAME TO three_x_ui_inbound_plans`,
+		`CREATE INDEX three_x_ui_inbound_plans_due_idx
+			ON three_x_ui_inbound_plans(status, next_reset_at, retry_at)
+			WHERE reset_days > 0`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("restore legacy inbound plan schema: %v\n%s", err, statement)
+		}
 	}
 }
 
