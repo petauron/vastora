@@ -60,25 +60,27 @@ type AgentCredential struct {
 }
 
 type AgentView struct {
-	ID                   string                   `json:"id"`
-	Name                 string                   `json:"name"`
-	Version              string                   `json:"version"`
-	OperatingSystem      string                   `json:"operatingSystem"`
-	Architecture         string                   `json:"architecture"`
-	Status               string                   `json:"status"`
-	AppliedInstallations int                      `json:"appliedInstallations"`
-	EnrolledAt           time.Time                `json:"enrolledAt"`
-	LastSeenAt           time.Time                `json:"lastSeenAt"`
-	Connected            bool                     `json:"connected"`
-	SiteID               string                   `json:"siteId"`
-	Roles                []string                 `json:"roles"`
-	Capabilities         NodeCapabilities         `json:"capabilities"`
-	NetworkCandidates    []networking.Candidate   `json:"networkCandidates"`
-	PublicEgress         *networking.PublicEgress `json:"publicEgress,omitempty"`
-	NetworkProfile       *networking.Profile      `json:"networkProfile,omitempty"`
-	GatewayHealthy       bool                     `json:"gatewayHealthy"`
-	TailscaleOwnership   string                   `json:"tailscaleOwnership"`
-	CredentialRevoked    bool                     `json:"credentialRevoked"`
+	ID                    string                   `json:"id"`
+	Name                  string                   `json:"name"`
+	Version               string                   `json:"version"`
+	OperatingSystem       string                   `json:"operatingSystem"`
+	Architecture          string                   `json:"architecture"`
+	Status                string                   `json:"status"`
+	AppliedInstallations  int                      `json:"appliedInstallations"`
+	EnrolledAt            time.Time                `json:"enrolledAt"`
+	LastSeenAt            time.Time                `json:"lastSeenAt"`
+	Connected             bool                     `json:"connected"`
+	SiteID                string                   `json:"siteId"`
+	Roles                 []string                 `json:"roles"`
+	Capabilities          NodeCapabilities         `json:"capabilities"`
+	NetworkCandidates     []networking.Candidate   `json:"networkCandidates"`
+	PublicEgress          *networking.PublicEgress `json:"publicEgress,omitempty"`
+	NetworkProfile        *networking.Profile      `json:"networkProfile,omitempty"`
+	GatewayHealthy        bool                     `json:"gatewayHealthy"`
+	TailscaleOwnership    string                   `json:"tailscaleOwnership"`
+	CredentialRevoked     bool                     `json:"credentialRevoked"`
+	RemoteUpdateSupported bool                     `json:"remoteUpdateSupported"`
+	Update                *AgentUpdateView         `json:"update,omitempty"`
 }
 
 func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
@@ -525,7 +527,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if !publicEgress.ObservedAt.IsZero() {
 		publicEgressObservedAt = publicEgress.ObservedAt.Format(time.RFC3339Nano)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = ?, tailscale_ownership = ?, last_seen_at = ?, public_egress_address = CASE WHEN ? THEN ? ELSE public_egress_address END, public_egress_bind_address = CASE WHEN ? THEN ? ELSE public_egress_bind_address END, public_egress_mode = CASE WHEN ? THEN ? ELSE public_egress_mode END, public_egress_observed_at = CASE WHEN ? THEN ? ELSE public_egress_observed_at END WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), replacePublicEgress, publicEgress.Address, replacePublicEgress, publicEgress.BindAddress, replacePublicEgress, publicEgress.Mode, replacePublicEgress, publicEgressObservedAt, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_generation = ?, remote_update_supported = ?, tailscale_ownership = ?, last_seen_at = ?, public_egress_address = CASE WHEN ? THEN ? ELSE public_egress_address END, public_egress_bind_address = CASE WHEN ? THEN ? ELSE public_egress_bind_address END, public_egress_mode = CASE WHEN ? THEN ? ELSE public_egress_mode END, public_egress_observed_at = CASE WHEN ? THEN ? ELSE public_egress_observed_at END WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.ApplicationRuntimeGeneration, heartbeat.RemoteUpdateSupported, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), replacePublicEgress, publicEgress.Address, replacePublicEgress, publicEgress.BindAddress, replacePublicEgress, publicEgress.Mode, replacePublicEgress, publicEgressObservedAt, id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_network_candidates WHERE agent_id = ?`, id); err != nil {
@@ -755,7 +757,7 @@ func normalizeAgentPublicEgress(value *networking.PublicEgress, candidates []net
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at, remote_update_supported FROM agents ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
@@ -765,7 +767,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		var enrolledAt, lastSeenAt, publicAddress, publicBindAddress, publicMode, publicObservedAt string
 		var rolesJSON, capabilitiesJSON []byte
 		var gatewayHealthy int
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.TailscaleOwnership, &agent.CredentialRevoked, &publicAddress, &publicBindAddress, &publicMode, &publicObservedAt); err != nil {
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.TailscaleOwnership, &agent.CredentialRevoked, &publicAddress, &publicBindAddress, &publicMode, &publicObservedAt, &agent.RemoteUpdateSupported); err != nil {
 			return nil, fmt.Errorf("center: scan agent: %w", err)
 		}
 		var err error
@@ -801,6 +803,30 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	for index := range agents {
 		byID[agents[index].ID] = index
 		agents[index].NetworkCandidates = []networking.Candidate{}
+	}
+	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at
+		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)`)
+	if err != nil {
+		return nil, fmt.Errorf("center: list Agent updates: %w", err)
+	}
+	for updateRows.Next() {
+		var update AgentUpdateView
+		var agentID, updatedAt string
+		if err := updateRows.Scan(&update.ID, &agentID, &update.TargetVersion, &update.State, &update.LastError, &updatedAt); err != nil {
+			updateRows.Close()
+			return nil, fmt.Errorf("center: scan Agent update: %w", err)
+		}
+		update.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+		if err != nil {
+			updateRows.Close()
+			return nil, errors.New("center: invalid stored Agent update timestamp")
+		}
+		if index, ok := byID[agentID]; ok {
+			agents[index].Update = &update
+		}
+	}
+	if err := updateRows.Close(); err != nil {
+		return nil, err
 	}
 	candidateRows, err := s.db.QueryContext(ctx, `SELECT agent_id, address, interface_name, kind, observed_at FROM agent_network_candidates ORDER BY agent_id, kind, interface_name, address`)
 	if err != nil {

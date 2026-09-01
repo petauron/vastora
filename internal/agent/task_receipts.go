@@ -77,6 +77,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		return nil, err
 	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM task_receipts WHERE state = 'acknowledged' AND updated_at < ?`, s.now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano))
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM task_receipts WHERE task_kind = 'agent.update' AND state = 'processing' AND updated_at < ?`, s.now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano))
 	var attempt int64
 	var executorRuntimeGeneration int
 	var storedHash []byte
@@ -138,12 +139,12 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	if state != "processing" {
 		return nil, errors.New("agent: stored task receipt state is invalid")
 	}
-	if task.Kind == "agent.decommission" {
+	if task.Kind == "agent.decommission" || task.Kind == "agent.update" {
 		// The durable host helper makes this task resumable. Re-delivery after a
 		// lease recovery must re-arm that helper instead of manufacturing an
 		// unknown terminal outcome.
 		if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, updated_at = ? WHERE task_id = ? AND state = 'processing'`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID); err != nil {
-			return nil, fmt.Errorf("agent: resume host decommission receipt: %w", err)
+			return nil, fmt.Errorf("agent: resume host lifecycle receipt: %w", err)
 		}
 		return nil, nil
 	}

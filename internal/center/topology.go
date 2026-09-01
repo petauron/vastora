@@ -46,6 +46,7 @@ type NodeHeartbeat struct {
 	GatewayRevision              int64
 	GatewayConfigHash            string
 	ApplicationRuntimeGeneration int
+	RemoteUpdateSupported        bool
 	TailscaleOwnership           string
 	Startup                      bool
 }
