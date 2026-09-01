@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CheckCircle2Icon, MapPinIcon, NetworkIcon, PlusIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon } from "lucide-react";
+import { CheckCircle2Icon, CircleArrowUpIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon } from "lucide-react";
 import { api } from "../api";
 import { validCenterURL } from "../lib/network";
 import type { AppData, Mutate, Screen } from "../App";
@@ -135,8 +135,9 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
   const [siteID, setSiteID] = useState("");
   const [gateway, setGateway] = useState(false);
   const [tunnel, setTunnel] = useState(false);
-  const [commandKind, setCommandKind] = useState<"purpose" | "update" | null>(null);
+  const [commandKind, setCommandKind] = useState<"purpose" | null>(null);
   const [busy, setBusy] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
   const [error, setError] = useState("");
   const [danger, setDanger] = useState(false);
   const [confirmation, setConfirmation] = useState("");
@@ -157,8 +158,9 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
   const roles = gateway ? "worker,gateway" : "worker";
   const capabilities = ["docker", gateway ? "gateway" : "", tunnel ? "tunnel" : ""].filter(Boolean).join(",");
   const purposeCommand = `sudo /usr/local/bin/vastora agent configure --data-dir /var/lib/vastora/agent --roles ${shellQuote(roles)} --capabilities ${shellQuote(capabilities)}`;
-  const updateCommand = `sudo /usr/local/bin/vastora agent update --data-dir /var/lib/vastora/agent --center-url ${shellQuote(data.status.agentConnectUrl)}`;
-  const command = commandKind === "purpose" ? purposeCommand : updateCommand;
+  const manualUpdateCommand = "sudo /usr/local/bin/vastora agent update --data-dir /var/lib/vastora/agent";
+  const updateActive = agent?.update?.state === "pending" || agent?.update?.state === "running" || agent?.update?.state === "installing";
+  const updateRequired = Boolean(agent && agent.version !== data.status.version);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!agent) return;
@@ -184,12 +186,23 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
       setBusy(false);
     }
   };
+  const startUpdate = async () => {
+    if (!agent) return;
+    setUpdateBusy(true); setError("");
+    try {
+      await mutate(() => api.startAgentUpdate(agent.id), copy(language, "已向 Agent 下发安全更新。", "Secure Agent update queued."));
+    } catch (updateError) {
+      setError(userError(language, updateError));
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
   return (
     <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(agent)}>
       <SheetContent className="sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{copy(language, `管理 ${agent?.name ?? ""}`, `Manage ${agent?.name ?? ""}`)}</SheetTitle>
-          <SheetDescription>{danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : copy(language, "修改名称、位置或节点用途；需要在节点执行的操作会生成一条命令。", "Change its name, location, or purpose. Operations that must run on the node are provided as one command.")}</SheetDescription>
+          <SheetDescription>{danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : copy(language, "修改名称、位置或节点用途；支持的 Agent 可以由 Center 安全更新。", "Change its name, location, or purpose. Supported Agents can update securely through Center.")}</SheetDescription>
         </SheetHeader>
         {danger ? <div className="flex flex-1 flex-col gap-4 px-4">
           <Alert variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, "确认停用节点", "Confirm node disable")}</AlertTitle><AlertDescription>{copy(language, "Center 会撤销管理权限，但不会远程删除节点上的二进制或数据。", "Center revokes management access but does not remotely delete the binary or local data.")}</AlertDescription></Alert>
@@ -207,8 +220,8 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
               </div>
               <Button className="mt-3" disabled={!purposeChanged} onClick={() => setCommandKind("purpose")} size="sm" type="button" variant="outline"><TerminalIcon data-icon="inline-start" />{copy(language, "生成修改命令", "Generate change command")}</Button>
             </div>
-            <div className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">Agent</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, `节点版本 ${agent?.version ?? "—"} · Center 版本 ${data.status.version}`, `Node ${agent?.version ?? "—"} · Center ${data.status.version}`)}</p></div><StateBadge value={agent?.version === data.status.version ? "ready" : "pending"} /></div><Button className="mt-3" onClick={() => setCommandKind("update")} size="sm" type="button" variant="outline"><TerminalIcon data-icon="inline-start" />{agent?.version === data.status.version ? copy(language, "重新安装当前版本", "Reinstall current version") : copy(language, "更新 Agent", "Update Agent")}</Button></div>
-            {commandKind ? <Alert><TerminalIcon /><AlertTitle>{commandKind === "purpose" ? copy(language, "在节点运行一次", "Run once on the node") : copy(language, "安全更新 Agent", "Safely update Agent")}</AlertTitle><AlertDescription><p>{commandKind === "purpose" ? copy(language, "命令会更新 systemd 配置并重启 Agent，Center 会自动看到新用途。", "The command updates systemd, restarts Agent, and Center detects the new purpose automatically.") : copy(language, "Agent 会验证下载摘要和版本；若服务重启失败，会恢复上一版。", "Agent verifies the download digest and version. If restart fails, it restores the previous binary.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{command}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={command} /></div></AlertDescription></Alert> : null}
+            <div className="rounded-xl border p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-sm font-medium">Agent</p><p className="mt-1 text-xs text-muted-foreground">{copy(language, `节点版本 ${agent?.version ?? "—"} · Center 版本 ${data.status.version}`, `Node ${agent?.version ?? "—"} · Center ${data.status.version}`)}</p></div><StateBadge value={updateActive ? "applying" : !updateRequired ? "ready" : agent?.update?.state === "failed" ? "failed" : "pending"} /></div>{(updateRequired || updateActive) && agent?.remoteUpdateSupported ? <><Button className="mt-3" disabled={!agent.connected || updateActive || updateBusy} onClick={() => void startUpdate()} size="sm" type="button" variant="outline">{updateBusy || updateActive ? <Spinner data-icon="inline-start" /> : agent.update?.state === "failed" ? <RotateCcwIcon data-icon="inline-start" /> : <CircleArrowUpIcon data-icon="inline-start" />}{updateActive ? copy(language, "正在更新", "Updating") : agent.update?.state === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "通过 Center 更新", "Update through Center")}</Button>{!agent.connected ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "节点重新上线后才能开始更新。", "The node must reconnect before updating.")}</p> : null}{updateActive ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, `正在安全更新到 ${agent.update?.targetVersion}；节点会短暂离线并自动重新连接。`, `Safely updating to ${agent.update?.targetVersion}. The node briefly disconnects and reconnects automatically.`)}</p> : null}{agent.update?.state === "failed" && agent.update.lastError ? <FieldError className="mt-2">{agent.update.lastError}</FieldError> : null}</> : null}{updateRequired && !agent?.remoteUpdateSupported ? <Alert className="mt-3"><TerminalIcon /><AlertTitle>{copy(language, "需要一次手动更新", "One manual update required")}</AlertTitle><AlertDescription><p>{copy(language, "当前版本还不支持 Center 远程更新。完成这一次后，后续版本可直接在这里更新。", "This version predates Center-managed updates. After this one-time step, future updates can run here.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{manualUpdateCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={manualUpdateCommand} /></div></AlertDescription></Alert> : null}</div>
+            {commandKind ? <Alert><TerminalIcon /><AlertTitle>{copy(language, "在节点运行一次", "Run once on the node")}</AlertTitle><AlertDescription><p>{copy(language, "命令会更新 systemd 配置并重启 Agent，Center 会自动看到新用途。", "The command updates systemd, restarts Agent, and Center detects the new purpose automatically.")}</p><div className="relative mt-3"><code className="block break-all rounded-lg bg-muted p-3 pr-12 text-xs leading-5">{purposeCommand}</code><CopyButton className="absolute right-1.5 top-1.5" label={copy(language, "复制命令", "Copy command")} language={language} size="icon-sm" value={purposeCommand} /></div></AlertDescription></Alert> : null}
             {error ? <FieldError>{error}</FieldError> : null}
           </FieldGroup></div>
           <SheetFooter className="justify-between"><Button onClick={() => setDanger(true)} type="button" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "停用节点", "Disable node")}</Button><div className="flex gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button><Button disabled={busy || !name || name === agent?.name && siteID === agent?.siteId} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存信息", "Save details")}</Button></div></SheetFooter>

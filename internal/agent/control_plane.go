@@ -39,6 +39,7 @@ type Client struct {
 	GatewayProvisioner GatewayProvisioner
 	TunnelProvisioner  TunnelProvisioner
 	Decommissioner     HostDecommissioner
+	Updater            HostUpdater
 	TailscaleIsolation func(context.Context, TailscaleIsolationDesiredState) error
 	TailscaleEnrolled  bool
 	TailscaleOwnership string
@@ -62,6 +63,17 @@ type HostDecommissionRequest struct {
 	Attempt    int64
 	DeleteData bool
 	Connection Connection
+}
+
+type HostUpdater interface {
+	ScheduleUpdate(context.Context, HostUpdateRequest) error
+}
+
+type HostUpdateRequest struct {
+	TaskID        string
+	Attempt       int64
+	TargetVersion string
+	Connection    Connection
 }
 
 // deferredTaskCompletionError leaves the Center task lease active so the same
@@ -160,6 +172,7 @@ type DeploymentTask struct {
 	Reconcile                 bool                           `json:"reconcile,omitempty"`
 	RequiredRuntimeGeneration int                            `json:"requiredRuntimeGeneration,omitempty"`
 	OfflineRestore            bool                           `json:"-"`
+	TargetVersion             string                         `json:"targetVersion,omitempty"`
 }
 
 type RegistryCredential struct {
@@ -500,6 +513,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"gatewayRevision":              gatewayRevision,
 		"gatewayConfigHash":            gatewayConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
+		"remoteUpdateSupported":        c.Updater != nil,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           c.TailscaleOwnership,
 		"startup":                      startup,
@@ -962,6 +976,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	var result ApplicationTaskResult
 	var err error
 	decommissionHandedOff := false
+	updateHandedOff := false
 	switch task.Kind {
 	case "application.apply":
 		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
@@ -1066,12 +1081,30 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				decommissionHandedOff = err == nil
 			}
 		}
+	case "agent.update":
+		if c.Updater == nil {
+			err = errors.New("agent: host update capability is not configured")
+		} else if strings.TrimSpace(task.TargetVersion) == "" {
+			err = errors.New("agent: update target version is missing")
+		} else {
+			var connection Connection
+			connection, err = store.Connection(ctx)
+			if err == nil {
+				err = c.Updater.ScheduleUpdate(ctx, HostUpdateRequest{TaskID: task.ID, Attempt: task.Attempt, TargetVersion: task.TargetVersion, Connection: connection})
+				updateHandedOff = err == nil
+			}
+		}
 	default:
 		err = errors.New("agent: unsupported task kind")
 	}
 	if decommissionHandedOff {
 		// The persistent host helper owns the terminal result. A successful
 		// schedule is not evidence that host cleanup itself has completed.
+		return
+	}
+	if updateHandedOff {
+		// The persistent updater owns binary replacement, rollback, restart, and
+		// terminal reporting. A successful schedule is not an update result.
 		return
 	}
 	if task.Kind == "application.apply" && task.Operation != "uninstall" && len(result.GeneratedSecrets) != 0 {
@@ -1254,6 +1287,26 @@ func (c Client) CompleteHostDecommission(ctx context.Context, connection Connect
 		return errors.New("agent: invalid host decommission completion")
 	}
 	payload := map[string]any{"attempt": attempt, "succeeded": cleanupErr == nil, "error": safeTaskError(cleanupErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+// BeginHostUpdate transfers a claimed update from the Agent lease to the
+// persistent systemd helper before the Agent process is restarted.
+func (c Client) BeginHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64) error {
+	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+		return errors.New("agent: invalid host update handoff")
+	}
+	payload := map[string]any{"attempt": attempt}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/updates/"+url.PathEscape(taskID)+"/start", payload, connection.Credential, connection.CAFingerprint, nil)
+}
+
+// CompleteHostUpdate reports the persistent helper outcome. Center accepts a
+// success only after the target Agent version has reconnected by heartbeat.
+func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64, updateErr error) error {
+	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+		return errors.New("agent: invalid host update completion")
+	}
+	payload := map[string]any{"attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, nil)
 }
 

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 47
+const centerSchemaVersion = 48
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -168,7 +168,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			public_egress_address TEXT NOT NULL DEFAULT '',
 			public_egress_bind_address TEXT NOT NULL DEFAULT '',
 			public_egress_mode TEXT NOT NULL DEFAULT '' CHECK(public_egress_mode IN ('', 'direct', 'nat')),
-			public_egress_observed_at TEXT NOT NULL DEFAULT ''
+			public_egress_observed_at TEXT NOT NULL DEFAULT '',
+			remote_update_supported INTEGER NOT NULL DEFAULT 0 CHECK(remote_update_supported IN (0, 1))
 		)`,
 		`CREATE TABLE agent_enrollment_operations (
 			token_hash BLOB PRIMARY KEY REFERENCES agent_enrollment_tokens(token_hash) ON DELETE CASCADE,
@@ -222,6 +223,19 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE agent_updates (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+			target_version TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'installing', 'succeeded', 'failed')),
+			attempt INTEGER NOT NULL DEFAULT 0,
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX agent_updates_one_active_idx ON agent_updates(agent_id) WHERE state IN ('pending', 'running', 'installing')`,
+		`CREATE INDEX agent_updates_agent_idx ON agent_updates(agent_id, created_at DESC)`,
 		`CREATE TABLE applications (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,

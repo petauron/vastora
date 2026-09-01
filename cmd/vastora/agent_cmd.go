@@ -297,6 +297,34 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		return cleanPersistentHostDecommission(*operationFile)
+	case "finish-update":
+		flags := flag.NewFlagSet("agent finish-update", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		operationFile := flags.String("operation-file", hostUpdateOperationPath, "internal: protected host update operation")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("invalid persistent host update command")
+		}
+		if err := requireLinuxRoot("agent finish-update"); err != nil {
+			return err
+		}
+		return runPersistentHostUpdate(context.Background(), *operationFile)
+	case "cleanup-update":
+		flags := flag.NewFlagSet("agent cleanup-update", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		operationFile := flags.String("operation-file", hostUpdateOperationPath, "internal: protected host update operation")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("invalid persistent host update finalizer")
+		}
+		if err := requireLinuxRoot("agent cleanup-update"); err != nil {
+			return err
+		}
+		return cleanPersistentHostUpdate(*operationFile)
 	case "enroll":
 		flags := flag.NewFlagSet("agent enroll", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -497,6 +525,9 @@ func runAgent(arguments []string) error {
 			return fmt.Errorf("locate vastora executable: %w", err)
 		}
 		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
+		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
+			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
+		}
 		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
 		if capabilities.Gateway {
 			caddyDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
@@ -614,30 +645,7 @@ func validatedNodeRuntime(rolesValue, capabilitiesValue string) ([]string, agent
 }
 
 func updateAgentExecutable(ctx context.Context, client *http.Client, connection agent.Connection, executable string, restart func() error) (string, error) {
-	endpoint, err := agentUpdateEndpoint(connection, runtime.GOOS, runtime.GOARCH)
-	if err != nil {
-		return "", err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", fmt.Errorf("create Agent update request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+connection.Credential)
-	response, err := client.Do(request)
-	if err != nil {
-		return "", fmt.Errorf("download Agent update: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		message, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		return "", fmt.Errorf("download Agent update: %s: %s", response.Status, strings.TrimSpace(string(message)))
-	}
-	expectedVersion := strings.TrimSpace(response.Header.Get("X-Vastora-Version"))
-	expectedDigest := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Vastora-SHA256")))
-	if expectedVersion == "" || len(expectedDigest) != sha256.Size*2 {
-		return "", errors.New("center returned incomplete Agent update metadata")
-	}
-	executable, err = filepath.Abs(executable)
+	executable, err := filepath.Abs(executable)
 	if err != nil {
 		return "", fmt.Errorf("resolve Agent executable: %w", err)
 	}
@@ -645,36 +653,11 @@ func updateAgentExecutable(ctx context.Context, client *http.Client, connection 
 	if err != nil || !info.Mode().IsRegular() {
 		return "", errors.New("agent executable is not a regular file")
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(executable), ".vastora-update-*")
+	temporaryPath, expectedVersion, err := downloadAgentUpdateCandidate(ctx, client, connection, filepath.Dir(executable))
 	if err != nil {
-		return "", fmt.Errorf("create Agent update file: %w", err)
+		return "", err
 	}
-	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	digest := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(temporary, digest), io.LimitReader(response.Body, (256<<20)+1))
-	if copyErr == nil && written > 256<<20 {
-		copyErr = errors.New("agent update exceeds 256 MiB")
-	}
-	if syncErr := temporary.Sync(); copyErr == nil {
-		copyErr = syncErr
-	}
-	if closeErr := temporary.Close(); copyErr == nil {
-		copyErr = closeErr
-	}
-	if copyErr != nil {
-		return "", fmt.Errorf("store Agent update: %w", copyErr)
-	}
-	if got := fmt.Sprintf("%x", digest.Sum(nil)); got != expectedDigest {
-		return "", errors.New("agent update integrity check failed")
-	}
-	if err := os.Chmod(temporaryPath, 0o755); err != nil {
-		return "", fmt.Errorf("make Agent update executable: %w", err)
-	}
-	output, err := exec.CommandContext(ctx, temporaryPath, "version").CombinedOutput()
-	if err != nil || strings.TrimSpace(string(output)) != expectedVersion {
-		return "", errors.New("downloaded Agent update failed its version check")
-	}
 	backupPath := executable + ".previous"
 	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("prepare Agent rollback file: %w", err)
@@ -693,6 +676,70 @@ func updateAgentExecutable(ctx context.Context, client *http.Client, connection 
 		return "", fmt.Errorf("restart updated Agent; previous binary restored: %w", err)
 	}
 	return expectedVersion, nil
+}
+
+func downloadAgentUpdateCandidate(ctx context.Context, client *http.Client, connection agent.Connection, directory string) (string, string, error) {
+	endpoint, err := agentUpdateEndpoint(connection, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return "", "", err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("create Agent update request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+connection.Credential)
+	response, err := client.Do(request)
+	if err != nil {
+		return "", "", fmt.Errorf("download Agent update: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		return "", "", fmt.Errorf("download Agent update: %s: %s", response.Status, strings.TrimSpace(string(message)))
+	}
+	expectedVersion := strings.TrimSpace(response.Header.Get("X-Vastora-Version"))
+	expectedDigest := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Vastora-SHA256")))
+	if expectedVersion == "" || len(expectedDigest) != sha256.Size*2 {
+		return "", "", errors.New("center returned incomplete Agent update metadata")
+	}
+	temporary, err := os.CreateTemp(directory, ".vastora-update-*")
+	if err != nil {
+		return "", "", fmt.Errorf("create Agent update file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	keep := false
+	defer func() {
+		_ = temporary.Close()
+		if !keep {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	digest := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(temporary, digest), io.LimitReader(response.Body, (256<<20)+1))
+	if copyErr == nil && written > 256<<20 {
+		copyErr = errors.New("agent update exceeds 256 MiB")
+	}
+	if syncErr := temporary.Sync(); copyErr == nil {
+		copyErr = syncErr
+	}
+	if closeErr := temporary.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return "", "", fmt.Errorf("store Agent update: %w", copyErr)
+	}
+	if got := fmt.Sprintf("%x", digest.Sum(nil)); got != expectedDigest {
+		return "", "", errors.New("agent update integrity check failed")
+	}
+	if err := os.Chmod(temporaryPath, 0o755); err != nil {
+		return "", "", fmt.Errorf("make Agent update executable: %w", err)
+	}
+	output, err := exec.CommandContext(ctx, temporaryPath, "version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(output)) != expectedVersion {
+		return "", "", errors.New("downloaded Agent update failed its version check")
+	}
+	keep = true
+	return temporaryPath, expectedVersion, nil
 }
 
 func agentUpdateEndpoint(connection agent.Connection, operatingSystem, architecture string) (string, error) {

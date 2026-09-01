@@ -44,6 +44,7 @@ type AgentTask struct {
 	RegistryCredential        *AgentRegistryCredential       `json:"registryCredential,omitempty"`
 	Reconcile                 bool                           `json:"reconcile,omitempty"`
 	RequiredRuntimeGeneration int                            `json:"requiredRuntimeGeneration,omitempty"`
+	TargetVersion             string                         `json:"targetVersion,omitempty"`
 }
 
 type AgentRegistryCredential struct {
@@ -88,16 +89,28 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
+	requiredTaskID := ""
+	if len(requiredTaskIDs) != 0 {
+		requiredTaskID = strings.TrimSpace(requiredTaskIDs[0])
+	}
+	if requiredTaskID == "" {
+		updateTask, updateErr := s.claimAgentUpdate(ctx, tx, agentID)
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		if updateTask != nil {
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return updateTask, nil
+		}
+	}
 	var task AgentTask
 	var manifest []byte
 	var secretID sql.NullString
 	var registryCredentialID sql.NullString
 	var attempt int64
 	var reconciliationRequested, requiredRuntimeGeneration int
-	requiredTaskID := ""
-	if len(requiredTaskIDs) != 0 {
-		requiredTaskID = strings.TrimSpace(requiredTaskIDs[0])
-	}
 	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation
 		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'`
 	queryArgs := []any{agentID}
@@ -329,6 +342,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeAgentDecommission(ctx, agentID, expectedAttempt, succeeded, taskError)
+	}
+	if isAgentUpdateTaskID(taskID) {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeAgentUpdate(ctx, agentID, taskID, expectedAttempt, succeeded, taskError)
 	}
 	if revision, gatewayTask := gatewayTaskRevision(taskID); gatewayTask {
 		if reconciliationRequired {

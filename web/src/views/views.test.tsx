@@ -39,7 +39,7 @@ const dashboard = (): AppData => ({
   sources: [], organizations: [], routes: [], actions: [], integrations: [], threeXUIControllerMigrations: [],
   systemDomain: { namespace: "vastora.example.com", centerUrl: "https://center.vastora.example.com", headscaleUrl: "https://headscale.vastora.example.com", cloudflareZone: "example.com", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: true, cloudflareOAuthAvailable: true },
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
-  agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true }],
+  agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true, remoteUpdateSupported: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
   registryCredentials: [],
   applications: [
@@ -1454,22 +1454,37 @@ describe("network and app views", () => {
     expect(command).not.toContain("--capabilities");
   });
 
-  it("generates one safe command for node purpose changes and Agent updates", () => {
-    const container = render(<NodesView data={dashboard()} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+  it("queues supported Agent updates through Center and keeps purpose changes explicit", async () => {
+    const data = dashboard();
+    data.agents[0].version = "old";
+    const update = vi.spyOn(api, "startAgentUpdate").mockResolvedValue({ id: "agent-update-1", targetVersion: "test", state: "pending", updatedAt: "2026-08-18T00:00:00Z" });
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={() => undefined} />);
     const manage = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理"));
     act(() => manage?.click());
     expect(document.body.textContent).toContain("节点用途");
-    expect(document.body.textContent).toContain("重新安装当前版本");
-    const update = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("重新安装当前版本"));
-    act(() => update?.click());
-    expect(document.body.textContent).toContain("agent update");
-    expect(document.body.textContent).toContain("--center-url 'https://center.example.com'");
+    const updateButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("通过 Center 更新"));
+    await act(async () => updateButton?.click());
+    expect(update).toHaveBeenCalledWith("agent");
+    expect(document.body.textContent).not.toContain("agent update");
     const tunnel = document.querySelector<HTMLElement>("#manage-node-tunnel");
     act(() => tunnel?.click());
     const generate = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("生成修改命令"));
     act(() => generate?.click());
     expect(document.body.textContent).toContain("agent configure");
     expect(document.body.textContent).toContain("--capabilities 'docker,gateway'");
+  });
+
+  it("shows one manual bootstrap update for legacy Agents", () => {
+    const data = dashboard();
+    data.agents[0].version = "old";
+    data.agents[0].remoteUpdateSupported = false;
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    const manage = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理"));
+    act(() => manage?.click());
+    expect(document.body.textContent).toContain("需要一次手动更新");
+    expect(document.body.textContent).toContain("sudo /usr/local/bin/vastora agent update --data-dir /var/lib/vastora/agent");
+    expect(document.body.textContent).not.toContain("--center-url");
+    expect(document.body.textContent).not.toContain("通过 Center 更新");
   });
 
   it("does not ask for integration secrets again when editing", () => {

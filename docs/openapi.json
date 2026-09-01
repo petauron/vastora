@@ -4047,6 +4047,58 @@
         ]
       }
     },
+    "/api/v1/agents/{id}/updates": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Queue Agent Update",
+        "operationId": "queueAgentUpdate_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/agents/{id}/revoke": {
       "post": {
         "tags": [
@@ -4470,6 +4522,9 @@
                   "applicationRuntimeGeneration": {
                     "type": "integer"
                   },
+                  "remoteUpdateSupported": {
+                    "type": "boolean"
+                  },
                   "tailscaleEnrolled": {
                     "type": "boolean"
                   },
@@ -4691,6 +4746,83 @@
                   "taskId": {
                     "type": "string"
                   },
+                  "attempt": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{id}/updates/{taskID}/start": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Begin Agent Update",
+        "operationId": "beginAgentUpdate_post",
+        "x-vastora-audience": "agent",
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "taskID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
                   "attempt": {
                     "type": "integer"
                   }

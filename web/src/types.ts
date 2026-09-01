@@ -252,6 +252,16 @@ export type AgentView = {
   networkProfile?: NetworkProfile;
   gatewayHealthy: boolean;
   tailscaleOwnership?: "managed" | "external" | "";
+  remoteUpdateSupported: boolean;
+  update?: AgentUpdate;
+};
+
+export type AgentUpdate = {
+  id: string;
+  targetVersion: string;
+  state: "pending" | "running" | "installing" | "succeeded" | "failed";
+  lastError?: string;
+  updatedAt: string;
 };
 
 export type AgentEnrollment = { token: string; siteId: string; installerUrl: string; expiresAt: string };

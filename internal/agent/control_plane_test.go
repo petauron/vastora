@@ -46,6 +46,15 @@ type fakeHostDecommissioner struct {
 	scheduleCalls int
 }
 
+type fakeHostUpdater struct {
+	requests []HostUpdateRequest
+}
+
+func (u *fakeHostUpdater) ScheduleUpdate(_ context.Context, request HostUpdateRequest) error {
+	u.requests = append(u.requests, request)
+	return nil
+}
+
 func (d *fakeHostDecommissioner) Prepare(_ context.Context, deleteData bool) error {
 	d.prepared = true
 	d.prepareCalls++
@@ -651,6 +660,71 @@ func TestAgentDecommissionHandsOffWithoutPrematureAcknowledgement(t *testing.T) 
 	}
 }
 
+func TestAgentUpdateHandsOffWithoutPrematureAcknowledgement(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		t.Fatalf("unexpected request before host update completed: %s %s", request.Method, request.URL.Path)
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	updater := &fakeHostUpdater{}
+	task := DeploymentTask{Kind: "agent.update", ID: "agent-update-task-1", Attempt: 1, TargetVersion: "0.1.0-alpha.89"}
+	(Client{HTTPClient: server.Client(), Updater: updater}).processTask(context.Background(), store, task, func(err error) { t.Errorf("task error: %v", err) })
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	(Client{HTTPClient: server.Client(), Updater: updater}).processTask(context.Background(), store, task, func(err error) { t.Errorf("duplicate task error: %v", err) })
+	if len(updater.requests) != 2 {
+		t.Fatalf("durable update helper was not re-armed after duplicate delivery: %#v", updater.requests)
+	}
+	request := updater.requests[1]
+	if request.TaskID != task.ID || request.Attempt != task.Attempt || request.TargetVersion != task.TargetVersion || request.Connection.Credential != "credential" {
+		t.Fatalf("Agent update handoff is incomplete: %#v", request)
+	}
+}
+
+func TestAgentHeartbeatAdvertisesRemoteUpdateCapability(t *testing.T) {
+	reported := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		var heartbeat struct {
+			RemoteUpdateSupported bool `json:"remoteUpdateSupported"`
+		}
+		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" || json.NewDecoder(request.Body).Decode(&heartbeat) != nil {
+			t.Fatalf("unexpected heartbeat request: %s", request.URL.Path)
+		}
+		reported = heartbeat.RemoteUpdateSupported
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "node", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	client := Client{HTTPClient: server.Client(), Updater: &fakeHostUpdater{}}
+	if _, err := client.heartbeat(context.Background(), store); err != nil {
+		t.Fatal(err)
+	}
+	if !reported {
+		t.Fatal("Agent did not advertise its persistent update capability")
+	}
+}
+
 func TestHostDecommissionHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
 	started := false
 	completed := false
@@ -680,6 +754,38 @@ func TestHostDecommissionHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T)
 	}
 	if !started || !completed {
 		t.Fatalf("host cleanup lifecycle callbacks: started=%v completed=%v", started, completed)
+	}
+}
+
+func TestHostUpdateHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
+	started := false
+	completed := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer credential" || request.Method != http.MethodPost {
+			t.Fatalf("unauthenticated host update callback: %s %s", request.Method, request.Header.Get("Authorization"))
+		}
+		switch request.URL.Path {
+		case "/api/v1/agents/agent-1/updates/agent-update-task-1/start":
+			started = true
+		case "/api/v1/agents/agent-1/tasks/agent-update-task-1/result":
+			completed = true
+		default:
+			t.Fatalf("unexpected host update callback: %s", request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
+	client := Client{HTTPClient: server.Client()}
+	if err := client.BeginHostUpdate(context.Background(), connection, "agent-update-task-1", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CompleteHostUpdate(context.Background(), connection, "agent-update-task-1", 2, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !started || !completed {
+		t.Fatalf("host update lifecycle callbacks: started=%v completed=%v", started, completed)
 	}
 }
 
