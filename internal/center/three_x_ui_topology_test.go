@@ -14,7 +14,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	master := enrollOrchestrationNode(t, store, "subscription-controller", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.90", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", PublicAddress: "203.0.113.90", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
-	worker := enrollOrchestrationNode(t, store, "vless-worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", EnabledKinds: []string{networking.KindLAN}})
+	worker := enrollOrchestrationNode(t, store, "vless-worker", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.91", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", PublicAddress: "203.0.113.91", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
 
 	masterDeployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
@@ -111,7 +111,12 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if observedPlan.TotalBytes != 2147483648 || observedPlan.ResetDay != 15 || observedPlan.Revision != 2 {
 		t.Fatalf("heartbeat overwrote a Center-managed REALITY plan: %#v", observedPlan)
 	}
-	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, RegionCode: "US", Name: "Worker", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
+	// Retire the previously observed unmanaged inbound before asking Vastora to
+	// create this host's single managed 443 node.
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET status = 'stopped' WHERE application_id = ? AND app_protocol = 'vless/tcp/reality'`, workerDeployment.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, RegionCode: "US", Name: "Worker", ClientName: "Phone", GatewayNodeID: worker.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}

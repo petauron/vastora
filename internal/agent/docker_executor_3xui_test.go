@@ -25,11 +25,21 @@ func TestThreeXUIPortsPublishOnlySelectedServices(t *testing.T) {
 	if _, exists := exposed[dockernetwork.MustParsePort("2096/tcp")]; exists {
 		t.Fatal("worker unexpectedly publishes the master subscription service")
 	}
-	for _, number := range []string{"2053/tcp", "20000/tcp", "20031/tcp"} {
+	for _, number := range []string{"2053/tcp", "443/tcp"} {
 		port := dockernetwork.MustParsePort(number)
-		if _, exists := exposed[port]; !exists || len(bindings[port]) != 1 || bindings[port][0].HostIP.String() != "100.64.0.10" {
+		if _, exists := exposed[port]; !exists {
 			t.Fatalf("3x-ui mapping %s is missing", number)
 		}
+	}
+	panel := dockernetwork.MustParsePort("2053/tcp")
+	if len(bindings[panel]) != 1 || bindings[panel][0].HostIP.String() != "100.64.0.10" {
+		t.Fatal("3x-ui panel private binding is missing")
+	}
+	if _, exists := bindings[dockernetwork.MustParsePort("443/tcp")]; exists {
+		t.Fatal("raw REALITY port was unexpectedly published on the host")
+	}
+	if len(exposed) != 2 {
+		t.Fatalf("worker published unexpected ports: %#v", exposed)
 	}
 }
 

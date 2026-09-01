@@ -149,7 +149,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			return RealityCommandResult{}, deferUncertainRealityTask(attempt, disableErr)
 		}
 		if !networking.IsPrivateServiceAddress(command.TargetAddress) {
-			return RealityCommandResult{}, errors.New("agent: disabled REALITY inbound because its high port was bound to a public-only service address")
+			return RealityCommandResult{}, errors.New("agent: disabled REALITY inbound because the node has no valid private service address")
 		}
 		if !validThreeXUIShareHostname(command.TargetHost) || !validThreeXUIShareHostname(command.ServerName) {
 			return RealityCommandResult{}, errors.New("agent: disabled REALITY inbound until an administrator selects a valid targetHost and serverName")
@@ -267,6 +267,10 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	if command.CreateInitialClient && command.ClientResetDays > 0 && command.ClientExpiryTime <= store.now().UTC().UnixMilli() {
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
 	}
+	port := threeXUIRealityPort
+	if err := ensureRealityPortAvailable(ctx, baseURL, masterToken, command.TargetNodeID, port); err != nil {
+		return RealityCommandResult{}, err
+	}
 	// The client name is derived from the command ID. If the deterministic
 	// inbound no longer exists, a same-name client can only be residue from an
 	// interrupted compensation and must not be reused with new credentials.
@@ -305,10 +309,6 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		return RealityCommandResult{}, fmt.Errorf("agent: generate REALITY short id: %w", err)
 	}
 	shortID := hex.EncodeToString(shortBytes)
-	port, err := availableRealityPort(ctx, baseURL, masterToken, command.TargetNodeID, listen)
-	if err != nil {
-		return RealityCommandResult{}, err
-	}
 	guardPort, err := realityGuardPort(port)
 	if err != nil {
 		return RealityCommandResult{}, err
@@ -957,45 +957,21 @@ func threeXUIAPI(ctx context.Context, method, endpoint, token, contentType strin
 	return envelope.Object, nil
 }
 
-func availableTCPPort(address string) (int, error) {
-	for port := threeXUIRealityPortFirst; port <= threeXUIRealityPortLast; port++ {
-		listener, err := net.Listen("tcp", net.JoinHostPort(address, strconv.Itoa(port)))
-		if err != nil {
-			continue
-		}
-		_ = listener.Close()
-		return port, nil
-	}
-	return 0, errors.New("agent: no mapped private REALITY port is available")
-}
-
-func availableRealityPort(ctx context.Context, baseURL, token string, nodeID int, address string) (int, error) {
-	if nodeID == 0 {
-		return availableTCPPort(address)
-	}
+func ensureRealityPortAvailable(ctx context.Context, baseURL, token string, nodeID, port int) error {
 	payload, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
 	if err != nil {
-		return 0, fmt.Errorf("agent: inspect remote REALITY ports: %w", err)
+		return fmt.Errorf("agent: inspect REALITY node port: %w", err)
 	}
-	var inbounds []struct {
-		Port   int  `json:"port"`
-		NodeID *int `json:"nodeId,omitempty"`
-	}
+	var inbounds []threeXUIRealityInbound
 	if json.Unmarshal(payload, &inbounds) != nil {
-		return 0, errors.New("agent: 3x-ui returned invalid remote inbound data")
+		return errors.New("agent: 3x-ui returned invalid inbound data")
 	}
-	used := map[int]bool{}
 	for _, inbound := range inbounds {
-		if inbound.NodeID != nil && *inbound.NodeID == nodeID {
-			used[inbound.Port] = true
+		if threeXUIInboundMatchesNode(inbound, nodeID) && inbound.Port == port {
+			return errors.New("agent: this 3x-ui host already provides its VLESS REALITY node on port 443")
 		}
 	}
-	for port := threeXUIRealityPortFirst; port <= threeXUIRealityPortLast; port++ {
-		if !used[port] {
-			return port, nil
-		}
-	}
-	return 0, errors.New("agent: could not allocate an unused remote REALITY port")
+	return nil
 }
 
 func randomUUID() (string, error) {

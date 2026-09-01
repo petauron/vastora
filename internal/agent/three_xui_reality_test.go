@@ -25,16 +25,15 @@ func installRealityGuardTestSeams(t *testing.T) {
 		return realityTargetVerification{TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true}, nil
 	}
 	realityCompanionEnsurer = func(_ context.Context, _ string, _ string, _ int, realityPort int, inboundTag, _ string) (threeXUIRealityInbound, error) {
-		port := 21000
-		if realityPort >= threeXUIRealityPortFirst && realityPort <= threeXUIRealityPortLast {
-			port += realityPort - threeXUIRealityPortFirst
+		if realityPort != threeXUIRealityPort {
+			return threeXUIRealityInbound{}, errors.New("unexpected REALITY port")
 		}
-		return threeXUIRealityInbound{ID: 99, Tag: realityGuardTag(inboundTag), Port: port, Protocol: "tunnel", Listen: "127.0.0.1", Enable: true}, nil
+		return threeXUIRealityInbound{ID: 99, Tag: realityGuardTag(inboundTag), Port: threeXUIRealityGuardPort, Protocol: "tunnel", Listen: "127.0.0.1", Enable: true}, nil
 	}
 	realityRoutingEnsurer = func(context.Context, string, string, string, string) error { return nil }
 	realityInboundHardener = func(_ context.Context, _ string, _ string, inbound threeXUIRealityInbound, _ int, inboundTag string, _ realityTargetVerification) (threeXUIRealityInbound, threeXUIRealityInbound, error) {
 		inbound.Enable = true
-		return inbound, threeXUIRealityInbound{ID: 99, Tag: realityGuardTag(inboundTag), Port: 21000, Protocol: "tunnel", Listen: "127.0.0.1", Enable: true}, nil
+		return inbound, threeXUIRealityInbound{ID: 99, Tag: realityGuardTag(inboundTag), Port: threeXUIRealityGuardPort, Protocol: "tunnel", Listen: "127.0.0.1", Enable: true}, nil
 	}
 	t.Cleanup(func() {
 		realityTargetVerifier = previousVerifier
@@ -42,6 +41,26 @@ func installRealityGuardTestSeams(t *testing.T) {
 		realityRoutingEnsurer = previousRouting
 		realityInboundHardener = previousHardener
 	})
+}
+
+func TestEnsureRealityPortAvailableIsScopedToPhysicalNode(t *testing.T) {
+	localNodeID := 0
+	workerNodeID := 7
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":1,"port":443,"nodeId":7},{"id":2,"port":443}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	if err := ensureRealityPortAvailable(context.Background(), server.URL, "token", workerNodeID, threeXUIRealityPort); err == nil {
+		t.Fatal("an occupied worker port was accepted")
+	}
+	if err := ensureRealityPortAvailable(context.Background(), server.URL, "token", localNodeID, threeXUIRealityPort); err == nil {
+		t.Fatal("an occupied local port was accepted")
+	}
+	if err := ensureRealityPortAvailable(context.Background(), server.URL, "token", 8, threeXUIRealityPort); err != nil {
+		t.Fatalf("another physical node could not reuse port 443: %v", err)
+	}
 }
 
 func TestThreeXUIRealityStreamSettingsUsesMinimumClientVersionAndProxyProtocol(t *testing.T) {
@@ -378,7 +397,7 @@ func TestApplyRealityCommandRecoversLostAddResponse(t *testing.T) {
 				_, _ = response.Write([]byte(`{"success":true,"obj":[]}`))
 				return
 			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}]}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":443,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}]}`))
 		case "POST /panel/api/server/scanRealityTargets":
 			_, _ = response.Write([]byte(`{"success":true,"obj":[{"target":"www.example.test:443","host":"www.example.test","feasible":true,"serverNames":["www.example.test"]}]}`))
 		case "GET /panel/api/server/getNewX25519Cert":
@@ -414,7 +433,7 @@ func TestApplyRealityCommandRecoversLostAddResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if addCalls != 1 || result.InboundID != 9 || result.InboundTag != "n7-"+tag || result.Port != 31000 {
+	if addCalls != 1 || result.InboundID != 9 || result.InboundTag != "n7-"+tag || result.Port != threeXUIRealityPort {
 		t.Fatalf("lost response recovery result=%#v add calls=%d", result, addCalls)
 	}
 }
@@ -430,7 +449,7 @@ func TestApplyRealityCommandRecreatesLostAddHalfStateWithInitialClient(t *testin
 	deleteCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		inbound := `{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
+		inbound := `{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":443,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
 		if clientIncluded {
 			inbound = strings.Replace(inbound, `"clients":[]`, `"clients":[{"id":"client-id","email":"`+clientEmail+`"}]`, 1)
 		}
@@ -503,7 +522,7 @@ func TestApplyRealityCommandRollsBackExpiredExistingInbound(t *testing.T) {
 	commandID := "application-command-expired-replay"
 	tag := threeXUIRealityTag(commandID)
 	clientEmail := threeXUIClientEmail("Phone", commandID)
-	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"` + clientEmail + `"}]},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
+	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":443,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"` + clientEmail + `"}]},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
 	deleted := false
 	clientExists := true
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -557,7 +576,7 @@ func TestApplyRealityCommandRollsBackKnownFailureAtRetryLimit(t *testing.T) {
 	commandID := "application-command-rollback-limit"
 	tag := threeXUIRealityTag(commandID)
 	deleted := false
-	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":31000,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[]},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
+	inbound := `{"id":9,"tag":"` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":443,"total":0,"trafficReset":"never","trafficResetDay":1,"settings":{"clients":[]},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","maxClientVer":"","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}`
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {

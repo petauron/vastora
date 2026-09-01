@@ -36,17 +36,15 @@ func TestApplyRealityGuardRoutingIsFirstAndPreservesUserConfiguration(t *testing
 }
 
 func TestRealityGuardPortMappingIsDeterministicAndBounded(t *testing.T) {
-	for realityPort := threeXUIRealityPortFirst; realityPort <= threeXUIRealityPortLast; realityPort++ {
-		guardPort, err := realityGuardPort(realityPort)
-		if err != nil || guardPort != threeXUIRealityGuardPortFirst+(realityPort-threeXUIRealityPortFirst) {
-			t.Fatalf("reality port %d mapped to %d: %v", realityPort, guardPort, err)
-		}
+	guardPort, err := realityGuardPort(threeXUIRealityPort)
+	if err != nil || guardPort != threeXUIRealityGuardPort {
+		t.Fatalf("REALITY port mapped to %d: %v", guardPort, err)
 	}
-	if _, err := realityGuardPort(threeXUIRealityPortFirst - 1); err == nil {
-		t.Fatal("port below the managed range was accepted")
+	if _, err := realityGuardPort(threeXUIRealityPort - 1); err == nil {
+		t.Fatal("an unmanaged port was accepted")
 	}
-	if _, err := realityGuardPort(threeXUIRealityPortLast + 1); err == nil {
-		t.Fatal("port above the managed range was accepted")
+	if _, err := realityGuardPort(threeXUIRealityPort + 1); err == nil {
+		t.Fatal("an unmanaged port was accepted")
 	}
 }
 

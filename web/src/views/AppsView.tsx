@@ -173,6 +173,7 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
   const activeWorkers = isController ? data.applications.filter((value) => value.controllerApplicationId === application.id && (value.status !== "stopped" || value.nodeSyncStatus === "pending" || value.nodeSyncStatus === "applying")) : [];
   const managedApplicationIDs = new Set([application.id, ...activeWorkers.map((worker) => worker.id)]);
   const managedVLESSNodeCount = isController ? data.services.filter((service) => managedApplicationIDs.has(service.applicationId) && service.appProtocol === "vless/tcp/reality" && service.status !== "stopped").length : 0;
+  const hasVLESSNode = services.some((service) => service.appProtocol === "vless/tcp/reality");
   const retryNodeSync = async () => {
     setSyncingNode(true);
     try {
@@ -198,7 +199,7 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
 	      {isThreeXUI ? <div className={`grid gap-2 ${isController ? "sm:grid-cols-2" : "sm:grid-cols-1"}`}>
 	        {isController ? <Button disabled={serviceAccessLocked} onClick={onClients} size="sm"><UsersIcon data-icon="inline-start" />{copy(language, "管理客户端", "Manage clients")}</Button> : null}
 	        {isController ? <Button onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "管理账号", "Admin credentials")}</Button> : null}
-	        <Button disabled={serviceAccessLocked || isWorker && (!nodeReady || syncingNode)} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button>
+	        <Button disabled={hasVLESSNode || serviceAccessLocked || isWorker && (!nodeReady || syncingNode)} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{hasVLESSNode ? copy(language, "VLESS 节点已配置", "VLESS node configured") : copy(language, "创建 VLESS", "Create VLESS")}</Button>
         {isController && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}
       </div> : null}
       {!isWorker && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}

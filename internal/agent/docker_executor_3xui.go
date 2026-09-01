@@ -25,8 +25,7 @@ import (
 
 const (
 	threeXUISubscriptionPort = 2096
-	threeXUIRealityPortFirst = 20000
-	threeXUIRealityPortLast  = 20031
+	threeXUIRealityPort      = 443
 )
 
 func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentTask, bindAddress string) (string, error) {
@@ -153,20 +152,27 @@ func threeXUIPorts(bindAddress string, panelPort int, role string) (dockernetwor
 	if role != "master" && role != "worker" {
 		return nil, nil, errors.New("agent: invalid 3x-ui topology role")
 	}
+	if panelPort == threeXUIRealityPort {
+		return nil, nil, errors.New("agent: 3x-ui panel port must not use the managed REALITY port")
+	}
 	exposed := dockernetwork.PortSet{}
 	bindings := dockernetwork.PortMap{}
-	add := func(portNumber int) {
+	expose := func(portNumber int) dockernetwork.Port {
 		port := dockernetwork.MustParsePort(strconv.Itoa(portNumber) + "/tcp")
 		exposed[port] = struct{}{}
+		return port
+	}
+	bind := func(portNumber int) {
+		port := expose(portNumber)
 		bindings[port] = []dockernetwork.PortBinding{{HostIP: address.Unmap(), HostPort: strconv.Itoa(portNumber)}}
 	}
-	add(panelPort)
+	bind(panelPort)
 	if role == "master" {
-		add(threeXUISubscriptionPort)
+		bind(threeXUISubscriptionPort)
 	}
-	for port := threeXUIRealityPortFirst; port <= threeXUIRealityPortLast; port++ {
-		add(port)
-	}
+	// REALITY is reachable only from the per-node HAProxy over the shared
+	// Docker network. Never publish the raw 3x-ui socket on the host.
+	expose(threeXUIRealityPort)
 	return exposed, bindings, nil
 }
 

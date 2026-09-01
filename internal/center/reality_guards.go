@@ -311,14 +311,14 @@ func (s *Store) completeRealityHardenCommand(ctx context.Context, tx *sql.Tx, ta
 			taskError = "center: Agent returned an invalid REALITY hardening result"
 		} else {
 			result := envelope.ApplicationCommand
-			expectedGuardPort := threeXUIRealityGuardPortFirst + result.Port - centerThreeXUIRealityPortFirst
+			expectedGuardPort := threeXUIRealityGuardPort
 			expectedInboundTag := input.InboundTag
 			expectedCompanionTag := input.InboundTag + "-guard"
 			if input.TargetNodeID > 0 {
 				expectedInboundTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + input.InboundTag
 				expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 			}
-			if result.Action != "harden" || result.InboundID != input.InboundID || result.Listen != input.TargetAddress || result.Port < centerThreeXUIRealityPortFirst || result.Port > centerThreeXUIRealityPortFirst+31 || (result.InboundTag != input.InboundTag && result.InboundTag != expectedInboundTag) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN != result.NodeASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != expectedGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
+			if result.Action != "harden" || result.InboundID != input.InboundID || result.Listen != input.TargetAddress || result.Port != centerThreeXUIRealityPort || (result.InboundTag != input.InboundTag && result.InboundTag != expectedInboundTag) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN != result.NodeASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != expectedGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
 				succeeded = false
 				taskError = "center: Agent returned an unsafe REALITY hardening result"
 			}
