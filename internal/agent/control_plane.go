@@ -217,7 +217,7 @@ type RealityCommandTask struct {
 	CreateInitialClient bool     `json:"createInitialClient"`
 	InboundTag          string   `json:"inboundTag"`
 	InboundTotalBytes   int64    `json:"inboundTotalBytes"`
-	InboundResetDays    int      `json:"inboundResetDays"`
+	InboundResetDay     int      `json:"inboundResetDay"`
 	ClientTotalBytes    int64    `json:"clientTotalBytes"`
 	ClientResetDays     int      `json:"clientResetDays"`
 	ClientExpiryTime    int64    `json:"clientExpiryTime"`
@@ -278,7 +278,7 @@ type ThreeXUIClientInbound struct {
 	Enabled         bool   `json:"enabled"`
 	TotalBytes      int64  `json:"totalBytes"`
 	UsedBytes       int64  `json:"usedBytes"`
-	ResetDays       int    `json:"resetDays"`
+	ResetDay        int    `json:"resetDay"`
 	NextResetAt     string `json:"nextResetAt,omitempty"`
 	PlanStatus      string `json:"planStatus"`
 	PlanError       string `json:"planError,omitempty"`
@@ -298,7 +298,7 @@ type ThreeXUIClientCommandTask struct {
 	LimitIP             int                     `json:"limitIp"`
 	ServiceID           string                  `json:"serviceId,omitempty"`
 	InboundTotalBytes   int64                   `json:"inboundTotalBytes"`
-	InboundResetDays    int                     `json:"inboundResetDays"`
+	InboundResetDay     int                     `json:"inboundResetDay"`
 	ExpectedNextResetAt string                  `json:"expectedNextResetAt,omitempty"`
 	PlanRevision        int64                   `json:"planRevision,omitempty"`
 	OperationKey        string                  `json:"operationKey,omitempty"`

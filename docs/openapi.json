@@ -2011,7 +2011,7 @@
                   "inboundTotalBytes": {
                     "type": "integer"
                   },
-                  "inboundResetDays": {
+                  "inboundResetDay": {
                     "type": "integer"
                   },
                   "clientTotalBytes": {
@@ -2326,7 +2326,7 @@
                   "inboundTotalBytes": {
                     "type": "integer"
                   },
-                  "inboundResetDays": {
+                  "inboundResetDay": {
                     "type": "integer"
                   }
                 }

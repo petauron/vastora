@@ -34,7 +34,7 @@ func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (Thre
 	if input.ApplicationID == "" || !threeXUIClientActions[input.Action] {
 		return input, errors.New("center: application and a valid 3x-ui client operation are required")
 	}
-	if input.TotalBytes < 0 || input.ResetDays < 0 || input.ResetDays > maxThreeXUIResetDays || input.ExpiryTime < 0 || input.LimitIP < 0 || input.LimitIP > 1000 || input.InboundTotalBytes < 0 || input.InboundResetDays < 0 || input.InboundResetDays > maxThreeXUIResetDays {
+	if input.TotalBytes < 0 || input.ResetDays < 0 || input.ResetDays > maxThreeXUIResetDays || input.ExpiryTime < 0 || input.LimitIP < 0 || input.LimitIP > 1000 || input.InboundTotalBytes < 0 || input.InboundResetDay < 0 || input.InboundResetDay > maxThreeXUIResetDay {
 		return input, errors.New("center: client quota, expiry, or IP limit is invalid")
 	}
 	switch input.Action {
@@ -154,7 +154,7 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 		for _, inbound := range inbounds {
 			if inbound.ServiceID == input.ServiceID && inbound.ID == input.InboundID {
 				planRevision = inbound.PlanRevision + 1
-				if input.InboundResetDays == inbound.ResetDays && inbound.PlanStatus == "active" {
+				if input.InboundResetDay == inbound.ResetDay && inbound.PlanStatus == "active" {
 					nextResetAt = inbound.NextResetAt
 				}
 				break
@@ -163,13 +163,13 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 		if planRevision < 2 {
 			return ApplicationCommandView{}, errors.New("center: REALITY inbound traffic plan is unavailable")
 		}
-		if input.InboundResetDays > 0 && nextResetAt == "" {
-			nextResetAt, err = nextThreeXUIInboundResetAt(ctx, tx, input.ServiceID, now, input.InboundResetDays)
+		if input.InboundResetDay > 0 && nextResetAt == "" {
+			nextResetAt, err = nextThreeXUIInboundResetAt(ctx, tx, input.ServiceID, now, input.InboundResetDay)
 			if err != nil {
 				return ApplicationCommandView{}, err
 			}
 		}
-		if input.InboundResetDays == 0 {
+		if input.InboundResetDay == 0 {
 			nextResetAt = ""
 		}
 	}
@@ -177,7 +177,7 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 		Action: input.Action, Email: input.Email, NewEmail: input.NewEmail, InboundID: input.InboundID,
 		InboundIDs: input.InboundIDs,
 		Enabled:    input.Enabled, TotalBytes: input.TotalBytes, ResetDays: input.ResetDays, ExpiryTime: input.ExpiryTime, LimitIP: input.LimitIP,
-		ServiceID: input.ServiceID, InboundTotalBytes: input.InboundTotalBytes, InboundResetDays: input.InboundResetDays, ExpectedNextResetAt: nextResetAt, PlanRevision: planRevision,
+		ServiceID: input.ServiceID, InboundTotalBytes: input.InboundTotalBytes, InboundResetDay: input.InboundResetDay, ExpectedNextResetAt: nextResetAt, PlanRevision: planRevision,
 		Inbounds: inbounds, SubscriptionBaseURI: subscriptionBaseURI,
 	}
 	if input.Action == "update_inbound" {
@@ -185,7 +185,7 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 			if task.Inbounds[index].ServiceID == input.ServiceID && task.Inbounds[index].ID == input.InboundID {
 				task.InboundTag = task.Inbounds[index].InboundTag
 				task.Inbounds[index].TotalBytes = input.InboundTotalBytes
-				task.Inbounds[index].ResetDays = input.InboundResetDays
+				task.Inbounds[index].ResetDay = input.InboundResetDay
 				task.Inbounds[index].NextResetAt = nextResetAt
 				task.Inbounds[index].PlanStatus = "active"
 				task.Inbounds[index].PlanError = ""
@@ -214,7 +214,7 @@ func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID strin
 	rows, err := tx.QueryContext(ctx, `SELECT CAST(SUBSTR(s.name, 9) AS INTEGER), s.id, s.name, s.display_name, target.id, target.node_id, agent.name,
 		COALESCE((SELECT p.hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), ''),
 		COALESCE((SELECT p.sni_hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), ''),
-		COALESCE(plan.total_bytes, 0), COALESCE(plan.reset_days, 0), COALESCE(plan.next_reset_at, ''),
+		COALESCE(plan.total_bytes, 0), COALESCE(plan.reset_day, 0), COALESCE(plan.next_reset_at, ''),
 		COALESCE(plan.status, 'active'), COALESCE(plan.last_error, ''), COALESCE(plan.revision, 0), COALESCE(plan.inbound_tag, '')
 		FROM services s JOIN applications target ON target.id = s.application_id JOIN agents agent ON agent.id = target.node_id
 		LEFT JOIN three_x_ui_inbound_plans plan ON plan.service_id = s.id
@@ -229,7 +229,7 @@ func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID strin
 	values := []ThreeXUIClientInbound{}
 	for rows.Next() {
 		var value ThreeXUIClientInbound
-		if err := rows.Scan(&value.ID, &value.ServiceID, &value.Name, &value.DisplayName, &value.ApplicationID, &value.NodeID, &value.NodeName, &value.ConnectHostname, &value.SNIHostname, &value.TotalBytes, &value.ResetDays, &value.NextResetAt, &value.PlanStatus, &value.PlanError, &value.PlanRevision, &value.InboundTag); err != nil {
+		if err := rows.Scan(&value.ID, &value.ServiceID, &value.Name, &value.DisplayName, &value.ApplicationID, &value.NodeID, &value.NodeName, &value.ConnectHostname, &value.SNIHostname, &value.TotalBytes, &value.ResetDay, &value.NextResetAt, &value.PlanStatus, &value.PlanError, &value.PlanRevision, &value.InboundTag); err != nil {
 			return nil, err
 		}
 		if value.ID > 0 {
@@ -380,7 +380,7 @@ func validateThreeXUIClientCommandResult(input ThreeXUIClientCommandTask, result
 }
 
 func sameThreeXUIInboundReference(expected, actual ThreeXUIClientInbound) bool {
-	return expected.ID == actual.ID && expected.ServiceID == actual.ServiceID && expected.Name == actual.Name && expected.DisplayName == actual.DisplayName && expected.ApplicationID == actual.ApplicationID && expected.NodeID == actual.NodeID && expected.NodeName == actual.NodeName && expected.ConnectHostname == actual.ConnectHostname && expected.SNIHostname == actual.SNIHostname && expected.ResetDays == actual.ResetDays && expected.NextResetAt == actual.NextResetAt && expected.PlanStatus == actual.PlanStatus && expected.PlanError == actual.PlanError
+	return expected.ID == actual.ID && expected.ServiceID == actual.ServiceID && expected.Name == actual.Name && expected.DisplayName == actual.DisplayName && expected.ApplicationID == actual.ApplicationID && expected.NodeID == actual.NodeID && expected.NodeName == actual.NodeName && expected.ConnectHostname == actual.ConnectHostname && expected.SNIHostname == actual.SNIHostname && expected.ResetDay == actual.ResetDay && expected.NextResetAt == actual.NextResetAt && expected.PlanStatus == actual.PlanStatus && expected.PlanError == actual.PlanError
 }
 
 func validThreeXUIInboundTag(value string) bool {

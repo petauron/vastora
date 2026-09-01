@@ -155,7 +155,7 @@ func TestThreeXUIInboundScheduledResetIsJournaledExactlyOnce(t *testing.T) {
 		Action: "reset_inbound_plan", ServiceID: "service-9", InboundID: 9,
 		InboundTotalBytes: 1000, ExpectedNextResetAt: boundary, PlanRevision: 3,
 		OperationKey: threeXUIResetOperationKey("service-9", boundary), InboundTag: "vastora-node",
-		Inbounds: []ThreeXUIClientInbound{{ID: 9, ServiceID: "service-9", InboundTag: "vastora-node", TotalBytes: 1000, ResetDays: 30, NextResetAt: boundary, PlanStatus: "resetting"}},
+		Inbounds: []ThreeXUIClientInbound{{ID: 9, ServiceID: "service-9", InboundTag: "vastora-node", TotalBytes: 1000, ResetDay: 1, NextResetAt: boundary, PlanStatus: "resetting"}},
 	}
 	for range 2 {
 		if _, err := applyThreeXUIClientCommand(context.Background(), store, command); err != nil {
@@ -302,7 +302,7 @@ func TestWorkerScheduledResetUsesLocalIDAndWaitsForCentralProjection(t *testing.
 		InboundTotalBytes: 1000, ExpectedNextResetAt: boundary, PlanRevision: 3,
 		OperationKey: threeXUIResetOperationKey("service-worker", boundary), InboundTag: "n7-vastora-worker", TargetNodeID: 7,
 		TargetAddress: workerURL.Hostname(), TargetPanelPort: workerPort, TargetAPIToken: "worker-token",
-		Inbounds: []ThreeXUIClientInbound{{ID: 90, ServiceID: "service-worker", InboundTag: "n7-vastora-worker", TotalBytes: 1000, ResetDays: 30, NextResetAt: boundary, PlanStatus: "resetting"}},
+		Inbounds: []ThreeXUIClientInbound{{ID: 90, ServiceID: "service-worker", InboundTag: "n7-vastora-worker", TotalBytes: 1000, ResetDay: 1, NextResetAt: boundary, PlanStatus: "resetting"}},
 	}
 	if _, err := applyThreeXUIClientCommand(context.Background(), store, command); err != nil {
 		t.Fatal(err)
@@ -364,7 +364,7 @@ func TestScheduledResetPreservesManualDisabledDecisionAcrossRetry(t *testing.T) 
 		Action: "reset_inbound_plan", ServiceID: "service-9", InboundID: 9,
 		InboundTotalBytes: 1000, ExpectedNextResetAt: boundary, PlanRevision: 3,
 		OperationKey: threeXUIResetOperationKey("service-9", boundary), InboundTag: "vastora-node",
-		Inbounds: []ThreeXUIClientInbound{{ID: 9, ServiceID: "service-9", InboundTag: "vastora-node", TotalBytes: 1000, ResetDays: 30, NextResetAt: boundary, PlanStatus: "resetting"}},
+		Inbounds: []ThreeXUIClientInbound{{ID: 9, ServiceID: "service-9", InboundTag: "vastora-node", TotalBytes: 1000, ResetDay: 1, NextResetAt: boundary, PlanStatus: "resetting"}},
 	}
 	if _, err := applyThreeXUIClientCommand(context.Background(), store, command); err == nil {
 		t.Fatal("first enable attempt unexpectedly succeeded")

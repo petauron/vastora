@@ -562,6 +562,54 @@ func TestVersion46MigrationRetiresSharedPathPublications(t *testing.T) {
 	}
 }
 
+func TestVersion47MigrationConvertsInboundPlansToMonthlyBillingDay(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 46); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	boundary := "2026-09-22T00:00:00Z"
+	if _, err := db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(
+		service_id, inbound_tag, total_bytes, reset_days, next_reset_at, revision, status, updated_at
+	) VALUES('service-v3', 'legacy-inbound', 107374182400, 30, ?, 2, 'active', ?)`, boundary, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 47); err != nil {
+		t.Fatal(err)
+	}
+	var resetDay int
+	var nextResetAt string
+	if err := db.QueryRowContext(ctx, `SELECT reset_day, next_reset_at FROM three_x_ui_inbound_plans WHERE service_id = 'service-v3'`).Scan(&resetDay, &nextResetAt); err != nil {
+		t.Fatal(err)
+	}
+	if resetDay != 1 || nextResetAt != boundary {
+		t.Fatalf("monthly plan reset day=%d next=%q", resetDay, nextResetAt)
+	}
+	var oldColumn int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('three_x_ui_inbound_plans') WHERE name = 'reset_days'`).Scan(&oldColumn); err != nil || oldColumn != 0 {
+		t.Fatalf("legacy reset_days column=%d err=%v", oldColumn, err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans SET reset_day = 32 WHERE service_id = 'service-v3'`); err == nil {
+		t.Fatal("monthly reset day accepted a value above 31")
+	}
+}
+
 func TestVersion11MigrationSelectsOneRunningThreeXUIControllerPerSite(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)

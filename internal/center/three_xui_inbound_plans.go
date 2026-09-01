@@ -15,6 +15,7 @@ import (
 
 const (
 	maxThreeXUIResetDays             = 3650
+	maxThreeXUIResetDay              = 31
 	threeXUIInboundPlanResetInterval = time.Minute
 	threeXUIInboundPlanResetWakeKey  = "three-x-ui-inbound-plan-reset"
 )
@@ -23,7 +24,7 @@ type threeXUIInboundPlan struct {
 	ServiceID   string
 	InboundTag  string
 	TotalBytes  int64
-	ResetDays   int
+	ResetDay    int
 	NextResetAt string
 	LastResetAt string
 	Revision    int64
@@ -33,20 +34,23 @@ type threeXUIInboundPlan struct {
 	LastError   string
 }
 
-func threeXUIResetBoundary(now time.Time, resetDays int, location *time.Location) string {
-	if resetDays <= 0 {
+func threeXUIResetBoundary(now time.Time, resetDay int, location *time.Location) string {
+	if resetDay <= 0 {
 		return ""
 	}
 	if location == nil {
 		location = time.UTC
 	}
 	local := now.In(location)
-	next := time.Date(local.Year(), local.Month(), local.Day()+resetDays, 0, 0, 0, 0, location)
+	next := monthlyBoundary(local.Year(), local.Month(), resetDay, location)
+	if !next.After(local) {
+		next = monthlyBoundary(local.Year(), local.Month()+1, resetDay, location)
+	}
 	return next.UTC().Format(time.RFC3339Nano)
 }
 
-func advanceThreeXUIResetBoundary(anchor string, resetDays int, now time.Time, location *time.Location) (string, error) {
-	if resetDays <= 0 {
+func advanceThreeXUIResetBoundary(anchor string, resetDay int, now time.Time, location *time.Location) (string, error) {
+	if resetDay <= 0 {
 		return "", nil
 	}
 	if location == nil {
@@ -57,10 +61,20 @@ func advanceThreeXUIResetBoundary(anchor string, resetDays int, now time.Time, l
 		return "", errors.New("center: stored REALITY traffic reset boundary is invalid")
 	}
 	local := boundary.In(location)
-	for !local.After(now.In(location)) {
-		local = local.AddDate(0, 0, resetDays)
+	current := now.In(location)
+	for !local.After(current) {
+		local = monthlyBoundary(local.Year(), local.Month()+1, resetDay, location)
 	}
 	return local.UTC().Format(time.RFC3339Nano), nil
+}
+
+func monthlyBoundary(year int, month time.Month, resetDay int, location *time.Location) time.Time {
+	firstOfFollowingMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, location)
+	lastDay := firstOfFollowingMonth.AddDate(0, 0, -1).Day()
+	if resetDay > lastDay {
+		resetDay = lastDay
+	}
+	return time.Date(year, month, resetDay, 0, 0, 0, 0, location)
 }
 
 func threeXUIInboundPlanLocation(ctx context.Context, tx *sql.Tx, serviceID string) (*time.Location, error) {
@@ -79,36 +93,36 @@ func threeXUIInboundPlanLocation(ctx context.Context, tx *sql.Tx, serviceID stri
 	return location, nil
 }
 
-func nextThreeXUIInboundResetAt(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time, resetDays int) (string, error) {
-	if resetDays == 0 {
+func nextThreeXUIInboundResetAt(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time, resetDay int) (string, error) {
+	if resetDay == 0 {
 		return "", nil
 	}
 	location, err := threeXUIInboundPlanLocation(ctx, tx, serviceID)
 	if err != nil {
 		return "", err
 	}
-	return threeXUIResetBoundary(now, resetDays, location), nil
+	return threeXUIResetBoundary(now, resetDay, location), nil
 }
 
-func upsertThreeXUIInboundPlan(ctx context.Context, tx *sql.Tx, serviceID, inboundTag string, totalBytes int64, resetDays int, nextResetAt string, revision int64, now time.Time) error {
-	if strings.TrimSpace(serviceID) == "" || strings.TrimSpace(inboundTag) == "" || totalBytes < 0 || resetDays < 0 || resetDays > maxThreeXUIResetDays || revision < 1 {
+func upsertThreeXUIInboundPlan(ctx context.Context, tx *sql.Tx, serviceID, inboundTag string, totalBytes int64, resetDay int, nextResetAt string, revision int64, now time.Time) error {
+	if strings.TrimSpace(serviceID) == "" || strings.TrimSpace(inboundTag) == "" || totalBytes < 0 || resetDay < 0 || resetDay > maxThreeXUIResetDay || revision < 1 {
 		return errors.New("center: invalid REALITY inbound traffic plan")
 	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(
-		service_id, inbound_tag, total_bytes, reset_days, next_reset_at, last_reset_at,
+		service_id, inbound_tag, total_bytes, reset_day, next_reset_at, last_reset_at,
 		revision, status, retry_at, attempt, last_error, updated_at
 	) VALUES(?, ?, ?, ?, ?, '', ?, 'active', '', 0, '', ?)
 	ON CONFLICT(service_id) DO UPDATE SET
 		inbound_tag = excluded.inbound_tag,
 		total_bytes = excluded.total_bytes,
-		reset_days = excluded.reset_days,
+		reset_day = excluded.reset_day,
 		next_reset_at = excluded.next_reset_at,
 		revision = excluded.revision,
 		status = 'active',
 		retry_at = '',
 		attempt = 0,
 		last_error = '',
-		updated_at = excluded.updated_at`, serviceID, inboundTag, totalBytes, resetDays, nextResetAt, revision, now.UTC().Format(time.RFC3339Nano))
+		updated_at = excluded.updated_at`, serviceID, inboundTag, totalBytes, resetDay, nextResetAt, revision, now.UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -145,7 +159,7 @@ func (s *Store) RunThreeXUIInboundPlanResets(ctx context.Context, interval time.
 func (s *Store) queueDueThreeXUIInboundPlanResets(ctx context.Context) error {
 	now := s.now().UTC()
 	rows, err := s.db.QueryContext(ctx, `SELECT service_id FROM three_x_ui_inbound_plans
-		WHERE reset_days > 0 AND next_reset_at <> '' AND julianday(next_reset_at) <= julianday(?)
+		WHERE reset_day > 0 AND next_reset_at <> '' AND julianday(next_reset_at) <= julianday(?)
 		AND (status = 'active' OR (status = 'failed' AND retry_at <> '' AND julianday(retry_at) <= julianday(?)))
 		ORDER BY next_reset_at, service_id LIMIT 64`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
@@ -187,7 +201,7 @@ func (s *Store) queueThreeXUIInboundPlanReset(ctx context.Context, serviceID str
 	boundary, boundaryErr := time.Parse(time.RFC3339Nano, plan.NextResetAt)
 	retryAt, retryErr := time.Parse(time.RFC3339Nano, plan.RetryAt)
 	failedRetryDue := plan.Status == "failed" && retryErr == nil && !retryAt.After(now)
-	if plan.ResetDays <= 0 || boundaryErr != nil || boundary.After(now) || (plan.Status != "active" && !failedRetryDue) {
+	if plan.ResetDay <= 0 || boundaryErr != nil || boundary.After(now) || (plan.Status != "active" && !failedRetryDue) {
 		return nil
 	}
 	var migrationActive int
@@ -232,7 +246,7 @@ func (s *Store) queueThreeXUIInboundPlanReset(ctx context.Context, serviceID str
 	}
 	task := ThreeXUIClientCommandTask{
 		Action: "reset_inbound_plan", ServiceID: serviceID, InboundID: inboundID,
-		InboundTotalBytes: plan.TotalBytes, InboundResetDays: plan.ResetDays,
+		InboundTotalBytes: plan.TotalBytes, InboundResetDay: plan.ResetDay,
 		ExpectedNextResetAt: plan.NextResetAt, PlanRevision: plan.Revision,
 		OperationKey: operationKey, InboundTag: plan.InboundTag, Inbounds: []ThreeXUIClientInbound{resetInbound},
 	}
@@ -268,8 +282,8 @@ func (s *Store) queueThreeXUIInboundPlanReset(ctx context.Context, serviceID str
 
 func readThreeXUIInboundPlan(ctx context.Context, tx *sql.Tx, serviceID string) (threeXUIInboundPlan, error) {
 	var plan threeXUIInboundPlan
-	err := tx.QueryRowContext(ctx, `SELECT service_id, inbound_tag, total_bytes, reset_days, next_reset_at, last_reset_at, revision, status, retry_at, attempt, last_error
-		FROM three_x_ui_inbound_plans WHERE service_id = ?`, serviceID).Scan(&plan.ServiceID, &plan.InboundTag, &plan.TotalBytes, &plan.ResetDays, &plan.NextResetAt, &plan.LastResetAt, &plan.Revision, &plan.Status, &plan.RetryAt, &plan.Attempt, &plan.LastError)
+	err := tx.QueryRowContext(ctx, `SELECT service_id, inbound_tag, total_bytes, reset_day, next_reset_at, last_reset_at, revision, status, retry_at, attempt, last_error
+		FROM three_x_ui_inbound_plans WHERE service_id = ?`, serviceID).Scan(&plan.ServiceID, &plan.InboundTag, &plan.TotalBytes, &plan.ResetDay, &plan.NextResetAt, &plan.LastResetAt, &plan.Revision, &plan.Status, &plan.RetryAt, &plan.Attempt, &plan.LastError)
 	return plan, err
 }
 
@@ -415,8 +429,8 @@ func completeThreeXUIInboundPlanUpdate(ctx context.Context, tx *sql.Tx, input Th
 	if inboundTag == "" {
 		return errors.New("center: Agent did not observe the managed REALITY inbound tag")
 	}
-	changed, err := tx.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans SET inbound_tag = ?, total_bytes = ?, reset_days = ?, next_reset_at = ?, revision = ?, status = 'active', retry_at = '', attempt = 0, last_error = '', updated_at = ?
-		WHERE service_id = ? AND revision = ?`, inboundTag, input.InboundTotalBytes, input.InboundResetDays, input.ExpectedNextResetAt, input.PlanRevision, now.Format(time.RFC3339Nano), input.ServiceID, plan.Revision)
+	changed, err := tx.ExecContext(ctx, `UPDATE three_x_ui_inbound_plans SET inbound_tag = ?, total_bytes = ?, reset_day = ?, next_reset_at = ?, revision = ?, status = 'active', retry_at = '', attempt = 0, last_error = '', updated_at = ?
+		WHERE service_id = ? AND revision = ?`, inboundTag, input.InboundTotalBytes, input.InboundResetDay, input.ExpectedNextResetAt, input.PlanRevision, now.Format(time.RFC3339Nano), input.ServiceID, plan.Revision)
 	if err != nil {
 		return err
 	}
@@ -425,7 +439,7 @@ func completeThreeXUIInboundPlanUpdate(ctx context.Context, tx *sql.Tx, input Th
 	}
 	for index := range result.Inbounds {
 		if result.Inbounds[index].ServiceID == input.ServiceID && result.Inbounds[index].ID == input.InboundID {
-			result.Inbounds[index].ResetDays = input.InboundResetDays
+			result.Inbounds[index].ResetDay = input.InboundResetDay
 			result.Inbounds[index].NextResetAt = input.ExpectedNextResetAt
 			result.Inbounds[index].PlanStatus = "active"
 			result.Inbounds[index].PlanError = ""
@@ -461,7 +475,7 @@ func (s *Store) completeThreeXUIInboundPlanReset(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return err
 	}
-	nextResetAt, err := advanceThreeXUIResetBoundary(input.ExpectedNextResetAt, plan.ResetDays, now, location)
+	nextResetAt, err := advanceThreeXUIResetBoundary(input.ExpectedNextResetAt, plan.ResetDay, now, location)
 	if err != nil {
 		return err
 	}
