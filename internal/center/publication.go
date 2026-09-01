@@ -23,7 +23,7 @@ type PublicationInput struct {
 	ServiceID       string `json:"serviceId"`
 	Kind            string `json:"kind"`
 	GatewayNodeID   string `json:"gatewayNodeId,omitempty"`
-	Hostname        string `json:"hostname"`
+	Hostname        string `json:"hostname,omitempty"`
 	SNIHostname     string `json:"sniHostname,omitempty"`
 	DNSProvider     string `json:"dnsProvider"`
 	TLSEnabled      bool   `json:"tlsEnabled,omitempty"`
@@ -65,11 +65,24 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	input.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.Hostname), "."))
 	input.SNIHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.SNIHostname), "."))
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
-	if input.ServiceID == "" || !domainSuffixPattern.MatchString(input.Hostname) {
-		return PublicationView{}, errors.New("center: service and a valid hostname are required")
+	if input.ServiceID == "" {
+		return PublicationView{}, errors.New("center: service is required")
 	}
 	if !validPublicationKind(input.Kind) {
 		return PublicationView{}, errors.New("center: unsupported publication kind")
+	}
+	if !validPublicationDNS(input.Kind, input.DNSProvider) {
+		return PublicationView{}, errors.New("center: DNS provider is not valid for this publication")
+	}
+	if input.Hostname == "" && (input.Kind == publicationPublic || input.Kind == publicationCloudflare) {
+		hostname, err := s.randomPublicationHostname(ctx, input.ServiceID, input.DNSProvider)
+		if err != nil {
+			return PublicationView{}, err
+		}
+		input.Hostname = hostname
+	}
+	if !domainSuffixPattern.MatchString(input.Hostname) {
+		return PublicationView{}, errors.New("center: a valid hostname is required")
 	}
 	if input.Kind == publicationShared443 {
 		if !domainSuffixPattern.MatchString(input.SNIHostname) {
@@ -77,9 +90,6 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		}
 	} else if input.SNIHostname != "" {
 		return PublicationView{}, errors.New("center: TLS SNI hostname is only valid for shared 443 access")
-	}
-	if !validPublicationDNS(input.Kind, input.DNSProvider) {
-		return PublicationView{}, errors.New("center: DNS provider is not valid for this publication")
 	}
 	if input.DNSProvider == "cloudflare" {
 		var zoneName string
@@ -333,6 +343,43 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		s.schedulePublicationVerification(id, revision)
 	}
 	return s.Publication(ctx, id)
+}
+
+func (s *Store) randomPublicationHostname(ctx context.Context, serviceID, dnsProvider string) (string, error) {
+	var zone string
+	cloudflareErr := s.db.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&zone)
+	if cloudflareErr != nil && !errors.Is(cloudflareErr, sql.ErrNoRows) {
+		return "", cloudflareErr
+	}
+	if errors.Is(cloudflareErr, sql.ErrNoRows) {
+		if dnsProvider == "cloudflare" {
+			return "", errors.New("center: configure Cloudflare before using managed DNS or Tunnel publication")
+		}
+		if err := s.db.QueryRowContext(ctx, `SELECT si.domain_suffix FROM services se JOIN sites si ON si.id = se.site_id WHERE se.id = ?`, serviceID).Scan(&zone); errors.Is(err, sql.ErrNoRows) {
+			return "", errors.New("center: service not found")
+		} else if err != nil {
+			return "", err
+		}
+	}
+	zone = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(zone), "."))
+	if !domainSuffixPattern.MatchString(zone) {
+		return "", errors.New("center: enter a public hostname or configure a valid public domain")
+	}
+	for range 8 {
+		label, err := randomDNSLabel(16)
+		if err != nil {
+			return "", err
+		}
+		hostname := label + "." + zone
+		var exists int
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM publications WHERE hostname = ?)`, hostname).Scan(&exists); err != nil {
+			return "", err
+		}
+		if exists == 0 {
+			return hostname, nil
+		}
+	}
+	return "", errors.New("center: could not allocate a unique public hostname")
 }
 
 func (s *Store) ensureServicePublicationChangeAllowed(ctx context.Context, queryer networkQueryer, serviceID string) error {

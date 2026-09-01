@@ -106,16 +106,16 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("成功");
   });
 
-  it("creates lowercase DNS-safe default service hostnames", () => {
+  it("keeps private hostnames readable and leaves public hostnames to Center", () => {
     const data = dashboard();
     data.sites[0].domainSuffix = "vastora.example.com";
     const service = { id: "manager", applicationId: "running", siteId: "site", name: "Manager 页面", protocol: "http" as const, containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog" as const, management: true, status: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
     data.services = [service];
     expect(defaultPublicationHostname(data, service)).toBe("manager-komari-agent.home.vastora.example.com");
-    expect(defaultPublicationHostname(data, service, "cloudflare_tunnel")).toBe("komari-agent-home-server.example.com");
+    expect(defaultPublicationHostname(data, service, "cloudflare_tunnel")).toBe("");
     data.services.push({ ...service, id: "subscription", name: "订阅服务" });
     expect(defaultPublicationHostname(data, service)).toBe("manager-komari-agent.home.vastora.example.com");
-    expect(defaultPublicationHostname(data, service, "cloudflare_tunnel")).toBe("komari-agent-manager-home-server.example.com");
+    expect(defaultPublicationHostname(data, service, "cloudflare_tunnel")).toBe("");
     expect(defaultRealityHostname(data, data.applications[0])).toBe("reality.home-server.home.vastora.example.com");
   });
 
@@ -356,7 +356,7 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
 
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ kind: "cloudflare_tunnel", hostname: "komari-agent-home-server.example.com" }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ kind: "cloudflare_tunnel", hostname: undefined }));
     expect(mutate).toHaveBeenCalledWith(expect.any(Function), "访问入口已创建。", { reportError: false });
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("填写内容不完整或格式不正确");
   });
@@ -482,7 +482,8 @@ describe("network and app views", () => {
     });
     expect(document.body.textContent).toContain("发布独立订阅服务");
     expect(document.body.textContent).toContain("管理面板仍只在私网开放");
-    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("3x-ui-home-server.example.com");
+    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("");
+    expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.placeholder).toBe("留空时自动生成");
     expect(document.querySelector<HTMLButtonElement>("#subscription-kind")?.textContent).toContain("Cloudflare Tunnel");
   });
 

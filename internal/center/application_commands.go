@@ -118,7 +118,7 @@ type RealityCommandResult struct {
 type SubscriptionCommandInput struct {
 	ApplicationID string `json:"applicationId"`
 	GatewayNodeID string `json:"gatewayNodeId"`
-	Hostname      string `json:"hostname"`
+	Hostname      string `json:"hostname,omitempty"`
 	Kind          string `json:"kind"`
 	DNSProvider   string `json:"dnsProvider"`
 }

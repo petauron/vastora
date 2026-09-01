@@ -119,20 +119,9 @@ export function latestOperations(deployments: Deployment[]) {
 }
 
 export function defaultPublicationHostname(data: AppData, service: Service, kind?: PublicationKind) {
+  if (kind === "public_direct" || kind === "cloudflare_tunnel") return "";
   const application = data.applications.find((value) => value.id === service.applicationId);
   const site = data.sites.find((value) => value.id === service.siteId);
-  if (kind === "public_direct" || kind === "cloudflare_tunnel") {
-    const zone = data.systemDomain.cloudflareZone || data.integrations.find((value) => value.kind === "cloudflare" && value.status === "configured")?.endpoint || site?.domainSuffix;
-    const agent = data.agents.find((value) => value.id === application?.nodeId);
-    const appLabel = dnsLabel(application?.appKey.split("/").at(-1) || application?.name || "app");
-    const nodeLabel = dnsLabel(agent?.name || "node");
-    const applicationServices = data.services.filter((value) => value.applicationId === service.applicationId);
-    const serviceLabel = applicationServices.length > 1 ? dnsLabel(service.name) || "service" : "";
-    const hostnameParts = [appLabel, serviceLabel, nodeLabel].filter(Boolean);
-    const partLimit = Math.floor((63 - hostnameParts.length + 1) / hostnameParts.length);
-    const hostnameLabel = hostnameParts.map((value) => value.slice(0, partLimit).replace(/-+$/g, "")).join("-");
-    return zone ? `${hostnameLabel}.${zone}`.toLowerCase() : "";
-  }
   if (!site?.domainSuffix) return "";
   const appLabel = dnsLabel(application?.appKey.split("/").at(-1) || application?.name || "app");
   const serviceLabel = dnsLabel(service.name) || "service";
