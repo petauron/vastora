@@ -1550,7 +1550,6 @@
           "Applications"
         ],
         "summary": "Reveal Protected Application Credentials",
-        "description": "Reauthenticates the current administrator, records a security audit event, and returns only the current credentials for the selected managed 3x-ui controller or CPA application. The response is never cacheable.",
         "operationId": "revealApplicationCredentials_post",
         "x-vastora-audience": "browser-admin",
         "security": [
@@ -1562,19 +1561,19 @@
         "responses": {
           "200": {
             "description": "Successful response.",
-            "headers": {
-              "Cache-Control": {
-                "description": "Prevents storage of the revealed credential response.",
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              }
-            },
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApplicationCredentials"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
                 }
               }
             }
@@ -1625,7 +1624,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Reauthenticates the current administrator, records a security audit event, and returns only the current credentials for the selected managed 3x-ui controller or CPA application. The response is never cacheable."
       }
     },
     "/api/v1/applications/{id}/credentials/rotate": {
@@ -1634,7 +1634,6 @@
           "Applications"
         ],
         "summary": "Rotate One CPA Credential",
-        "description": "Reauthenticates the current administrator and rotates either the CPA management key or client API key. The same Idempotency-Key always resumes the same generated value. Management-key rotation updates CPA first and then Keeper; partial completion remains failed or action_required until retried.",
         "operationId": "rotateApplicationCredentials_post",
         "x-vastora-audience": "browser-admin",
         "security": [
@@ -1643,6 +1642,42 @@
             "AdminCSRF": []
           }
         ],
+        "responses": {
+          "202": {
+            "description": "The durable rotation was created, resumed, or completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationCredentialRotation"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
         "parameters": [
           {
             "name": "id",
@@ -1667,16 +1702,12 @@
         ],
         "requestBody": {
           "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "currentPassword",
-                  "target",
-                  "confirm"
-                ],
                 "properties": {
                   "currentPassword": {
                     "type": "string"
@@ -1692,27 +1723,48 @@
                     "type": "boolean",
                     "const": true
                   }
-                }
+                },
+                "required": [
+                  "currentPassword",
+                  "target",
+                  "confirm"
+                ]
               }
             }
           }
         },
+        "description": "Reauthenticates the current administrator and rotates either the CPA management key or client API key. The same Idempotency-Key always resumes the same generated value. Management-key rotation updates CPA first and then Keeper; partial completion remains failed or action_required until retried."
+      }
+    },
+    "/api/v1/applications/{id}/credentials/rotations/{rotationId}": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Read CPA Credential Rotation Status",
+        "operationId": "applicationCredentialRotation_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
         "responses": {
-          "202": {
-            "description": "The durable rotation was created, resumed, or completed.",
-            "headers": {
-              "Cache-Control": {
-                "description": "Prevents storage of security-sensitive operation state.",
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              }
-            },
+          "200": {
+            "description": "Current durable rotation state.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApplicationCredentialRotation"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
                 }
               }
             }
@@ -1732,76 +1784,31 @@
           "500": {
             "$ref": "#/components/responses/Error"
           }
-		}
-	  }
-	},
-	"/api/v1/applications/{id}/credentials/rotations/{rotationId}": {
-	  "get": {
-		"tags": [
-		  "Applications"
-		],
-		"summary": "Read CPA Credential Rotation Status",
-		"description": "Returns the non-secret durable status of one credential rotation so the administrator can see completion, failure, or action_required without retaining a password in the browser. The response is never cacheable.",
-		"operationId": "applicationCredentialRotation_get",
-		"x-vastora-audience": "browser-admin",
-		"security": [
-		  {
-			"AdminSession": []
-		  }
-		],
-		"parameters": [
-		  {
-			"name": "id",
-			"in": "path",
-			"required": true,
-			"schema": {
-			  "type": "string",
-			  "minLength": 1
-			}
-		  },
-		  {
-			"name": "rotationId",
-			"in": "path",
-			"required": true,
-			"schema": {
-			  "type": "string",
-			  "minLength": 1
-			}
-		  }
-		],
-		"responses": {
-		  "200": {
-			"description": "Current durable rotation state.",
-			"headers": {
-			  "Cache-Control": {
-				"description": "Prevents storage of security-sensitive operation state.",
-				"schema": {
-				  "type": "string",
-				  "const": "no-store"
-				}
-			  }
-			},
-			"content": {
-			  "application/json": {
-				"schema": {
-				  "$ref": "#/components/schemas/ApplicationCredentialRotation"
-				}
-			  }
-			}
-		  },
-		  "401": {
-			"$ref": "#/components/responses/Error"
-		  },
-		  "404": {
-			"$ref": "#/components/responses/Error"
-		  },
-		  "500": {
-			"$ref": "#/components/responses/Error"
-		  }
-		}
-	  }
-	},
-	"/api/v1/applications/{id}/3xui-node/reconcile": {
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "rotationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Returns the non-secret durable status of one credential rotation so the administrator can see completion, failure, or action_required without retaining a password in the browser. The response is never cacheable."
+      }
+    },
+    "/api/v1/applications/{id}/3xui-node/reconcile": {
       "post": {
         "tags": [
           "Applications"
@@ -6637,21 +6644,43 @@
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["kind", "username", "password"],
+            "required": [
+              "kind",
+              "username",
+              "password"
+            ],
             "properties": {
-              "kind": { "type": "string", "const": "three_x_ui" },
-              "username": { "type": "string" },
-              "password": { "type": "string" }
+              "kind": {
+                "type": "string",
+                "const": "three_x_ui"
+              },
+              "username": {
+                "type": "string"
+              },
+              "password": {
+                "type": "string"
+              }
             }
           },
           {
             "type": "object",
             "additionalProperties": false,
-            "required": ["kind", "managementKey", "clientApiKey"],
+            "required": [
+              "kind",
+              "managementKey",
+              "clientApiKey"
+            ],
             "properties": {
-              "kind": { "type": "string", "const": "cpa" },
-              "managementKey": { "type": "string" },
-              "clientApiKey": { "type": "string" }
+              "kind": {
+                "type": "string",
+                "const": "cpa"
+              },
+              "managementKey": {
+                "type": "string"
+              },
+              "clientApiKey": {
+                "type": "string"
+              }
             }
           }
         ]
@@ -6659,17 +6688,55 @@
       "ApplicationCredentialRotation": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "applicationId", "target", "state", "createdAt", "updatedAt"],
+        "required": [
+          "id",
+          "applicationId",
+          "target",
+          "state",
+          "createdAt",
+          "updatedAt"
+        ],
         "properties": {
-          "id": { "type": "string" },
-          "applicationId": { "type": "string" },
-          "target": { "type": "string", "enum": ["management", "client"] },
-          "state": { "type": "string", "enum": ["preparing", "pending", "succeeded", "failed", "action_required"] },
-          "cpaDeploymentId": { "type": "string" },
-          "keeperDeploymentId": { "type": "string" },
-          "lastError": { "type": "string" },
-          "createdAt": { "type": "string", "format": "date-time" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string"
+          },
+          "applicationId": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "management",
+              "client"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "preparing",
+              "pending",
+              "succeeded",
+              "failed",
+              "action_required"
+            ]
+          },
+          "cpaDeploymentId": {
+            "type": "string"
+          },
+          "keeperDeploymentId": {
+            "type": "string"
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       }
     },
