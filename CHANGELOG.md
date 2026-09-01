@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.89](https://github.com/petauron/vastora/compare/v0.1.0-alpha.88...v0.1.0-alpha.89) (2026-09-01)
+
+
+### Features
+
+* **agent:** update Agents through Center ([4269591](https://github.com/petauron/vastora/commit/4269591a11e5cc8a31dc490bc47e0ae427848f29))
+
 ## [0.1.0-alpha.88](https://github.com/petauron/vastora/compare/v0.1.0-alpha.87...v0.1.0-alpha.88) (2026-09-01)
 
 
