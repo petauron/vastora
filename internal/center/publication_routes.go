@@ -14,7 +14,7 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func (s *Store) upsertPublicationRoute(ctx context.Context, tx *sql.Tx, publicationID, siteID, serviceID, gatewayID, hostname, pathPrefix, protocol, endpoint string, tlsEnabled bool, now time.Time) error {
+func (s *Store) upsertPublicationRoute(ctx context.Context, tx *sql.Tx, publicationID, siteID, serviceID, gatewayID, hostname, protocol, endpoint string, tlsEnabled bool, now time.Time) error {
 	var err error
 	endpoint, err = s.gatewayServiceEndpoint(ctx, tx, serviceID, gatewayID, endpoint)
 	if err != nil {
@@ -28,10 +28,10 @@ func (s *Store) upsertPublicationRoute(ctx context.Context, tx *sql.Tx, publicat
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO routes(id, publication_id, site_id, service_id, gateway_node_id, hostname, path_prefix, protocol, upstreams_json, tls_enabled, status, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, routeID, publicationID, siteID, serviceID, gatewayID, hostname, pathPrefix, protocol, upstreams, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+		_, err = tx.ExecContext(ctx, `INSERT INTO routes(id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, tls_enabled, status, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, routeID, publicationID, siteID, serviceID, gatewayID, hostname, protocol, upstreams, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	} else if err == nil {
-		_, err = tx.ExecContext(ctx, `UPDATE routes SET hostname = ?, path_prefix = ?, protocol = ?, upstreams_json = ?, tls_enabled = ?, status = 'pending', last_error = '', updated_at = ? WHERE id = ?`, hostname, pathPrefix, protocol, upstreams, tlsEnabled, now.Format(time.RFC3339Nano), routeID)
+		_, err = tx.ExecContext(ctx, `UPDATE routes SET hostname = ?, protocol = ?, upstreams_json = ?, tls_enabled = ?, status = 'pending', last_error = '', updated_at = ? WHERE id = ?`, hostname, protocol, upstreams, tlsEnabled, now.Format(time.RFC3339Nano), routeID)
 	}
 	if err != nil {
 		return fmt.Errorf("center: save publication route: %w", err)
@@ -54,6 +54,71 @@ func canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, gateway
 		return net.JoinHostPort(dockerruntime.ThreeXUIAlias, strconv.Itoa(containerPort))
 	}
 	return endpoint
+}
+
+func (s *Store) discardEmptyRetiredSharedPublicationMarker(ctx context.Context) error {
+	var markerExists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'retired_shared_publication_gateways'`).Scan(&markerExists); err != nil || markerExists == 0 {
+		return err
+	}
+	var pending int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM retired_shared_publication_gateways`).Scan(&pending); err != nil {
+		return err
+	}
+	if pending != 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `DROP TABLE retired_shared_publication_gateways`)
+	return err
+}
+
+// reconcileRetiredSharedPublicationGateways completes migration 46 after the
+// Center starts serving. The SQL migration removes obsolete path routes, while
+// this transaction publishes the resulting host-only desired state to every
+// affected Gateway before dropping the one-shot marker table.
+func (s *Store) reconcileRetiredSharedPublicationGateways(ctx context.Context) error {
+	var markerExists int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'retired_shared_publication_gateways'`).Scan(&markerExists); err != nil {
+		return err
+	}
+	if markerExists == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT gateway_node_id FROM retired_shared_publication_gateways ORDER BY gateway_node_id`)
+	if err != nil {
+		return err
+	}
+	gatewayIDs := []string{}
+	for rows.Next() {
+		var gatewayID string
+		if err := rows.Scan(&gatewayID); err != nil {
+			rows.Close()
+			return err
+		}
+		gatewayIDs = append(gatewayIDs, gatewayID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	for _, gatewayID := range gatewayIDs {
+		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE retired_shared_publication_gateways`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // reconcileDockerGatewayEndpoints upgrades persisted same-node routes to the
@@ -126,22 +191,22 @@ func (s *Store) reconcileDockerGatewayEndpoints(ctx context.Context) error {
 }
 
 func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, p.gateway_node_id, p.hostname, p.path_prefix, p.tls_enabled, s.id, s.site_id, s.protocol, s.endpoint
+	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, p.gateway_node_id, p.hostname, p.tls_enabled, s.id, s.site_id, s.protocol, s.endpoint
 		FROM publications p JOIN services s ON s.id = p.service_id
 		WHERE s.application_id = ? AND p.status <> 'stopped' AND s.status <> 'stopped'`, applicationID)
 	if err != nil {
 		return err
 	}
 	type item struct {
-		publicationID, kind, gatewayID, hostname, pathPrefix, serviceID, siteID, protocol, endpoint string
-		tls                                                                                         bool
+		publicationID, kind, gatewayID, hostname, serviceID, siteID, protocol, endpoint string
+		tls                                                                             bool
 	}
 	items := []item{}
 	for rows.Next() {
 		var value item
 		var gatewayID sql.NullString
 		var tls int
-		if err := rows.Scan(&value.publicationID, &value.kind, &gatewayID, &value.hostname, &value.pathPrefix, &tls, &value.serviceID, &value.siteID, &value.protocol, &value.endpoint); err != nil {
+		if err := rows.Scan(&value.publicationID, &value.kind, &gatewayID, &value.hostname, &tls, &value.serviceID, &value.siteID, &value.protocol, &value.endpoint); err != nil {
 			rows.Close()
 			return err
 		}
@@ -155,7 +220,7 @@ func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx
 	for _, value := range items {
 		web := value.protocol == "http" || value.protocol == "https"
 		if isGatewayPublication(value.kind, web) {
-			if err := s.upsertPublicationRoute(ctx, tx, value.publicationID, value.siteID, value.serviceID, value.gatewayID, value.hostname, value.pathPrefix, value.protocol, value.endpoint, value.tls, now); err != nil {
+			if err := s.upsertPublicationRoute(ctx, tx, value.publicationID, value.siteID, value.serviceID, value.gatewayID, value.hostname, value.protocol, value.endpoint, value.tls, now); err != nil {
 				return err
 			}
 			gateways[value.gatewayID] = true

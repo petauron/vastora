@@ -105,7 +105,7 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	if publication.TLSEnabled {
 		scheme = "https"
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+publication.Hostname+publicationExternalPath(publication.PathPrefix, "/"), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+publication.Hostname+"/", nil)
 	if err != nil {
 		return PublicationView{}, err
 	}

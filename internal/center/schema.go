@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 45
+const centerSchemaVersion = 46
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -335,7 +335,6 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'public_shared_443', 'cloudflare_tunnel')),
 			gateway_node_id TEXT REFERENCES agents(id) ON DELETE RESTRICT,
 			hostname TEXT NOT NULL,
-			path_prefix TEXT NOT NULL DEFAULT '',
 			sni_hostname TEXT NOT NULL DEFAULT '',
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
 			dns_record_id TEXT NOT NULL DEFAULT '',
@@ -376,7 +375,6 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			hostname TEXT NOT NULL,
-			path_prefix TEXT NOT NULL DEFAULT '',
 			protocol TEXT NOT NULL CHECK(protocol IN ('http', 'https')),
 			upstreams_json BLOB NOT NULL,
 			tls_enabled INTEGER NOT NULL DEFAULT 0,
@@ -388,7 +386,6 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(publication_id, gateway_node_id)
 		)`,
-		`CREATE UNIQUE INDEX publications_hostname_path_idx ON publications(hostname, path_prefix) WHERE path_prefix <> ''`,
 		`CREATE TABLE gateway_components (
 			gateway_node_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
 			desired_status TEXT NOT NULL CHECK(desired_status IN ('running', 'stopped')),

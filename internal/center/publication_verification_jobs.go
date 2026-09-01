@@ -236,6 +236,9 @@ func (s *Store) resumePublicationVerifications(ctx context.Context) error {
 // serving Center. Offline commands such as backup deliberately do not call it,
 // so opening the database alone never performs external health checks.
 func (s *Store) StartPublicationVerifications(ctx context.Context) error {
+	if err := s.reconcileRetiredSharedPublicationGateways(ctx); err != nil {
+		return err
+	}
 	if err := s.reconcileDockerGatewayEndpoints(ctx); err != nil {
 		return err
 	}

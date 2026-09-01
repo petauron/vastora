@@ -282,11 +282,7 @@ func caddyConfiguration(desired gateway.DesiredState, certificates []gateway.Cer
 			if route.Path != "" {
 				matcher["path"] = []string{route.Path}
 			}
-			handlers := make([]map[string]any, 0, 2)
-			if route.StripPrefix != "" {
-				handlers = append(handlers, map[string]any{"handler": "rewrite", "strip_path_prefix": route.StripPrefix})
-			}
-			handlers = append(handlers, proxy)
+			handlers := []map[string]any{proxy}
 			candidate := caddyRoute{Match: []map[string][]string{matcher}, Handle: handlers, Terminal: true}
 			if route.TLSEnabled {
 				httpsRoutes = append(httpsRoutes, candidate)

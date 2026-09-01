@@ -123,7 +123,15 @@ export function defaultPublicationHostname(data: AppData, service: Service, kind
   const site = data.sites.find((value) => value.id === service.siteId);
   if (kind === "public_direct" || kind === "cloudflare_tunnel") {
     const zone = data.systemDomain.cloudflareZone || data.integrations.find((value) => value.kind === "cloudflare" && value.status === "configured")?.endpoint || site?.domainSuffix;
-    return zone ? `service-vastora.${zone}`.toLowerCase() : "";
+    const agent = data.agents.find((value) => value.id === application?.nodeId);
+    const appLabel = dnsLabel(application?.appKey.split("/").at(-1) || application?.name || "app");
+    const nodeLabel = dnsLabel(agent?.name || "node");
+    const applicationServices = data.services.filter((value) => value.applicationId === service.applicationId);
+    const serviceLabel = applicationServices.length > 1 ? dnsLabel(service.name) || "service" : "";
+    const hostnameParts = [appLabel, serviceLabel, nodeLabel].filter(Boolean);
+    const partLimit = Math.floor((63 - hostnameParts.length + 1) / hostnameParts.length);
+    const hostnameLabel = hostnameParts.map((value) => value.slice(0, partLimit).replace(/-+$/g, "")).join("-");
+    return zone ? `${hostnameLabel}.${zone}`.toLowerCase() : "";
   }
   if (!site?.domainSuffix) return "";
   const appLabel = dnsLabel(application?.appKey.split("/").at(-1) || application?.name || "app");
@@ -140,7 +148,7 @@ export function defaultRealityHostname(data: AppData, application: AppData["appl
 }
 
 function dnsLabel(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63).replace(/-+$/g, "");
 }
 
 export function operationLabel(language: Language, operation: Deployment["operation"]) {
