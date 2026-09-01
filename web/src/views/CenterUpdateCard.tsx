@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CircleArrowUpIcon, CircleCheckIcon, RotateCcwIcon, ShieldCheckIcon } from "lucide-react";
 import { api } from "../api";
 import type { CenterUpdateStatus } from "../types";
@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 
 const manualCommand = "curl -LsSf https://vastora.petauron.com/install.sh | sudo sh -s -- center";
+const reloadPage = () => window.location.reload();
 const updateStages: Readonly<Record<string, readonly [string, string]>> = {
   queued: ["等待主机更新服务", "Waiting for the host update service"],
   downloading: ["正在下载安装元数据", "Downloading release metadata"],
@@ -27,10 +28,11 @@ const updateStages: Readonly<Record<string, readonly [string, string]>> = {
   finalizing: ["正在完成最终检查", "Finishing final checks"],
 };
 
-export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }: { language: Language; onRefresh: () => Promise<void>; onStatusChange: (status: CenterUpdateStatus) => void; status: CenterUpdateStatus }) {
+export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, onStatusChange, status }: { language: Language; onRefresh: () => Promise<void>; onReload?: () => void; onStatusChange: (status: CenterUpdateStatus) => void; status: CenterUpdateStatus }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const reloadStarted = useRef(false);
   const running = status.state === "queued" || status.state === "applying";
   const stageCopy = updateStages[status.phase || (status.state === "queued" ? "queued" : "installing")] || updateStages.installing;
   const updateStage = copy(language, stageCopy[0], stageCopy[1]);
@@ -44,7 +46,9 @@ export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }
         const next = await api.centerUpdate();
         if (stopped) return;
         if (next.state === "succeeded") {
-          await onRefresh();
+          if (reloadStarted.current) return;
+          reloadStarted.current = true;
+          try { await onRefresh(); } finally { onReload(); }
           return;
         }
         onStatusChange(next);
@@ -55,7 +59,7 @@ export function CenterUpdateCard({ language, onRefresh, onStatusChange, status }
     };
     void poll();
     return () => { stopped = true; window.clearTimeout(timer); };
-  }, [onRefresh, onStatusChange, running]);
+  }, [onRefresh, onReload, onStatusChange, running]);
 
   const refresh = async () => {
     setBusy(true); setError("");
