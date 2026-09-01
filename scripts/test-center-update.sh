@@ -22,17 +22,20 @@ set -eu
 [ "${1:-}" = "center" ]
 shift
 release_url=""
+release_resolve=""
 install_dir=""
 expected_version=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --release-url) release_url="$2"; shift 2 ;;
+    --release-resolve) release_resolve="$2"; shift 2 ;;
     --install-dir) install_dir="$2"; shift 2 ;;
     --expected-version) expected_version="$2"; shift 2 ;;
     *) exit 2 ;;
   esac
 done
 [ "$release_url" = "https://vastora.petauron.com/releases/v$expected_version/vastora-center-install.tar.gz" ]
+[ "$release_resolve" = "vastora.petauron.com:443:203.0.113.10" ]
 [ "$VASTORA_UPDATE_STATUS_FILE" = "$install_dir/.update-status.json" ]
 [ "$VASTORA_UPDATE_TARGET_VERSION" = "$expected_version" ]
 grep -Fq '"message":"Installing the verified release."' "$VASTORA_UPDATE_STATUS_FILE"
@@ -44,6 +47,7 @@ cat > "$fake_bin/curl" <<'EOF'
 set -eu
 headers=""
 output=""
+resolve=""
 url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -51,11 +55,13 @@ while [ "$#" -gt 0 ]; do
     --tlsv1.2) shift ;;
     --dump-header) headers="$2"; shift 2 ;;
     --write-out) shift 2 ;;
+    --resolve) resolve="$2"; shift 2 ;;
     -o) output="$2"; shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
 done
+[ "$resolve" = "vastora.petauron.com:443:203.0.113.10" ]
 [ "$url" = "https://vastora.petauron.com/releases/v$FAKE_TARGET_VERSION/install.sh" ]
 status="${FAKE_RESPONSE_STATUS:-200}"
 if [ "$status" != "200" ]; then
@@ -76,7 +82,12 @@ chmod 0755 "$fake_bin/id" "$fake_bin/curl" "$temporary_dir/installer.sh"
 run_update() {
   target_version="$1"
   response_version="$2"
-  printf '%s\n' "$target_version" > "$install_dir/.update-request"
+  printf '%s\n' \
+    "$target_version" \
+    "https://vastora.petauron.com/releases" \
+    "vastora.petauron.com" \
+    "443" \
+    "203.0.113.10" > "$install_dir/.update-request"
   FAKE_INSTALLER_LOG="$temporary_dir/installer.log" \
   FAKE_INSTALLER_SOURCE="$temporary_dir/installer.sh" \
   FAKE_RESPONSE_VERSION="$response_version" \
