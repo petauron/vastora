@@ -162,11 +162,11 @@ func TestStoredThreeXUICredentialsRequireAdministratorReauthenticationAndAreAudi
 	if err := store.AcknowledgeDeploymentCredentials(ctx, deployment.ID, adminID, request.SecretOperationKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RevealStoredThreeXUICredentials(ctx, deployment.ApplicationID, adminID, "incorrect-password"); err == nil || !strings.Contains(err.Error(), "current password is incorrect") {
+	if _, err := store.RevealApplicationCredentials(ctx, deployment.ApplicationID, adminID, "incorrect-password"); err == nil || !strings.Contains(err.Error(), "current password is incorrect") {
 		t.Fatalf("stored credentials accepted incorrect reauthentication: %v", err)
 	}
-	revealed, err := store.RevealStoredThreeXUICredentials(ctx, deployment.ApplicationID, adminID, "correct-horse-battery-staple")
-	if err != nil || revealed != *deployment.OneTimeCredentials {
+	revealed, err := store.RevealApplicationCredentials(ctx, deployment.ApplicationID, adminID, "correct-horse-battery-staple")
+	if err != nil || revealed.Kind != "three_x_ui" || revealed.Username != deployment.OneTimeCredentials.Username || revealed.Password != deployment.OneTimeCredentials.Password {
 		t.Fatalf("stored credentials = %#v err=%v", revealed, err)
 	}
 	actions, err := store.ListActions(ctx, 10)

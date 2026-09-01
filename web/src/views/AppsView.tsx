@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AppWindowIcon, ArrowRightLeftIcon, ArrowUpCircleIcon, CheckCircle2Icon, ExternalLinkIcon, EyeIcon, EyeOffIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, PencilIcon, RadioTowerIcon, RefreshCwIcon, RotateCcwIcon, Settings2Icon, ShieldAlertIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
-import type { AgentView, Application, ApplicationCommand, AppView, Deployment, Publication, PublicationKind, Service, ThreeXUIRole } from "../types";
+import type { AgentView, Application, ApplicationCommand, ApplicationCredentialRotation, ApplicationCredentials, AppView, Deployment, Publication, PublicationKind, Service, ThreeXUIRole } from "../types";
 import type { Language } from "../translations";
 import { canInstall, defaultPublicationHostname, gatewaysForKind, installBlocker, isActiveApplication, isInstalledApplication, latestOperations, localized, operationLabel, publicationIntentOptions, publicationKindLabel, publicationKindsForIntent, publicationOptions, type PublicationIntent } from "./appAccess";
 import { CopyButton, HighPrivilegeBadge, PageHeading, StateBadge, TechnicalError, copy, userError } from "./shared";
@@ -148,7 +148,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
       <ThreeXUIInboundTrafficSheet controller={trafficController ?? null} language={language} onClose={() => setTrafficService(null)} service={trafficService} siteTimezone={trafficService ? data.sites.find((site) => site.id === trafficService.siteId)?.timezone : undefined} />
       <SubscriptionSheet application={subscriptionApplication} data={data} language={language} mutate={mutate} onClose={() => setSubscriptionApplication(null)} />
 	      <ThreeXUIClientsSheet advancedURL={clientsApplication ? data.deployments.find((value) => value.applicationId === clientsApplication.id && value.state === "succeeded" && value.operation !== "uninstall")?.accessUrl : undefined} application={clientsApplication} language={language} onClose={() => setClientsApplication(null)} siteTimezone={clientsApplication ? data.sites.find((site) => site.id === clientsApplication.siteId)?.timezone : undefined} />
-	      <ThreeXUICredentialsSheet application={credentialApplication} language={language} onClose={() => setCredentialApplication(null)} />
+	      <ApplicationCredentialsSheet application={credentialApplication} language={language} onClose={() => setCredentialApplication(null)} />
 	      <ThreeXUIControllerMigrationSheet application={migrationApplication} data={data} language={language} mutate={mutate} onClose={() => setMigrationApplication(null)} />
       <UninstallSheet application={uninstallApplication} app={uninstallApplication ? catalogByKey.get(uninstallApplication.appKey) : undefined} language={language} onClose={() => setUninstallApplication(null)} onSubmit={async (application, deleteData) => { await mutate(() => api.createDeployment(application.nodeId, application.appKey, {}, "uninstall", deleteData), copy(language, "卸载任务已创建。", "Uninstall task created.")); setUninstallApplication(null); }} />
     </section>
@@ -165,6 +165,7 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
   const subscriptionService = services.find((service) => service.name === "subscription");
   const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
   const isThreeXUI = application.appKey === "vastora-official/3x-ui";
+	const isCPA = application.appKey === "vastora-official/cpa";
   const isController = isThreeXUI && application.role === "master";
   const isWorker = isThreeXUI && application.role === "worker";
   const nodeSyncing = application.nodeSyncStatus === "pending" || application.nodeSyncStatus === "applying";
@@ -202,6 +203,7 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
 	        <Button disabled={hasVLESSNode || serviceAccessLocked || isWorker && (!nodeReady || syncingNode)} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{hasVLESSNode ? copy(language, "VLESS 节点已配置", "VLESS node configured") : copy(language, "创建 VLESS", "Create VLESS")}</Button>
         {isController && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}
       </div> : null}
+			{isCPA ? <Button disabled={Boolean(activeChange)} onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "凭据", "Credentials")}</Button> : null}
       {!isWorker && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
       {!isWorker && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
 			{visibleServices.map((service) => <ServiceRow data={data} key={service.id} language={language} locked={serviceAccessLocked} onPublish={() => onPublish(service)} onRename={() => onRenameReality(service)} onTraffic={() => onTraffic(service)} service={service} mutate={mutate} />)}
@@ -211,28 +213,69 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
 	  </Card>;
 }
 
-function ThreeXUICredentialsSheet({ application, language, onClose }: { application: Application | null; language: Language; onClose: () => void }) {
+function ApplicationCredentialsSheet({ application, language, onClose }: { application: Application | null; language: Language; onClose: () => void }) {
 	const [currentPassword, setCurrentPassword] = useState("");
-	const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
-	const [passwordVisible, setPasswordVisible] = useState(false);
+	const [credentials, setCredentials] = useState<ApplicationCredentials | null>(null);
+	const [visibleSecrets, setVisibleSecrets] = useState<Set<string>>(() => new Set());
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
+	const [rotationTarget, setRotationTarget] = useState<"management" | "client" | null>(null);
+	const [rotationConfirmed, setRotationConfirmed] = useState(false);
+	const [rotation, setRotation] = useState<ApplicationCredentialRotation | null>(null);
 
 	useEffect(() => {
 		setCurrentPassword("");
 		setCredentials(null);
-		setPasswordVisible(false);
+		setVisibleSecrets(new Set());
 		setBusy(false);
 		setError("");
+		setRotationTarget(null);
+		setRotationConfirmed(false);
+		setRotation(null);
 	}, [application?.id]);
+
+	useEffect(() => {
+		const applicationID = application?.id;
+		const rotationID = rotation?.id;
+		const rotationState = rotation?.state;
+		if (!applicationID || !rotationID || rotationState !== "preparing" && rotationState !== "pending") return;
+		const controller = new AbortController();
+		let timer = 0;
+		const poll = async () => {
+			try {
+				const current = await api.applicationCredentialRotation(applicationID, rotationID, controller.signal);
+				setRotation(current);
+				if (current.state === "succeeded") {
+					clearSecretOperation(`application-credential-rotation:${applicationID}:${current.target}`);
+					return;
+				}
+				if (current.state === "preparing" || current.state === "pending") timer = window.setTimeout(() => void poll(), 1000);
+			} catch (pollError) {
+				if (!controller.signal.aborted) setError(userError(language, pollError));
+			}
+		};
+		timer = window.setTimeout(() => void poll(), 1000);
+		return () => {
+			controller.abort();
+			window.clearTimeout(timer);
+		};
+	}, [application?.id, language, rotation?.id, rotation?.state]);
 
 	const close = () => {
 		setCurrentPassword("");
 		setCredentials(null);
-		setPasswordVisible(false);
+		setVisibleSecrets(new Set());
 		setError("");
+		setRotationTarget(null);
+		setRotationConfirmed(false);
+		setRotation(null);
 		onClose();
 	};
+	const toggleSecret = (name: string) => setVisibleSecrets((current) => {
+		const next = new Set(current);
+		if (next.has(name)) next.delete(name); else next.add(name);
+		return next;
+	});
 	const reveal = async (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		if (!application || busy) return;
@@ -241,31 +284,65 @@ function ThreeXUICredentialsSheet({ application, language, onClose }: { applicat
 		setBusy(true);
 		setError("");
 		try {
-			setCredentials(await api.revealStoredThreeXUICredentials(application.id, reauthentication));
+			setCredentials(await api.revealApplicationCredentials(application.id, reauthentication));
 		} catch (revealError) {
 			setError(userError(language, revealError));
 		} finally {
 			setBusy(false);
 		}
 	};
+	const beginRotation = (target: "management" | "client") => {
+		setCredentials(null);
+		setVisibleSecrets(new Set());
+		setCurrentPassword("");
+		setRotationTarget(target);
+		setRotationConfirmed(false);
+		setRotation(null);
+		setError("");
+	};
+	const rotate = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!application || !rotationTarget || busy || !rotationConfirmed) return;
+		const reauthentication = currentPassword;
+		const scope = `application-credential-rotation:${application.id}:${rotationTarget}`;
+		setCurrentPassword("");
+		setBusy(true);
+		setError("");
+		try {
+			const result = await api.rotateApplicationCredentials(application.id, rotationTarget, reauthentication, secretOperation(scope));
+			setRotation(result);
+			if (result.state === "succeeded") clearSecretOperation(scope);
+		} catch (rotationError) {
+			setError(userError(language, rotationError));
+		} finally {
+			setBusy(false);
+		}
+	};
+	const secretField = (id: string, label: string, value: string) => <Field><FieldLabel htmlFor={id}>{label}</FieldLabel><div className="flex items-center gap-2"><div className="relative min-w-0 flex-1"><Input className="pr-11 font-mono" id={id} readOnly type={visibleSecrets.has(id) ? "text" : "password"} value={value} /><Button aria-label={visibleSecrets.has(id) ? copy(language, "隐藏凭据", "Hide credential") : copy(language, "显示凭据", "Show credential")} className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => toggleSecret(id)} size="icon-sm" type="button" variant="ghost">{visibleSecrets.has(id) ? <EyeOffIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}</Button></div><CopyButton language={language} size="icon" value={value} /></div></Field>;
+	const isCPA = application?.appKey === "vastora-official/cpa";
 
 	return <Sheet onOpenChange={(open) => { if (!open) close(); }} open={Boolean(application)}>
 		<SheetContent className="sm:max-w-md">
 			<SheetHeader>
-				<SheetTitle>{copy(language, "3x-ui 管理账号", "3x-ui administrator account")}</SheetTitle>
-				<SheetDescription>{copy(language, "账号密码由 Center 加密保管。每次查看都需要重新输入当前 Center 管理员密码，并会记录安全审计事件。", "Center stores these credentials encrypted. Every reveal requires your current Center administrator password and creates a security audit event.")}</SheetDescription>
+				<SheetTitle>{isCPA ? copy(language, "CPA 凭据", "CPA credentials") : copy(language, "3x-ui 管理账号", "3x-ui administrator account")}</SheetTitle>
+				<SheetDescription>{copy(language, "凭据由 Center 加密保管。每次查看或轮换都需要重新输入当前 Center 管理员密码，并会记录安全审计事件。", "Center stores these credentials encrypted. Every reveal or rotation requires your current Center administrator password and creates a security audit event.")}</SheetDescription>
 			</SheetHeader>
-			{credentials ? <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
+			{rotationTarget ? <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void rotate(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup>
+				{rotation ? <Alert variant={rotation.state === "failed" || rotation.state === "action_required" ? "destructive" : "default"}>{rotation.state === "succeeded" ? <CheckCircle2Icon /> : rotation.state === "pending" || rotation.state === "preparing" ? <Spinner /> : <ShieldAlertIcon />}<AlertTitle>{rotation.state === "succeeded" ? copy(language, "凭据轮换完成", "Credential rotation completed") : rotation.state === "pending" || rotation.state === "preparing" ? copy(language, "凭据轮换已排队", "Credential rotation is queued") : copy(language, "凭据轮换需要重试", "Credential rotation needs retry")}</AlertTitle><AlertDescription>{rotation.lastError || copy(language, "CPA 与依赖组件会按顺序应用同一轮换结果。完成前不会生成第二个值。", "CPA and dependent components apply the same rotation in order. No second value is generated while it is pending.")}</AlertDescription></Alert> : null}
+				<Field><FieldLabel>{copy(language, "轮换项目", "Credential to rotate")}</FieldLabel><FieldDescription>{rotationTarget === "management" ? copy(language, "CPA 管理密钥；已安装 Keeper 时会同步更新。", "CPA management key; an installed Keeper is updated with it.") : copy(language, "客户端 API 密钥；管理密钥保持不变。", "Client API key; the management key remains unchanged.")}</FieldDescription></Field>
+				<Field><FieldLabel htmlFor="application-credential-rotation-password">{copy(language, "Center 管理员密码", "Center administrator password")}</FieldLabel><Input autoComplete="current-password" autoFocus id="application-credential-rotation-password" minLength={administratorPasswordMinLength} onChange={(event) => setCurrentPassword(event.target.value)} required type="password" value={currentPassword} /><FieldDescription>{copy(language, "同一个轮换操作会复用原请求标识；网络响应不明确时重试不会生成第二个密钥。", "The same rotation reuses its original request identity; retrying an ambiguous response does not generate a second key.")}</FieldDescription></Field>
+				<Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="application-credential-rotation-confirm">{copy(language, "确认立即轮换", "Confirm immediate rotation")}</FieldLabel><FieldDescription>{copy(language, "旧密钥将在节点应用新配置后失效。", "The previous key becomes invalid after the node applies the new configuration.")}</FieldDescription></div><Switch checked={rotationConfirmed} id="application-credential-rotation-confirm" onCheckedChange={setRotationConfirmed} /></Field>
+				{error ? <FieldError role="alert">{error}</FieldError> : null}
+			</FieldGroup></div><SheetFooter><Button onClick={() => { setRotationTarget(null); setRotation(null); setCurrentPassword(""); setError(""); }} type="button" variant="outline">{copy(language, "返回", "Back")}</Button><Button disabled={busy || !rotationConfirmed || currentPassword.length < administratorPasswordMinLength || rotation?.state === "succeeded"} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{rotation?.state === "pending" || rotation?.state === "preparing" ? copy(language, "验证并检查", "Verify and check") : copy(language, "验证并轮换", "Verify and rotate")}</Button></SheetFooter></form> : credentials ? <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
 				<Alert><KeyRoundIcon /><AlertTitle>{copy(language, "凭据仅在当前面板中显示", "Credentials are shown only in this panel")}</AlertTitle><AlertDescription>{copy(language, "关闭后会立即从页面状态中清除；以后仍可再次验证并查看。", "They are cleared from page state as soon as this panel closes. You can reauthenticate to reveal them again later.")}</AlertDescription></Alert>
 				<FieldGroup>
-					<Field><FieldLabel htmlFor="three-x-ui-credential-username">{copy(language, "账号", "Username")}</FieldLabel><div className="flex items-center gap-2"><Input className="font-mono" id="three-x-ui-credential-username" readOnly value={credentials.username} /><CopyButton language={language} size="icon" value={credentials.username} /></div></Field>
-					<Field><FieldLabel htmlFor="three-x-ui-credential-password">{copy(language, "密码", "Password")}</FieldLabel><div className="flex items-center gap-2"><div className="relative min-w-0 flex-1"><Input className="pr-11 font-mono" id="three-x-ui-credential-password" readOnly type={passwordVisible ? "text" : "password"} value={credentials.password} /><Button aria-label={passwordVisible ? copy(language, "隐藏密码", "Hide password") : copy(language, "显示密码", "Show password")} className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setPasswordVisible((visible) => !visible)} size="icon-sm" type="button" variant="ghost">{passwordVisible ? <EyeOffIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}</Button></div><CopyButton language={language} size="icon" value={credentials.password} /></div></Field>
+					{credentials.kind === "three_x_ui" ? <><Field><FieldLabel htmlFor="three-x-ui-credential-username">{copy(language, "账号", "Username")}</FieldLabel><div className="flex items-center gap-2"><Input className="font-mono" id="three-x-ui-credential-username" readOnly value={credentials.username} /><CopyButton language={language} size="icon" value={credentials.username} /></div></Field>{secretField("three-x-ui-credential-password", copy(language, "密码", "Password"), credentials.password)}</> : <>{secretField("cpa-management-key", copy(language, "管理密钥", "Management key"), credentials.managementKey)}{secretField("cpa-client-api-key", copy(language, "客户端 API 密钥", "Client API key"), credentials.clientApiKey)}</>}
 				</FieldGroup>
 			</div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void reveal(event)}>
-				<div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="three-x-ui-credential-reauthentication">{copy(language, "Center 管理员密码", "Center administrator password")}</FieldLabel><Input autoComplete="current-password" autoFocus id="three-x-ui-credential-reauthentication" minLength={administratorPasswordMinLength} onChange={(event) => setCurrentPassword(event.target.value)} required type="password" value={currentPassword} /><FieldDescription>{copy(language, "密码只随本次验证请求发送，不会持久化到浏览器。", "This password is sent only with this verification request and is not persisted in the browser.")}</FieldDescription>{error ? <FieldError role="alert">{error}</FieldError> : null}</Field></FieldGroup></div>
+				<div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="application-credential-reauthentication">{copy(language, "Center 管理员密码", "Center administrator password")}</FieldLabel><Input autoComplete="current-password" autoFocus id="application-credential-reauthentication" minLength={administratorPasswordMinLength} onChange={(event) => setCurrentPassword(event.target.value)} required type="password" value={currentPassword} /><FieldDescription>{copy(language, "密码只随本次验证请求发送，不会持久化到浏览器。", "This password is sent only with this verification request and is not persisted in the browser.")}</FieldDescription>{error ? <FieldError role="alert">{error}</FieldError> : null}</Field></FieldGroup></div>
 				<SheetFooter><Button onClick={close} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || currentPassword.length < administratorPasswordMinLength} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}{busy ? copy(language, "正在验证…", "Verifying…") : copy(language, "验证并查看", "Verify and reveal")}</Button></SheetFooter>
 			</form>}
-			{credentials ? <SheetFooter><Button onClick={close} type="button">{copy(language, "关闭", "Close")}</Button></SheetFooter> : null}
+			{credentials ? <SheetFooter>{credentials.kind === "cpa" ? <><Button onClick={() => beginRotation("management")} type="button" variant="outline">{copy(language, "轮换管理密钥", "Rotate management key")}</Button><Button onClick={() => beginRotation("client")} type="button" variant="outline">{copy(language, "轮换客户端密钥", "Rotate client key")}</Button></> : null}<Button onClick={close} type="button">{copy(language, "关闭", "Close")}</Button></SheetFooter> : null}
 		</SheetContent>
 	</Sheet>;
 }

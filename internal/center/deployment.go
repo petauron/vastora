@@ -26,10 +26,14 @@ type DeploymentRequest struct {
 	DeleteData bool            `json:"deleteData"`
 	// RegistryCredentialID is tri-state: omitted preserves an installed binding,
 	// an empty string clears it, and a non-empty value replaces it.
-	RegistryCredentialID *string `json:"registryCredentialId,omitempty"`
-	SecretOperationOwner string  `json:"-"`
-	SecretOperationKey   string  `json:"-"`
-	ChangeProposalID     string  `json:"-"`
+	RegistryCredentialID *string              `json:"registryCredentialId,omitempty"`
+	SecretOperationOwner string               `json:"-"`
+	SecretOperationKey   string               `json:"-"`
+	ChangeProposalID     string               `json:"-"`
+	InternalDeploymentID string               `json:"-"`
+	CPACredentials       *cpaCredentialValues `json:"-"`
+	CPAManagementKey     string               `json:"-"`
+	CredentialRotation   bool                 `json:"-"`
 }
 
 type DeploymentView struct {
@@ -86,6 +90,14 @@ func validateRegistryCredentialBinding(ctx context.Context, querier registryCred
 func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest) (DeploymentView, error) {
 	s.deploymentCreateMu.Lock()
 	defer s.deploymentCreateMu.Unlock()
+	request.InternalDeploymentID = strings.TrimSpace(request.InternalDeploymentID)
+	if request.InternalDeploymentID != "" {
+		if replay, err := s.deploymentByID(ctx, request.InternalDeploymentID); err == nil {
+			return replay, nil
+		} else if !errors.Is(err, errDeploymentNotFound) {
+			return DeploymentView{}, err
+		}
+	}
 	request.ChangeProposalID = strings.TrimSpace(request.ChangeProposalID)
 	if request.ChangeProposalID != "" {
 		var replay DeploymentView
@@ -220,7 +232,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if request.Operation == "configure" {
+	if request.Operation == "configure" && !request.CredentialRotation {
 		var changed map[string]json.RawMessage
 		if len(request.Config) == 0 || json.Unmarshal(request.Config, &changed) != nil || len(changed) == 0 {
 			return DeploymentView{}, errors.New("center: configure requires at least one changed setting")
@@ -242,14 +254,30 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 					return DeploymentView{}, err
 				}
 			}
+			if request.AppKey == cpaAppKey {
+				deploymentConfig, err = removeJSONObjectKeys(deploymentConfig, "timezone", "management_key", "api_key")
+				if err != nil {
+					return DeploymentView{}, err
+				}
+			}
 		}
 		config, secrets, err = normalizeDeploymentConfig(manifest, deploymentConfig)
 		if err != nil {
 			return DeploymentView{}, err
 		}
 	}
+	if request.AppKey == cpaAppKey && request.Operation != "uninstall" {
+		config, err = s.withCPASiteTimezone(ctx, request.AgentID, config)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+		secrets, err = s.withCPACredentials(ctx, request.AgentID, request.Operation, request.CPACredentials)
+		if err != nil {
+			return DeploymentView{}, err
+		}
+	}
 	if request.AppKey == "vastora-official/keeper" && request.Operation != "uninstall" {
-		secrets, err = s.withCPASecret(ctx, request.AgentID, secrets)
+		secrets, err = s.withCPASecret(ctx, request.AgentID, secrets, request.CPAManagementKey)
 		if err != nil {
 			return DeploymentView{}, err
 		}
@@ -268,9 +296,12 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if err != nil {
 		return DeploymentView{}, fmt.Errorf("center: encode deployment manifest: %w", err)
 	}
-	id, err := randomToken(18)
-	if err != nil {
-		return DeploymentView{}, err
+	id := request.InternalDeploymentID
+	if id == "" {
+		id, err = randomToken(18)
+		if err != nil {
+			return DeploymentView{}, err
+		}
 	}
 	now := s.now().UTC()
 	deployment := DeploymentView{ID: id, AgentID: request.AgentID, AppKey: request.AppKey, AppVersion: manifest.Version, Operation: request.Operation, DeleteData: request.DeleteData, State: "pending", CreatedAt: now, UpdatedAt: now, OneTimeCredentials: oneTimeCredentials, OneTimeCredentialsAvailable: producesCredentials}

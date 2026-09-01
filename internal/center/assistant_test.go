@@ -305,6 +305,103 @@ func TestAssistantProposalRequiresExactApprovalAndAppliesExactlyOnce(t *testing.
 	}
 }
 
+func TestAssistantCPACredentialRotationRequiresApprovalAndKeepsSecretsOutOfModelData(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	session, _, err := store.CreateFirstAdmin(ctx, "assistant-admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminID, err := store.SessionAdminID(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := enrollOrchestrationNode(t, store, "assistant-cpa-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
+	install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTask := claimTask(t, store, node)
+	var original cpaCredentialValues
+	if err := json.Unmarshal(installTask.Secrets, &original); err != nil || original.ManagementKey == "" || original.APIKey == "" {
+		t.Fatalf("CPA install did not generate credentials: %#v err=%v", original, err)
+	}
+	completeApplicationTaskForCredentialTest(t, store, node, installTask, "10.0.0.93", 8317)
+
+	conversation, err := store.CreateAssistantConversation(ctx, adminID, "Rotate CPA client key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.QueueAssistantMessage(ctx, adminID, conversation.ID, "轮换 CPA 客户端密钥")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, "", false)
+	previews := assistantPreviewCache{installations: map[string]assistantInstallPreview{}, rotations: map[string]assistantCredentialRotationPreview{}}
+	previewResult, _, err := server.executeAssistantTool(ctx, adminID, run, "preview-tool", "preview_rotate_cpa_credential", assistantJSON(map[string]string{"applicationId": install.ApplicationID, "target": "client"}), previews)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var preview assistantCredentialRotationPreview
+	if err := json.Unmarshal(previewResult, &preview); err != nil {
+		t.Fatal(err)
+	}
+	proposalResult, proposal, err := server.executeAssistantTool(ctx, adminID, run, "proposal-tool", "propose_change", assistantJSON(map[string]string{"previewDigest": preview.Digest}), previews)
+	if err != nil || proposal == nil || proposal.Kind != "rotate_cpa_credential" || proposal.Risk != "high" {
+		t.Fatalf("assistant CPA proposal = %#v err=%v", proposal, err)
+	}
+	for _, secretValue := range []string{original.ManagementKey, original.APIKey} {
+		if bytes.Contains(previewResult, []byte(secretValue)) || bytes.Contains(proposalResult, []byte(secretValue)) {
+			t.Fatal("assistant CPA preview or proposal exposed an existing credential")
+		}
+	}
+	var rotations int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_credential_rotations`).Scan(&rotations); err != nil || rotations != 0 {
+		t.Fatalf("assistant CPA proposal created work before approval: count=%d err=%v", rotations, err)
+	}
+	if _, err := store.ApplyAssistantProposal(ctx, adminID, proposal.ID, proposal.Digest); err == nil {
+		t.Fatal("pending assistant CPA proposal executed without approval")
+	}
+	if _, err := store.DecideAssistantProposal(ctx, adminID, proposal.ID, "approved", proposal.Digest); err != nil {
+		t.Fatal(err)
+	}
+	execution, err := store.ApplyAssistantProposal(ctx, adminID, proposal.ID, proposal.Digest)
+	if err != nil || execution.Kind != "rotate_cpa_credential" || execution.ID == "" {
+		t.Fatalf("assistant CPA execution = %#v err=%v", execution, err)
+	}
+	replayed, err := store.ApplyAssistantProposal(ctx, adminID, proposal.ID, proposal.Digest)
+	if err != nil || replayed.ID != execution.ID {
+		t.Fatalf("assistant CPA replay = %#v err=%v", replayed, err)
+	}
+	rotationTask := claimTask(t, store, node)
+	var rotated cpaCredentialValues
+	if err := json.Unmarshal(rotationTask.Secrets, &rotated); err != nil {
+		t.Fatal(err)
+	}
+	if rotated.ManagementKey != original.ManagementKey || rotated.APIKey == "" || rotated.APIKey == original.APIKey {
+		t.Fatalf("assistant rotated the wrong CPA credential: before=%#v after=%#v", original, rotated)
+	}
+	completeApplicationTaskForCredentialTest(t, store, node, rotationTask, "10.0.0.93", 8317)
+	completed, err := store.refreshCredentialRotation(ctx, execution.ID)
+	if err != nil || completed.State != "succeeded" {
+		t.Fatalf("assistant CPA rotation completion = %#v err=%v", completed, err)
+	}
+
+	var proposalData, auditData []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT request_json || summary_json || targets_json FROM change_proposals WHERE id = ?`, proposal.ID).Scan(&proposalData); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COALESCE(group_concat(payload_json, ''), '') FROM assistant_audit_events WHERE proposal_id = ?`, proposal.ID).Scan(&auditData); err != nil {
+		t.Fatal(err)
+	}
+	for _, secretValue := range []string{original.ManagementKey, original.APIKey, rotated.APIKey} {
+		if bytes.Contains(proposalData, []byte(secretValue)) || bytes.Contains(auditData, []byte(secretValue)) {
+			t.Fatal("assistant proposal or audit data exposed a CPA credential")
+		}
+	}
+}
+
 func TestAssistantRejectionStaleRevisionAndToolBoundaryFailClosed(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -332,13 +429,14 @@ func TestAssistantRejectionStaleRevisionAndToolBoundaryFailClosed(t *testing.T) 
 	if _, err := store.ApplyAssistantProposal(ctx, adminID, proposal.ID, proposal.Digest); err == nil {
 		t.Fatal("rejected proposal was executable")
 	}
-	if _, _, err := NewServer(store, "", false).executeAssistantTool(ctx, adminID, run, "tool", "shell", json.RawMessage(`{"command":"id"}`), map[string]assistantInstallPreview{}); err == nil || !strings.Contains(err.Error(), "not allowed") {
+	previews := assistantPreviewCache{installations: map[string]assistantInstallPreview{}, rotations: map[string]assistantCredentialRotationPreview{}}
+	if _, _, err := NewServer(store, "", false).executeAssistantTool(ctx, adminID, run, "tool", "shell", json.RawMessage(`{"command":"id"}`), previews); err == nil || !strings.Contains(err.Error(), "not allowed") {
 		t.Fatalf("excluded high-risk tool was accepted: %v", err)
 	}
 	if !assistantArgumentsContainSensitiveData(json.RawMessage(`{"config":{"api_key":"must-not-persist"}}`)) {
 		t.Fatal("sensitive model tool arguments were not rejected")
 	}
-	nodeResult, _, err := NewServer(store, "", false).executeAssistantTool(ctx, adminID, run, "tool", "list_nodes", json.RawMessage(`{}`), map[string]assistantInstallPreview{})
+	nodeResult, _, err := NewServer(store, "", false).executeAssistantTool(ctx, adminID, run, "tool", "list_nodes", json.RawMessage(`{}`), previews)
 	if err != nil {
 		t.Fatal(err)
 	}

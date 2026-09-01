@@ -128,7 +128,7 @@ export type AssistantProposal = {
   id: string;
   conversationId: string;
   runId: string;
-  kind: "install_application";
+	kind: "install_application" | "rotate_cpa_credential";
   summary: {
     action?: string;
     agentId?: string;
@@ -136,8 +136,9 @@ export type AssistantProposal = {
     appKey?: string;
     appName?: LocalizedText;
     version?: string;
-    role?: string;
-    impact?: string;
+		role?: string;
+		credentialTarget?: "management" | "client";
+		impact?: string;
     dataRetention?: string;
   };
   digest: string;
@@ -147,9 +148,16 @@ export type AssistantProposal = {
   risk: "low" | "medium" | "high";
   status: "pending" | "approved" | "rejected" | "expired" | "applied" | "cancelled";
   expiresAt: string;
-  deploymentId?: string;
-  createdAt: string;
-  updatedAt: string;
+	deploymentId?: string;
+	executionId?: string;
+	createdAt: string;
+	updatedAt: string;
+};
+
+export type AssistantExecution = {
+	id: string;
+	kind: AssistantProposal["kind"];
+	state: string;
 };
 
 export type AssistantConversation = {
@@ -318,6 +326,8 @@ export type ThreeXUIRole = "master" | "worker";
 export type ThreeXUIBackup = { applicationId: string; revision: number; state: "pending" | "ready" | "failed"; sha256?: string; size: number; lastError?: string; updatedAt: string };
 export type ThreeXUIControllerMigration = { id: string; siteId: string; sourceApplicationId: string; targetApplicationId: string; backupRevision: number; state: "backing_up" | "restoring" | "switching" | "ready" | "failed"; step: "backup" | "restore" | "cleanup" | "switch" | "complete"; lastError?: string; backup?: ThreeXUIBackup; createdAt: string; updatedAt: string };
 export type Application = { id: string; name: string; nodeId: string; siteId: string; appKey: string; image: string; status: string; runtime: string; role?: ThreeXUIRole; controllerApplicationId?: string; nodeSyncStatus?: "pending" | "applying" | "ready" | "failed" | "stopped"; nodeSyncError?: string; restorePointState?: "pending" | "ready" | "failed"; restorePointAt?: string; installedVersion?: string; availableVersion?: string; updateAvailable: boolean; createdAt: string; updatedAt: string };
+export type ApplicationCredentials = { kind: "three_x_ui"; username: string; password: string } | { kind: "cpa"; managementKey: string; clientApiKey: string };
+export type ApplicationCredentialRotation = { id: string; applicationId: string; target: "management" | "client"; state: "preparing" | "pending" | "succeeded" | "failed" | "action_required"; cpaDeploymentId?: string; keeperDeploymentId?: string; lastError?: string; createdAt: string; updatedAt: string };
 export type Service = { id: string; applicationId: string; siteId: string; name: string; displayName?: string; regionCode?: string; protocol: "http" | "https" | "tcp" | "udp"; containerPort: number; hostPort: number; endpoint: string; source: "catalog" | "observed"; appProtocol?: string; management: boolean; observedListen?: string; status: string; lastError?: string; guardStatus?: "pending" | "hardening" | "ready" | "action_required"; guardSummary?: string; actionRequiredReason?: string; createdAt: string; updatedAt: string };
 export type Region = { code: string; nameZh: string; prefix: string };
 export type RegionSuggestion = { agentId: string; publicAddress: string; regionCode: string; prefix: string; source: string };

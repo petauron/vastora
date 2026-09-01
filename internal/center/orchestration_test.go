@@ -168,7 +168,7 @@ func TestAgentRuntimeGenerationFencesClaimsAndResultEvidence(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "runtime-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.83", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.83", LANAddress: "10.0.0.83", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestNewerAgentCompletesOlderPendingRuntimeTaskAtExecutedGeneration(t *testi
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "runtime-forward-executor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.85", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.85", LANAddress: "10.0.0.85", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +584,7 @@ func TestPublicationRejectsCrossNodeWithoutSharedPrivateNetwork(t *testing.T) {
 
 func installCPA(t *testing.T, store *Store, node AgentCredential, address string) string {
 	t.Helper()
-	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1096,7 +1096,7 @@ func TestDisabledAgentCredentialIsRevoked(t *testing.T) {
 	if len(agents) != 1 || agents[0].Status != "disabled" || agents[0].Connected {
 		t.Fatalf("disabled Agent state is incorrect: %#v", agents)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)}); err == nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: json.RawMessage(`{"debug":false}`)}); err == nil {
 		t.Fatal("disabled Agent accepted a deployment")
 	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}}); err == nil {

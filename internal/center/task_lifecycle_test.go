@@ -256,7 +256,7 @@ func TestInvalidReconciliationDispositionIsRejected(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "invalid-reconciliation", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.16", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.16", LANAddress: "10.0.0.16", EnabledKinds: []string{networking.KindLAN}})
-	config := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	config := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	clock := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
-	config := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	config := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config}); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestTaskLeaseRenewalKeepsAttemptActiveAndNeverResurrectsExpiredLease(t *tes
 	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "lease-renewal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
-	config := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	config := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "address-snapshot", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.11", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.11", LANAddress: "10.0.0.11", EnabledKinds: []string{networking.KindLAN}})
-	config := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	config := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestNetworkProfileChangeAndDeploymentCreationRemainConsistent(t *testing.T)
 	go func() {
 		ready.Done()
 		<-start
-		view, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+		view, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 		deploymentResults <- deploymentResult{view: view, err: err}
 	}()
 	ready.Wait()
@@ -500,7 +500,7 @@ func TestDeploymentLifecyclePreventsDuplicateInstallAndControlsDataDeletion(t *t
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.20", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.20", LANAddress: "10.0.0.20", EnabledKinds: []string{networking.KindLAN}})
-	config := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	config := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "uninstall"}); err == nil {
 		t.Fatal("uninstall was accepted before installation")
 	}
@@ -532,12 +532,16 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.30", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.30", LANAddress: "10.0.0.30", EnabledKinds: []string{networking.KindLAN}})
-	initial := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	initial := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: initial}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, node, "application.apply", json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.30"}]}`))
-	configured, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "configure", Config: json.RawMessage(`{"timezone":"Asia/Singapore","debug":true}`)})
+	originalCredentials, err := store.currentCPACredentials(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Operation: "configure", Config: json.RawMessage(`{"debug":true}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +554,7 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	if json.Unmarshal(task.Config, &config) != nil || json.Unmarshal(task.Secrets, &secrets) != nil {
 		t.Fatalf("configure task returned invalid configuration: %#v", task)
 	}
-	if config["timezone"] != "Asia/Singapore" || config["debug"] != true || secrets["management_key"] != "management-secret" || secrets["api_key"] != "client-secret" {
+	if config["timezone"] != "Asia/Singapore" || config["debug"] != true || secrets["management_key"] != originalCredentials.ManagementKey || secrets["api_key"] != originalCredentials.APIKey {
 		t.Fatalf("configure did not merge encrypted prior values: config=%#v secrets=%#v", config, secrets)
 	}
 }
@@ -560,7 +564,7 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "versioned", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.31", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.31", LANAddress: "10.0.0.31", EnabledKinds: []string{networking.KindLAN}})
-	initial := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	initial := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +594,7 @@ func TestFailedChangeRemainsAnInstalledApplication(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "degraded", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.32", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.32", LANAddress: "10.0.0.32", EnabledKinds: []string{networking.KindLAN}})
-	initial := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	initial := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
 		t.Fatal(err)
 	}
@@ -614,7 +618,7 @@ func TestInstalledAppCanBeUninstalledAfterCatalogRemoval(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "catalog-removed", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.33", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.33", LANAddress: "10.0.0.33", EnabledKinds: []string{networking.KindLAN}})
-	initial := json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)
+	initial := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
 		t.Fatal(err)
 	}

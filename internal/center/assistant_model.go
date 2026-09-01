@@ -35,6 +35,11 @@ type assistantModelResponse struct {
 	} `json:"choices"`
 }
 
+type assistantPreviewCache struct {
+	installations map[string]assistantInstallPreview
+	rotations     map[string]assistantCredentialRotationPreview
+}
+
 func assistantTools() []map[string]any {
 	tool := func(name, description string, properties map[string]any, required ...string) map[string]any {
 		parameters := map[string]any{"type": "object", "additionalProperties": false, "properties": properties}
@@ -53,6 +58,7 @@ func assistantTools() []map[string]any {
 		tool("list_actions", "List recent task events.", map[string]any{}),
 		tool("explain_failure", "Return a sanitized explanation for one deployment failure.", map[string]any{"deploymentId": map[string]any{"type": "string"}}, "deploymentId"),
 		tool("preview_install_application", "Validate and preview one non-secret Catalog application installation. This never creates work.", map[string]any{"agentId": map[string]any{"type": "string"}, "appKey": map[string]any{"type": "string"}, "role": map[string]any{"type": "string"}, "config": map[string]any{"type": "object"}}, "agentId", "appKey", "config"),
+		tool("preview_rotate_cpa_credential", "Validate and preview rotation of one CPA management or client credential. This never returns a credential or creates work.", map[string]any{"applicationId": map[string]any{"type": "string"}, "target": map[string]any{"type": "string", "enum": []string{"management", "client"}}}, "applicationId", "target"),
 		tool("propose_change", "Create an approval-gated proposal from a preview returned in this run.", map[string]any{"previewDigest": map[string]any{"type": "string"}}, "previewDigest"),
 		tool("get_change_status", "Read one proposal status.", map[string]any{"proposalId": map[string]any{"type": "string"}}, "proposalId"),
 		tool("cancel_change", "Cancel one still-pending proposal. This cannot cancel or undo execution.", map[string]any{"proposalId": map[string]any{"type": "string"}}, "proposalId"),
@@ -95,7 +101,7 @@ func (s *Server) executeAssistantRun(ctx context.Context, run AssistantRunView, 
 		s.failAssistantRun(run, err)
 		return
 	}
-	messages := []assistantModelMessage{{Role: "system", Content: "You are the embedded Vastora cluster assistant. Use only the supplied read and proposal tools. Never claim to execute a change. Never ask for, repeat, or expose credentials. For an installation request, inspect the target and Catalog, call preview_install_application, explain the exact impact, then call propose_change with that preview digest. A proposal always requires the separate trusted approval card. Plain chat text is never approval. Reply in the user's language."}}
+	messages := []assistantModelMessage{{Role: "system", Content: "You are the embedded Vastora cluster assistant. Use only the supplied read and proposal tools. Never claim to execute a change. Never ask for, repeat, or expose credentials. For an installation request, inspect the target and Catalog, call preview_install_application, explain the exact impact, then call propose_change with that preview digest. For CPA credential rotation, identify the installed CPA application, call preview_rotate_cpa_credential for exactly one target, explain the impact, then call propose_change. Credential values are generated and applied outside the model and are never returned to you. Every proposal requires the separate trusted approval card. Plain chat text is never approval. Reply in the user's language."}}
 	start := 0
 	if len(history) > 30 {
 		start = len(history) - 30
@@ -105,7 +111,10 @@ func (s *Server) executeAssistantRun(ctx context.Context, run AssistantRunView, 
 			messages = append(messages, assistantModelMessage{Role: message.Role, Content: redactAssistantText(message.Content)})
 		}
 	}
-	previews := make(map[string]assistantInstallPreview)
+	previews := assistantPreviewCache{
+		installations: make(map[string]assistantInstallPreview),
+		rotations:     make(map[string]assistantCredentialRotationPreview),
+	}
 	for range 8 {
 		response, callErr := s.callAssistantModel(ctx, provider, messages)
 		if callErr != nil {
@@ -204,7 +213,7 @@ func (s *Server) callAssistantModel(ctx context.Context, provider assistantProvi
 	return decoded.Choices[0].Message, nil
 }
 
-func (s *Server) executeAssistantTool(ctx context.Context, adminID string, run AssistantRunView, toolID, name string, arguments json.RawMessage, previews map[string]assistantInstallPreview) (json.RawMessage, *AssistantProposalView, error) {
+func (s *Server) executeAssistantTool(ctx context.Context, adminID string, run AssistantRunView, toolID, name string, arguments json.RawMessage, previews assistantPreviewCache) (json.RawMessage, *AssistantProposalView, error) {
 	switch name {
 	case "cluster_overview":
 		agents, err := s.store.ListAgents(ctx)
@@ -278,7 +287,18 @@ func (s *Server) executeAssistantTool(ctx context.Context, adminID string, run A
 		if err != nil {
 			return nil, nil, err
 		}
-		previews[preview.Digest] = preview
+		previews.installations[preview.Digest] = preview
+		return assistantJSON(preview), nil, nil
+	case "preview_rotate_cpa_credential":
+		var input assistantCredentialRotationRequest
+		if json.Unmarshal(arguments, &input) != nil {
+			return nil, nil, errors.New("center: invalid CPA credential rotation preview arguments")
+		}
+		preview, err := s.store.PreviewAssistantCredentialRotation(ctx, input)
+		if err != nil {
+			return nil, nil, err
+		}
+		previews.rotations[preview.Digest] = preview
 		return assistantJSON(preview), nil, nil
 	case "propose_change":
 		var input struct {
@@ -287,15 +307,21 @@ func (s *Server) executeAssistantTool(ctx context.Context, adminID string, run A
 		if json.Unmarshal(arguments, &input) != nil {
 			return nil, nil, errors.New("center: invalid proposal arguments")
 		}
-		preview, ok := previews[input.PreviewDigest]
-		if !ok {
-			return nil, nil, errors.New("center: propose_change requires a preview from the current run")
+		if preview, ok := previews.installations[input.PreviewDigest]; ok {
+			proposal, err := s.store.CreateAssistantProposal(ctx, adminID, run.ConversationID, run.ID, preview)
+			if err != nil {
+				return nil, nil, err
+			}
+			return assistantJSON(proposal), &proposal, nil
 		}
-		proposal, err := s.store.CreateAssistantProposal(ctx, adminID, run.ConversationID, run.ID, preview)
-		if err != nil {
-			return nil, nil, err
+		if preview, ok := previews.rotations[input.PreviewDigest]; ok {
+			proposal, err := s.store.CreateAssistantCredentialRotationProposal(ctx, adminID, run.ConversationID, run.ID, preview)
+			if err != nil {
+				return nil, nil, err
+			}
+			return assistantJSON(proposal), &proposal, nil
 		}
-		return assistantJSON(proposal), &proposal, nil
+		return nil, nil, errors.New("center: propose_change requires a preview from the current run")
 	case "get_change_status":
 		var input struct {
 			ProposalID string `json:"proposalId"`
@@ -514,18 +540,18 @@ func (s *Server) cancelAssistantRun(ctx context.Context, adminID, runID string) 
 	return nil
 }
 
-func (s *Server) watchAssistantDeployment(proposal AssistantProposalView, deployment DeploymentView, adminID string) {
+func (s *Server) watchAssistantDeployment(proposal AssistantProposalView, execution AssistantExecutionView, adminID string) {
 	s.assistantRunMu.Lock()
-	if _, exists := s.assistantWatchers[deployment.ID]; exists {
+	if _, exists := s.assistantWatchers[execution.ID]; exists {
 		s.assistantRunMu.Unlock()
 		return
 	}
-	s.assistantWatchers[deployment.ID] = struct{}{}
+	s.assistantWatchers[execution.ID] = struct{}{}
 	s.assistantRunMu.Unlock()
 	s.store.startBackground(func() {
 		defer func() {
 			s.assistantRunMu.Lock()
-			delete(s.assistantWatchers, deployment.ID)
+			delete(s.assistantWatchers, execution.ID)
 			s.assistantRunMu.Unlock()
 		}()
 		lastState := ""
@@ -533,7 +559,7 @@ func (s *Server) watchAssistantDeployment(proposal AssistantProposalView, deploy
 		defer ticker.Stop()
 		for {
 			var state, taskError string
-			err := s.store.db.QueryRowContext(s.store.backgroundCtx, `SELECT state, error FROM deployments WHERE id = ?`, deployment.ID).Scan(&state, &taskError)
+			err := s.store.db.QueryRowContext(s.store.backgroundCtx, `SELECT state, error FROM deployments WHERE id = ?`, execution.ID).Scan(&state, &taskError)
 			if err != nil {
 				return
 			}
@@ -544,8 +570,8 @@ func (s *Server) watchAssistantDeployment(proposal AssistantProposalView, deploy
 				} else if state == "failed" {
 					event = "execution.failed"
 				}
-				_ = s.store.appendAssistantEvent(s.store.backgroundCtx, proposal.ConversationID, proposal.RunID, event, map[string]string{"deploymentId": deployment.ID, "error": redactAssistantText(taskError)})
-				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, deployment.ID, event, map[string]string{"error": redactAssistantText(taskError)})
+				_ = s.store.appendAssistantEvent(s.store.backgroundCtx, proposal.ConversationID, proposal.RunID, event, map[string]string{"deploymentId": execution.ID, "error": redactAssistantText(taskError)})
+				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, execution.ID, event, map[string]string{"error": redactAssistantText(taskError)})
 				lastState = state
 			}
 			if state == "succeeded" || state == "failed" {
@@ -553,11 +579,11 @@ func (s *Server) watchAssistantDeployment(proposal AssistantProposalView, deploy
 				if state == "failed" {
 					runState, finalEvent, message = "failed", "run.failed", "The approved application installation failed: "+redactAssistantText(taskError)
 				}
-				completed, err := s.finishAssistantDeployment(s.store.backgroundCtx, proposal, deployment.ID, runState, finalEvent, message, taskError)
+				completed, err := s.finishAssistantExecution(s.store.backgroundCtx, proposal, execution.ID, "deploymentId", runState, finalEvent, message, taskError)
 				if err != nil || !completed {
 					return
 				}
-				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, deployment.ID, finalEvent, map[string]string{"answerDigest": assistantDigest(message)})
+				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, execution.ID, finalEvent, map[string]string{"answerDigest": assistantDigest(message)})
 				return
 			}
 			select {
@@ -569,7 +595,65 @@ func (s *Server) watchAssistantDeployment(proposal AssistantProposalView, deploy
 	})
 }
 
-func (s *Server) finishAssistantDeployment(ctx context.Context, proposal AssistantProposalView, deploymentID, runState, finalEvent, message, taskError string) (bool, error) {
+func (s *Server) watchAssistantCredentialRotation(proposal AssistantProposalView, execution AssistantExecutionView, adminID string) {
+	watchKey := "credential-rotation:" + execution.ID
+	s.assistantRunMu.Lock()
+	if _, exists := s.assistantWatchers[watchKey]; exists {
+		s.assistantRunMu.Unlock()
+		return
+	}
+	s.assistantWatchers[watchKey] = struct{}{}
+	s.assistantRunMu.Unlock()
+	s.store.startBackground(func() {
+		defer func() {
+			s.assistantRunMu.Lock()
+			delete(s.assistantWatchers, watchKey)
+			s.assistantRunMu.Unlock()
+		}()
+		lastState := ""
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			rotation, err := s.store.refreshCredentialRotation(s.store.backgroundCtx, execution.ID)
+			if err != nil {
+				return
+			}
+			if rotation.State != lastState {
+				event := "execution." + rotation.State
+				if rotation.State == "succeeded" {
+					event = "execution.completed"
+				} else if rotation.State == "failed" || rotation.State == "action_required" {
+					event = "execution.failed"
+				}
+				payload := map[string]string{"rotationId": execution.ID, "state": rotation.State, "error": redactAssistantText(rotation.LastError)}
+				_ = s.store.appendAssistantEvent(s.store.backgroundCtx, proposal.ConversationID, proposal.RunID, event, payload)
+				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, "", event, payload)
+				lastState = rotation.State
+			}
+			if rotation.State == "succeeded" || rotation.State == "failed" || rotation.State == "action_required" {
+				runState, finalEvent := "completed", "run.completed"
+				message := "The approved CPA credential rotation completed successfully. The secret value was not disclosed to the assistant."
+				if rotation.State != "succeeded" {
+					runState, finalEvent = "failed", "run.failed"
+					message = "The approved CPA credential rotation requires attention: " + redactAssistantText(rotation.LastError)
+				}
+				completed, finishErr := s.finishAssistantExecution(s.store.backgroundCtx, proposal, execution.ID, "rotationId", runState, finalEvent, message, rotation.LastError)
+				if finishErr != nil || !completed {
+					return
+				}
+				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, "", finalEvent, map[string]string{"answerDigest": assistantDigest(message), "rotationId": execution.ID})
+				return
+			}
+			select {
+			case <-s.store.backgroundCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	})
+}
+
+func (s *Server) finishAssistantExecution(ctx context.Context, proposal AssistantProposalView, executionID, eventField, runState, finalEvent, message, taskError string) (bool, error) {
 	messageID, err := randomToken(18)
 	if err != nil {
 		return false, err
@@ -595,7 +679,7 @@ func (s *Server) finishAssistantDeployment(ctx context.Context, proposal Assista
 	if err := insertAssistantEvent(ctx, tx, proposal.ConversationID, proposal.RunID, "message.delta", map[string]string{"messageId": messageID, "content": message}, now); err != nil {
 		return false, err
 	}
-	if err := insertAssistantEvent(ctx, tx, proposal.ConversationID, proposal.RunID, finalEvent, map[string]string{"runId": proposal.RunID, "deploymentId": deploymentID}, now); err != nil {
+	if err := insertAssistantEvent(ctx, tx, proposal.ConversationID, proposal.RunID, finalEvent, map[string]string{"runId": proposal.RunID, eventField: executionID}, now); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -605,27 +689,32 @@ func (s *Server) finishAssistantDeployment(ctx context.Context, proposal Assista
 }
 
 func (s *Server) resumeAssistantExecutions() {
-	rows, err := s.store.db.QueryContext(s.store.backgroundCtx, `SELECT change_proposals.id, change_proposals.deployment_id
+	rows, err := s.store.db.QueryContext(s.store.backgroundCtx, `SELECT change_proposals.id, change_proposals.kind, change_proposals.execution_id
 		FROM change_proposals
 		JOIN assistant_runs ON assistant_runs.id = change_proposals.run_id
-		WHERE change_proposals.status = 'applied' AND change_proposals.deployment_id IS NOT NULL AND assistant_runs.status = 'approval_required'`)
+		WHERE change_proposals.status = 'applied' AND change_proposals.execution_id <> '' AND assistant_runs.status = 'approval_required'`)
 	if err != nil {
 		return
 	}
-	type execution struct{ proposalID, deploymentID string }
+	type execution struct{ proposalID, kind, executionID string }
 	executions := []execution{}
 	for rows.Next() {
-		var proposalID, deploymentID string
-		if rows.Scan(&proposalID, &deploymentID) != nil {
+		var proposalID, kind, executionID string
+		if rows.Scan(&proposalID, &kind, &executionID) != nil {
 			continue
 		}
-		executions = append(executions, execution{proposalID: proposalID, deploymentID: deploymentID})
+		executions = append(executions, execution{proposalID: proposalID, kind: kind, executionID: executionID})
 	}
 	rows.Close()
 	for _, value := range executions {
 		proposal, _, adminID, err := s.store.assistantProposalByID(s.store.backgroundCtx, value.proposalID)
 		if err == nil {
-			s.watchAssistantDeployment(proposal, DeploymentView{ID: value.deploymentID}, adminID)
+			executionView := AssistantExecutionView{ID: value.executionID, Kind: value.kind}
+			if value.kind == "rotate_cpa_credential" {
+				s.watchAssistantCredentialRotation(proposal, executionView, adminID)
+			} else {
+				s.watchAssistantDeployment(proposal, executionView, adminID)
+			}
 		}
 	}
 }

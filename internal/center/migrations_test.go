@@ -539,6 +539,60 @@ func TestVersion52MigrationPreservesBuiltinHeadscaleCloudflareDNS(t *testing.T) 
 	}
 }
 
+func TestVersion54MigrationPreservesAssistantProposalExecution(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 53); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `INSERT INTO admins(id, username, password_hash, created_at) VALUES('admin-v53', 'admin-v53', 'hash', ?);
+		INSERT INTO assistant_conversations(id, admin_id, title, created_at, updated_at) VALUES('conversation-v53', 'admin-v53', 'Legacy proposal', ?, ?);
+		INSERT INTO assistant_runs(id, conversation_id, admin_id, status, created_at, updated_at) VALUES('run-v53', 'conversation-v53', 'admin-v53', 'approval_required', ?, ?);
+		INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, operation, state, created_at, updated_at, application_id) VALUES('deployment-v53', 'agent-v3', 'legacy/app', '1.0.0', '{}', '{}', 'configure', 'succeeded', ?, ?, 'application-v3');
+		INSERT INTO change_proposals(id, conversation_id, run_id, admin_id, kind, request_json, summary_json, digest, targets_json, expected_revision, policy_version, risk, status, expires_at, deployment_id, created_at, updated_at)
+		VALUES('proposal-v53', 'conversation-v53', 'run-v53', 'admin-v53', 'install_application', '{}', '{}', 'digest-v53', '[]', 'revision-v53', 'install-application-v1', 'medium', 'applied', ?, 'deployment-v53', ?, ?)`, now, now, now, now, now, now, now, time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano), now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 54); err != nil {
+		t.Fatal(err)
+	}
+	var kind, deploymentID, executionID string
+	if err := db.QueryRowContext(ctx, `SELECT kind, deployment_id, execution_id FROM change_proposals WHERE id = 'proposal-v53'`).Scan(&kind, &deploymentID, &executionID); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "install_application" || deploymentID != "deployment-v53" || executionID != deploymentID {
+		t.Fatalf("migrated proposal = kind %q deployment %q execution %q", kind, deploymentID, executionID)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO change_proposals(id, conversation_id, run_id, admin_id, kind, request_json, summary_json, digest, targets_json, expected_revision, policy_version, risk, status, expires_at, execution_id, created_at, updated_at)
+		VALUES('rotation-proposal-v54', 'conversation-v53', 'run-v53', 'admin-v53', 'rotate_cpa_credential', '{}', '{}', 'rotation-digest', '[]', 'rotation-revision', 'rotate-cpa-credential-v1', 'high', 'pending', ?, '', ?, ?)`, time.Now().UTC().Add(time.Hour).Format(time.RFC3339Nano), now, now); err != nil {
+		t.Fatalf("v54 schema rejected a CPA rotation proposal: %v", err)
+	}
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	if rows.Next() {
+		t.Fatal("v54 migration left a foreign-key violation")
+	}
+}
+
 func TestVersion46MigrationRetiresSharedPathPublications(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
@@ -1172,6 +1226,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE three_x_ui_backups`,
 		`DROP TABLE three_x_ui_nodes`,
 		`DROP TABLE headscale_api_keys`,
+		`DROP TABLE application_credential_rotations`,
 		`DROP TABLE initial_setup_operations`,
 		`DROP TABLE cloudflare_tunnel_operations`,
 		`DROP TABLE agent_enrollment_operations`,

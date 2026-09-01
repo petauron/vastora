@@ -21,6 +21,7 @@ const (
 )
 
 var secretOperationKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{16,128}$`)
+var errDeploymentNotFound = errors.New("center: deployment not found")
 
 type secretDelivery struct {
 	ResourceID  string
@@ -133,7 +134,7 @@ func (s *Store) deploymentByID(ctx context.Context, id string) (DeploymentView, 
 		&value.ID, &value.AgentID, &value.AppKey, &value.AppVersion, &value.Operation, &value.DeleteData, &value.State, &value.ReconciliationRequired, &value.Error, &createdAt, &updatedAt, &value.ApplicationID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return value, errors.New("center: deployment not found")
+		return value, errDeploymentNotFound
 	}
 	if err != nil {
 		return value, fmt.Errorf("center: read deployment: %w", err)
@@ -197,37 +198,61 @@ func (s *Store) AcknowledgeDeploymentCredentials(ctx context.Context, deployment
 	return nil
 }
 
-func (s *Store) RevealStoredThreeXUICredentials(ctx context.Context, applicationID, adminID, currentPassword string) (OneTimeCredentials, error) {
+type ApplicationCredentials struct {
+	Kind          string `json:"kind"`
+	Username      string `json:"username,omitempty"`
+	Password      string `json:"password,omitempty"`
+	ManagementKey string `json:"managementKey,omitempty"`
+	ClientAPIKey  string `json:"clientApiKey,omitempty"`
+}
+
+func (s *Store) RevealApplicationCredentials(ctx context.Context, applicationID, adminID, currentPassword string) (ApplicationCredentials, error) {
 	if err := s.ReauthenticateAdmin(ctx, adminID, currentPassword); err != nil {
-		return OneTimeCredentials{}, err
+		return ApplicationCredentials{}, err
 	}
 	applicationID = strings.TrimSpace(applicationID)
-	var deploymentID, secretID, agentID string
-	err := s.db.QueryRowContext(ctx, `SELECT deployment.id, deployment.secret_id, application.node_id
+	var deploymentID, secretID, agentID, appKey, role string
+	err := s.db.QueryRowContext(ctx, `SELECT deployment.id, deployment.secret_id, application.node_id, application.app_key, application.role
 		FROM applications application
 		JOIN deployments deployment ON deployment.application_id = application.id
-		WHERE application.id = ? AND application.app_key = ? AND application.role = ?
+		WHERE application.id = ? AND application.status <> 'stopped'
 		AND deployment.state = 'succeeded' AND deployment.operation IN ('install', 'upgrade', 'configure')
 		AND deployment.secret_id IS NOT NULL
-		ORDER BY deployment.updated_at DESC, deployment.rowid DESC LIMIT 1`, applicationID, threeXUIAppKey, threeXUIRoleMaster).Scan(&deploymentID, &secretID, &agentID)
+		ORDER BY deployment.updated_at DESC, deployment.rowid DESC LIMIT 1`, applicationID).Scan(&deploymentID, &secretID, &agentID, &appKey, &role)
 	if errors.Is(err, sql.ErrNoRows) {
-		return OneTimeCredentials{}, errors.New("center: stored 3x-ui credentials are unavailable")
+		return ApplicationCredentials{}, errors.New("center: stored application credentials are unavailable")
 	}
 	if err != nil {
-		return OneTimeCredentials{}, fmt.Errorf("center: read stored 3x-ui credentials: %w", err)
+		return ApplicationCredentials{}, fmt.Errorf("center: read stored application credentials: %w", err)
 	}
 	plain, err := s.getSecret(ctx, secretID, "deployment:"+deploymentID)
 	if err != nil {
-		return OneTimeCredentials{}, err
+		return ApplicationCredentials{}, err
 	}
-	var values map[string]string
-	if json.Unmarshal(plain, &values) != nil || strings.TrimSpace(values["username"]) == "" || strings.TrimSpace(values["password"]) == "" {
-		return OneTimeCredentials{}, errors.New("center: stored 3x-ui credentials are invalid")
+	var credentials ApplicationCredentials
+	switch appKey {
+	case threeXUIAppKey:
+		if role != threeXUIRoleMaster {
+			return ApplicationCredentials{}, errors.New("center: stored application credentials are unavailable")
+		}
+		var values map[string]string
+		if json.Unmarshal(plain, &values) != nil || strings.TrimSpace(values["username"]) == "" || strings.TrimSpace(values["password"]) == "" {
+			return ApplicationCredentials{}, errors.New("center: stored 3x-ui credentials are invalid")
+		}
+		credentials = ApplicationCredentials{Kind: "three_x_ui", Username: values["username"], Password: values["password"]}
+	case cpaAppKey:
+		values, decodeErr := decodeCPACredentialValues(plain)
+		if decodeErr != nil {
+			return ApplicationCredentials{}, decodeErr
+		}
+		credentials = ApplicationCredentials{Kind: "cpa", ManagementKey: values.ManagementKey, ClientAPIKey: values.APIKey}
+	default:
+		return ApplicationCredentials{}, errors.New("center: this application does not expose managed credentials")
 	}
-	if err := s.recordStandaloneTaskEvent(ctx, applicationID, agentID, "security.credentials.reveal", 1, "succeeded", "stored 3x-ui administrator credentials revealed after administrator reauthentication: "+adminID); err != nil {
-		return OneTimeCredentials{}, fmt.Errorf("center: record credential access audit event: %w", err)
+	if err := s.recordStandaloneTaskEvent(ctx, applicationID, agentID, "security.credentials.reveal", 1, "succeeded", "current "+appKey+" credentials revealed after administrator reauthentication by "+adminID); err != nil {
+		return ApplicationCredentials{}, fmt.Errorf("center: record credential access audit event: %w", err)
 	}
-	return OneTimeCredentials{Username: values["username"], Password: values["password"]}, nil
+	return credentials, nil
 }
 
 func (s *Store) RevealApplicationCommandResult(ctx context.Context, commandID, ownerID, operationKey string) (string, error) {

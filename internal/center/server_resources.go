@@ -50,7 +50,7 @@ func (s *Server) handleAcknowledgeDeploymentCredentials(writer http.ResponseWrit
 	writeJSON(writer, http.StatusOK, map[string]bool{"acknowledged": true})
 }
 
-func (s *Server) handleRevealStoredThreeXUICredentials(writer http.ResponseWriter, request *http.Request) {
+func (s *Server) handleRevealApplicationCredentials(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
 		CurrentPassword string `json:"currentPassword"`
 	}
@@ -63,12 +63,47 @@ func (s *Server) handleRevealStoredThreeXUICredentials(writer http.ResponseWrite
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	credentials, err := s.store.RevealStoredThreeXUICredentials(request.Context(), request.PathValue("id"), adminID, input.CurrentPassword)
+	credentials, err := s.store.RevealApplicationCredentials(request.Context(), request.PathValue("id"), adminID, input.CurrentPassword)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
+	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, credentials)
+}
+
+func (s *Server) handleRotateApplicationCredentials(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		CurrentPassword string `json:"currentPassword"`
+		Target          string `json:"target"`
+		Confirm         bool   `json:"confirm"`
+	}
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	rotation, err := s.store.RotateApplicationCredentials(request.Context(), request.PathValue("id"), adminID, input.CurrentPassword, request.Header.Get("Idempotency-Key"), input.Target, input.Confirm)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusAccepted, rotation)
+}
+
+func (s *Server) handleApplicationCredentialRotation(writer http.ResponseWriter, request *http.Request) {
+	rotation, err := s.store.ApplicationCredentialRotation(request.Context(), request.PathValue("id"), request.PathValue("rotationId"))
+	if err != nil {
+		writeError(writer, http.StatusNotFound, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, rotation)
 }
 
 func (s *Server) handleRetryTaskReconciliation(writer http.ResponseWriter, request *http.Request) {

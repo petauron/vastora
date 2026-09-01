@@ -150,7 +150,7 @@ func TestLegacyAgentCannotLeaseTaskBeforeEncryptionIdentityBackfill(t *testing.T
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET x25519_public_key = X'' WHERE id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestDeploymentLeasesBoundRegistryCredentialOnlyToMatchingImageTask(t *testi
 	}
 	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{
 		AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID,
-		Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`),
+		Config: json.RawMessage(`{"debug":false}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestRegistryCredentialBindingCanBePreservedAndExplicitlyCleared(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	initial, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestRegistryCredentialRotationAndSafeDeletion(t *testing.T) {
 	if rotated.ID != credential.ID || rotated.Host != credential.Host || rotated.Username != "robot-new" {
 		t.Fatalf("rotated credential = %#v", rotated)
 	}
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"timezone":"UTC","management_key":"management-secret","api_key":"client-secret","debug":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, RegistryCredentialID: &credential.ID, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

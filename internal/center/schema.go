@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 52
+const centerSchemaVersion = 54
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -537,6 +537,24 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 		)`,
 		`CREATE UNIQUE INDEX deployments_one_active_task_idx ON deployments(agent_id, app_key) WHERE state IN ('pending', 'running') OR reconciliation_required = 1`,
 		`CREATE UNIQUE INDEX deployments_change_proposal_idx ON deployments(change_proposal_id) WHERE change_proposal_id IS NOT NULL`,
+		`CREATE TABLE application_credential_rotations (
+			id TEXT PRIMARY KEY,
+			application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+			admin_id TEXT NOT NULL REFERENCES admins(id) ON DELETE RESTRICT,
+			operation_key_hash BLOB NOT NULL,
+			request_hash BLOB NOT NULL,
+			target TEXT NOT NULL CHECK(target IN ('management', 'client')),
+			secret_id TEXT REFERENCES secrets(id) ON DELETE RESTRICT,
+			cpa_deployment_id TEXT NOT NULL,
+			keeper_deployment_id TEXT NOT NULL DEFAULT '',
+			state TEXT NOT NULL CHECK(state IN ('preparing', 'pending', 'succeeded', 'failed', 'action_required')),
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(admin_id, operation_key_hash),
+			UNIQUE(cpa_deployment_id)
+		)`,
+		`CREATE UNIQUE INDEX application_credential_rotations_keeper_idx ON application_credential_rotations(keeper_deployment_id) WHERE keeper_deployment_id <> ''`,
 		`CREATE TABLE application_commands (
 			id TEXT PRIMARY KEY,
 			application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
@@ -703,7 +721,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			conversation_id TEXT NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
 			run_id TEXT NOT NULL REFERENCES assistant_runs(id) ON DELETE CASCADE,
 			admin_id TEXT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
-			kind TEXT NOT NULL CHECK(kind = 'install_application'),
+			kind TEXT NOT NULL CHECK(kind IN ('install_application', 'rotate_cpa_credential')),
 			request_json BLOB NOT NULL,
 			summary_json BLOB NOT NULL,
 			digest TEXT NOT NULL,
@@ -714,6 +732,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected', 'expired', 'applied', 'cancelled')),
 			expires_at TEXT NOT NULL,
 			deployment_id TEXT REFERENCES deployments(id),
+			execution_id TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
