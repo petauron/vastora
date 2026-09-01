@@ -206,8 +206,10 @@ func (s *Store) CloudflareZones(ctx context.Context) ([]CloudflareZone, error) {
 }
 
 func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationID string, revision int64) error {
-	var kind, gatewayID, hostname, pathPrefix, dnsRecordID, accessApplicationID string
-	if err := s.db.QueryRowContext(ctx, `SELECT kind, COALESCE(gateway_node_id, ''), hostname, path_prefix, dns_record_id, access_application_id FROM publications WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, publicationID, revision).Scan(&kind, &gatewayID, &hostname, &pathPrefix, &dnsRecordID, &accessApplicationID); errors.Is(err, sql.ErrNoRows) {
+	var kind, gatewayID, hostname, dnsRecordID, accessApplicationID, appKey, serviceName string
+	if err := s.db.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.dns_record_id, p.access_application_id, a.app_key, s.name
+		FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
+		WHERE p.id = ? AND p.desired_revision = ? AND p.status <> 'stopped'`, publicationID, revision).Scan(&kind, &gatewayID, &hostname, &dnsRecordID, &accessApplicationID, &appKey, &serviceName); errors.Is(err, sql.ErrNoRows) {
 		return errStalePublicationReconcile
 	} else if err != nil {
 		return err
@@ -255,7 +257,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			}
 			dnsRecordID = createdRecordID
 		}
-		if strings.HasPrefix(pathPrefix, "/s/") && accessApplicationID == "" {
+		if !(appKey == threeXUIAppKey && serviceName == "subscription") && accessApplicationID == "" {
 			if err := s.ensureCloudflareServiceAccess(ctx, publicationID, revision, hostname); err != nil {
 				return err
 			}
@@ -331,17 +333,6 @@ func (s *Store) reusePublicationDNSRecord(ctx context.Context, publicationID, ki
 }
 
 func (s *Store) ensureCloudflareServiceAccess(ctx context.Context, publicationID string, revision int64, hostname string) error {
-	var applicationID string
-	err := s.db.QueryRowContext(ctx, `SELECT access_application_id FROM publications
-		WHERE id <> ? AND hostname = ? AND path_prefix LIKE '/s/%' AND status <> 'stopped' AND access_application_id <> ''
-		ORDER BY created_at LIMIT 1`, publicationID, hostname).Scan(&applicationID)
-	if err == nil {
-		_, updateErr := s.db.ExecContext(ctx, `UPDATE publications SET access_application_id = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped'`, applicationID, s.now().UTC().Format(time.RFC3339Nano), publicationID, revision)
-		return updateErr
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
 	record, exists, err := s.centerRemoteAccessRecord(ctx)
 	if err != nil {
 		return err
@@ -353,7 +344,7 @@ func (s *Store) ensureCloudflareServiceAccess(ctx context.Context, publicationID
 	if err != nil {
 		return err
 	}
-	applicationID, err = client.createAccessApplication(ctx, "Vastora services", hostname+"/s/*", record.AudienceKind, record.AudienceValue, record.IdentityProviderID)
+	applicationID, err := client.createAccessApplication(ctx, "Vastora "+hostname, hostname, record.AudienceKind, record.AudienceValue, record.IdentityProviderID)
 	if err != nil {
 		return err
 	}

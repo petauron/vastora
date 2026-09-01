@@ -36,7 +36,6 @@ type PublicationView struct {
 	Kind                 string                `json:"kind"`
 	GatewayNodeID        string                `json:"gatewayNodeId,omitempty"`
 	Hostname             string                `json:"hostname"`
-	PathPrefix           string                `json:"pathPrefix,omitempty"`
 	SNIHostname          string                `json:"sniHostname,omitempty"`
 	DNSProvider          string                `json:"dnsProvider"`
 	DNSRecordID          string                `json:"dnsRecordId,omitempty"`
@@ -235,12 +234,11 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	if publicWeb {
 		var conflicting int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id
-			WHERE p.hostname = ? AND p.status <> 'stopped' AND s.protocol IN ('http', 'https')
-			AND (p.kind <> ? OR COALESCE(p.gateway_node_id, '') <> ? OR p.path_prefix = '')`, input.Hostname, input.Kind, gatewayID).Scan(&conflicting); err != nil {
+			WHERE p.hostname = ? AND p.status <> 'stopped' AND s.protocol IN ('http', 'https')`, input.Hostname).Scan(&conflicting); err != nil {
 			return PublicationView{}, err
 		}
 		if conflicting != 0 {
-			return PublicationView{}, errors.New("center: this shared service hostname already belongs to another public gateway")
+			return PublicationView{}, errors.New("center: this public hostname is already used by another Web service")
 		}
 	}
 
@@ -275,28 +273,17 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	}
 	now := s.now().UTC()
 	tlsEnabled := webService && (input.Kind == publicationPublic || input.Kind == publicationCloudflare || privateTLS)
-	id, pathPrefix, accessApplicationID, revision := "", "", "", int64(1)
+	id, accessApplicationID, revision := "", "", int64(1)
 	var existingStatus string
 	var cleanupPending int
-	err = tx.QueryRowContext(ctx, `SELECT id, path_prefix, access_application_id, status, cleanup_pending, desired_revision FROM publications WHERE service_id = ? AND kind = ? AND hostname = ?`, input.ServiceID, input.Kind, input.Hostname).Scan(&id, &pathPrefix, &accessApplicationID, &existingStatus, &cleanupPending, &revision)
+	err = tx.QueryRowContext(ctx, `SELECT id, access_application_id, status, cleanup_pending, desired_revision FROM publications WHERE service_id = ? AND kind = ? AND hostname = ?`, input.ServiceID, input.Kind, input.Hostname).Scan(&id, &accessApplicationID, &existingStatus, &cleanupPending, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		id, err = randomToken(18)
 		if err != nil {
 			return PublicationView{}, err
 		}
-		if publicWeb {
-			pathToken, tokenErr := randomToken(16)
-			if tokenErr != nil {
-				return PublicationView{}, tokenErr
-			}
-			pathClass := "s"
-			if appKey == threeXUIAppKey && serviceName == "subscription" {
-				pathClass = "u"
-			}
-			pathPrefix = "/" + pathClass + "/" + pathToken
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, path_prefix, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, pathPrefix, input.SNIHostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.SNIHostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return PublicationView{}, fmt.Errorf("center: create publication: %w", err)
 		}
 		revision = 1
@@ -321,7 +308,7 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		}
 	}
 	if isGatewayPublication(input.Kind, webService) {
-		if err := s.upsertPublicationRoute(ctx, tx, id, siteID, input.ServiceID, gatewayID, input.Hostname, pathPrefix, protocol, endpoint, tlsEnabled, now); err != nil {
+		if err := s.upsertPublicationRoute(ctx, tx, id, siteID, input.ServiceID, gatewayID, input.Hostname, protocol, endpoint, tlsEnabled, now); err != nil {
 			return PublicationView{}, err
 		}
 		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
@@ -414,11 +401,11 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	var tls int
 	var created, updated string
 	var certificateNotAfter string
-	err := s.db.QueryRowContext(ctx, `SELECT p.id, p.service_id, p.kind, p.gateway_node_id, p.hostname, p.path_prefix, p.sni_hostname, p.dns_provider, p.dns_record_id, p.tls_enabled,
+	err := s.db.QueryRowContext(ctx, `SELECT p.id, p.service_id, p.kind, p.gateway_node_id, p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id, p.tls_enabled,
 		CASE WHEN p.tls_enabled = 1 AND p.kind IN ('lan_gateway', 'headscale_gateway') THEN COALESCE(c.not_after, '') ELSE '' END,
 		p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at
 		FROM publications p JOIN services s ON s.id = p.service_id LEFT JOIN site_certificates c ON c.site_id = s.site_id WHERE p.id = ?`, id).Scan(
-		&value.ID, &value.ServiceID, &value.Kind, &gatewayID, &value.Hostname, &value.PathPrefix, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID, &tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated)
+		&value.ID, &value.ServiceID, &value.Kind, &gatewayID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID, &tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PublicationView{}, errors.New("center: publication not found")
 	}
@@ -475,7 +462,7 @@ func (s *Store) publicationAccessURL(ctx context.Context, publication Publicatio
 	if publication.TLSEnabled {
 		scheme = "https"
 	}
-	return (&url.URL{Scheme: scheme, Host: publication.Hostname, Path: publicationExternalPath(publication.PathPrefix, path)}).String(), nil
+	return (&url.URL{Scheme: scheme, Host: publication.Hostname, Path: path}).String(), nil
 }
 
 func (s *Store) ListPublications(ctx context.Context) ([]PublicationView, error) {
@@ -495,7 +482,7 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 	}
 	homepagePaths[threeXUIAppKey+"\x00subscription"] = "/sub/"
 	rows, err := s.db.QueryContext(ctx, `SELECT
-		p.id, p.service_id, p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.path_prefix, p.sni_hostname, p.dns_provider, p.dns_record_id,
+		p.id, p.service_id, p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,
 		p.tls_enabled, CASE WHEN p.tls_enabled = 1 AND p.kind IN ('lan_gateway', 'headscale_gateway') THEN COALESCE(c.not_after, '') ELSE '' END,
 		p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at,
 		s.protocol, s.name, a.app_key,
@@ -518,7 +505,7 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		var created, updated, certificateNotAfter, protocol, serviceName, appKey string
 		var lanAddress, headscaleAddress, publicAddress, tunnelID string
 		if err := rows.Scan(
-			&value.ID, &value.ServiceID, &value.Kind, &value.GatewayNodeID, &value.Hostname, &value.PathPrefix, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID,
+			&value.ID, &value.ServiceID, &value.Kind, &value.GatewayNodeID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID,
 			&tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated,
 			&protocol, &serviceName, &appKey, &lanAddress, &headscaleAddress, &publicAddress, &tunnelID,
 		); err != nil {
@@ -549,7 +536,7 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 			if value.TLSEnabled {
 				scheme = "https"
 			}
-			value.AccessURL = (&url.URL{Scheme: scheme, Host: value.Hostname, Path: publicationExternalPath(value.PathPrefix, path)}).String()
+			value.AccessURL = (&url.URL{Scheme: scheme, Host: value.Hostname, Path: path}).String()
 		}
 		address := ""
 		switch value.Kind {
@@ -580,14 +567,4 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		values = append(values, value)
 	}
 	return values, rows.Err()
-}
-
-func publicationExternalPath(prefix, upstreamPath string) string {
-	if prefix == "" {
-		return upstreamPath
-	}
-	if upstreamPath == "" || upstreamPath == "/" {
-		return strings.TrimSuffix(prefix, "/") + "/"
-	}
-	return strings.TrimSuffix(prefix, "/") + "/" + strings.TrimPrefix(upstreamPath, "/")
 }

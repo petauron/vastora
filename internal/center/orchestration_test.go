@@ -109,7 +109,7 @@ func TestCloudflareWebPublicationRequiresConfiguredCenterAccess(t *testing.T) {
 	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
-	_, err = store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationCloudflare, GatewayNodeID: node.ID, Hostname: "service-vastora.example.com", DNSProvider: "cloudflare"})
+	_, err = store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationCloudflare, GatewayNodeID: node.ID, Hostname: "cpa-tunnel-node.example.com", DNSProvider: "cloudflare"})
 	if err == nil || !strings.Contains(err.Error(), "enable the Center Cloudflare Access entry") {
 		t.Fatalf("unconfigured Center Access returned the wrong publication error: %v", err)
 	}
@@ -837,7 +837,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if task.Kind != "application.command" || task.SubscriptionCommand == nil || task.ApplicationCommand != nil {
 		t.Fatalf("unexpected subscription task: %#v", task)
 	}
-	if task.SubscriptionCommand.Domain != "subscribe.edge.example.test" || !strings.HasPrefix(task.SubscriptionCommand.BaseURI, "https://subscribe.edge.example.test/u/") || !strings.HasSuffix(task.SubscriptionCommand.BaseURI, "/sub/") {
+	if task.SubscriptionCommand.Domain != "subscribe.edge.example.test" || task.SubscriptionCommand.BaseURI != "https://subscribe.edge.example.test/sub/" {
 		t.Fatalf("unexpected subscription settings: %#v", task.SubscriptionCommand)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{SubscriptionCommand: &SubscriptionCommandResult{Domain: task.SubscriptionCommand.Domain, BaseURI: task.SubscriptionCommand.BaseURI}})

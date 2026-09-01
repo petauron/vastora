@@ -461,10 +461,7 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
-		`DROP INDEX publications_hostname_path_idx`,
-		`ALTER TABLE routes DROP COLUMN path_prefix`,
 		`ALTER TABLE publications DROP COLUMN access_application_id`,
-		`ALTER TABLE publications DROP COLUMN path_prefix`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_mode`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_bind_address`,
@@ -502,6 +499,66 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 	version, err := sqliteSchemaVersion(ctx, migrated.db)
 	if err != nil || version != centerSchemaVersion {
 		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+}
+
+func TestVersion46MigrationRetiresSharedPathPublications(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 45); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE publications
+		SET kind = 'cloudflare_tunnel', hostname = 'service-vastora.example.test', path_prefix = '/s/legacy',
+			dns_provider = 'cloudflare', dns_record_id = 'shared-dns', access_application_id = 'shared-access'
+		WHERE id = 'publication-v3'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE routes
+		SET hostname = 'service-vastora.example.test', path_prefix = '/s/legacy'
+		WHERE id = 'route-v3'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 46); err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+	var cleanupPending, desiredRevision int
+	if err := db.QueryRowContext(ctx, `SELECT status, cleanup_pending, desired_revision FROM publications WHERE id = 'publication-v3'`).Scan(&status, &cleanupPending, &desiredRevision); err != nil {
+		t.Fatal(err)
+	}
+	if status != "stopped" || cleanupPending != 1 || desiredRevision != 2 {
+		t.Fatalf("retired publication status=%q cleanup=%d revision=%d", status, cleanupPending, desiredRevision)
+	}
+	var routes int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE id = 'route-v3'`).Scan(&routes); err != nil || routes != 0 {
+		t.Fatalf("retired routes=%d err=%v", routes, err)
+	}
+	var gatewayID string
+	if err := db.QueryRowContext(ctx, `SELECT gateway_node_id FROM retired_shared_publication_gateways`).Scan(&gatewayID); err != nil || gatewayID != "agent-v3" {
+		t.Fatalf("retired gateway=%q err=%v", gatewayID, err)
+	}
+	for _, table := range []string{"publications", "routes"} {
+		var pathColumns int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'path_prefix'`, table).Scan(&pathColumns); err != nil || pathColumns != 0 {
+			t.Fatalf("%s path columns=%d err=%v", table, pathColumns, err)
+		}
 	}
 }
 

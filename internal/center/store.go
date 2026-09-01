@@ -223,6 +223,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.discardEmptyRetiredSharedPublicationMarker(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, fmt.Errorf("center: finalize dedicated Web hostname migration: %w", err)
+	}
 	if err := store.initializeDatabaseKeyBinding(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()
