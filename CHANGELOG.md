@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0-alpha.86](https://github.com/petauron/vastora/compare/v0.1.0-alpha.85...v0.1.0-alpha.86) (2026-09-01)
+
+
+### Features
+
+* **3x-ui:** model VPS traffic as monthly plans ([df8a1df](https://github.com/petauron/vastora/commit/df8a1df41d08a91e3acef8eab2fb00ceae48754a))
+
+
+### Bug Fixes
+
+* **agent:** start unused gateway nodes without Caddy ([2b195e1](https://github.com/petauron/vastora/commit/2b195e187915b2518ac2f14e9d010d904856e73a))
+* **center:** refresh the page after updating ([f6cef20](https://github.com/petauron/vastora/commit/f6cef20948a1112864c900b6b5e409d594fa6261))
+* **web:** show domain blockers inside the dialog ([0067161](https://github.com/petauron/vastora/commit/006716114f1a3b51b43e6bc4a599541cd327b78b))
+
 ## [0.1.0-alpha.85](https://github.com/petauron/vastora/compare/v0.1.0-alpha.84...v0.1.0-alpha.85) (2026-09-01)
 
 
