@@ -59,6 +59,10 @@ type DNSRecordInstruction struct {
 }
 
 func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (PublicationView, error) {
+	return s.createPublication(ctx, input, false)
+}
+
+func (s *Store) createPublication(ctx context.Context, input PublicationInput, managedSubscription bool) (PublicationView, error) {
 	input.ServiceID = strings.TrimSpace(input.ServiceID)
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.GatewayNodeID = strings.TrimSpace(input.GatewayNodeID)
@@ -129,6 +133,9 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 	}
 	if serviceStatus == "stopped" || serviceStatus == "failed" {
 		return PublicationView{}, errors.New("center: service must be running before it can be published")
+	}
+	if appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster && serviceName == "subscription" && !managedSubscription {
+		return PublicationView{}, errors.New("center: use the public subscription workflow for the 3x-ui subscription service")
 	}
 	if appProtocol == "vless/tcp/reality" {
 		var guardStatus string
