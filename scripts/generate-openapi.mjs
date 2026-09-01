@@ -195,6 +195,46 @@ const document = {
         },
       },
       JsonObject: { type: "object", additionalProperties: true, description: "Endpoint-specific JSON object. Runtime decoding rejects fields not declared by the corresponding Go request type." },
+      ApplicationCredentials: {
+        oneOf: [
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "username", "password"],
+            properties: {
+              kind: { type: "string", const: "three_x_ui" },
+              username: { type: "string" },
+              password: { type: "string" },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "managementKey", "clientApiKey"],
+            properties: {
+              kind: { type: "string", const: "cpa" },
+              managementKey: { type: "string" },
+              clientApiKey: { type: "string" },
+            },
+          },
+        ],
+      },
+      ApplicationCredentialRotation: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "applicationId", "target", "state", "createdAt", "updatedAt"],
+        properties: {
+          id: { type: "string" },
+          applicationId: { type: "string" },
+          target: { type: "string", enum: ["management", "client"] },
+          state: { type: "string", enum: ["preparing", "pending", "succeeded", "failed", "action_required"] },
+          cpaDeploymentId: { type: "string" },
+          keeperDeploymentId: { type: "string" },
+          lastError: { type: "string" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
     },
     responses: {
       Error: {
@@ -241,6 +281,42 @@ for (const route of routes) {
       description: "Encrypted 3x-ui backup stream. The authenticated Agent and revision identify the restore point.",
       content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
     };
+  }
+  const noStoreHeaders = {
+    "Cache-Control": {
+      description: "Prevents storage of the security-sensitive response.",
+      schema: { type: "string", const: "no-store" },
+    },
+  };
+  if (route.handler === "handleRevealApplicationCredentials") {
+    operation.summary = "Reveal Protected Application Credentials";
+    operation.description = "Reauthenticates the current administrator, records a security audit event, and returns only the current credentials for the selected managed 3x-ui controller or CPA application. The response is never cacheable.";
+    operation.requestBody.content["application/json"].schema.required = ["currentPassword"];
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentials" };
+  } else if (route.handler === "handleRotateApplicationCredentials") {
+    operation.summary = "Rotate One CPA Credential";
+    operation.description = "Reauthenticates the current administrator and rotates either the CPA management key or client API key. The same Idempotency-Key always resumes the same generated value. Management-key rotation updates CPA first and then Keeper; partial completion remains failed or action_required until retried.";
+    operation.parameters ||= [];
+    operation.parameters.push({
+      name: "Idempotency-Key",
+      in: "header",
+      required: true,
+      schema: { type: "string", minLength: 16, maxLength: 128, pattern: "^[A-Za-z0-9._-]+$" },
+    });
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["currentPassword", "target", "confirm"];
+    schema.properties.target.enum = ["management", "client"];
+    schema.properties.confirm.const = true;
+    operation.responses["202"].description = "The durable rotation was created, resumed, or completed.";
+    operation.responses["202"].headers = noStoreHeaders;
+    operation.responses["202"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentialRotation" };
+  } else if (route.handler === "handleApplicationCredentialRotation") {
+    operation.summary = "Read CPA Credential Rotation Status";
+    operation.description = "Returns the non-secret durable status of one credential rotation so the administrator can see completion, failure, or action_required without retaining a password in the browser. The response is never cacheable.";
+    operation.responses["200"].description = "Current durable rotation state.";
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentialRotation" };
   }
   document.paths[route.path] ||= {};
   document.paths[route.path][route.method] = operation;
