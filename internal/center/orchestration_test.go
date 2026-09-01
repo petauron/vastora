@@ -970,7 +970,7 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 		TargetIP:           "203.0.113.10",
 		ServerName:         "www.example.com",
 		NodeASN:            64500,
-		TargetASN:          64500,
+		TargetASN:          64496,
 		TLS13:              true,
 		X25519:             true,
 		HTTP2:              true,
@@ -1009,6 +1009,28 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 				t.Fatal("tampered result was accepted")
 			}
 		})
+	}
+}
+
+func TestRealityTargetHostnameRequiresDotCom(t *testing.T) {
+	for _, hostname := range []string{"www.intel.com", "download.amd.com", "EXAMPLE.COM."} {
+		if !validRealityTargetHostname(hostname) {
+			t.Fatalf("valid .com hostname %q was rejected", hostname)
+		}
+	}
+	for _, hostname := range []string{"example.xyz", "example.net", "com", "bad..com"} {
+		if validRealityTargetHostname(hostname) {
+			t.Fatalf("non-.com or invalid hostname %q was accepted", hostname)
+		}
+	}
+}
+
+func TestDisabledRealityInboundRemainsRecoverableWhileGuardNeedsHardening(t *testing.T) {
+	if status := observedThreeXUIServiceStatus(false, "vless/tcp/reality", "action_required"); status != "degraded" {
+		t.Fatalf("recoverable REALITY status = %q", status)
+	}
+	if status := observedThreeXUIServiceStatus(false, "vless/tcp/reality", "ready"); status != "stopped" {
+		t.Fatalf("operator-stopped REALITY status = %q", status)
 	}
 }
 

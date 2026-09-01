@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -401,62 +400,29 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	return result, nil
 }
 
-type realityScanCandidate struct {
-	Target      string   `json:"target"`
-	Host        string   `json:"host"`
-	Feasible    bool     `json:"feasible"`
-	ServerNames []string `json:"serverNames"`
+var preferredRealityTargets = []string{
+	"www.intel.com",
+	"www.amd.com",
+	"www.microsoft.com",
+	"www.apple.com",
+	"www.oracle.com",
 }
 
-func discoverRealityTarget(ctx context.Context, baseURL, token, nodePublicAddress string, excludedSNI []string) (realityTargetVerification, error) {
-	nodeIP := net.ParseIP(strings.TrimSpace(nodePublicAddress))
-	if nodeIP == nil || nodeIP.To4() == nil {
-		return realityTargetVerification{}, errors.New("agent: automatic REALITY target discovery requires the node's confirmed public IPv4 address")
-	}
-	mask := net.CIDRMask(24, 32)
-	neighborhood := (&net.IPNet{IP: nodeIP.To4().Mask(mask), Mask: mask}).String()
-	payload, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/server/scanRealityTargets", token, "application/x-www-form-urlencoded", url.Values{"targets": {neighborhood}})
-	if err != nil {
-		return realityTargetVerification{}, fmt.Errorf("agent: automatically scan REALITY targets: %w", err)
-	}
-	var candidates []realityScanCandidate
-	if json.Unmarshal(payload, &candidates) != nil {
-		return realityTargetVerification{}, errors.New("agent: 3x-ui returned invalid automatic REALITY target candidates")
-	}
-	sort.Slice(candidates, func(left, right int) bool {
-		return candidates[left].Host < candidates[right].Host
-	})
+func discoverRealityTarget(ctx context.Context, _, _, nodePublicAddress string, excludedSNI []string) (realityTargetVerification, error) {
 	excluded := make(map[string]bool, len(excludedSNI))
 	for _, hostname := range excludedSNI {
 		excluded[strings.ToLower(strings.TrimSpace(hostname))] = true
 	}
-	for _, candidate := range candidates {
-		if !candidate.Feasible {
+	for _, hostname := range preferredRealityTargets {
+		if excluded[hostname] {
 			continue
 		}
-		targetHost := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(candidate.Host), "."))
-		if !validThreeXUIShareHostname(targetHost) {
-			if host, _, splitErr := net.SplitHostPort(strings.TrimSpace(candidate.Target)); splitErr == nil {
-				targetHost = strings.ToLower(strings.TrimSuffix(host, "."))
-			}
-		}
-		serverNames := append([]string(nil), candidate.ServerNames...)
-		serverNames = append(serverNames, targetHost)
-		sort.Strings(serverNames)
-		seen := map[string]bool{}
-		for _, value := range serverNames {
-			serverName := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
-			if seen[serverName] || excluded[serverName] || !validThreeXUIShareHostname(serverName) || !validThreeXUIShareHostname(targetHost) {
-				continue
-			}
-			seen[serverName] = true
-			verification, verifyErr := realityTargetVerifier(ctx, targetHost, serverName, nodePublicAddress)
-			if verifyErr == nil {
-				return verification, nil
-			}
+		verification, err := realityTargetVerifier(ctx, hostname, hostname, nodePublicAddress)
+		if err == nil {
+			return verification, nil
 		}
 	}
-	return realityTargetVerification{}, errors.New("agent: no safe REALITY target was found automatically in the node's public network; open Advanced settings and enter a target manually")
+	return realityTargetVerification{}, errors.New("agent: no preferred .com REALITY target passed TLS validation; open Advanced settings and enter another .com hostname manually")
 }
 
 func completeThreeXUIRealityCreation(ctx context.Context, baseURL, token string, result RealityCommandResult, clientEmail string) error {
@@ -868,13 +834,9 @@ func threeXUIClientEmail(name, commandID string) string {
 }
 
 func findRealityInbound(ctx context.Context, baseURL, token, inboundTag string, nodeID int) (threeXUIRealityInbound, bool, error) {
-	result, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
+	inbounds, err := listRealityInbounds(ctx, baseURL, token)
 	if err != nil {
-		return threeXUIRealityInbound{}, false, fmt.Errorf("agent: list 3x-ui inbounds: %w", err)
-	}
-	var inbounds []threeXUIRealityInbound
-	if json.Unmarshal(result, &inbounds) != nil {
-		return threeXUIRealityInbound{}, false, errors.New("agent: 3x-ui returned invalid inbound data")
+		return threeXUIRealityInbound{}, false, err
 	}
 	for _, inbound := range inbounds {
 		if normalizedThreeXUIInboundTag(inbound.Tag, nodeID) == normalizedThreeXUIInboundTag(inboundTag, nodeID) && threeXUIInboundMatchesNode(inbound, nodeID) {
@@ -882,6 +844,18 @@ func findRealityInbound(ctx context.Context, baseURL, token, inboundTag string, 
 		}
 	}
 	return threeXUIRealityInbound{}, false, nil
+}
+
+func listRealityInbounds(ctx context.Context, baseURL, token string) ([]threeXUIRealityInbound, error) {
+	result, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/list", token, "", nil)
+	if err != nil {
+		return nil, fmt.Errorf("agent: list 3x-ui inbounds: %w", err)
+	}
+	var inbounds []threeXUIRealityInbound
+	if json.Unmarshal(result, &inbounds) != nil {
+		return nil, errors.New("agent: 3x-ui returned invalid inbound data")
+	}
+	return inbounds, nil
 }
 
 func realityResultFromInbound(inbound threeXUIRealityInbound, inboundTag, connectHostname, displayName, clientName, clientEmail string) (RealityCommandResult, error) {

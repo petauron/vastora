@@ -53,9 +53,9 @@
   public address. A REALITY route can target only the same node's 3x-ui alias;
   cross-node VLESS relaying is rejected. Unknown SNI traffic is passed to Caddy,
   which has no matching application route for unconfigured hostnames.
-- Managed VLESS+REALITY fallback traffic never targets an administrator-supplied
-  hostname directly. Agent pins one non-CDN/WAF IP in the node's ASN, verifies
-  TLS 1.3, X25519, H2, SNI, and the certificate, and points REALITY at a
+- Managed VLESS+REALITY fallback traffic uses a curated reputable `.com`
+  hostname by default, with Intel and AMD checked first. Agent pins one resolved
+  IP, verifies TLS 1.3, X25519, H2, SNI, and the certificate, and points REALITY at a
   loopback Xray `tunnel`. Exact SNI is routed direct and the next same-inbound
   rule blackholes everything else. Any missing, stale, or failed guard blocks
   Center publication and leaves the inbound disabled. Invalid REALITY clients

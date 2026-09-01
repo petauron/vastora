@@ -321,10 +321,15 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 		return input, "", errors.New("center: REALITY DNS must be manual or Cloudflare")
 	}
 	manualTarget := input.TargetHost != "" || input.ServerName != ""
-	if manualTarget && (!domainSuffixPattern.MatchString(input.TargetHost) || !domainSuffixPattern.MatchString(input.ServerName)) {
-		return input, "", errors.New("center: REALITY targetHost and serverName must both be valid hostnames; leave both empty for automatic discovery")
+	if manualTarget && (!validRealityTargetHostname(input.TargetHost) || !validRealityTargetHostname(input.ServerName)) {
+		return input, "", errors.New("center: REALITY targetHost and serverName must both be valid .com hostnames; leave both empty for automatic selection")
 	}
 	return input, displayName, nil
+}
+
+func validRealityTargetHostname(hostname string) bool {
+	hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
+	return domainSuffixPattern.MatchString(hostname) && strings.HasSuffix(hostname, ".com")
 }
 
 func validateRealityCommandResult(input RealityCommandTask, result RealityCommandResult) error {
@@ -340,7 +345,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
 	manualTargetMismatch := input.TargetHost != "" && (result.TargetHost != input.TargetHost || result.ServerName != input.ServerName)
-	if !domainSuffixPattern.MatchString(result.TargetHost) || !domainSuffixPattern.MatchString(result.ServerName) || manualTargetMismatch || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
+	if !validRealityTargetHostname(result.TargetHost) || !validRealityTargetHostname(result.ServerName) || manualTargetMismatch || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
@@ -370,7 +375,7 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 	applicationID = strings.TrimSpace(applicationID)
 	input.TargetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.TargetHost), "."))
 	input.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.ServerName), "."))
-	if applicationID == "" || !domainSuffixPattern.MatchString(input.TargetHost) || !domainSuffixPattern.MatchString(input.ServerName) {
+	if applicationID == "" || !validRealityTargetHostname(input.TargetHost) || !validRealityTargetHostname(input.ServerName) {
 		return ApplicationCommandView{}, errors.New("center: application, targetHost, and serverName are required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)

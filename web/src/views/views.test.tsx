@@ -465,7 +465,7 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#reality-subscription-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
     expect(document.querySelector<HTMLButtonElement>("#reality-gateway")?.textContent).toContain("home-server");
-    expect(document.body.textContent).toContain("Agent 自动发现并校验");
+    expect(document.body.textContent).toContain("Agent 自动选择并校验可信 .com 网站");
     expect(document.body.textContent).toContain("手动指定 REALITY 安全目标");
     expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.required).toBe(false);
     expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.required).toBe(false);
