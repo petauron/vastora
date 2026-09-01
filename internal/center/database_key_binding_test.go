@@ -154,7 +154,7 @@ func TestCenterBackupRejectsChangedOrMixedRootKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWritePrivate(t, keyPath, bytes.Repeat([]byte{0x3c}, secret.KeySize))
-	if err := store.Backup(context.Background(), filepath.Join(t.TempDir(), "changed.vastora"), "password"); err == nil || !strings.Contains(err.Error(), "root key changed") {
+	if err := store.Backup(context.Background(), filepath.Join(t.TempDir(), "changed.vastora"), "binding-password"); err == nil || !strings.Contains(err.Error(), "root key changed") {
 		t.Fatalf("changed-key backup error = %v", err)
 	}
 	mustWritePrivate(t, keyPath, originalKey)
@@ -168,7 +168,7 @@ func TestCenterBackupRejectsChangedOrMixedRootKeys(t *testing.T) {
 	if _, err := store.db.Exec(`INSERT INTO secrets(id, sealed, created_at, updated_at) VALUES('mixed-key', ?, ?, ?); INSERT INTO settings(key, value) VALUES('official_catalog_signing_key', 'mixed-key')`, sealed, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Backup(context.Background(), filepath.Join(t.TempDir(), "mixed.vastora"), "password"); err == nil || !strings.Contains(err.Error(), "verify encrypted state") {
+	if err := store.Backup(context.Background(), filepath.Join(t.TempDir(), "mixed.vastora"), "binding-password"); err == nil || !strings.Contains(err.Error(), "verify encrypted state") {
 		t.Fatalf("mixed-key backup error = %v", err)
 	}
 }

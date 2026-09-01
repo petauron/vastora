@@ -2,12 +2,10 @@ package center
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -155,8 +153,8 @@ func (s *Server) handleCreateBackup(writer http.ResponseWriter, request *http.Re
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if len(strings.TrimSpace(input.Password)) < 12 {
-		writeError(writer, http.StatusBadRequest, errors.New("center: backup password must be at least 12 characters"))
+	if err := ValidateBackupPassword(input.Password); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
 	temporaryDir, err := os.MkdirTemp("", "vastora-web-backup-*")
