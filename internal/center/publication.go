@@ -198,6 +198,11 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 		if err := validatePublicationOrigin(ctx, tx, appNodeID, gatewayID, endpoint); err != nil {
 			return PublicationView{}, err
 		}
+		_, port, _ := net.SplitHostPort(endpoint)
+		internalThreeXUIReality := appNodeID == gatewayID && appKey == threeXUIAppKey && appProtocol == "vless/tcp/reality"
+		if appNodeID == gatewayID && port == "443" && !internalThreeXUIReality {
+			return PublicationView{}, errors.New("center: move the application inbound away from port 443 before enabling the shared 443 gateway")
+		}
 		occupied, err := gatewayHasDirectRaw443(ctx, tx, gatewayID)
 		if err != nil {
 			return PublicationView{}, err
