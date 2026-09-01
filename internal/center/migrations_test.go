@@ -462,6 +462,7 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`DROP TABLE agent_updates`,
 		`ALTER TABLE publications DROP COLUMN access_application_id`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at`,
 		`ALTER TABLE agent_network_profiles DROP COLUMN public_mode`,
