@@ -185,13 +185,18 @@ pruned, the updater fails closed and tells the administrator to refresh Settings
 and request the current release.
 `setup.sh` supports `--bootstrap-port` and `--ssh-host` after the `--` separator.
 
-Center checks the fixed public endpoint for a complete official release. An
-administrator can confirm the update in Settings; a narrow deployer operation
-queues a root systemd one-shot service on the host. That service downloads the
-exact target through `/releases/vVERSION/`, verifies the installer's version and
-SHA-256 metadata, and rejects a mismatched bundle before installation. Center
-still never mounts the Docker socket. For the first release containing this
-updater, run the same public command once to install the service.
+The official Compose profile explicitly configures release metadata, an
+immutable installer base, public-network verification, region lookup, and
+Cloudflare OAuth endpoints. A private package can supply its own HTTPS endpoints
+or omit each capability; Center has no runtime fallback to the official profile.
+When release endpoints are configured, an administrator can confirm an update
+in Settings and a narrow deployer operation queues a root systemd one-shot
+service on the host. That service pins the validated installer address,
+downloads the exact target through `/releases/vVERSION/`, verifies the
+installer's version and SHA-256 metadata, and rejects redirects or a mismatched
+bundle before installation. Center still never mounts the Docker socket. For
+the first release containing this updater, run the same public command once to
+install the service.
 
 Both entry points keep `.env`, replace only managed deployment files, validate
 and pull the new immutable image before changing anything, then start Center and

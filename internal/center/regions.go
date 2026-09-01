@@ -15,8 +15,6 @@ import (
 	"golang.org/x/text/language/display"
 )
 
-const countryISBaseURL = "https://api.country.is/"
-
 var supportedRegionCodes = strings.Fields(`AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW`)
 
 var supportedRegionCodeSet = func() map[string]struct{} {
@@ -103,12 +101,15 @@ func (s *Store) SuggestAgentRegion(ctx context.Context, agentID string) (RegionS
 	if agentID == "" {
 		return RegionSuggestion{}, errors.New("center: Agent is required for region matching")
 	}
+	if s.lookupPublicRegion == nil {
+		return RegionSuggestion{}, errors.New("center: automatic region matching is disabled; select a region manually")
+	}
 	var publicAddress string
 	if err := s.db.QueryRowContext(ctx, `SELECT public_address FROM agent_network_profiles WHERE agent_id = ? AND direct_public = 1`, agentID).Scan(&publicAddress); err != nil {
 		return RegionSuggestion{}, errors.New("center: this Agent has no confirmed public address")
 	}
 	publicIP := net.ParseIP(strings.TrimSpace(publicAddress))
-	if publicIP == nil || s.lookupPublicRegion == nil {
+	if publicIP == nil {
 		return RegionSuggestion{}, errors.New("center: this Agent has no usable public address")
 	}
 	code, err := s.lookupPublicRegion(ctx, publicIP.String())
@@ -119,14 +120,10 @@ func (s *Store) SuggestAgentRegion(ctx context.Context, agentID string) (RegionS
 	if !ok {
 		return RegionSuggestion{}, errors.New("center: automatic region matching returned an unsupported region")
 	}
-	return RegionSuggestion{AgentID: agentID, PublicAddress: publicIP.String(), RegionCode: code, Prefix: regionPrefix(code), Source: "country.is"}, nil
+	return RegionSuggestion{AgentID: agentID, PublicAddress: publicIP.String(), RegionCode: code, Prefix: regionPrefix(code), Source: "configured_helper"}, nil
 }
 
-func countryISLookup(client *http.Client) func(context.Context, string) (string, error) {
-	return countryISLookupAt(client, countryISBaseURL)
-}
-
-func countryISLookupAt(client *http.Client, baseURL string) func(context.Context, string) (string, error) {
+func regionLookupAt(client *http.Client, baseURL string) func(context.Context, string) (string, error) {
 	return func(ctx context.Context, address string) (string, error) {
 		publicIP := net.ParseIP(strings.TrimSpace(address))
 		if publicIP == nil {
@@ -144,21 +141,21 @@ func countryISLookupAt(client *http.Client, baseURL string) func(context.Context
 		}
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("country.is returned HTTP %d", response.StatusCode)
+			return "", fmt.Errorf("region lookup service returned HTTP %d", response.StatusCode)
 		}
 		var result struct {
 			IP      string `json:"ip"`
 			Country string `json:"country"`
 		}
 		if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&result); err != nil {
-			return "", errors.New("country.is returned invalid JSON")
+			return "", errors.New("region lookup service returned invalid JSON")
 		}
 		resolvedIP := net.ParseIP(strings.TrimSpace(result.IP))
 		if resolvedIP == nil || !resolvedIP.Equal(publicIP) {
-			return "", errors.New("country.is returned a different address")
+			return "", errors.New("region lookup service returned a different address")
 		}
 		if _, ok := regionCode(result.Country); !ok {
-			return "", errors.New("country.is returned an unsupported region")
+			return "", errors.New("region lookup service returned an unsupported region")
 		}
 		return strings.ToUpper(result.Country), nil
 	}

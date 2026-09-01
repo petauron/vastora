@@ -16,9 +16,17 @@ type CenterUpdateExecution struct {
 	UpdatedAt     string `json:"updatedAt,omitempty"`
 }
 
+type CenterUpdateRequest struct {
+	Version          string `json:"version"`
+	InstallerBaseURL string `json:"installerBaseUrl"`
+	InstallerHost    string `json:"installerHost"`
+	InstallerPort    string `json:"installerPort"`
+	InstallerAddress string `json:"installerAddress"`
+}
+
 type CenterUpdater interface {
 	CenterUpdateStatus(context.Context) (CenterUpdateExecution, error)
-	StartCenterUpdate(context.Context, string) (CenterUpdateExecution, error)
+	StartCenterUpdate(context.Context, CenterUpdateRequest) (CenterUpdateExecution, error)
 }
 
 func (client *Client) CenterUpdateStatus(ctx context.Context) (CenterUpdateExecution, error) {
@@ -29,8 +37,8 @@ func (client *Client) CenterUpdateStatus(ctx context.Context) (CenterUpdateExecu
 	return decodeCenterUpdateExecution(body)
 }
 
-func (client *Client) StartCenterUpdate(ctx context.Context, version string) (CenterUpdateExecution, error) {
-	payload, err := json.Marshal(map[string]string{"version": version})
+func (client *Client) StartCenterUpdate(ctx context.Context, input CenterUpdateRequest) (CenterUpdateExecution, error) {
+	payload, err := json.Marshal(input)
 	if err != nil {
 		return CenterUpdateExecution{}, err
 	}

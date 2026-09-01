@@ -25,6 +25,20 @@ services:
       - /app/catalog/catalog.json
       - --deployer-socket
       - /run/vastora-deployer/deployer.sock
+      - --release-metadata-url
+      - https://vastora.petauron.com/install.sh
+      - --release-installer-base-url
+      - https://vastora.petauron.com/releases
+      - --public-helper-origin
+      - https://vastora.petauron.com
+      - --region-lookup-url
+      - https://api.country.is
+      - --cloudflare-oauth-client-id
+      - 565bf36df0a8deb0fde1bd27367a44bd
+      - --cloudflare-oauth-redirect-url
+      - https://vastora.petauron.com/oauth/cloudflare/callback
+      - --cloudflare-oauth-relay-url
+      - https://vastora.petauron.com/oauth/cloudflare
     ports:
       - 127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}:8080
     networks:

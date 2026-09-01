@@ -176,29 +176,32 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	cloudflareHTTPClient, err := externalHelperHTTPClient([]string{cloudflareTokenURL, cloudflareAPIURL}, false, 20*time.Second)
+	if err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	store := &Store{
 		db: db, dataDir: dataDir, key: key,
-		backgroundCtx:                  backgroundCtx,
-		backgroundCancel:               backgroundCancel,
-		headscaleAllowedEndpoints:      headscaleAllowedEndpoints,
-		headscaleHTTPClient:            &http.Client{Timeout: 20 * time.Second},
-		builtinHeadscaleDialAddress:    net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
-		cloudflareOAuth:                defaultCloudflareOAuthConfig(),
+		backgroundCtx:               backgroundCtx,
+		backgroundCancel:            backgroundCancel,
+		headscaleAllowedEndpoints:   headscaleAllowedEndpoints,
+		headscaleHTTPClient:         &http.Client{Timeout: 20 * time.Second},
+		builtinHeadscaleDialAddress: net.JoinHostPort(dockerruntime.CaddyAlias, "443"),
+		cloudflareOAuth: cloudflareOAuthConfig{
+			AuthorizationURL: cloudflareAuthorizationURL,
+			TokenURL:         cloudflareTokenURL,
+			APIURL:           cloudflareAPIURL,
+			HTTPClient:       cloudflareHTTPClient,
+		},
 		cloudflareOAuthSessions:        make(map[string]*cloudflareOAuthSession),
 		assistantResolve:               net.DefaultResolver.LookupIPAddr,
 		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),
 		publicationVerificationBackoff: defaultPublicationVerificationBackoff,
 		now:                            time.Now,
 		discoverNetworkCandidates:      networking.Discover,
-		lookupPublicRegion: countryISLookup(&http.Client{
-			Timeout: 8 * time.Second,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}),
-		lookupPublicAddress:  vastoraPublicAddressLookup(&http.Client{Timeout: 5 * time.Second}),
-		lookupGatewayAddress: networking.DefaultRouteAddress,
-		verifyPublicEntry:    vastoraPublicEntryVerifier(&http.Client{Timeout: 12 * time.Second}),
+		lookupGatewayAddress:           networking.DefaultRouteAddress,
 	}
 	store.verifyPublication = store.verifyPublicationRevision
 	store.issuePrivateCertificate = store.obtainPrivateCertificate

@@ -406,7 +406,7 @@ func TestHeartbeatReportsAgentObservedPublicEgress(t *testing.T) {
 		}
 		reported = payload.PublicEgress
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{}`))
+		_, _ = response.Write([]byte(`{"publicAddressLookupUrl":"https://helper.example.com/network/public-address"}`))
 	}))
 	defer server.Close()
 	store, err := Open(t.TempDir())
@@ -417,8 +417,11 @@ func TestHeartbeatReportsAgentObservedPublicEgress(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
-	client := Client{PublicEgress: func(_ context.Context, _ []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
+	client := Client{PublicEgress: func(_ context.Context, endpoint string, allowPrivate bool, _ []networking.Candidate, now time.Time) (*networking.PublicEgress, error) {
 		observations++
+		if endpoint != "https://helper.example.com/network/public-address" || allowPrivate {
+			t.Fatalf("unexpected public helper: %q private=%t", endpoint, allowPrivate)
+		}
 		return &networking.PublicEgress{Address: "198.51.100.22", BindAddress: "10.0.0.22", Mode: networking.PublicModeNAT, ObservedAt: now}, nil
 	}}
 	if observationErr, heartbeatErr := client.heartbeatWithStartup(context.Background(), store, true); observationErr != nil || heartbeatErr != nil {

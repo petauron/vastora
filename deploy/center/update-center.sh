@@ -36,6 +36,30 @@ if ! printf '%s\n' "$target_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-
   echo "The requested Center version is invalid." >&2
   exit 2
 fi
+installer_base_url="$(awk 'NR == 2 {print; exit}' "$request")"
+case "$installer_base_url" in
+  https://* ) ;;
+  *) echo "The release installer base URL must use HTTPS." >&2; exit 2 ;;
+esac
+installer_host="$(awk 'NR == 3 {print; exit}' "$request")"
+installer_port="$(awk 'NR == 4 {print; exit}' "$request")"
+installer_address="$(awk 'NR == 5 {print; exit}' "$request")"
+if ! printf '%s\n' "$installer_host" | grep -Eq '^[0-9A-Za-z.-]+$' ||
+   ! printf '%s\n' "$installer_port" | grep -Eq '^[0-9]{1,5}$' ||
+   ! printf '%s\n' "$installer_address" | grep -Eq '^[0-9A-Fa-f:.]+$'; then
+  echo "The release installer DNS pin is invalid." >&2
+  exit 2
+fi
+case "$installer_address" in
+  *:*) installer_resolve="$installer_host:$installer_port:[$installer_address]" ;;
+  *) installer_resolve="$installer_host:$installer_port:$installer_address" ;;
+esac
+case "$installer_base_url" in
+  *[!A-Za-z0-9.:/_~-]* | *'@'* | *'?'* | *'#'*)
+    echo "The release installer base URL is invalid." >&2
+    exit 2
+    ;;
+esac
 
 write_status() {
   update_state="$1"
@@ -73,10 +97,11 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 write_status applying "$target_version" "Downloading the verified release metadata."
-release_base="https://vastora.petauron.com/releases/v$target_version"
+release_base="${installer_base_url%/}/v$target_version"
 failure_message="The immutable Center installer could not be downloaded."
 installer_status=""
 if ! installer_status="$(curl --proto '=https' --tlsv1.2 -fsS \
+  --resolve "$installer_resolve" \
   --dump-header "$installer_headers" \
   --write-out '%{http_code}' \
   "$release_base/install.sh" -o "$installer")"; then
@@ -124,6 +149,7 @@ if ! VASTORA_UPDATE_STATUS_FILE="$status_file" \
   VASTORA_UPDATE_TARGET_VERSION="$target_version" \
   /bin/sh "$installer" center \
   --release-url "$release_base/vastora-center-install.tar.gz" \
+  --release-resolve "$installer_resolve" \
   --install-dir "$install_dir" \
   --expected-version "$target_version"; then
   exit 1

@@ -251,6 +251,7 @@ export function App() {
     cloudflareConfigured={setupStatus?.cloudflareConfigured ?? false}
     cloudflareAccessConfigured={setupStatus?.cloudflareAccessConfigured ?? false}
     cloudflareOAuthAvailable={setupStatus?.cloudflareOAuthAvailable ?? false}
+    publicNetworkHelperAvailable={setupStatus?.publicNetworkHelperAvailable ?? false}
     cloudflareZone={setupStatus?.cloudflareZone}
     language={language}
     onLanguage={setLanguage}

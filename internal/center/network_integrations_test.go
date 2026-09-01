@@ -279,6 +279,7 @@ func TestFirstPrivateEnrollmentUsesConfiguredCoLocatedCenterURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/agent-enrollments", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	NewServer(store, "", false).WithCoLocatedAgentURL("http://127.0.0.1:19090").handleCreateAgentEnrollment(response, request)
 	if response.Code != http.StatusCreated {

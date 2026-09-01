@@ -6,7 +6,7 @@ export type AppDataPatch = Partial<AppData> & { status: CenterStatus };
 export function emptyAppData(status: CenterStatus): AppData {
   return {
     status,
-    centerUpdate: { currentVersion: status.version, updateAvailable: false, automatic: false, state: "idle" },
+    centerUpdate: { currentVersion: status.version, updateAvailable: false, releaseCheckAvailable: false, automatic: false, state: "idle" },
     sources: [],
     apps: [],
     registryCredentials: [],

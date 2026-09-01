@@ -39,9 +39,9 @@ afterEach(() => {
 });
 
 function mockReadyCenter() {
-  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, cloudflareConfigured: false, cloudflareAccessConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: false, cloudflareAccessConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
   const status = vi.spyOn(api, "status").mockResolvedValue({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" });
-  vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, automatic: true, state: "idle" });
+  vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
   vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
   vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
   vi.spyOn(api, "applications").mockResolvedValue({ applications: [] });
@@ -87,7 +87,7 @@ describe("application shell", () => {
   });
 
   it("requires ten characters when creating the administrator", async () => {
-    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, cloudflareConfigured: false, cloudflareAccessConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, publicNetworkHelperAvailable: false, regionLookupAvailable: false, cloudflareConfigured: false, cloudflareAccessConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -173,7 +173,7 @@ describe("application shell", () => {
     const stale = deferred<CenterUpdateStatus>();
     let staleSignal: AbortSignal | undefined;
     updates.mockImplementationOnce((_refresh, signal) => { staleSignal = signal; return stale.promise; });
-    updates.mockResolvedValueOnce({ currentVersion: "fresh-version", latestVersion: "fresh-version", updateAvailable: false, automatic: true, state: "idle" });
+    updates.mockResolvedValueOnce({ currentVersion: "fresh-version", latestVersion: "fresh-version", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
     const settings = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Settings");
 
     act(() => settings?.click());
@@ -182,7 +182,7 @@ describe("application shell", () => {
     await act(async () => { check?.click(); await Promise.resolve(); });
     await vi.waitFor(() => expect(container.textContent).toContain("fresh-version"));
     expect(staleSignal?.aborted).toBe(true);
-    await act(async () => { stale.resolve({ currentVersion: "stale-version", latestVersion: "stale-version", updateAvailable: false, automatic: true, state: "idle" }); });
+    await act(async () => { stale.resolve({ currentVersion: "stale-version", latestVersion: "stale-version", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" }); });
 
     expect(container.textContent).toContain("fresh-version");
     expect(container.textContent).not.toContain("stale-version");

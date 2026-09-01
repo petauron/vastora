@@ -223,7 +223,13 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 			centerURL = s.coLocatedAgentURL
 		}
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"connected": true, "centerUrl": centerURL, "tailscaleIsolation": isolation})
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"connected":                true,
+		"centerUrl":                centerURL,
+		"tailscaleIsolation":       isolation,
+		"publicAddressLookupUrl":   s.publicAddressLookupURL,
+		"publicHelperAllowPrivate": s.publicHelperAllowPrivate,
+	})
 }
 
 func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Request) {

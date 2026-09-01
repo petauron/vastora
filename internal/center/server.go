@@ -22,22 +22,26 @@ import (
 var Version = "0.1.0-dev"
 
 type Server struct {
-	store                *Store
-	staticDir            string
-	agentBinariesDir     string
-	setupAgentConnectURL string
-	coLocatedAgentURL    string
-	secureCookies        bool
-	officialCatalog      []byte
-	infrastructure       deployapi.InfrastructureManager
-	updates              deployapi.CenterUpdater
-	releaseChecker       CenterReleaseChecker
-	catalogRefreshMu     sync.Mutex
-	assistantRunMu       sync.Mutex
-	assistantRuns        map[string]context.CancelFunc
-	assistantWatchers    map[string]struct{}
-	assistantResumeOnce  sync.Once
-	startupReady         atomic.Bool
+	store                    *Store
+	staticDir                string
+	agentBinariesDir         string
+	setupAgentConnectURL     string
+	coLocatedAgentURL        string
+	secureCookies            bool
+	officialCatalog          []byte
+	infrastructure           deployapi.InfrastructureManager
+	updates                  deployapi.CenterUpdater
+	releaseChecker           CenterReleaseChecker
+	releaseInstallerBaseURL  string
+	resolveReleaseInstaller  func(context.Context) (ExternalHelperPin, error)
+	publicAddressLookupURL   string
+	publicHelperAllowPrivate bool
+	catalogRefreshMu         sync.Mutex
+	assistantRunMu           sync.Mutex
+	assistantRuns            map[string]context.CancelFunc
+	assistantWatchers        map[string]struct{}
+	assistantResumeOnce      sync.Once
+	startupReady             atomic.Bool
 }
 
 func (s *Server) WithInfrastructureManager(manager deployapi.InfrastructureManager) *Server {
@@ -53,6 +57,22 @@ func (s *Server) WithCenterUpdater(updates deployapi.CenterUpdater) *Server {
 
 func (s *Server) WithCenterReleaseChecker(checker CenterReleaseChecker) *Server {
 	s.releaseChecker = checker
+	return s
+}
+
+func (s *Server) WithReleaseInstallerBaseURL(value string) *Server {
+	s.releaseInstallerBaseURL = value
+	return s
+}
+
+func (s *Server) WithReleaseInstallerResolver(resolve func(context.Context) (ExternalHelperPin, error)) *Server {
+	s.resolveReleaseInstaller = resolve
+	return s
+}
+
+func (s *Server) WithPublicAddressLookupURL(value string, allowPrivate bool) *Server {
+	s.publicAddressLookupURL = value
+	s.publicHelperAllowPrivate = allowPrivate
 	return s
 }
 

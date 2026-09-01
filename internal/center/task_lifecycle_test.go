@@ -569,7 +569,7 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "already at version") {
 		t.Fatalf("same-version upgrade was accepted: %v", err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET installed_version = '7.2.127' WHERE app_key = ?`, cpaAppKey); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.127' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
 		t.Fatal(err)
 	}
 	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"})
@@ -577,7 +577,7 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 		t.Fatalf("newer version was not accepted: %#v err=%v", upgrade, err)
 	}
 	completeNextTask(t, store, node, "application.apply", result)
-	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET installed_version = '7.2.129' WHERE app_key = ?`, cpaAppKey); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.129' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "downgrade is not allowed") {

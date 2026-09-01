@@ -13,28 +13,27 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const officialInstallerURL = "https://vastora.petauron.com/install.sh"
-
 type CenterReleaseChecker interface {
 	LatestVersion(context.Context, bool) (string, time.Time, error)
 }
 
 type CenterUpdateStatus struct {
-	CurrentVersion  string `json:"currentVersion"`
-	LatestVersion   string `json:"latestVersion,omitempty"`
-	UpdateAvailable bool   `json:"updateAvailable"`
-	Automatic       bool   `json:"automatic"`
-	State           string `json:"state"`
-	TargetVersion   string `json:"targetVersion,omitempty"`
-	Phase           string `json:"phase,omitempty"`
-	Progress        int    `json:"progress,omitempty"`
-	Message         string `json:"message,omitempty"`
-	CheckedAt       string `json:"checkedAt,omitempty"`
-	UpdatedAt       string `json:"updatedAt,omitempty"`
-	Error           string `json:"error,omitempty"`
+	CurrentVersion        string `json:"currentVersion"`
+	LatestVersion         string `json:"latestVersion,omitempty"`
+	UpdateAvailable       bool   `json:"updateAvailable"`
+	ReleaseCheckAvailable bool   `json:"releaseCheckAvailable"`
+	Automatic             bool   `json:"automatic"`
+	State                 string `json:"state"`
+	TargetVersion         string `json:"targetVersion,omitempty"`
+	Phase                 string `json:"phase,omitempty"`
+	Progress              int    `json:"progress,omitempty"`
+	Message               string `json:"message,omitempty"`
+	CheckedAt             string `json:"checkedAt,omitempty"`
+	UpdatedAt             string `json:"updatedAt,omitempty"`
+	Error                 string `json:"error,omitempty"`
 }
 
-type OfficialReleaseChecker struct {
+type ReleaseChecker struct {
 	url       string
 	client    *http.Client
 	mu        sync.Mutex
@@ -43,20 +42,17 @@ type OfficialReleaseChecker struct {
 	expiresAt time.Time
 }
 
-func NewOfficialReleaseChecker(endpoint string) *OfficialReleaseChecker {
-	if endpoint == "" {
-		endpoint = officialInstallerURL
+func NewReleaseChecker(endpoint string, client *http.Client) *ReleaseChecker {
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	}
-	return &OfficialReleaseChecker{
-		url: endpoint,
-		client: &http.Client{
-			Timeout:       15 * time.Second,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
+	return &ReleaseChecker{
+		url:    endpoint,
+		client: client,
 	}
 }
 
-func (checker *OfficialReleaseChecker) LatestVersion(ctx context.Context, refresh bool) (string, time.Time, error) {
+func (checker *ReleaseChecker) LatestVersion(ctx context.Context, refresh bool) (string, time.Time, error) {
 	checker.mu.Lock()
 	defer checker.mu.Unlock()
 	now := time.Now().UTC()
@@ -70,11 +66,11 @@ func (checker *OfficialReleaseChecker) LatestVersion(ctx context.Context, refres
 	request.Header.Set("User-Agent", "Vastora/"+Version)
 	response, err := checker.client.Do(request)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("center: check official release: %w", err)
+		return "", time.Time{}, fmt.Errorf("center: check configured release source: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return "", time.Time{}, fmt.Errorf("center: official installer returned HTTP %d", response.StatusCode)
+		return "", time.Time{}, fmt.Errorf("center: release metadata endpoint returned HTTP %d", response.StatusCode)
 	}
 	version, err := releaseVersionFromHeader(response.Header.Get("X-Vastora-Version"))
 	if err != nil {
@@ -89,7 +85,7 @@ func (checker *OfficialReleaseChecker) LatestVersion(ctx context.Context, refres
 func releaseVersionFromHeader(value string) (string, error) {
 	version := strings.TrimSpace(value)
 	if version == "" || strings.HasPrefix(version, "v") || !semver.IsValid("v"+version) {
-		return "", errors.New("center: official installer returned an invalid release version")
+		return "", errors.New("center: release metadata endpoint returned an invalid release version")
 	}
 	return version, nil
 }
@@ -113,7 +109,16 @@ func (s *Server) handleStartCenterUpdate(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusConflict, errors.New("center: automatic updates are not available on this installation"))
 		return
 	}
-	execution, err := s.updates.StartCenterUpdate(request.Context(), status.LatestVersion)
+	if s.resolveReleaseInstaller == nil {
+		writeError(writer, http.StatusConflict, errors.New("center: release installer resolution is unavailable"))
+		return
+	}
+	pin, err := s.resolveReleaseInstaller(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	execution, err := s.updates.StartCenterUpdate(request.Context(), deployapi.CenterUpdateRequest{Version: status.LatestVersion, InstallerBaseURL: s.releaseInstallerBaseURL, InstallerHost: pin.Host, InstallerPort: pin.Port, InstallerAddress: pin.Address})
 	if err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
@@ -132,6 +137,7 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 		result.Error = "center: release checking is unavailable"
 		return result
 	}
+	result.ReleaseCheckAvailable = true
 	latest, checkedAt, err := s.releaseChecker.LatestVersion(ctx, refreshOfficial)
 	if err != nil {
 		result.Error = err.Error()

@@ -229,6 +229,9 @@ func candidateAddressExists(candidates []networking.Candidate, address string) b
 }
 
 func (s *Store) tailscaleFixedEndpointCurrent(ctx context.Context, config tailscaleFixedEndpointConfig) (bool, string, error) {
+	if s.lookupPublicAddress == nil {
+		return false, "Public address verification is disabled; the saved endpoint is not being advertised.", nil
+	}
 	candidates, err := s.discoverNetworkCandidates(s.now().UTC())
 	if err != nil {
 		return false, "", fmt.Errorf("center: discover current fixed-endpoint address: %w", err)

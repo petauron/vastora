@@ -45,7 +45,7 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 			suggestedGatewayAddress = publicAddresses[0].Address
 			publicAddressDetection = "direct"
 		}
-		if s.infrastructure != nil {
+		if s.infrastructure != nil && s.store.lookupPublicAddress != nil {
 			if observed, lookupErr := s.store.lookupPublicAddress(request.Context()); lookupErr == nil {
 				observedPublicAddress = observed
 				publicAddressDetection = "cloud_mapping_candidate"
@@ -76,21 +76,23 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 		setupLastError = status.LastError
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"administratorConfigured":    status.AdministratorConfigured,
-		"onboardingComplete":         status.OnboardingComplete,
-		"suggestedAgentConnectUrl":   s.setupAgentConnectURL,
-		"builtinHeadscaleAvailable":  s.infrastructure != nil,
-		"cloudflareOAuthAvailable":   s.store.CloudflareOAuthAvailable(),
-		"cloudflareConfigured":       cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
-		"cloudflareAccessConfigured": cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.AccessManagement,
-		"cloudflareZone":             cloudflare.Endpoint,
-		"publicAddressCandidates":    publicAddresses,
-		"gatewayAddressCandidates":   gatewayAddresses,
-		"observedPublicAddress":      observedPublicAddress,
-		"suggestedGatewayAddress":    suggestedGatewayAddress,
-		"publicAddressDetection":     publicAddressDetection,
-		"setupOperationPhase":        setupOperationPhase,
-		"setupLastError":             setupLastError,
+		"administratorConfigured":      status.AdministratorConfigured,
+		"onboardingComplete":           status.OnboardingComplete,
+		"suggestedAgentConnectUrl":     s.setupAgentConnectURL,
+		"builtinHeadscaleAvailable":    s.infrastructure != nil,
+		"cloudflareOAuthAvailable":     s.store.CloudflareOAuthAvailable(),
+		"publicNetworkHelperAvailable": s.store.lookupPublicAddress != nil && s.store.verifyPublicEntry != nil,
+		"regionLookupAvailable":        s.store.lookupPublicRegion != nil,
+		"cloudflareConfigured":         cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
+		"cloudflareAccessConfigured":   cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.AccessManagement,
+		"cloudflareZone":               cloudflare.Endpoint,
+		"publicAddressCandidates":      publicAddresses,
+		"gatewayAddressCandidates":     gatewayAddresses,
+		"observedPublicAddress":        observedPublicAddress,
+		"suggestedGatewayAddress":      suggestedGatewayAddress,
+		"publicAddressDetection":       publicAddressDetection,
+		"setupOperationPhase":          setupOperationPhase,
+		"setupLastError":               setupLastError,
 	})
 }
 

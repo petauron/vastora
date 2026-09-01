@@ -84,6 +84,7 @@ export type CenterUpdateStatus = {
   currentVersion: string;
   latestVersion?: string;
   updateAvailable: boolean;
+  releaseCheckAvailable: boolean;
   automatic: boolean;
   state: "idle" | "queued" | "applying" | "succeeded" | "failed";
   targetVersion?: string;
@@ -167,6 +168,8 @@ export type SetupStatus = {
   suggestedAgentConnectUrl: string;
   builtinHeadscaleAvailable: boolean;
   cloudflareOAuthAvailable: boolean;
+  publicNetworkHelperAvailable: boolean;
+  regionLookupAvailable: boolean;
   cloudflareConfigured: boolean;
   cloudflareAccessConfigured: boolean;
   cloudflareZone?: string;
