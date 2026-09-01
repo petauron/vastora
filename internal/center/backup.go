@@ -166,6 +166,9 @@ func Restore(backupPath, destination, password string) error {
 	if err := syncDirectory(staging); err != nil {
 		return fmt.Errorf("center: sync restore staging directory: %w", err)
 	}
+	if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("center: remove empty restore destination: %w", err)
+	}
 	if err := os.Rename(staging, destination); err != nil {
 		return fmt.Errorf("center: publish restored directory: %w", err)
 	}

@@ -444,17 +444,20 @@ func applyRealityGuardRouting(config map[string]any, guardTag, serverName string
 		map[string]any{"type": "field", "inboundTag": []any{guardTag}, "outboundTag": realityGuardBlackholeTag},
 	)
 	for _, raw := range rules {
-		if !isManagedRealityGuardRule(raw) {
+		if !isManagedRealityGuardRule(raw, guardTag) {
 			preserved = append(preserved, raw)
 		}
 	}
 	routing["rules"] = preserved
 }
 
-func isManagedRealityGuardRule(raw any) bool {
+func isManagedRealityGuardRule(raw any, guardTag string) bool {
 	rule, _ := raw.(map[string]any)
 	tag, _ := rule["outboundTag"].(string)
-	return tag == realityGuardDirectTag || tag == realityGuardBlackholeTag
+	if routingRuleUsesInbound(raw, guardTag) {
+		return true
+	}
+	return (tag == realityGuardDirectTag || tag == realityGuardBlackholeTag) && !routingRuleHasInboundRestriction(raw)
 }
 
 func routingRuleUsesInbound(raw any, expected string) bool {

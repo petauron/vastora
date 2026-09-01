@@ -1051,7 +1051,7 @@ func readOptionalCACertificate(path string) (string, error) {
 		return "", fmt.Errorf("read Center CA certificate: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Size() > 1024*1024 {
-		return "", errors.New("Center CA certificate must be a regular PEM file no larger than 1 MiB")
+		return "", errors.New("center CA certificate must be a regular PEM file no larger than 1 MiB")
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
