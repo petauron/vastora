@@ -350,6 +350,7 @@ func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
 	commandID := "application-command-compensate1234"
 	clientEmail := threeXUIClientEmail("Phone", commandID)
 	deletedInbound, deletedClient := false, false
+	createdSubID := ""
 	clientExists := true
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -359,6 +360,18 @@ func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
 		case "GET /panel/api/server/getNewX25519Cert":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"privateKey":"private-key","publicKey":"public-key"}}`))
 		case "POST /panel/api/inbounds/add":
+			var payload struct {
+				Settings struct {
+					Clients []struct {
+						Email string `json:"email"`
+						SubID string `json:"subId"`
+					} `json:"clients"`
+				} `json:"settings"`
+			}
+			if json.NewDecoder(request.Body).Decode(&payload) != nil || len(payload.Settings.Clients) != 1 || payload.Settings.Clients[0].Email != clientEmail {
+				t.Fatal("initial REALITY client payload was not decoded")
+			}
+			createdSubID = payload.Settings.Clients[0].SubID
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"tag":"` + threeXUIRealityTag(commandID) + `"}}`))
 		case "GET /panel/api/hosts/byInbound/9":
 			response.WriteHeader(http.StatusBadGateway)
@@ -399,6 +412,9 @@ func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
 	}
 	if !deletedInbound || !deletedClient {
 		t.Fatalf("compensation deleted inbound=%t client=%t", deletedInbound, deletedClient)
+	}
+	if createdSubID == "" {
+		t.Fatal("initial REALITY client did not receive a subscription id")
 	}
 }
 

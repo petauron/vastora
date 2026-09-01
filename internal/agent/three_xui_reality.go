@@ -298,8 +298,12 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		if err != nil {
 			return RealityCommandResult{}, err
 		}
+		clientSubscriptionID, err := randomClientToken()
+		if err != nil {
+			return RealityCommandResult{}, err
+		}
 		clients = append(clients, map[string]any{
-			"id": clientID, "email": clientEmail, "flow": "xtls-rprx-vision", "limitIp": 0,
+			"id": clientID, "subId": clientSubscriptionID, "email": clientEmail, "flow": "xtls-rprx-vision", "limitIp": 0,
 			"totalGB": command.ClientTotalBytes, "expiryTime": command.ClientExpiryTime, "reset": command.ClientResetDays, "enable": true,
 		})
 	}
