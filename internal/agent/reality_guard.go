@@ -18,10 +18,9 @@ import (
 )
 
 const (
-	threeXUIRealityGuardPortFirst = 21000
-	threeXUIRealityGuardPortLast  = 21031
-	realityGuardDirectTag         = "vastora-reality-direct"
-	realityGuardBlackholeTag      = "vastora-reality-blackhole"
+	threeXUIRealityGuardPort = 21000
+	realityGuardDirectTag    = "vastora-reality-direct"
+	realityGuardBlackholeTag = "vastora-reality-blackhole"
 )
 
 type realityTargetVerification struct {
@@ -189,10 +188,10 @@ func realityGuardTag(inboundTag string) string {
 }
 
 func realityGuardPort(realityPort int) (int, error) {
-	if realityPort < threeXUIRealityPortFirst || realityPort > threeXUIRealityPortLast {
-		return 0, errors.New("agent: REALITY port is outside the managed range")
+	if realityPort != threeXUIRealityPort {
+		return 0, errors.New("agent: REALITY inbound must use the managed port 443")
 	}
-	return threeXUIRealityGuardPortFirst + realityPort - threeXUIRealityPortFirst, nil
+	return threeXUIRealityGuardPort, nil
 }
 
 func ensureRealityGuardCompanion(ctx context.Context, baseURL, token string, nodeID, realityPort int, inboundTag, targetIP string) (threeXUIRealityInbound, error) {

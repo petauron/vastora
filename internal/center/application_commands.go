@@ -18,16 +18,16 @@ import (
 )
 
 const (
-	centerThreeXUIRealityPortFirst = 20000
-	threeXUIRealityGuardPortFirst  = 21000
-	realityCommandKind             = "3xui.reality.create"
-	realityVerifyCommandKind       = "3xui.reality.verify"
-	realityHardenCommandKind       = "3xui.reality.harden"
-	realityRenameCommandKind       = "3xui.reality.rename"
-	subscriptionCommandKind        = "3xui.subscription.configure"
-	clientCommandKind              = "3xui.clients.manage"
-	nodeCommandKind                = "3xui.node.reconcile"
-	controllerCommandKind          = "3xui.controller.manage"
+	centerThreeXUIRealityPort = 443
+	threeXUIRealityGuardPort  = 21000
+	realityCommandKind        = "3xui.reality.create"
+	realityVerifyCommandKind  = "3xui.reality.verify"
+	realityHardenCommandKind  = "3xui.reality.harden"
+	realityRenameCommandKind  = "3xui.reality.rename"
+	subscriptionCommandKind   = "3xui.subscription.configure"
+	clientCommandKind         = "3xui.clients.manage"
+	nodeCommandKind           = "3xui.node.reconcile"
+	controllerCommandKind     = "3xui.controller.manage"
 )
 
 type RealityCommandInput struct {
@@ -332,7 +332,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + input.InboundTag
 	}
-	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Listen != input.TargetAddress || result.Port < centerThreeXUIRealityPortFirst || result.Port > centerThreeXUIRealityPortFirst+31 || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.ServerName) || result.InboundTotalBytes != input.InboundTotalBytes {
+	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Listen != input.TargetAddress || result.Port != centerThreeXUIRealityPort || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.ServerName) || result.InboundTotalBytes != input.InboundTotalBytes {
 		return errors.New("center: Agent returned an unsafe REALITY result")
 	}
 	expectedCompanionTag := input.InboundTag + "-guard"
@@ -340,7 +340,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
 	manualTargetMismatch := input.TargetHost != "" && (result.TargetHost != input.TargetHost || result.ServerName != input.ServerName)
-	if !domainSuffixPattern.MatchString(result.TargetHost) || !domainSuffixPattern.MatchString(result.ServerName) || manualTargetMismatch || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" || !result.ProxyProtocol {
+	if !domainSuffixPattern.MatchString(result.TargetHost) || !domainSuffixPattern.MatchString(result.ServerName) || manualTargetMismatch || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
@@ -463,6 +463,9 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if net.ParseIP(targetPublicAddress) == nil {
 		return ApplicationCommandView{}, errors.New("center: target VLESS node has no confirmed public address for ASN validation")
 	}
+	if input.GatewayNodeID != targetAgentID {
+		return ApplicationCommandView{}, errors.New("center: a VLESS node must use its own public gateway so traffic exits directly from that node")
+	}
 	var agentID string
 	var targetNodeID int
 	if role == threeXUIRoleMaster {
@@ -510,11 +513,14 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if err := ensureRealityDisplayNameUnreserved(ctx, tx, siteID, displayName); err != nil {
 		return ApplicationCommandView{}, err
 	}
-	var existingControllerRealityServices int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE application_id = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.ApplicationID).Scan(&existingControllerRealityServices); err != nil {
+	var existingRealityServices int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE application_id = ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped'`, input.ApplicationID).Scan(&existingRealityServices); err != nil {
 		return ApplicationCommandView{}, err
 	}
-	createInitialClient := role == threeXUIRoleMaster && existingControllerRealityServices == 0
+	if existingRealityServices != 0 {
+		return ApplicationCommandView{}, errors.New("center: this 3x-ui host already provides its VLESS node; manage subscribers on the controller instead of creating another inbound")
+	}
+	createInitialClient := role == threeXUIRoleMaster
 	if createInitialClient && !validThreeXUIClientName(input.ClientName) {
 		return ApplicationCommandView{}, errors.New("center: the first REALITY node requires a valid subscription client name")
 	}

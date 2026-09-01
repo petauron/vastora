@@ -579,7 +579,7 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("当前订阅包含 2 个 VLESS 节点");
     expect(container.textContent).not.toContain("统一管理 1 个 VLESS 节点");
     expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("管理客户端"))).toHaveLength(1);
-    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("创建 VLESS"))).toHaveLength(2);
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("VLESS 节点已配置"))).toHaveLength(2);
 		expect(container.textContent).toContain("客户端和订阅由当前位置的订阅主机统一管理");
 	});
 

@@ -36,8 +36,8 @@
 - Application Web ports bind to the confirmed private service address rather
   than every host interface. A public address is accepted only when Agent finds
   it on a local interface and an administrator explicitly enables direct ingress.
-- When suggesting a VLESS node region, Center sends only the selected Gateway's
-  confirmed public IP address to `api.country.is`. No credentials, node secrets,
+- When suggesting a VLESS node region, Center sends only that node's confirmed
+  public IP address to `api.country.is`. No credentials, node secrets,
   private addresses, or application data are included. The lookup is optional;
   failure leaves the searchable manual region selector available.
 - LAN and Headscale Web entries use selected Caddy Gateway nodes. They may use
@@ -47,10 +47,12 @@
 - ACME account keys and private HTTPS certificates are encrypted in Center.
   Certificate keys are absent from desired-state JSON and task-event records,
   delivered only with a claimed Gateway task, and encrypted at rest by Agent.
-- HAProxy is installed only for an explicit shared-443 Publication. It performs
-  TCP ClientHello SNI routing without terminating TLS, uses no Docker socket,
-  and binds only the confirmed public address. Unknown SNI traffic is passed to
-  Caddy, which has no matching application route for unconfigured hostnames.
+- HAProxy is installed on each VLESS node when its explicit shared-443
+  Publication is created. It performs TCP ClientHello SNI routing without
+  terminating TLS, uses no Docker socket, and binds only that node's confirmed
+  public address. A REALITY route can target only the same node's 3x-ui alias;
+  cross-node VLESS relaying is rejected. Unknown SNI traffic is passed to Caddy,
+  which has no matching application route for unconfigured hostnames.
 - Managed VLESS+REALITY fallback traffic never targets an administrator-supplied
   hostname directly. Agent pins one non-CDN/WAF IP in the node's ASN, verifies
   TLS 1.3, X25519, H2, SNI, and the certificate, and points REALITY at a
