@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.85](https://github.com/petauron/vastora/compare/v0.1.0-alpha.84...v0.1.0-alpha.85) (2026-09-01)
+
+
+### Features
+
+* **3x-ui:** simplify VLESS REALITY creation ([9fbfd3d](https://github.com/petauron/vastora/commit/9fbfd3dc49e8ec484dfef612100bb86e24c18617))
+
+
+### Bug Fixes
+
+* **3x-ui:** align REALITY automation checks ([de45f85](https://github.com/petauron/vastora/commit/de45f85bf1405222b555d95cb9567d3e9b5a9d6a))
+
 ## [0.1.0-alpha.84](https://github.com/petauron/vastora/compare/v0.1.0-alpha.83...v0.1.0-alpha.84) (2026-09-01)
 
 
