@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.88](https://github.com/petauron/vastora/compare/v0.1.0-alpha.87...v0.1.0-alpha.88) (2026-09-01)
+
+
+### Bug Fixes
+
+* **agent:** accept REALITY region in encrypted tasks ([32fcca3](https://github.com/petauron/vastora/commit/32fcca335dec82f5d18512bb712ff486e9fec7a7))
+
 ## [0.1.0-alpha.87](https://github.com/petauron/vastora/compare/v0.1.0-alpha.86...v0.1.0-alpha.87) (2026-09-01)
 
 
