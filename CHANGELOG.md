@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.87](https://github.com/petauron/vastora/compare/v0.1.0-alpha.86...v0.1.0-alpha.87) (2026-09-01)
+
+
+### Bug Fixes
+
+* **3x-ui:** allow automatic REALITY target discovery ([70e0142](https://github.com/petauron/vastora/commit/70e01428054060ab96af160bd599fed4712d846b))
+
 ## [0.1.0-alpha.86](https://github.com/petauron/vastora/compare/v0.1.0-alpha.85...v0.1.0-alpha.86) (2026-09-01)
 
 
