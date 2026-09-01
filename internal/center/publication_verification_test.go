@@ -409,6 +409,8 @@ func TestStoppedPublicationCompensatesInFlightCloudflareDNSCreation(t *testing.T
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
+		case "GET /zones/zone/dns_records":
+			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
 		case "POST /zones/zone/dns_records":
 			close(createStarted)
 			<-releaseCreate
