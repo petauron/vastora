@@ -165,10 +165,12 @@ func (installer DockerHeadscaleInstaller) ReconcileHeadscale(ctx context.Context
 }
 
 func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, input deployapi.HeadscaleInstallRequest, createAPIKey bool) (string, deployapi.HeadscaleAPIKeyRotation, error) {
-	input.DNSPolicy, input.DNSResolvers, err := deployapi.NormalizeHeadscaleDNS(input.DNSPolicy, input.DNSResolvers)
+	dnsPolicy, dnsResolvers, err := deployapi.NormalizeHeadscaleDNS(input.DNSPolicy, input.DNSResolvers)
 	if err != nil {
 		return "", deployapi.HeadscaleAPIKeyRotation{}, fmt.Errorf("deployer: Headscale DNS: %w", err)
 	}
+	input.DNSPolicy = dnsPolicy
+	input.DNSResolvers = dnsResolvers
 	settings, centerURL, headscaleURL, err := installer.settings(input)
 	if err != nil {
 		return "", deployapi.HeadscaleAPIKeyRotation{}, err
