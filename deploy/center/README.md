@@ -158,10 +158,13 @@ installer R2 bucket:
 - `vastora-center-install.tar.gz`
 - `vastora-center-install.tar.gz.sha256`
 
-After their digests are verified, the release workflow replaces the small
-`vastora/current.json` manifest in one operation. The Installer Worker reads
-that pointer and serves the selected version through `vastora.petauron.com`;
-GitHub Release attachments are not part of the installation path.
+The same four files (`install.sh`, the bundle, its checksum, and
+`vastora-release-manifest.json`) are attached to the draft GitHub Release as
+durable history. After their digests are verified, the workflow stages the
+candidate in R2 and replaces the small `vastora/current.json` manifest in one
+operation. The Installer Worker reads that pointer and serves the selected
+version through `vastora.petauron.com`; GitHub attachments are not part of the
+runtime installation path.
 
 Create them locally without uploading anything:
 
@@ -176,7 +179,10 @@ configuration, plus
 `release.env` with the release version and immutable image. `install.sh`
 supports `--release-url` for a trusted mirror and `--install-dir` for a custom
 location. Automatic updates additionally pass `--expected-version`, so a bundle
-for a different release is rejected before any installed file changes.
+for a different release is rejected before any installed file changes. R2 keeps
+only the selected version; if an already queued historical update has been
+pruned, the updater fails closed and tells the administrator to refresh Settings
+and request the current release.
 `setup.sh` supports `--bootstrap-port` and `--ssh-host` after the `--` separator.
 
 Center checks the fixed public endpoint for a complete official release. An
@@ -209,14 +215,24 @@ its version metadata, then records a visible `Release metadata` check on the
 pull request. It does not repeat source checks for the already-tested `main`
 commit. Merging that pull request creates a draft release, builds and pushes one
 `linux/amd64` + `linux/arm64` Center image index to GHCR, verifies both
-platforms, packages the installer against the immutable index digest, uploads
-all three assets, and publishes the release only after every step succeeds.
-Failed builds leave the release as a draft. After GitHub publishes the release
-metadata, the workflow atomically activates the already-staged R2 manifest. The
-Cloudflare Worker behind `vastora.petauron.com` serves only the three objects
-named by that manifest and returns `X-Vastora-Version` on every installer
-response. Center update checks use that trusted header, including for
-prereleases, rather than GitHub's stable-only `releases/latest` endpoint.
+platforms, packages the installer against the immutable index digest, and
+uploads the four verified historical assets while the release remains a draft.
+It then stages and activates R2, verifies both public endpoints, prunes stale
+Vastora release objects in batches of at most 1,000, verifies the endpoints
+again, and publishes the GitHub Release last. Failed or interrupted runs leave
+the release as a draft. A scheduled workflow uses the same non-cancelling
+product lock to repair stale candidates without crossing the exact `vastora/`
+prefix. After reconciliation, R2 contains only `vastora/current.json` and the
+five objects belonging to its selected release. The Cloudflare Worker returns
+`X-Vastora-Version` on every installer response. Center update checks use that
+trusted header, including for prereleases, rather than GitHub's stable-only
+`releases/latest` endpoint.
+
+Use an R2 credential limited to the `petauron-downloads` bucket and the minimum
+list, metadata/read, write, and delete operations needed by `vastora/`. The
+release tooling independently rejects keys outside `vastora/releases/` and
+refuses deletion if `vastora/current.json` changes during reconciliation; it
+never accepts another product prefix as a cleanup target.
 
 The GHCR package must allow unauthenticated pulls. The release job checks that
 before publishing and then downloads the public short URLs and verifies the
