@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.84](https://github.com/petauron/vastora/compare/v0.1.0-alpha.83...v0.1.0-alpha.84) (2026-09-01)
+
+
+### Features
+
+* **gateway:** randomize public hostnames ([381eeba](https://github.com/petauron/vastora/commit/381eeba569a767b18f5b05b0ad552ca05514e788))
+
 ## [0.1.0-alpha.83](https://github.com/petauron/vastora/compare/v0.1.0-alpha.82...v0.1.0-alpha.83) (2026-09-01)
 
 
