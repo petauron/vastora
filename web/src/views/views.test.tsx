@@ -455,7 +455,7 @@ describe("network and app views", () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("自动识别地区并生成标准节点名");
+    expect(document.body.textContent).toContain("入口、地区、域名、DNS 和安全目标会自动处理");
     expect(document.querySelector<HTMLInputElement>("#reality-name")?.value).toBe("home-server");
     expect(document.body.textContent).toContain("🇺🇸 美国home-server");
     expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
@@ -465,9 +465,11 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#reality-subscription-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
     expect(document.querySelector<HTMLButtonElement>("#reality-gateway")?.textContent).toContain("home-server");
-    expect(document.body.textContent).toContain("REALITY 防盗目标");
-    expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.required).toBe(true);
-    expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.required).toBe(true);
+    expect(document.body.textContent).toContain("Agent 自动发现并校验");
+    expect(document.body.textContent).toContain("手动指定 REALITY 安全目标");
+    expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.required).toBe(false);
+    expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.required).toBe(false);
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("自动创建"))).toBe(true);
   });
 
   it("offers a separate one-click public 3x-ui subscription", async () => {
