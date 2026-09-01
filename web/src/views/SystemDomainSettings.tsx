@@ -19,7 +19,6 @@ export function SystemDomainSettings({ domain, language }: { domain: SystemDomai
   const [retiring, setRetiring] = useState("");
   const [retireError, setRetireError] = useState("");
   useEffect(() => setCurrentDomain(domain), [domain]);
-  const blocked = !currentDomain.builtinHeadscale || currentDomain.activePublications > 0 || currentDomain.pendingCleanup > 0;
   const transitions = Array.from(currentDomain.aliases.reduce((values, alias) => {
     const current = values.get(alias.transitionId) ?? [];
     current.push(alias);
@@ -41,13 +40,12 @@ export function SystemDomainSettings({ domain, language }: { domain: SystemDomai
       <CardHeader>
         <CardTitle className="flex items-center gap-2"><Globe2Icon aria-hidden="true" />{copy(language, "Vastora 域名", "Vastora domain")}</CardTitle>
         <CardDescription>{copy(language, "Center、Headscale 和应用入口使用同一域名空间。", "Center, Headscale, and app access points share one domain namespace.")}</CardDescription>
-        <CardAction><Button disabled={blocked} onClick={() => setOpen(true)} size="sm" variant="outline">{copy(language, "切换域名", "Switch domain")}</Button></CardAction>
+        <CardAction><Button onClick={() => setOpen(true)} size="sm" variant="outline">{copy(language, "切换域名", "Switch domain")}</Button></CardAction>
       </CardHeader>
       <CardContent className="grid gap-4 text-sm sm:grid-cols-3">
         <DomainValue label={copy(language, "域名空间", "Namespace")} value={currentDomain.namespace || "—"} />
         <DomainValue label="Center" value={currentDomain.centerUrl} />
         <DomainValue label="Headscale" value={currentDomain.headscaleUrl || "—"} />
-        {blocked ? <p className="sm:col-span-3 text-sm text-amber-600 dark:text-amber-400">{!currentDomain.builtinHeadscale ? copy(language, "外部 Headscale 暂不支持自动迁移域名。", "Automatic domain migration is not available with external Headscale.") : currentDomain.activePublications > 0 ? copy(language, `请先停止 ${currentDomain.activePublications} 个访问入口。`, `Stop ${currentDomain.activePublications} access point(s) first.`) : copy(language, `请等待 ${currentDomain.pendingCleanup} 个入口完成清理。`, `Wait for ${currentDomain.pendingCleanup} access point cleanup(s).`)}</p> : null}
         {transitions.length > 0 ? <div className="grid gap-3 sm:col-span-3">
           <p className="text-xs text-muted-foreground">{copy(language, `仍有 ${transitions.length} 组旧系统地址处于迁移过渡期。`, `${transitions.length} previous system address group(s) remain in transition.`)}</p>
           {transitions.map(([transitionID, aliases]) => {
@@ -80,11 +78,12 @@ function DomainSwitchSheet({ domain, language, onClose, open }: { domain: System
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const blocked = !domain.builtinHeadscale || domain.activePublications > 0 || domain.pendingCleanup > 0;
   const zone = zones.find((candidate) => candidate.id === zoneID) ?? null;
   const namespace = zone ? `vastora.${zone.name}` : "";
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || blocked) return;
     let active = true;
     setLoadingZones(true);
     setZoneError("");
@@ -103,7 +102,7 @@ function DomainSwitchSheet({ domain, language, onClose, open }: { domain: System
       if (active) setLoadingZones(false);
     });
     return () => { active = false; };
-  }, [domain.cloudflareZone, open, reloadZones]);
+  }, [blocked, domain.cloudflareZone, open, reloadZones]);
 
   const resetAndClose = () => {
     if (busy) return;
@@ -124,6 +123,7 @@ function DomainSwitchSheet({ domain, language, onClose, open }: { domain: System
     <SheetContent className="sm:max-w-xl">
       <SheetHeader><SheetTitle>{copy(language, "切换 Vastora 域名", "Switch Vastora domain")}</SheetTitle><SheetDescription>{copy(language, "一次迁移 Center、Headscale 和默认应用域名空间。", "Move Center, Headscale, and the default app namespace together.")}</SheetDescription></SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pb-4">
+        {blocked ? <Alert><CircleAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, "当前暂时无法切换", "Domain switching is currently unavailable")}</AlertTitle><AlertDescription><p>{domainSwitchBlockReason(domain, language)}</p>{domain.activePublications > 0 ? <Button className="mt-3" onClick={() => { resetAndClose(); window.location.assign("/apps"); }} size="sm" type="button" variant="outline">{copy(language, "管理访问入口", "Manage access points")}</Button> : null}</AlertDescription></Alert> : <>
         <Alert><ShieldAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, "旧地址不会立即失效", "Previous addresses remain available")}</AlertTitle><AlertDescription>{copy(language, "Vastora 会先创建数据库快照，再启用新域名。在线节点会在下一次心跳验证新地址后自动切换；离线节点仍可通过旧地址恢复。应用访问入口需在切换后重新创建。", "Vastora creates a database snapshot before enabling the new domain. Online nodes verify and switch to the new address on their next heartbeat; offline nodes can still recover through the previous address. Recreate app access points after the switch.")}</AlertDescription></Alert>
         <div className="rounded-2xl border bg-background p-4 shadow-xs sm:p-5">
           <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400"><CloudIcon aria-hidden="true" className="size-6" /></span><div><div className="flex items-center gap-2 font-medium">{copy(language, "使用现有 Cloudflare 授权", "Use the saved Cloudflare authorization")}<CheckCircle2Icon aria-label={copy(language, "已连接", "Connected")} className="size-4 text-emerald-500" /></div><p className="mt-1 text-sm text-muted-foreground">{copy(language, `当前连接 ${domain.cloudflareZone || "Cloudflare"}，切换域名无需重新登录。`, `Connected to ${domain.cloudflareZone || "Cloudflare"}. Switching domains does not require signing in again.`)}</p></div></div>
@@ -136,10 +136,17 @@ function DomainSwitchSheet({ domain, language, onClose, open }: { domain: System
         {busy ? <Alert><Spinner /><AlertTitle>{copy(language, "正在安全切换域名", "Switching domain safely")}</AlertTitle><AlertDescription>{copy(language, "正在依次完成备份、DNS、证书和网关更新。证书签发可能需要几分钟，请不要关闭页面。", "Completing backup, DNS, certificate, and gateway updates in order. Certificate issuance can take a few minutes; keep this page open.")}</AlertDescription></Alert> : null}
         {zone ? <Field orientation="horizontal"><div className="flex flex-1 flex-col gap-1"><FieldLabel htmlFor="confirm-domain-switch">{copy(language, "确认迁移全部系统域名", "Confirm the system-domain migration")}</FieldLabel><FieldDescription>{copy(language, "新建入口将使用新域名空间；旧应用入口不会自动复制。", "New access points use the new namespace; old app access points are not copied automatically.")}</FieldDescription></div><Switch checked={confirmed} disabled={busy} id="confirm-domain-switch" onCheckedChange={setConfirmed} /></Field> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
+        </>}
       </div>
-      <SheetFooter><Button disabled={busy} onClick={resetAndClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !zone || !confirmed} onClick={() => void submit()} type="button">{busy ? <Spinner data-icon="inline-start" /> : <ArrowRightIcon data-icon="inline-start" />}{copy(language, "切换域名", "Switch domain")}</Button></SheetFooter>
+      <SheetFooter><Button disabled={busy} onClick={resetAndClose} type="button" variant="outline">{copy(language, blocked ? "关闭" : "取消", blocked ? "Close" : "Cancel")}</Button>{!blocked ? <Button disabled={busy || !zone || !confirmed} onClick={() => void submit()} type="button">{busy ? <Spinner data-icon="inline-start" /> : <ArrowRightIcon data-icon="inline-start" />}{copy(language, "切换域名", "Switch domain")}</Button> : null}</SheetFooter>
     </SheetContent>
   </Sheet>;
+}
+
+function domainSwitchBlockReason(domain: SystemDomain, language: Language) {
+  if (!domain.builtinHeadscale) return copy(language, "外部 Headscale 暂不支持自动迁移域名。", "Automatic domain migration is not available with external Headscale.");
+  if (domain.activePublications > 0) return copy(language, `请先停止 ${domain.activePublications} 个访问入口，再回来切换域名。`, `Stop ${domain.activePublications} access point(s), then return to switch domains.`);
+  return copy(language, `请等待 ${domain.pendingCleanup} 个入口完成清理。`, `Wait for ${domain.pendingCleanup} access point cleanup(s).`);
 }
 
 function Preview({ oldValue, value }: { oldValue: string; value: string }) {
