@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.82](https://github.com/petauron/vastora/compare/v0.1.0-alpha.81...v0.1.0-alpha.82) (2026-09-01)
+
+
+### Bug Fixes
+
+* **gateway:** restore dedicated public hostnames ([23e4f2c](https://github.com/petauron/vastora/commit/23e4f2c92263359a9f3dd15e91dd58822027f706))
+
 ## [0.1.0-alpha.81](https://github.com/petauron/vastora/compare/v0.1.0-alpha.80...v0.1.0-alpha.81) (2026-08-31)
 
 
