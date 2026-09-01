@@ -2221,8 +2221,7 @@
                     "type": "string"
                   },
                   "hostname": {
-                    "type": "string",
-                    "description": "Optional for public subscription access. When omitted, Center persists a random 128-bit DNS-safe hostname in the configured public zone."
+                    "type": "string"
                   },
                   "kind": {
                     "type": "string"
@@ -2682,8 +2681,7 @@
                     "type": "string"
                   },
                   "hostname": {
-                    "type": "string",
-                    "description": "Optional for public_direct and cloudflare_tunnel. When omitted, Center persists a random 128-bit DNS-safe hostname in the configured public zone."
+                    "type": "string"
                   },
                   "sniHostname": {
                     "type": "string"
