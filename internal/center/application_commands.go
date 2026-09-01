@@ -320,8 +320,9 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	if input.DNSProvider != "manual" && input.DNSProvider != "cloudflare" {
 		return input, "", errors.New("center: REALITY DNS must be manual or Cloudflare")
 	}
-	if !domainSuffixPattern.MatchString(input.TargetHost) || !domainSuffixPattern.MatchString(input.ServerName) {
-		return input, "", errors.New("center: REALITY targetHost and serverName are required valid hostnames; target port is fixed to 443")
+	manualTarget := input.TargetHost != "" || input.ServerName != ""
+	if manualTarget && (!domainSuffixPattern.MatchString(input.TargetHost) || !domainSuffixPattern.MatchString(input.ServerName)) {
+		return input, "", errors.New("center: REALITY targetHost and serverName must both be valid hostnames; leave both empty for automatic discovery")
 	}
 	return input, displayName, nil
 }
@@ -338,7 +339,8 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
-	if result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" || !result.ProxyProtocol {
+	manualTargetMismatch := input.TargetHost != "" && (result.TargetHost != input.TargetHost || result.ServerName != input.ServerName)
+	if !domainSuffixPattern.MatchString(result.TargetHost) || !domainSuffixPattern.MatchString(result.ServerName) || manualTargetMismatch || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != 21000+(result.Port-centerThreeXUIRealityPortFirst) || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
