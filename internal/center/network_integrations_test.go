@@ -31,6 +31,61 @@ func TestCloudflareAPIErrorsDoNotExposeToken(t *testing.T) {
 	}
 }
 
+func TestEnsureCloudflareDNSRecordAdoptsExactExistingRecord(t *testing.T) {
+	posts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodGet {
+			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"record-id","type":"A","name":"app.example.com","content":"203.0.113.10","proxied":false}]}`))
+			return
+		}
+		posts++
+		response.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	client := cloudflareClient{zoneID: "zone", token: "token", baseURL: server.URL, http: server.Client()}
+	recordID, created, err := client.ensureDNSRecord(context.Background(), "A", "app.example.com", "203.0.113.10", false)
+	if err != nil || created || recordID != "record-id" || posts != 0 {
+		t.Fatalf("ensured record id=%q created=%t posts=%d err=%v", recordID, created, posts, err)
+	}
+}
+
+func TestEnsureCloudflareDNSRecordRejectsConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"record-id","type":"A","name":"app.example.com","content":"203.0.113.11","proxied":false}]}`))
+	}))
+	defer server.Close()
+	client := cloudflareClient{zoneID: "zone", token: "token", baseURL: server.URL, http: server.Client()}
+	if _, _, err := client.ensureDNSRecord(context.Background(), "A", "app.example.com", "203.0.113.10", false); err == nil || !strings.Contains(err.Error(), "different value") {
+		t.Fatalf("conflicting record error = %v", err)
+	}
+}
+
+func TestEnsureCloudflareDNSRecordRecoversCommittedLostResponse(t *testing.T) {
+	created := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.Method == http.MethodGet {
+			if created {
+				_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[{"id":"record-id","type":"A","name":"app.example.com","content":"203.0.113.10","proxied":false}]}`))
+				return
+			}
+			_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
+			return
+		}
+		created = true
+		response.WriteHeader(http.StatusBadGateway)
+		_, _ = response.Write([]byte(`{"success":false,"errors":[{"code":1000,"message":"response lost"}],"result":null}`))
+	}))
+	defer server.Close()
+	client := cloudflareClient{zoneID: "zone", token: "token", baseURL: server.URL, http: server.Client()}
+	recordID, wasCreated, err := client.ensureDNSRecord(context.Background(), "A", "app.example.com", "203.0.113.10", false)
+	if err != nil || wasCreated || recordID != "record-id" {
+		t.Fatalf("recovered record id=%q created=%t err=%v", recordID, wasCreated, err)
+	}
+}
+
 func TestHeadscaleRequestKeepsFixedOriginAndRejectsRedirects(t *testing.T) {
 	targetRequests := 0
 	target := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

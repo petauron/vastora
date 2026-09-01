@@ -240,18 +240,23 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			}
 		}
 		if dnsRecordID == "" {
-			createdRecordID, createErr := client.createDNSRecord(ctx, "CNAME", hostname, tunnelID+".cfargotunnel.com", true)
+			createdRecordID, created, createErr := client.ensureDNSRecord(ctx, "CNAME", hostname, tunnelID+".cfargotunnel.com", true)
 			err = createErr
 			if err != nil {
 				return err
 			}
 			updated, updateErr := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped' AND dns_record_id = ''`, createdRecordID, s.now().UTC().Format(time.RFC3339Nano), publicationID, revision)
 			if updateErr != nil {
-				return errors.Join(updateErr, s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID))
+				if created {
+					return errors.Join(updateErr, s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID))
+				}
+				return updateErr
 			}
 			if changed, _ := updated.RowsAffected(); changed != 1 {
-				if cleanupErr := s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID); cleanupErr != nil {
-					return cleanupErr
+				if created {
+					if cleanupErr := s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID); cleanupErr != nil {
+						return cleanupErr
+					}
 				}
 				return errStalePublicationReconcile
 			}
@@ -295,17 +300,22 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 			}
 		}
 		if dnsRecordID == "" {
-			createdRecordID, createErr := client.createDNSRecord(ctx, recordType, hostname, ip.String(), false)
+			createdRecordID, created, createErr := client.ensureDNSRecord(ctx, recordType, hostname, ip.String(), false)
 			if createErr != nil {
 				return createErr
 			}
 			updated, updateErr := s.db.ExecContext(ctx, `UPDATE publications SET dns_record_id = ?, updated_at = ? WHERE id = ? AND desired_revision = ? AND status <> 'stopped' AND dns_record_id = ''`, createdRecordID, s.now().UTC().Format(time.RFC3339Nano), publicationID, revision)
 			if updateErr != nil {
-				return errors.Join(updateErr, s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID))
+				if created {
+					return errors.Join(updateErr, s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID))
+				}
+				return updateErr
 			}
 			if changed, _ := updated.RowsAffected(); changed != 1 {
-				if cleanupErr := s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID); cleanupErr != nil {
-					return cleanupErr
+				if created {
+					if cleanupErr := s.compensateUntrackedCloudflareDNS(ctx, client, publicationID, createdRecordID); cleanupErr != nil {
+						return cleanupErr
+					}
 				}
 				return errStalePublicationReconcile
 			}
@@ -671,6 +681,45 @@ func (client cloudflareClient) createDNSRecord(ctx context.Context, recordType, 
 		return "", errors.New("center: Cloudflare did not return a DNS record ID")
 	}
 	return result.ID, nil
+}
+
+func (client cloudflareClient) ensureDNSRecord(ctx context.Context, recordType, name, content string, proxied bool) (string, bool, error) {
+	existing, err := client.listDNSRecords(ctx, name)
+	if err != nil {
+		return "", false, err
+	}
+	if recordID, found, conflict := matchingCloudflareDNSRecord(existing, recordType, name, content, proxied); found || conflict {
+		if conflict {
+			return "", false, fmt.Errorf("center: DNS record %s already exists with a different value", name)
+		}
+		return recordID, false, nil
+	}
+	recordID, err := client.createDNSRecord(ctx, recordType, name, content, proxied)
+	if err == nil {
+		return recordID, true, nil
+	}
+	// A create response can be lost after Cloudflare commits the record, and a
+	// concurrent reconciliation can win the same race. Re-read authoritative
+	// state before reporting failure or attempting compensation.
+	existing, listErr := client.listDNSRecords(ctx, name)
+	if listErr == nil {
+		if observedID, found, conflict := matchingCloudflareDNSRecord(existing, recordType, name, content, proxied); found {
+			return observedID, false, nil
+		} else if conflict {
+			return "", false, fmt.Errorf("center: DNS record %s already exists with a different value", name)
+		}
+	}
+	return "", false, err
+}
+
+func matchingCloudflareDNSRecord(records []cloudflareDNSRecord, recordType, name, content string, proxied bool) (string, bool, bool) {
+	if len(records) == 0 {
+		return "", false, false
+	}
+	if len(records) == 1 && records[0].Type == recordType && records[0].Name == name && records[0].Content == content && records[0].Proxied == proxied && records[0].ID != "" {
+		return records[0].ID, true, false
+	}
+	return "", false, true
 }
 
 func (client cloudflareClient) deleteDNSRecord(ctx context.Context, recordID string) error {

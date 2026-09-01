@@ -43,6 +43,27 @@ func installRealityGuardTestSeams(t *testing.T) {
 	})
 }
 
+func TestDiscoverRealityTargetUsesPreferredDotComOrder(t *testing.T) {
+	previousVerifier := realityTargetVerifier
+	var checked []string
+	realityTargetVerifier = func(_ context.Context, targetHost, serverName, _ string) (realityTargetVerification, error) {
+		checked = append(checked, targetHost)
+		if targetHost != serverName || targetHost != "www.amd.com" {
+			return realityTargetVerification{}, errors.New("unavailable")
+		}
+		return realityTargetVerification{TargetHost: targetHost, ServerName: serverName}, nil
+	}
+	t.Cleanup(func() { realityTargetVerifier = previousVerifier })
+
+	result, err := discoverRealityTarget(context.Background(), "", "", "203.0.113.10", []string{"www.intel.com"})
+	if err != nil || result.TargetHost != "www.amd.com" {
+		t.Fatalf("preferred target = %#v, err = %v", result, err)
+	}
+	if len(checked) != 1 || checked[0] != "www.amd.com" {
+		t.Fatalf("checked targets = %#v", checked)
+	}
+}
+
 func TestEnsureRealityPortAvailableIsScopedToPhysicalNode(t *testing.T) {
 	localNodeID := 0
 	workerNodeID := 7
@@ -335,8 +356,6 @@ func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
 		switch request.Method + " " + request.URL.Path {
 		case "GET /panel/api/inbounds/list":
 			_, _ = response.Write([]byte(`{"success":true,"obj":[]}`))
-		case "POST /panel/api/server/scanRealityTargets":
-			_, _ = response.Write([]byte(`{"success":true,"obj":[{"target":"www.example.test:443","host":"www.example.test","feasible":true,"serverNames":["www.example.test"]}]}`))
 		case "GET /panel/api/server/getNewX25519Cert":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"privateKey":"private-key","publicKey":"public-key"}}`))
 		case "POST /panel/api/inbounds/add":
@@ -398,8 +417,6 @@ func TestApplyRealityCommandRecoversLostAddResponse(t *testing.T) {
 				return
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"n7-` + tag + `","remark":"US node","protocol":"vless","listen":"100.64.0.2","port":443,"nodeId":7,"total":0,"settings":{"clients":[],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","tcpSettings":{"acceptProxyProtocol":true},"sockopt":{"acceptProxyProtocol":true},"realitySettings":{"target":"www.example.test:443","serverNames":["www.example.test"],"minClientVer":"1.8.2","shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}]}`))
-		case "POST /panel/api/server/scanRealityTargets":
-			_, _ = response.Write([]byte(`{"success":true,"obj":[{"target":"www.example.test:443","host":"www.example.test","feasible":true,"serverNames":["www.example.test"]}]}`))
 		case "GET /panel/api/server/getNewX25519Cert":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"privateKey":"private-key","publicKey":"public-key"}}`))
 		case "POST /panel/api/inbounds/add":
@@ -460,8 +477,6 @@ func TestApplyRealityCommandRecreatesLostAddHalfStateWithInitialClient(t *testin
 				return
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":[` + inbound + `]}`))
-		case "POST /panel/api/server/scanRealityTargets":
-			_, _ = response.Write([]byte(`{"success":true,"obj":[{"target":"www.example.test:443","host":"www.example.test","feasible":true,"serverNames":["www.example.test"]}]}`))
 		case "GET /panel/api/server/getNewX25519Cert":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"privateKey":"private-key","publicKey":"public-key"}}`))
 		case "POST /panel/api/inbounds/add":

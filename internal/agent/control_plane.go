@@ -695,6 +695,9 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 	}
 	result := make([]ApplicationEndpointObservation, 0, len(payload.Object))
 	for _, inbound := range payload.Object {
+		if inbound.Remark == realityGuardRemark && inbound.Protocol == "tunnel" && inbound.Listen == "127.0.0.1" && inbound.Port == threeXUIRealityGuardPort && strings.HasSuffix(strings.TrimSpace(inbound.Tag), "-guard") {
+			continue
+		}
 		transport := "tcp"
 		var stream struct {
 			Network  string `json:"network"`

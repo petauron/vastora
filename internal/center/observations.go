@@ -121,12 +121,15 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 		return err
 	}
 	for _, value := range observations {
-		status := "ready"
-		if !value.Enabled {
-			status = "stopped"
-		}
 		endpoint := net.JoinHostPort(serviceAddress, strconv.Itoa(value.Port))
 		serviceID := existing[value.Name]
+		guardStatus := ""
+		if serviceID != "" && !value.Enabled && value.AppProtocol == "vless/tcp/reality" {
+			if err := tx.QueryRowContext(ctx, `SELECT status FROM three_x_ui_reality_guards WHERE service_id = ?`, serviceID).Scan(&guardStatus); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+		status := observedThreeXUIServiceStatus(value.Enabled, value.AppProtocol, guardStatus)
 		if serviceID == "" {
 			serviceID, err = randomToken(18)
 			if err != nil {
@@ -158,6 +161,16 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 		}
 	}
 	return nil
+}
+
+func observedThreeXUIServiceStatus(enabled bool, appProtocol, guardStatus string) string {
+	if enabled {
+		return "ready"
+	}
+	if appProtocol == "vless/tcp/reality" && guardStatus != "" && guardStatus != "ready" {
+		return "degraded"
+	}
+	return "stopped"
 }
 
 func adoptObservedThreeXUIInboundPlan(ctx context.Context, tx *sql.Tx, serviceID string, observation ApplicationEndpointObservation, now time.Time) error {

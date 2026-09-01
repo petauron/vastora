@@ -149,7 +149,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 			t.Fatalf("missing 3x-ui Bearer token: %q", request.Header.Get("Authorization"))
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":7,"remark":"vless","protocol":"vless","port":443,"listen":"0.0.0.0","enable":true,"tag":"vastora-reality-7","total":1073741824,"streamSettings":{"network":"tcp","security":"reality"}},{"id":8,"remark":"disabled","protocol":"vmess","port":8443,"listen":"127.0.0.1","enable":false,"streamSettings":{"network":"ws"}}]}`))
+		_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":7,"remark":"vless","protocol":"vless","port":443,"listen":"0.0.0.0","enable":true,"tag":"vastora-reality-7","total":1073741824,"streamSettings":{"network":"tcp","security":"reality"}},{"id":8,"remark":"disabled","protocol":"vmess","port":8443,"listen":"127.0.0.1","enable":false,"streamSettings":{"network":"ws"}},{"id":9,"remark":"Vastora REALITY fallback guard","protocol":"tunnel","port":21000,"listen":"127.0.0.1","enable":true,"tag":"vastora-reality-7-guard","streamSettings":{}}]}`))
 	}))
 	defer server.Close()
 	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())

@@ -13,12 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/projectdiscovery/cdncheck"
 )
 
 const (
 	threeXUIRealityGuardPort = 21000
+	realityGuardRemark       = "Vastora REALITY fallback guard"
 	realityGuardDirectTag    = "vastora-reality-direct"
 	realityGuardBlackholeTag = "vastora-reality-blackhole"
 )
@@ -36,6 +35,11 @@ type realityTargetVerification struct {
 	CertificateValid bool
 }
 
+type threeXUIXraySettings struct {
+	XraySetting     map[string]any `json:"xraySetting"`
+	OutboundTestURL string         `json:"outboundTestUrl"`
+}
+
 var (
 	realityTargetVerifier   = verifyRealityTarget
 	realityCompanionEnsurer = ensureRealityGuardCompanion
@@ -46,8 +50,8 @@ var (
 func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublicAddress string) (realityTargetVerification, error) {
 	targetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(targetHost), "."))
 	serverName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(serverName), "."))
-	if !validThreeXUIShareHostname(targetHost) || !validThreeXUIShareHostname(serverName) {
-		return realityTargetVerification{}, errors.New("agent: REALITY targetHost and serverName must be valid hostnames")
+	if !validRealityTargetHostname(targetHost) || !validRealityTargetHostname(serverName) {
+		return realityTargetVerification{}, errors.New("agent: REALITY targetHost and serverName must be valid .com hostnames")
 	}
 	nodeIP := net.ParseIP(strings.TrimSpace(nodePublicAddress))
 	if nodeIP == nil || !nodeIP.IsGlobalUnicast() || nodeIP.IsPrivate() {
@@ -77,31 +81,12 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 	if len(ordered) == 0 {
 		return realityTargetVerification{}, errors.New("agent: REALITY target resolved only to non-public addresses")
 	}
-	client := cdncheck.New()
 	rejections := make([]string, 0, len(ordered))
 	for _, value := range ordered {
 		ip := unique[value]
 		targetASN, lookupErr := lookupTeamCymruASN(ctx, ip)
 		if lookupErr != nil {
 			rejections = append(rejections, value+": ASN lookup failed")
-			continue
-		}
-		if targetASN != nodeASN {
-			rejections = append(rejections, fmt.Sprintf("%s: ASN %d does not match node ASN %d", value, targetASN, nodeASN))
-			continue
-		}
-		if matched, provider, checkErr := client.CheckCDN(ip); checkErr != nil {
-			rejections = append(rejections, value+": CDN database check failed")
-			continue
-		} else if matched {
-			rejections = append(rejections, value+": shared CDN "+provider)
-			continue
-		}
-		if matched, provider, checkErr := client.CheckWAF(ip); checkErr != nil {
-			rejections = append(rejections, value+": WAF database check failed")
-			continue
-		} else if matched {
-			rejections = append(rejections, value+": shared WAF "+provider)
 			continue
 		}
 		verification := realityTargetVerification{
@@ -119,6 +104,11 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 		message += ": " + strings.Join(rejections, "; ")
 	}
 	return realityTargetVerification{}, errors.New(message)
+}
+
+func validRealityTargetHostname(hostname string) bool {
+	hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
+	return validThreeXUIShareHostname(hostname) && strings.HasSuffix(hostname, ".com")
 }
 
 func lookupTeamCymruASN(ctx context.Context, ip net.IP) (int64, error) {
@@ -200,16 +190,27 @@ func ensureRealityGuardCompanion(ctx context.Context, baseURL, token string, nod
 		return threeXUIRealityInbound{}, err
 	}
 	tag := realityGuardTag(inboundTag)
-	if existing, found, findErr := findRealityInbound(ctx, baseURL, token, tag, nodeID); findErr != nil {
-		return threeXUIRealityInbound{}, findErr
-	} else if found {
-		if existing.Protocol != "tunnel" || existing.Listen != "127.0.0.1" || existing.Port != port || !realityGuardTunnelTargets(existing, targetIP) {
+	inbounds, err := listRealityInbounds(ctx, baseURL, token)
+	if err != nil {
+		return threeXUIRealityInbound{}, err
+	}
+	for _, existing := range inbounds {
+		if !threeXUIInboundMatchesNode(existing, nodeID) || existing.Port != port {
+			continue
+		}
+		if normalizedThreeXUIInboundTag(existing.Tag, nodeID) == normalizedThreeXUIInboundTag(tag, nodeID) && existing.Protocol == "tunnel" && existing.Listen == "127.0.0.1" && realityGuardTunnelTargets(existing, targetIP) {
+			return existing, nil
+		}
+		if existing.Remark != realityGuardRemark || existing.Protocol != "tunnel" || existing.Listen != "127.0.0.1" {
 			return threeXUIRealityInbound{}, errors.New("agent: deterministic REALITY guard companion conflicts with an existing inbound")
 		}
-		return existing, nil
+		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/del/"+strconv.Itoa(existing.ID), token, "application/json", map[string]any{}); err != nil {
+			return threeXUIRealityInbound{}, fmt.Errorf("agent: replace stale REALITY guard companion: %w", err)
+		}
+		break
 	}
 	payload := map[string]any{
-		"enable": true, "tag": tag, "remark": "Vastora REALITY fallback guard", "listen": "127.0.0.1", "port": port, "protocol": "tunnel",
+		"enable": true, "tag": tag, "remark": realityGuardRemark, "listen": "127.0.0.1", "port": port, "protocol": "tunnel",
 		"settings":       map[string]any{"network": "tcp", "address": targetIP, "port": 443},
 		"streamSettings": map[string]any{},
 		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"tls"}, "metadataOnly": false, "routeOnly": true},
@@ -373,12 +374,9 @@ func ensureRealityGuardRouting(ctx context.Context, baseURL, token, guardTag, se
 	if err != nil {
 		return fmt.Errorf("agent: read 3x-ui Xray settings: %w", err)
 	}
-	var settings struct {
-		XraySetting     map[string]any `json:"xraySetting"`
-		OutboundTestURL string         `json:"outboundTestUrl"`
-	}
-	if json.Unmarshal(payload, &settings) != nil || settings.XraySetting == nil {
-		return errors.New("agent: 3x-ui returned invalid Xray settings")
+	settings, err := decodeThreeXUIXraySettings(payload)
+	if err != nil {
+		return err
 	}
 	original, err := json.Marshal(settings.XraySetting)
 	if err != nil {
@@ -398,6 +396,18 @@ func ensureRealityGuardRouting(ctx context.Context, baseURL, token, guardTag, se
 		return errors.Join(err, restoreThreeXUIXraySettings(ctx, baseURL, token, original, settings.OutboundTestURL))
 	}
 	return nil
+}
+
+func decodeThreeXUIXraySettings(payload json.RawMessage) (threeXUIXraySettings, error) {
+	var encodedSettings string
+	if json.Unmarshal(payload, &encodedSettings) != nil || strings.TrimSpace(encodedSettings) == "" {
+		return threeXUIXraySettings{}, errors.New("agent: 3x-ui returned invalid Xray settings")
+	}
+	var settings threeXUIXraySettings
+	if json.Unmarshal([]byte(encodedSettings), &settings) != nil || settings.XraySetting == nil {
+		return threeXUIXraySettings{}, errors.New("agent: 3x-ui returned invalid Xray settings")
+	}
+	return settings, nil
 }
 
 func restoreThreeXUIXraySettings(ctx context.Context, baseURL, token string, original []byte, outboundTestURL string) error {
@@ -434,11 +444,17 @@ func applyRealityGuardRouting(config map[string]any, guardTag, serverName string
 		map[string]any{"type": "field", "inboundTag": []any{guardTag}, "outboundTag": realityGuardBlackholeTag},
 	)
 	for _, raw := range rules {
-		if !routingRuleUsesInbound(raw, guardTag) {
+		if !isManagedRealityGuardRule(raw) {
 			preserved = append(preserved, raw)
 		}
 	}
 	routing["rules"] = preserved
+}
+
+func isManagedRealityGuardRule(raw any) bool {
+	rule, _ := raw.(map[string]any)
+	tag, _ := rule["outboundTag"].(string)
+	return tag == realityGuardDirectTag || tag == realityGuardBlackholeTag
 }
 
 func routingRuleUsesInbound(raw any, expected string) bool {
@@ -465,18 +481,45 @@ func verifyRealityGuardRoutingReadBack(ctx context.Context, baseURL, token, guar
 	if err != nil {
 		return err
 	}
-	var settings struct {
-		XraySetting map[string]any `json:"xraySetting"`
-	}
-	if json.Unmarshal(payload, &settings) != nil || settings.XraySetting == nil {
+	settings, err := decodeThreeXUIXraySettings(payload)
+	if err != nil {
 		return errors.New("agent: REALITY guard Xray read-back is invalid")
 	}
 	routing, _ := settings.XraySetting["routing"].(map[string]any)
 	rules, _ := routing["rules"].([]any)
-	if len(rules) < 2 || !routingRuleMatches(rules[0], guardTag, "full:"+serverName, realityGuardDirectTag) || !routingRuleMatches(rules[1], guardTag, "", realityGuardBlackholeTag) {
+	if !realityGuardRulesSurvived(rules, guardTag, serverName) {
 		return errors.New("agent: REALITY guard routes did not survive Xray config test/read-back")
 	}
 	return nil
+}
+
+func realityGuardRulesSurvived(rules []any, guardTag, serverName string) bool {
+	directIndex, blackholeIndex := -1, -1
+	for index, rule := range rules {
+		switch {
+		case routingRuleMatches(rule, guardTag, "full:"+serverName, realityGuardDirectTag):
+			directIndex = index
+		case routingRuleMatches(rule, guardTag, "", realityGuardBlackholeTag):
+			blackholeIndex = index
+		case routingRuleUsesInbound(rule, guardTag):
+			return false
+		case directIndex < 0 && !routingRuleHasInboundRestriction(rule):
+			return false
+		}
+	}
+	return directIndex >= 0 && blackholeIndex == directIndex+1
+}
+
+func routingRuleHasInboundRestriction(raw any) bool {
+	rule, _ := raw.(map[string]any)
+	switch values := rule["inboundTag"].(type) {
+	case []any:
+		return len(values) > 0
+	case []string:
+		return len(values) > 0
+	default:
+		return false
+	}
 }
 
 func routingRuleMatches(raw any, inboundTag, domain, outboundTag string) bool {
