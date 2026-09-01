@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.83](https://github.com/petauron/vastora/compare/v0.1.0-alpha.82...v0.1.0-alpha.83) (2026-09-01)
+
+
+### Features
+
+* **3x-ui:** allow protected credential retrieval ([0ac217a](https://github.com/petauron/vastora/commit/0ac217a9c4e738c8a164626d225590c81a21f38e))
+
 ## [0.1.0-alpha.82](https://github.com/petauron/vastora/compare/v0.1.0-alpha.81...v0.1.0-alpha.82) (2026-09-01)
 
 
