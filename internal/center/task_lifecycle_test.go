@@ -531,6 +531,9 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET timezone = 'Asia/Singapore' WHERE id = ?`, testSiteID(t, store)); err != nil {
+		t.Fatal(err)
+	}
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.30", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.30", LANAddress: "10.0.0.30", EnabledKinds: []string{networking.KindLAN}})
 	initial := json.RawMessage(`{"debug":false}`)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: initial}); err != nil {
