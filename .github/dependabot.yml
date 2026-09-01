@@ -8,6 +8,9 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Singapore
     open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
@@ -15,6 +18,24 @@ updates:
           - version-update:semver-patch
           - version-update:semver-minor
     groups:
+      opentelemetry:
+        patterns:
+          - "go.opentelemetry.io/*"
+        update-types:
+          - patch
+          - minor
+      projectdiscovery:
+        patterns:
+          - "github.com/projectdiscovery/*"
+        update-types:
+          - patch
+          - minor
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+        update-types:
+          - patch
+          - minor
       modernc:
         patterns:
           - "modernc.org/*"
@@ -25,6 +46,9 @@ updates:
     directory: "/web"
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Singapore
     open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
@@ -37,9 +61,17 @@ updates:
     ignore:
       - dependency-name: "@typescript/native"
     groups:
-      web-dependencies:
+      web-runtime:
         patterns:
           - "*"
+        dependency-type: production
+        update-types:
+          - patch
+          - minor
+      web-tooling:
+        patterns:
+          - "*"
+        dependency-type: development
         update-types:
           - patch
           - minor
@@ -47,6 +79,9 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Singapore
     open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
@@ -64,6 +99,9 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Singapore
     open-pull-requests-limit: 10
     allow:
       - dependency-name: "*"
@@ -78,3 +116,11 @@ updates:
         update-types:
           - version-update:semver-minor
           - version-update:semver-major
+    groups:
+      builders:
+        patterns:
+          - node
+          - golang
+        update-types:
+          - patch
+          - minor
