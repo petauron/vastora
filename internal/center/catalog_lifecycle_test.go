@@ -307,6 +307,77 @@ func TestCatalogFetchIdentityChangesRequireVerifiedResponseBeforeBecomingHealthy
 	}
 }
 
+func TestCatalogRedirectTargetChangeCannotRevalidateOldCache(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawEnvelope := signedCatalogEnvelope(t, privateKey, catalogLifecycleManifest("1.0.0", "Redirect target B"))
+	redirects := 0
+	var targetCValidators string
+	var remote *httptest.Server
+	remote = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/catalog":
+			redirects++
+			target := "/target-b"
+			if redirects > 1 {
+				target = "/target-c"
+			}
+			http.Redirect(writer, request, remote.URL+target, http.StatusFound)
+		case "/target-b":
+			writer.Header().Set("ETag", `"target-b"`)
+			_, _ = writer.Write(rawEnvelope)
+		case "/target-c":
+			targetCValidators = request.Header.Get("If-None-Match") + request.Header.Get("If-Modified-Since")
+			writer.WriteHeader(http.StatusNotModified)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer remote.Close()
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 8, 30, 6, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return now }
+	ctx := context.Background()
+	if err := store.CreateSource(ctx, SourceInput{
+		ID: "redirecting-source", DisplayName: "Redirecting", URL: remote.URL + "/catalog", PublicKey: publicKey,
+		CustomCAPEM: string(catalogTestServerCAPEM(t, remote)), RefreshSeconds: 300,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(store, "", false)
+	if _, err := server.RefreshCatalogSource(ctx, "redirecting-source"); err != nil {
+		t.Fatal(err)
+	}
+	sources, err := store.ListSources(ctx)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("initial source = %#v err=%v", sources, err)
+	}
+	verifiedFetchedAt := sources[0].FetchedAt
+
+	now = now.Add(11 * time.Minute)
+	if _, err := server.RefreshCatalogSource(ctx, "redirecting-source"); err == nil || !strings.Contains(err.Error(), "304 after a redirect") {
+		t.Fatalf("redirected 304 was accepted: %v", err)
+	}
+	if targetCValidators != "" {
+		t.Fatalf("target C received target B validators: %q", targetCValidators)
+	}
+	sources, err = store.ListSources(ctx)
+	if err != nil || len(sources) != 1 || sources[0].Status != "stale" || !sources[0].FetchedAt.Equal(verifiedFetchedAt) {
+		t.Fatalf("redirect-target failure advanced the verified cache: %#v err=%v", sources, err)
+	}
+	apps, err := store.ListApps(ctx)
+	if err != nil || len(apps) != 1 || apps[0].App.Description.English != "Redirect target B" {
+		t.Fatalf("redirect-target failure replaced the last verified cache: %#v err=%v", apps, err)
+	}
+}
+
 func TestCatalogRefreshDiscardsResponseAfterSourceLifecycleChanges(t *testing.T) {
 	for _, test := range []struct {
 		name   string
