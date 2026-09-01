@@ -24,6 +24,9 @@ func TestCPACredentialLifecycleGeneratesPreservesRevealsAndRotates(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET timezone = 'Asia/Singapore' WHERE id = ?`, testSiteID(t, store)); err != nil {
+		t.Fatal(err)
+	}
 	node := enrollOrchestrationNode(t, store, "cpa-credentials", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.95", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.95", LANAddress: "10.0.0.95", EnabledKinds: []string{networking.KindLAN}})
 
 	install, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
