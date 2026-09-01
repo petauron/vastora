@@ -81,6 +81,7 @@ func TestSystemEndpointAliasRetirementDeletesOnlyOwnedDNSAfterRuntimeRemoval(t *
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
+	storeBuiltinHeadscaleDNSForTest(t, store, "system", nil)
 	installer := &fakeBuiltinHeadscaleInstaller{}
 	server := NewServer(store, "", false).WithInfrastructureManager(installer)
 	if err := server.RetireSystemEndpointAliases(ctx, "transition"); err != nil {

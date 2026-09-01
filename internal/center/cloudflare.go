@@ -33,6 +33,8 @@ type IntegrationView struct {
 	UpdatedAt           time.Time  `json:"updatedAt"`
 	CredentialStatus    string     `json:"credentialStatus,omitempty"`
 	CredentialExpiresAt *time.Time `json:"credentialExpiresAt,omitempty"`
+	DNSPolicy           string     `json:"dnsPolicy,omitempty"`
+	DNSResolvers        []string   `json:"dnsResolvers,omitempty"`
 }
 
 type cloudflareClient struct {
@@ -103,6 +105,10 @@ func (s *Store) Integration(ctx context.Context, kind string) (IntegrationView, 
 		}
 	}
 	if kind == "headscale" && value.Mode == "builtin" {
+		value.DNSPolicy, value.DNSResolvers, err = s.builtinHeadscaleDNSConfig(ctx)
+		if err != nil {
+			return IntegrationView{}, err
+		}
 		if key, exists, keyErr := s.headscaleAPIKeyState(ctx); keyErr != nil {
 			return IntegrationView{}, keyErr
 		} else if exists {

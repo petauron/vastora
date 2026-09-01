@@ -36,7 +36,10 @@ func TestBundledServiceURLsUseStandardHTTPS(t *testing.T) {
 }
 
 func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T) {
-	headscalePayload := renderHeadscaleConfig("https://headscale.example.com")
+	headscalePayload, err := renderHeadscaleConfig("https://headscale.example.com", deployapi.HeadscaleDNSPolicyCustom, []string{"1.1.1.1", "1.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var parsed struct {
 		DERP struct {
 			URLs  []string `yaml:"urls"`
@@ -93,6 +96,20 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 	policy := string(renderHeadscalePolicy())
 	if strings.Contains(policy, "8443") || !strings.Contains(policy, `"ip": ["443"]`) {
 		t.Fatalf("Headscale policy exposes the wrong Center ports:\n%s", policy)
+	}
+}
+
+func TestGeneratedHeadscaleConfigurationKeepsSystemDNSByDefault(t *testing.T) {
+	payload, err := renderHeadscaleConfig("https://headscale.example.com", deployapi.HeadscaleDNSPolicySystem, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := string(payload)
+	if !strings.Contains(config, "override_local_dns: false") || !strings.Contains(config, "global: []") || strings.Contains(config, "1.1.1.1") {
+		t.Fatalf("system DNS policy was not rendered: %s", config)
+	}
+	if _, err := renderHeadscaleConfig("https://headscale.example.com", deployapi.HeadscaleDNSPolicyCustom, []string{"resolver.example.com"}); err == nil {
+		t.Fatal("non-IP Headscale resolver was accepted")
 	}
 }
 

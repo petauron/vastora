@@ -96,3 +96,22 @@ func TestClientUsesOnlyTheConfiguredUnixSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNormalizeHeadscaleDNS(t *testing.T) {
+	policy, resolvers, err := NormalizeHeadscaleDNS("", nil)
+	if err != nil || policy != HeadscaleDNSPolicySystem || len(resolvers) != 0 {
+		t.Fatalf("default Headscale DNS = %q %#v, err = %v", policy, resolvers, err)
+	}
+	policy, resolvers, err = NormalizeHeadscaleDNS("custom", []string{" 2001:0db8::1 ", "2001:db8::1", "192.0.2.53"})
+	if err != nil || policy != HeadscaleDNSPolicyCustom || len(resolvers) != 2 || resolvers[0] != "2001:db8::1" || resolvers[1] != "192.0.2.53" {
+		t.Fatalf("custom Headscale DNS = %q %#v, err = %v", policy, resolvers, err)
+	}
+	for _, invalid := range [][]string{nil, []string{"resolver.example.com"}, []string{"0.0.0.0"}, []string{"ff02::1"}} {
+		if _, _, err := NormalizeHeadscaleDNS("custom", invalid); err == nil {
+			t.Fatalf("invalid resolvers were accepted: %#v", invalid)
+		}
+	}
+	if _, _, err := NormalizeHeadscaleDNS("system", []string{"1.1.1.1"}); err == nil {
+		t.Fatal("system DNS policy accepted custom resolvers")
+	}
+}

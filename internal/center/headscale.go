@@ -25,13 +25,17 @@ import (
 const (
 	headscaleDNSFile               = "headscale-extra-records.json"
 	builtinHeadscaleRuntimeSetting = "builtin_headscale_runtime"
-	builtinHeadscaleRuntimeVersion = "direct-endpoints-v2"
+	builtinHeadscaleRuntimeVersion = "dns-policy-v3"
+	headscaleDNSPolicySetting      = "headscale_dns_policy"
+	headscaleDNSResolversSetting   = "headscale_dns_resolvers"
 )
 
 type HeadscaleInput struct {
-	Mode   string `json:"mode"`
-	URL    string `json:"url"`
-	APIKey string `json:"apiKey"`
+	Mode         string   `json:"mode"`
+	URL          string   `json:"url"`
+	APIKey       string   `json:"apiKey"`
+	DNSPolicy    string   `json:"dnsPolicy,omitempty"`
+	DNSResolvers []string `json:"dnsResolvers,omitempty"`
 }
 
 type HeadscaleJoin struct {
@@ -57,11 +61,32 @@ func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (I
 	return s.configureHeadscale(ctx, input, false, nil)
 }
 
-func (s *Store) ConfigureBuiltinHeadscale(ctx context.Context, result deployapi.HeadscaleInstallResult) (IntegrationView, error) {
+func (s *Store) ConfigureBuiltinHeadscale(ctx context.Context, result deployapi.HeadscaleInstallResult, dnsPolicy string, dnsResolvers []string) (IntegrationView, error) {
 	if result.APIKeyID == 0 || strings.TrimSpace(result.APIKeyPrefix) == "" || !result.APIKeyExpiresAt.After(s.now().UTC()) {
 		return IntegrationView{}, errors.New("center: deployment helper returned invalid Headscale API key metadata")
 	}
-	return s.configureHeadscale(ctx, HeadscaleInput{Mode: "builtin", URL: result.Endpoint, APIKey: result.APIKey}, true, &result)
+	return s.configureHeadscale(ctx, HeadscaleInput{Mode: "builtin", URL: result.Endpoint, APIKey: result.APIKey, DNSPolicy: dnsPolicy, DNSResolvers: dnsResolvers}, true, &result)
+}
+
+func (s *Store) builtinHeadscaleDNSConfig(ctx context.Context) (string, []string, error) {
+	var policy, encodedResolvers string
+	err := s.db.QueryRowContext(ctx, `SELECT policy.value, resolvers.value FROM settings policy, settings resolvers
+		WHERE policy.key = ? AND resolvers.key = ?`, headscaleDNSPolicySetting, headscaleDNSResolversSetting).Scan(&policy, &encodedResolvers)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, errors.New("center: built-in Headscale DNS policy is not configured")
+	}
+	if err != nil {
+		return "", nil, fmt.Errorf("center: read built-in Headscale DNS policy: %w", err)
+	}
+	var resolvers []string
+	if json.Unmarshal([]byte(encodedResolvers), &resolvers) != nil {
+		return "", nil, errors.New("center: stored Headscale DNS resolvers are invalid")
+	}
+	policy, resolvers, err = deployapi.NormalizeHeadscaleDNS(policy, resolvers)
+	if err != nil {
+		return "", nil, fmt.Errorf("center: stored Headscale DNS policy: %w", err)
+	}
+	return policy, resolvers, nil
 }
 
 func (s *Store) builtinHeadscaleRuntime(ctx context.Context) (string, string, bool, error) {
@@ -88,6 +113,7 @@ func (s *Store) markBuiltinHeadscaleRuntime(ctx context.Context) error {
 }
 
 func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, trustedBuiltin bool, builtinKey *deployapi.HeadscaleInstallResult) (IntegrationView, error) {
+	var err error
 	input.Mode = strings.TrimSpace(input.Mode)
 	input.APIKey = strings.TrimSpace(input.APIKey)
 	if input.Mode != "builtin" && input.Mode != "external" {
@@ -96,8 +122,15 @@ func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, tr
 	if trustedBuiltin != (input.Mode == "builtin") {
 		return IntegrationView{}, errors.New("center: built-in Headscale must be installed by the deployment helper")
 	}
+	if trustedBuiltin {
+		input.DNSPolicy, input.DNSResolvers, err = deployapi.NormalizeHeadscaleDNS(input.DNSPolicy, input.DNSResolvers)
+		if err != nil {
+			return IntegrationView{}, fmt.Errorf("center: Headscale DNS: %w", err)
+		}
+	} else if strings.TrimSpace(input.DNSPolicy) != "" || len(input.DNSResolvers) != 0 {
+		return IntegrationView{}, errors.New("center: DNS policy is managed only for built-in Headscale")
+	}
 	var endpoint string
-	var err error
 	if trustedBuiltin {
 		endpoint, err = normalizeHeadscaleEndpoint(input.URL)
 	} else {
@@ -153,8 +186,20 @@ func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, tr
 			state = 'ready', previous_prefix = '', last_error = '', updated_at = excluded.updated_at`, builtinKey.APIKeyID, builtinKey.APIKeyPrefix, builtinKey.APIKeyExpiresAt.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return IntegrationView{}, fmt.Errorf("center: save Headscale API key lifecycle: %w", err)
 		}
+		encodedResolvers, err := json.Marshal(input.DNSResolvers)
+		if err != nil {
+			return IntegrationView{}, err
+		}
+		for key, value := range map[string]string{headscaleDNSPolicySetting: input.DNSPolicy, headscaleDNSResolversSetting: string(encodedResolvers)} {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)
+				ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
+				return IntegrationView{}, fmt.Errorf("center: save Headscale DNS policy: %w", err)
+			}
+		}
 	} else if _, err := tx.ExecContext(ctx, `DELETE FROM headscale_api_keys`); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: disable bundled Headscale API key lifecycle: %w", err)
+	} else if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key IN (?, ?, ?)`, builtinHeadscaleRuntimeSetting, headscaleDNSPolicySetting, headscaleDNSResolversSetting); err != nil {
+		return IntegrationView{}, fmt.Errorf("center: disable bundled Headscale settings: %w", err)
 	}
 	if replacingSecret && existingSecretID != "" && existingSecretID != secretID {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, existingSecretID); err != nil {

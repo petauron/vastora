@@ -507,6 +507,38 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 	}
 }
 
+func TestVersion52MigrationPreservesBuiltinHeadscaleCloudflareDNS(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at)
+		VALUES('headscale', 'builtin', 'https://headscale.example.com', NULL, 'failed', ?, ?);
+		DELETE FROM settings WHERE key IN ('headscale_dns_policy', 'headscale_dns_resolvers');
+		DELETE FROM goose_db_version WHERE version_id >= 52;
+		PRAGMA user_version = 51`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	policy, resolvers, err := migrated.builtinHeadscaleDNSConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy != "custom" || len(resolvers) != 2 || resolvers[0] != "1.1.1.1" || resolvers[1] != "1.0.0.1" {
+		t.Fatalf("migrated Headscale DNS = %q %#v", policy, resolvers)
+	}
+}
+
 func TestVersion46MigrationRetiresSharedPathPublications(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)

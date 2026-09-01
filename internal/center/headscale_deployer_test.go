@@ -212,7 +212,7 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	payload, _ := json.Marshal(InitialSetupInput{
 		Site:      SiteInput{Name: "DMIT", Code: "dmit", Timezone: "Asia/Singapore"},
 		Network:   CenterNetworkInput{AgentConnectionMode: "headscale", AgentConnectURL: "https://center.example.com"},
-		Headscale: &HeadscaleInput{Mode: "builtin", URL: "https://headscale.example.com"},
+		Headscale: &HeadscaleInput{Mode: "builtin", URL: "https://headscale.example.com", DNSPolicy: "custom", DNSResolvers: []string{"9.9.9.9", "149.112.112.112"}},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", bytes.NewReader(payload))
 	request.Header.Set("Content-Type", "application/json")
@@ -224,11 +224,14 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	if installer.input.CenterURL != "https://center.example.com" || installer.input.HeadscaleURL != "https://headscale.example.com" || installer.input.PublicAddress != "192.9.143.79" || installer.input.GatewayBindAddress != "10.0.0.157" {
 		t.Fatalf("unexpected deployment input: %#v", installer.input)
 	}
+	if installer.input.DNSPolicy != "custom" || len(installer.input.DNSResolvers) != 2 || installer.input.DNSResolvers[0] != "9.9.9.9" {
+		t.Fatalf("unexpected Headscale DNS input: %#v", installer.input)
+	}
 	integration, err := store.Integration(context.Background(), "headscale")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if integration.Mode != "builtin" || integration.Endpoint != headscaleEndpoint || !integration.SecretSet {
+	if integration.Mode != "builtin" || integration.Endpoint != headscaleEndpoint || !integration.SecretSet || integration.DNSPolicy != "custom" || len(integration.DNSResolvers) != 2 {
 		t.Fatalf("unexpected saved integration: %#v", integration)
 	}
 	keyState, exists, err := store.headscaleAPIKeyState(context.Background())
@@ -267,6 +270,7 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
+	storeBuiltinHeadscaleDNSForTest(t, store, "custom", []string{"1.1.1.1", "1.0.0.1"})
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, builtinHeadscaleRuntimeSetting, "ipv4-only-v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +290,9 @@ func TestReconcileBuiltinHeadscaleAppliesAnOlderRuntimeOnce(t *testing.T) {
 	}
 	if installer.reconcileInput.CenterPrivateBindAddress != "" {
 		t.Fatalf("startup reconciliation trusted a pre-restart tailnet address: %#v", installer.reconcileInput)
+	}
+	if installer.reconcileInput.DNSPolicy != "custom" || len(installer.reconcileInput.DNSResolvers) != 2 {
+		t.Fatalf("startup reconciliation lost Headscale DNS policy: %#v", installer.reconcileInput)
 	}
 	installer.reconcileInput = deployapi.HeadscaleInstallRequest{}
 	if err := server.ReconcileBuiltinHeadscale(ctx); err != nil {
@@ -312,6 +319,7 @@ func TestReconcileBuiltinHeadscaleSerializesDomainMutations(t *testing.T) {
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', 'configured', ?, ?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
+	storeBuiltinHeadscaleDNSForTest(t, store, "system", nil)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?)`, builtinHeadscaleRuntimeSetting, "ipv4-only-v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -345,5 +353,17 @@ func TestReconcileBuiltinHeadscaleSerializesDomainMutations(t *testing.T) {
 	case <-lockAcquired:
 	case <-time.After(time.Second):
 		t.Fatal("domain mutation lock was not released after Headscale reconciliation")
+	}
+}
+
+func storeBuiltinHeadscaleDNSForTest(t *testing.T, store *Store, policy string, resolvers []string) {
+	t.Helper()
+	encoded, err := json.Marshal(resolvers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, headscaleDNSPolicySetting, policy, headscaleDNSResolversSetting, string(encoded)); err != nil {
+		t.Fatal(err)
 	}
 }

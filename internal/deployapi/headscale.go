@@ -10,7 +10,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
+	"strings"
 	"time"
+)
+
+const (
+	HeadscaleDNSPolicySystem = "system"
+	HeadscaleDNSPolicyCustom = "custom"
 )
 
 type HeadscaleInstallRequest struct {
@@ -24,6 +31,45 @@ type HeadscaleInstallRequest struct {
 	CenterPrivateBindAddress string                `json:"centerPrivateBindAddress,omitempty"`
 	CenterCertificatePEM     string                `json:"centerCertificatePem"`
 	CenterCertificateKeyPEM  string                `json:"centerCertificateKeyPem"`
+	DNSPolicy                string                `json:"dnsPolicy"`
+	DNSResolvers             []string              `json:"dnsResolvers,omitempty"`
+}
+
+func NormalizeHeadscaleDNS(policy string, resolvers []string) (string, []string, error) {
+	policy = strings.TrimSpace(policy)
+	if policy == "" {
+		policy = HeadscaleDNSPolicySystem
+	}
+	if policy != HeadscaleDNSPolicySystem && policy != HeadscaleDNSPolicyCustom {
+		return "", nil, errors.New("Headscale DNS policy must be system or custom")
+	}
+	if policy == HeadscaleDNSPolicySystem {
+		if len(resolvers) != 0 {
+			return "", nil, errors.New("system Headscale DNS policy cannot include custom resolvers")
+		}
+		return policy, []string{}, nil
+	}
+	if len(resolvers) == 0 || len(resolvers) > 8 {
+		return "", nil, errors.New("custom Headscale DNS policy requires one to eight resolvers")
+	}
+	normalized := make([]string, 0, len(resolvers))
+	seen := make(map[string]struct{}, len(resolvers))
+	for _, resolver := range resolvers {
+		address, err := netip.ParseAddr(strings.TrimSpace(resolver))
+		if err != nil || !address.IsValid() || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() {
+			return "", nil, fmt.Errorf("Headscale DNS resolver %q is not a valid unicast IP address", resolver)
+		}
+		value := address.Unmap().String()
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return "", nil, errors.New("custom Headscale DNS policy requires a resolver")
+	}
+	return policy, normalized, nil
 }
 
 type CenterEndpointAlias struct {

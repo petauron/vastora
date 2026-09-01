@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -184,10 +185,16 @@ func (s *Server) preflightInitialSetup(ctx context.Context, input InitialSetupIn
 				return validatedInitialSetup{}, InitialSetupInput{}, "", errors.New("center: built-in Headscale creates its API key automatically")
 			}
 			headscale.URL, err = normalizeHeadscaleEndpoint(headscale.URL)
+			if err == nil {
+				headscale.DNSPolicy, headscale.DNSResolvers, err = deployapi.NormalizeHeadscaleDNS(headscale.DNSPolicy, headscale.DNSResolvers)
+			}
 		case "external":
 			headscale.URL, err = s.store.authorizedHeadscaleEndpoint(headscale.URL)
 			if err == nil && len(headscale.APIKey) < 20 {
 				err = errors.New("center: Headscale API key is required")
+			}
+			if err == nil && (strings.TrimSpace(headscale.DNSPolicy) != "" || len(headscale.DNSResolvers) != 0) {
+				err = errors.New("center: DNS policy is managed only for built-in Headscale")
 			}
 		default:
 			err = errors.New("center: Headscale mode must be builtin or external")
@@ -269,6 +276,14 @@ func (s *Store) configuredHeadscaleMatchesSetup(ctx context.Context, input Heads
 		}
 		if subtle.ConstantTimeCompare(stored, []byte(input.APIKey)) != 1 {
 			return false, errors.New("center: existing Headscale credential does not match the pending initial setup")
+		}
+	} else {
+		policy, resolvers, err := s.builtinHeadscaleDNSConfig(ctx)
+		if err != nil {
+			return false, err
+		}
+		if policy != input.DNSPolicy || !slices.Equal(resolvers, input.DNSResolvers) {
+			return false, errors.New("center: existing Headscale DNS policy does not match the pending initial setup")
 		}
 	}
 	return true, nil

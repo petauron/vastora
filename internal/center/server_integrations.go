@@ -161,6 +161,10 @@ func (s *Server) configureHeadscaleOperation(ctx context.Context, input Headscal
 	if strings.TrimSpace(input.APIKey) != "" {
 		return IntegrationView{}, errors.New("center: built-in Headscale creates its API key automatically")
 	}
+	input.DNSPolicy, input.DNSResolvers, err := deployapi.NormalizeHeadscaleDNS(input.DNSPolicy, input.DNSResolvers)
+	if err != nil {
+		return IntegrationView{}, fmt.Errorf("center: Headscale DNS: %w", err)
+	}
 	s.store.domainSwitchMu.Lock()
 	defer s.store.domainSwitchMu.Unlock()
 
@@ -190,6 +194,8 @@ func (s *Server) configureHeadscaleOperation(ctx context.Context, input Headscal
 		CenterPrivateBindAddress: centerPrivateBindAddress,
 		CenterCertificatePEM:     centerCertificate.CertificatePEM,
 		CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
+		DNSPolicy:                input.DNSPolicy,
+		DNSResolvers:             input.DNSResolvers,
 	}
 	if operationID == "" {
 		encodedRequest, marshalErr := json.Marshal(installRequest)
@@ -203,7 +209,7 @@ func (s *Server) configureHeadscaleOperation(ctx context.Context, input Headscal
 	if err != nil {
 		return IntegrationView{}, err
 	}
-	value, err := s.store.ConfigureBuiltinHeadscale(ctx, result)
+	value, err := s.store.ConfigureBuiltinHeadscale(ctx, result, input.DNSPolicy, input.DNSResolvers)
 	if err != nil {
 		return IntegrationView{}, err
 	}
@@ -283,6 +289,10 @@ func (s *Server) builtinHeadscaleReconcileSnapshot(ctx context.Context) (builtin
 	if err != nil {
 		return builtinHeadscaleReconcileState{}, false, err
 	}
+	dnsPolicy, dnsResolvers, err := s.store.builtinHeadscaleDNSConfig(ctx)
+	if err != nil {
+		return builtinHeadscaleReconcileState{}, false, err
+	}
 	return builtinHeadscaleReconcileState{
 		Runtime: runtime,
 		Request: deployapi.HeadscaleInstallRequest{
@@ -298,6 +308,8 @@ func (s *Server) builtinHeadscaleReconcileSnapshot(ctx context.Context) (builtin
 			CenterPrivateBindAddress: "",
 			CenterCertificatePEM:     centerCertificate.CertificatePEM,
 			CenterCertificateKeyPEM:  centerCertificate.PrivateKeyPEM,
+			DNSPolicy:                dnsPolicy,
+			DNSResolvers:             dnsResolvers,
 		},
 	}, true, nil
 }

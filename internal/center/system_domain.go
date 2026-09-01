@@ -176,11 +176,17 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 		rollbackDNS()
 		return SystemDomainSwitchResult{}, fmt.Errorf("center: prepare private DNS for the new domain: %w", err)
 	}
+	dnsPolicy, dnsResolvers, err := s.store.builtinHeadscaleDNSConfig(ctx)
+	if err != nil {
+		rollbackDNS()
+		return SystemDomainSwitchResult{}, err
+	}
 	request := deployapi.HeadscaleInstallRequest{
 		CenterURL: centerURL, HeadscaleURL: headscaleURL, CenterAliases: centerAliases, HeadscaleAliases: headscaleAliases,
 		PublicAddress: binding.PublicAddress, GatewayBindAddress: binding.BindAddress,
 		CenterPrivateBindAddress: centerPrivateBindAddress,
 		CenterCertificatePEM:     newCertificate.CertificatePEM, CenterCertificateKeyPEM: newCertificate.PrivateKeyPEM,
+		DNSPolicy: dnsPolicy, DNSResolvers: dnsResolvers,
 	}
 	if err := s.infrastructure.ReconcileHeadscale(ctx, request); err != nil {
 		rollbackDNS()
@@ -195,6 +201,7 @@ func (s *Server) SwitchSystemDomain(ctx context.Context, input SystemDomainSwitc
 			PublicAddress:    binding.PublicAddress, GatewayBindAddress: binding.BindAddress,
 			CenterPrivateBindAddress: centerPrivateBindAddress,
 			CenterCertificatePEM:     oldCertificate.CertificatePEM, CenterCertificateKeyPEM: oldCertificate.PrivateKeyPEM,
+			DNSPolicy: dnsPolicy, DNSResolvers: dnsResolvers,
 		}
 		rollbackErr := s.infrastructure.ReconcileHeadscale(context.WithoutCancel(ctx), rollback)
 		rollbackDNS()
