@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base32"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/secret"
@@ -51,4 +53,12 @@ func randomToken(bytes int) (string, error) {
 		return "", fmt.Errorf("center: generate random token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+func randomDNSLabel(bytes int) (string, error) {
+	value := make([]byte, bytes)
+	if _, err := rand.Read(value); err != nil {
+		return "", fmt.Errorf("center: generate random DNS label: %w", err)
+	}
+	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(value)), nil
 }

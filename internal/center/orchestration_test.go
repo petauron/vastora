@@ -829,7 +829,10 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Hostname: "subscribe.edge.example.test", Kind: publicationPublic, DNSProvider: "manual"})
+	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET domain_suffix = 'example.test' WHERE id = ?`, testSiteID(t, store)); err != nil {
+		t.Fatal(err)
+	}
+	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Kind: publicationPublic, DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,7 +840,8 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if task.Kind != "application.command" || task.SubscriptionCommand == nil || task.ApplicationCommand != nil {
 		t.Fatalf("unexpected subscription task: %#v", task)
 	}
-	if task.SubscriptionCommand.Domain != "subscribe.edge.example.test" || task.SubscriptionCommand.BaseURI != "https://subscribe.edge.example.test/sub/" {
+	label := strings.TrimSuffix(task.SubscriptionCommand.Domain, ".example.test")
+	if len(label) != 26 || strings.Trim(label, "abcdefghijklmnopqrstuvwxyz234567") != "" || task.SubscriptionCommand.BaseURI != "https://"+task.SubscriptionCommand.Domain+"/sub/" {
 		t.Fatalf("unexpected subscription settings: %#v", task.SubscriptionCommand)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{SubscriptionCommand: &SubscriptionCommandResult{Domain: task.SubscriptionCommand.Domain, BaseURI: task.SubscriptionCommand.BaseURI}})

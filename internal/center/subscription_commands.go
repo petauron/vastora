@@ -17,8 +17,11 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	input.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.Hostname), "."))
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
-	if input.ApplicationID == "" || input.GatewayNodeID == "" || !domainSuffixPattern.MatchString(input.Hostname) {
-		return ApplicationCommandView{}, errors.New("center: application, entry node, and a valid subscription hostname are required")
+	if input.ApplicationID == "" || input.GatewayNodeID == "" {
+		return ApplicationCommandView{}, errors.New("center: application and entry node are required")
+	}
+	if input.Hostname != "" && !domainSuffixPattern.MatchString(input.Hostname) {
+		return ApplicationCommandView{}, errors.New("center: subscription hostname is invalid")
 	}
 	if input.Kind != publicationCloudflare && input.Kind != publicationPublic {
 		return ApplicationCommandView{}, errors.New("center: public subscription must use Cloudflare Tunnel or direct public HTTPS")
@@ -50,8 +53,8 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	if err != nil {
 		return ApplicationCommandView{}, err
 	}
-	baseURI := (&url.URL{Scheme: "https", Host: input.Hostname, Path: "/sub/"}).String()
-	task := SubscriptionCommandTask{Domain: input.Hostname, BaseURI: baseURI, PublicationID: publication.ID}
+	baseURI := (&url.URL{Scheme: "https", Host: publication.Hostname, Path: "/sub/"}).String()
+	task := SubscriptionCommandTask{Domain: publication.Hostname, BaseURI: baseURI, PublicationID: publication.ID}
 	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)
 	if err != nil {
