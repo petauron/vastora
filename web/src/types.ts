@@ -43,7 +43,8 @@ export type AppData = {
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
   systemDomain: SystemDomain;
   tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
-  centerRemoteAccess?: CenterRemoteAccess;
+  centerRemoteAccess: CenterRemoteAccess | null;
+  centerRemoteAccessError?: string;
 };
 
 export type RegistryCredential = {

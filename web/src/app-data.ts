@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { APIError, api } from "./api";
 import type { AppData, CenterStatus, Screen } from "./types";
 
 export type AppDataPatch = Partial<AppData> & { status: CenterStatus };
@@ -21,8 +21,21 @@ export function emptyAppData(status: CenterStatus): AppData {
     integrations: [],
     actions: [],
     threeXUIControllerMigrations: [],
-    systemDomain: { namespace: "", centerUrl: status.agentConnectUrl, headscaleUrl: "", cloudflareZone: "", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: false, cloudflareOAuthAvailable: false }
+    systemDomain: { namespace: "", centerUrl: status.agentConnectUrl, headscaleUrl: "", cloudflareZone: "", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: false, cloudflareOAuthAvailable: false },
+    centerRemoteAccess: null
   };
+}
+
+async function loadCenterRemoteAccess(signal?: AbortSignal) {
+  try {
+    return { centerRemoteAccess: await api.centerRemoteAccess(signal), centerRemoteAccessError: undefined };
+  } catch (error) {
+    if (signal?.aborted || (error instanceof APIError && error.status === 401)) throw error;
+    return {
+      centerRemoteAccess: null,
+      centerRemoteAccessError: error instanceof Error ? error.message : "Center remote access status request failed"
+    };
+  }
 }
 
 export async function loadScreenData(screen: Screen, signal?: AbortSignal): Promise<AppDataPatch> {
@@ -66,7 +79,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       };
     }
     case "apps": {
-      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations] = await Promise.all([
+      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations, remoteAccess] = await Promise.all([
         statusPromise,
         api.apps(signal),
         api.registryCredentials(signal),
@@ -77,7 +90,8 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         api.publications(signal),
         api.integrations(signal),
         api.sites(signal),
-        api.threeXUIControllerMigrations(signal)
+        api.threeXUIControllerMigrations(signal),
+        loadCenterRemoteAccess(signal)
       ]);
       return {
         status,
@@ -90,7 +104,8 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         publications: publications.publications,
         integrations: integrations.integrations,
         sites: sites.sites,
-        threeXUIControllerMigrations: migrations.migrations
+        threeXUIControllerMigrations: migrations.migrations,
+        ...remoteAccess
       };
     }
     case "network": {
@@ -101,7 +116,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         api.tailscaleFixedEndpoint(signal),
         api.centerRemoteAccess(signal)
       ]);
-      return { status, agents: agents.agents, integrations: integrations.integrations, tailscaleFixedEndpoint, centerRemoteAccess };
+      return { status, agents: agents.agents, integrations: integrations.integrations, tailscaleFixedEndpoint, centerRemoteAccess, centerRemoteAccessError: undefined };
     }
     case "activity": {
       const [status, actions, agents] = await Promise.all([
