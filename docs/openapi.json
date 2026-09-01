@@ -3917,6 +3917,9 @@
                   },
                   "caFingerprint": {
                     "type": "string"
+                  },
+                  "caCertificatePem": {
+                    "type": "string"
                   }
                 }
               }
