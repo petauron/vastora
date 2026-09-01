@@ -197,6 +197,39 @@ func (s *Store) AcknowledgeDeploymentCredentials(ctx context.Context, deployment
 	return nil
 }
 
+func (s *Store) RevealStoredThreeXUICredentials(ctx context.Context, applicationID, adminID, currentPassword string) (OneTimeCredentials, error) {
+	if err := s.ReauthenticateAdmin(ctx, adminID, currentPassword); err != nil {
+		return OneTimeCredentials{}, err
+	}
+	applicationID = strings.TrimSpace(applicationID)
+	var deploymentID, secretID, agentID string
+	err := s.db.QueryRowContext(ctx, `SELECT deployment.id, deployment.secret_id, application.node_id
+		FROM applications application
+		JOIN deployments deployment ON deployment.application_id = application.id
+		WHERE application.id = ? AND application.app_key = ? AND application.role = ?
+		AND deployment.state = 'succeeded' AND deployment.operation IN ('install', 'upgrade', 'configure')
+		AND deployment.secret_id IS NOT NULL
+		ORDER BY deployment.updated_at DESC, deployment.rowid DESC LIMIT 1`, applicationID, threeXUIAppKey, threeXUIRoleMaster).Scan(&deploymentID, &secretID, &agentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return OneTimeCredentials{}, errors.New("center: stored 3x-ui credentials are unavailable")
+	}
+	if err != nil {
+		return OneTimeCredentials{}, fmt.Errorf("center: read stored 3x-ui credentials: %w", err)
+	}
+	plain, err := s.getSecret(ctx, secretID, "deployment:"+deploymentID)
+	if err != nil {
+		return OneTimeCredentials{}, err
+	}
+	var values map[string]string
+	if json.Unmarshal(plain, &values) != nil || strings.TrimSpace(values["username"]) == "" || strings.TrimSpace(values["password"]) == "" {
+		return OneTimeCredentials{}, errors.New("center: stored 3x-ui credentials are invalid")
+	}
+	if err := s.recordStandaloneTaskEvent(ctx, applicationID, agentID, "security.credentials.reveal", 1, "succeeded", "stored 3x-ui administrator credentials revealed after administrator reauthentication: "+adminID); err != nil {
+		return OneTimeCredentials{}, fmt.Errorf("center: record credential access audit event: %w", err)
+	}
+	return OneTimeCredentials{Username: values["username"], Password: values["password"]}, nil
+}
+
 func (s *Store) RevealApplicationCommandResult(ctx context.Context, commandID, ownerID, operationKey string) (string, error) {
 	s.secretDeliveryMu.Lock()
 	defer s.secretDeliveryMu.Unlock()

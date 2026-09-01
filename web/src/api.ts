@@ -104,6 +104,7 @@ export const api = {
 	updateAgent: (agentId: string, name: string, siteId: string) => request<{ updated: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", body: JSON.stringify({ name, siteId }) }),
 	disableAgent: (agentId: string) => request<{ disabled: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
 	applications: (signal?: AbortSignal) => request<{ applications: Application[] }>("/api/v1/applications", { signal }),
+	revealStoredThreeXUICredentials: (applicationId: string, currentPassword: string) => request<{ username: string; password: string }>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/reveal`, { method: "POST", body: JSON.stringify({ currentPassword }) }),
 	reconcileThreeXUINode: (applicationId: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-node/reconcile`, { method: "POST", body: "{}" }),
 	threeXUIControllerMigrations: (signal?: AbortSignal) => request<{ migrations: ThreeXUIControllerMigration[] }>("/api/v1/three-x-ui-migrations", { signal }),
 	threeXUIControllerMigration: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}`),

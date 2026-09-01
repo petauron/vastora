@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AppWindowIcon, ArrowRightLeftIcon, ArrowUpCircleIcon, CheckCircle2Icon, ExternalLinkIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, PencilIcon, RadioTowerIcon, RefreshCwIcon, RotateCcwIcon, Settings2Icon, ShieldAlertIcon, Trash2Icon, UsersIcon } from "lucide-react";
+import { AppWindowIcon, ArrowRightLeftIcon, ArrowUpCircleIcon, CheckCircle2Icon, ExternalLinkIcon, EyeIcon, EyeOffIcon, Globe2Icon, KeyRoundIcon, PackagePlusIcon, PencilIcon, RadioTowerIcon, RefreshCwIcon, RotateCcwIcon, Settings2Icon, ShieldAlertIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
 import type { AgentView, Application, ApplicationCommand, AppView, Deployment, Publication, PublicationKind, Service, ThreeXUIRole } from "../types";
@@ -24,6 +24,7 @@ import { RealitySheet } from "./RealitySheet";
 import { RegionCombobox, regionBaseName, regionDisplayName } from "./RegionCombobox";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 import { clearSecretOperation, deploymentSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
+import { administratorPasswordMinLength } from "../lib/security";
 
 type DeploymentEditor = { app: AppView; agent?: AgentView; operation: "install" | "upgrade" | "configure" } | null;
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
@@ -39,6 +40,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	const [credentials, setCredentials] = useState<CredentialDelivery | undefined>(undefined);
 	const [credentialAckBusy, setCredentialAckBusy] = useState(false);
 	const credentialRecovery = useRef("");
+	const [credentialApplication, setCredentialApplication] = useState<Application | null>(null);
 	const [realityApplication, setRealityApplication] = useState<Application | null>(null);
 	const [realityRenameService, setRealityRenameService] = useState<Service | null>(null);
   const [trafficService, setTrafficService] = useState<Service | null>(null);
@@ -118,7 +120,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 
       {section === "installed" ? <div className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "已安装", "Installed")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "每个服务都可以有独立的访问方式。", "Each service can have its own access methods.")}</p></div>
-        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onClients={() => setClientsApplication(application)} onConfigure={() => openChange(application, "configure")} onMigrate={() => setMigrationApplication(application)} onPublish={setPublicationService} onReality={() => setRealityApplication(application)} onRenameReality={setRealityRenameService} onSubscription={() => setSubscriptionApplication(application)} onTraffic={setTrafficService} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openChange(application, "upgrade")} mutate={mutate} />)}</div>}
+	        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onClients={() => setClientsApplication(application)} onConfigure={() => openChange(application, "configure")} onCredentials={() => setCredentialApplication(application)} onMigrate={() => setMigrationApplication(application)} onPublish={setPublicationService} onReality={() => setRealityApplication(application)} onRenameReality={setRealityRenameService} onSubscription={() => setSubscriptionApplication(application)} onTraffic={setTrafficService} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openChange(application, "upgrade")} mutate={mutate} />)}</div>}
       </div> : null}
 
       {section === "store" ? <div className="flex flex-col gap-4">
@@ -145,14 +147,15 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 		<RealityRenameSheet data={data} language={language} mutate={mutate} onClose={() => setRealityRenameService(null)} service={realityRenameService} />
       <ThreeXUIInboundTrafficSheet controller={trafficController ?? null} language={language} onClose={() => setTrafficService(null)} service={trafficService} siteTimezone={trafficService ? data.sites.find((site) => site.id === trafficService.siteId)?.timezone : undefined} />
       <SubscriptionSheet application={subscriptionApplication} data={data} language={language} mutate={mutate} onClose={() => setSubscriptionApplication(null)} />
-      <ThreeXUIClientsSheet advancedURL={clientsApplication ? data.deployments.find((value) => value.applicationId === clientsApplication.id && value.state === "succeeded" && value.operation !== "uninstall")?.accessUrl : undefined} application={clientsApplication} language={language} onClose={() => setClientsApplication(null)} siteTimezone={clientsApplication ? data.sites.find((site) => site.id === clientsApplication.siteId)?.timezone : undefined} />
-      <ThreeXUIControllerMigrationSheet application={migrationApplication} data={data} language={language} mutate={mutate} onClose={() => setMigrationApplication(null)} />
+	      <ThreeXUIClientsSheet advancedURL={clientsApplication ? data.deployments.find((value) => value.applicationId === clientsApplication.id && value.state === "succeeded" && value.operation !== "uninstall")?.accessUrl : undefined} application={clientsApplication} language={language} onClose={() => setClientsApplication(null)} siteTimezone={clientsApplication ? data.sites.find((site) => site.id === clientsApplication.siteId)?.timezone : undefined} />
+	      <ThreeXUICredentialsSheet application={credentialApplication} language={language} onClose={() => setCredentialApplication(null)} />
+	      <ThreeXUIControllerMigrationSheet application={migrationApplication} data={data} language={language} mutate={mutate} onClose={() => setMigrationApplication(null)} />
       <UninstallSheet application={uninstallApplication} app={uninstallApplication ? catalogByKey.get(uninstallApplication.appKey) : undefined} language={language} onClose={() => setUninstallApplication(null)} onSubmit={async (application, deleteData) => { await mutate(() => api.createDeployment(application.nodeId, application.appKey, {}, "uninstall", deleteData), copy(language, "卸载任务已创建。", "Uninstall task created.")); setUninstallApplication(null); }} />
     </section>
   );
 }
 
-function InstalledAppCard({ application, app, data, language, onClients, onConfigure, onMigrate, onPublish, onReality, onRenameReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onMigrate: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
+function InstalledAppCard({ application, app, data, language, onClients, onConfigure, onCredentials, onMigrate, onPublish, onReality, onRenameReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const [syncingNode, setSyncingNode] = useState(false);
   const agent = data.agents.find((value) => value.id === application.nodeId);
   const services = data.services.filter((service) => service.applicationId === application.id && service.status !== "stopped");
@@ -192,9 +195,10 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
       {isWorker && nodeSyncing ? <Alert aria-live="polite"><Spinner /><AlertTitle>{copy(language, "正在接入订阅主机", "Connecting to the subscription controller")}</AlertTitle><AlertDescription>{copy(language, "连接完成后即可在此节点一键创建 VLESS。", "Once connected, you can create VLESS on this node.")}</AlertDescription></Alert> : null}
       {isWorker && (application.nodeSyncStatus === "failed" || !application.nodeSyncStatus) ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "尚未接入订阅主机", "Not connected to the subscription controller")}</AlertTitle><AlertDescription><p>{application.nodeSyncError || copy(language, "升级来的旧节点需要重新连接；新节点请确认两台主机能通过 Headscale 或私网互相访问。", "An upgraded existing node must reconnect. For a new node, confirm both hosts can reach each other over Headscale or the private network.")}</p><Button className="mt-3" disabled={syncingNode} onClick={() => void retryNodeSync()} size="sm" variant="outline">{syncingNode ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "重新连接", "Reconnect")}</Button></AlertDescription></Alert> : null}
       {isWorker && nodeReady ? <p className="text-sm text-muted-foreground">{copy(language, "此节点只承载 VLESS；客户端和订阅由当前位置的订阅主机统一管理。", "This node only carries VLESS. Clients and subscriptions are managed by the location controller.")}</p> : null}
-      {isThreeXUI ? <div className={`grid gap-2 ${isController ? "sm:grid-cols-3" : "sm:grid-cols-1"}`}>
-        {isController ? <Button disabled={serviceAccessLocked} onClick={onClients} size="sm"><UsersIcon data-icon="inline-start" />{copy(language, "管理客户端", "Manage clients")}</Button> : null}
-        <Button disabled={serviceAccessLocked || isWorker && (!nodeReady || syncingNode)} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button>
+	      {isThreeXUI ? <div className={`grid gap-2 ${isController ? "sm:grid-cols-2" : "sm:grid-cols-1"}`}>
+	        {isController ? <Button disabled={serviceAccessLocked} onClick={onClients} size="sm"><UsersIcon data-icon="inline-start" />{copy(language, "管理客户端", "Manage clients")}</Button> : null}
+	        {isController ? <Button onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "管理账号", "Admin credentials")}</Button> : null}
+	        <Button disabled={serviceAccessLocked || isWorker && (!nodeReady || syncingNode)} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button>
         {isController && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}
       </div> : null}
       {!isWorker && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
@@ -203,7 +207,66 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
       {isController && activeWorkers.length > 0 ? <p className="text-xs text-muted-foreground">{copy(language, "移除所有 VLESS 节点后才能卸载订阅主机。", "Remove all VLESS nodes before uninstalling the subscription controller.")}</p> : null}
     </CardContent>
     <CardFooter className="flex-wrap justify-end gap-2">{isController && activeWorkers.some((worker) => worker.nodeSyncStatus === "ready") ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} size="sm" variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "迁移订阅主机", "Move subscription host")}</Button> : null}{application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange) || activeWorkers.length > 0} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter>
-  </Card>;
+	  </Card>;
+}
+
+function ThreeXUICredentialsSheet({ application, language, onClose }: { application: Application | null; language: Language; onClose: () => void }) {
+	const [currentPassword, setCurrentPassword] = useState("");
+	const [credentials, setCredentials] = useState<{ username: string; password: string } | null>(null);
+	const [passwordVisible, setPasswordVisible] = useState(false);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+
+	useEffect(() => {
+		setCurrentPassword("");
+		setCredentials(null);
+		setPasswordVisible(false);
+		setBusy(false);
+		setError("");
+	}, [application?.id]);
+
+	const close = () => {
+		setCurrentPassword("");
+		setCredentials(null);
+		setPasswordVisible(false);
+		setError("");
+		onClose();
+	};
+	const reveal = async (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		if (!application || busy) return;
+		const reauthentication = currentPassword;
+		setCurrentPassword("");
+		setBusy(true);
+		setError("");
+		try {
+			setCredentials(await api.revealStoredThreeXUICredentials(application.id, reauthentication));
+		} catch (revealError) {
+			setError(userError(language, revealError));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return <Sheet onOpenChange={(open) => { if (!open) close(); }} open={Boolean(application)}>
+		<SheetContent className="sm:max-w-md">
+			<SheetHeader>
+				<SheetTitle>{copy(language, "3x-ui 管理账号", "3x-ui administrator account")}</SheetTitle>
+				<SheetDescription>{copy(language, "账号密码由 Center 加密保管。每次查看都需要重新输入当前 Center 管理员密码，并会记录安全审计事件。", "Center stores these credentials encrypted. Every reveal requires your current Center administrator password and creates a security audit event.")}</SheetDescription>
+			</SheetHeader>
+			{credentials ? <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
+				<Alert><KeyRoundIcon /><AlertTitle>{copy(language, "凭据仅在当前面板中显示", "Credentials are shown only in this panel")}</AlertTitle><AlertDescription>{copy(language, "关闭后会立即从页面状态中清除；以后仍可再次验证并查看。", "They are cleared from page state as soon as this panel closes. You can reauthenticate to reveal them again later.")}</AlertDescription></Alert>
+				<FieldGroup>
+					<Field><FieldLabel htmlFor="three-x-ui-credential-username">{copy(language, "账号", "Username")}</FieldLabel><div className="flex items-center gap-2"><Input className="font-mono" id="three-x-ui-credential-username" readOnly value={credentials.username} /><CopyButton language={language} size="icon" value={credentials.username} /></div></Field>
+					<Field><FieldLabel htmlFor="three-x-ui-credential-password">{copy(language, "密码", "Password")}</FieldLabel><div className="flex items-center gap-2"><div className="relative min-w-0 flex-1"><Input className="pr-11 font-mono" id="three-x-ui-credential-password" readOnly type={passwordVisible ? "text" : "password"} value={credentials.password} /><Button aria-label={passwordVisible ? copy(language, "隐藏密码", "Hide password") : copy(language, "显示密码", "Show password")} className="absolute top-1/2 right-1 -translate-y-1/2" onClick={() => setPasswordVisible((visible) => !visible)} size="icon-sm" type="button" variant="ghost">{passwordVisible ? <EyeOffIcon aria-hidden="true" /> : <EyeIcon aria-hidden="true" />}</Button></div><CopyButton language={language} size="icon" value={credentials.password} /></div></Field>
+				</FieldGroup>
+			</div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void reveal(event)}>
+				<div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="three-x-ui-credential-reauthentication">{copy(language, "Center 管理员密码", "Center administrator password")}</FieldLabel><Input autoComplete="current-password" autoFocus id="three-x-ui-credential-reauthentication" minLength={administratorPasswordMinLength} onChange={(event) => setCurrentPassword(event.target.value)} required type="password" value={currentPassword} /><FieldDescription>{copy(language, "密码只随本次验证请求发送，不会持久化到浏览器。", "This password is sent only with this verification request and is not persisted in the browser.")}</FieldDescription>{error ? <FieldError role="alert">{error}</FieldError> : null}</Field></FieldGroup></div>
+				<SheetFooter><Button onClick={close} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || currentPassword.length < administratorPasswordMinLength} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}{busy ? copy(language, "正在验证…", "Verifying…") : copy(language, "验证并查看", "Verify and reveal")}</Button></SheetFooter>
+			</form>}
+			{credentials ? <SheetFooter><Button onClick={close} type="button">{copy(language, "关闭", "Close")}</Button></SheetFooter> : null}
+		</SheetContent>
+	</Sheet>;
 }
 
 function ServiceRow({ data, language, service, locked, onPublish, onRename, onTraffic, mutate }: { data: AppData; language: Language; service: Service; locked: boolean; onPublish: () => void; onRename: () => void; onTraffic: () => void; mutate: Mutate }) {
