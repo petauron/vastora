@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.90](https://github.com/petauron/vastora/compare/v0.1.0-alpha.89...v0.1.0-alpha.90) (2026-09-01)
+
+
+### Bug Fixes
+
+* **3x-ui:** serve VLESS directly from each node ([0fb6dc7](https://github.com/petauron/vastora/commit/0fb6dc702134e08fb21493b47a553fb260dfd030))
+* **center:** preserve shared 443 collision guard ([4e2a6c2](https://github.com/petauron/vastora/commit/4e2a6c2c4534b0ccb9e3247efdc95ab28a313c55))
+
 ## [0.1.0-alpha.89](https://github.com/petauron/vastora/compare/v0.1.0-alpha.88...v0.1.0-alpha.89) (2026-09-01)
 
 
