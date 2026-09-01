@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-const PublicAddressLookupURL = "https://vastora.petauron.com/network/public-address"
-
 // LookupPublicIPv4 asks the Vastora address reflector which IPv4 address made
 // this request. The response identifies outbound NAT only; callers must not
 // treat it as proof of inbound reachability.
@@ -53,8 +51,8 @@ func LookupPublicIPv4(ctx context.Context, client *http.Client, endpoint string)
 
 // DetectPublicEgress observes the public IPv4 and matches the kernel-selected
 // local receiving address to a discovered Agent interface.
-func DetectPublicEgress(ctx context.Context, client *http.Client, candidates []Candidate, now time.Time) (*PublicEgress, error) {
-	publicAddress, err := LookupPublicIPv4(ctx, client, PublicAddressLookupURL)
+func DetectPublicEgress(ctx context.Context, client *http.Client, endpoint string, candidates []Candidate, now time.Time) (*PublicEgress, error) {
+	publicAddress, err := LookupPublicIPv4(ctx, client, endpoint)
 	if err != nil {
 		return nil, err
 	}

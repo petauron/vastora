@@ -63,7 +63,7 @@ func TestCountryISLookupRejectsMismatchedAddress(t *testing.T) {
 		fmt.Fprint(writer, `{"ip":"198.51.100.8","country":"US"}`)
 	}))
 	defer server.Close()
-	lookup := countryISLookupAt(server.Client(), server.URL)
+	lookup := regionLookupAt(server.Client(), server.URL)
 	if _, err := lookup(context.Background(), "203.0.113.8"); err == nil {
 		t.Fatal("country response for a different address was accepted")
 	}

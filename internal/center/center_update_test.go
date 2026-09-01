@@ -26,19 +26,19 @@ func (checker fixedReleaseChecker) LatestVersion(_ context.Context, refresh bool
 
 type fakeCenterUpdater struct {
 	status  deployapi.CenterUpdateExecution
-	started string
+	started deployapi.CenterUpdateRequest
 }
 
 func (updater *fakeCenterUpdater) CenterUpdateStatus(context.Context) (deployapi.CenterUpdateExecution, error) {
 	return updater.status, nil
 }
 
-func (updater *fakeCenterUpdater) StartCenterUpdate(_ context.Context, version string) (deployapi.CenterUpdateExecution, error) {
-	updater.started = version
-	return deployapi.CenterUpdateExecution{Available: true, State: "queued", TargetVersion: version}, nil
+func (updater *fakeCenterUpdater) StartCenterUpdate(_ context.Context, input deployapi.CenterUpdateRequest) (deployapi.CenterUpdateExecution, error) {
+	updater.started = input
+	return deployapi.CenterUpdateExecution{Available: true, State: "queued", TargetVersion: input.Version}, nil
 }
 
-func TestOfficialReleaseCheckerReadsTheR2ReleaseVersion(t *testing.T) {
+func TestReleaseCheckerReadsTheConfiguredReleaseVersion(t *testing.T) {
 	installer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodHead {
 			t.Fatalf("method = %s", request.Method)
@@ -47,7 +47,7 @@ func TestOfficialReleaseCheckerReadsTheR2ReleaseVersion(t *testing.T) {
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer installer.Close()
-	checker := NewOfficialReleaseChecker(installer.URL)
+	checker := NewReleaseChecker(installer.URL, installer.Client())
 	version, checkedAt, err := checker.LatestVersion(context.Background(), false)
 	if err != nil || version != "0.1.0-alpha.48" || checkedAt.IsZero() {
 		t.Fatalf("unexpected release: version=%q checked=%s err=%v", version, checkedAt, err)
@@ -59,7 +59,7 @@ func TestOfficialReleaseCheckerReadsTheR2ReleaseVersion(t *testing.T) {
 	}
 }
 
-func TestOfficialReleaseCheckerRejectsRedirectsAndMissingVersionHeaders(t *testing.T) {
+func TestReleaseCheckerRejectsRedirectsAndMissingVersionHeaders(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		status int
@@ -72,7 +72,7 @@ func TestOfficialReleaseCheckerRejectsRedirectsAndMissingVersionHeaders(t *testi
 				writer.WriteHeader(test.status)
 			}))
 			defer installer.Close()
-			if _, _, err := NewOfficialReleaseChecker(installer.URL).LatestVersion(context.Background(), false); err == nil {
+			if _, _, err := NewReleaseChecker(installer.URL, installer.Client()).LatestVersion(context.Background(), false); err == nil {
 				t.Fatal("invalid installer response was accepted")
 			}
 		})
@@ -84,15 +84,17 @@ func TestCenterUpdateStatusAndStartUseTheRestrictedUpdater(t *testing.T) {
 	Version = "0.1.0-alpha.47"
 	defer func() { Version = previousVersion }()
 	updater := &fakeCenterUpdater{status: deployapi.CenterUpdateExecution{Available: true, State: "idle"}}
-	server := &Server{updates: updater, releaseChecker: fixedReleaseChecker{version: "0.1.0-alpha.48"}}
+	server := &Server{updates: updater, releaseChecker: fixedReleaseChecker{version: "0.1.0-alpha.48"}, releaseInstallerBaseURL: "https://releases.example.com", resolveReleaseInstaller: func(context.Context) (ExternalHelperPin, error) {
+		return ExternalHelperPin{Host: "releases.example.com", Port: "443", Address: "203.0.113.10"}, nil
+	}}
 	status := server.centerUpdateStatus(context.Background(), false)
 	if !status.UpdateAvailable || !status.Automatic || status.LatestVersion != "0.1.0-alpha.48" {
 		t.Fatalf("unexpected update status: %#v", status)
 	}
 	response := httptest.NewRecorder()
 	server.handleStartCenterUpdate(response, httptest.NewRequest(http.MethodPost, "/api/v1/system/update", nil))
-	if response.Code != http.StatusAccepted || updater.started != "0.1.0-alpha.48" {
-		t.Fatalf("start status=%d body=%s version=%q", response.Code, response.Body.String(), updater.started)
+	if response.Code != http.StatusAccepted || updater.started.Version != "0.1.0-alpha.48" || updater.started.InstallerBaseURL != "https://releases.example.com" || updater.started.InstallerHost != "releases.example.com" || updater.started.InstallerAddress != "203.0.113.10" {
+		t.Fatalf("start status=%d body=%s request=%#v", response.Code, response.Body.String(), updater.started)
 	}
 }
 
@@ -113,7 +115,7 @@ func TestCenterUpdateStatusReportsVerifiedHostProgress(t *testing.T) {
 	}
 }
 
-func TestOfficialReleaseCheckerBypassesItsCacheWhenRefreshIsRequested(t *testing.T) {
+func TestReleaseCheckerBypassesItsCacheWhenRefreshIsRequested(t *testing.T) {
 	requests := 0
 	installer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		requests++
@@ -121,7 +123,7 @@ func TestOfficialReleaseCheckerBypassesItsCacheWhenRefreshIsRequested(t *testing
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer installer.Close()
-	checker := NewOfficialReleaseChecker(installer.URL)
+	checker := NewReleaseChecker(installer.URL, installer.Client())
 	first, _, err := checker.LatestVersion(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)

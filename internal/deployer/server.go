@@ -151,13 +151,11 @@ func (server *Server) startCenterUpdate(writer http.ResponseWriter, request *htt
 		writeError(writer, http.StatusConflict, errors.New("deployer: automatic Center updates are unavailable"))
 		return
 	}
-	var input struct {
-		Version string `json:"version"`
-	}
+	var input deployapi.CenterUpdateRequest
 	if !decodeRequest(writer, request, &input) {
 		return
 	}
-	result, err := server.centerUpdater.StartCenterUpdate(request.Context(), input.Version)
+	result, err := server.centerUpdater.StartCenterUpdate(request.Context(), input)
 	if err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return

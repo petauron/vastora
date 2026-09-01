@@ -35,7 +35,7 @@ afterEach(() => {
 
 const dashboard = (): AppData => ({
   status: { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" },
-  centerUpdate: { currentVersion: "test", latestVersion: "test", updateAvailable: false, automatic: true, state: "idle", checkedAt: "2026-08-18T00:00:00Z" },
+  centerUpdate: { currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle", checkedAt: "2026-08-18T00:00:00Z" },
   sources: [], organizations: [], routes: [], actions: [], integrations: [], threeXUIControllerMigrations: [],
   systemDomain: { namespace: "vastora.example.com", centerUrl: "https://center.vastora.example.com", headscaleUrl: "https://headscale.vastora.example.com", cloudflareZone: "example.com", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: true, cloudflareOAuthAvailable: true },
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
@@ -449,7 +449,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
-    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
+    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
@@ -476,7 +476,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     data.agents[0].networkProfile = { ...data.agents[0].networkProfile!, publicBindAddress: "10.0.0.10", publicMode: "nat" };
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
-    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
+    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     await act(async () => {
@@ -922,7 +922,7 @@ describe("network and app views", () => {
 		const data = realityDashboard();
 		vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new Error("not found"));
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
-		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
+		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
 		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.20", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64500, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
@@ -961,7 +961,7 @@ describe("network and app views", () => {
     data.applications.push({ ...data.applications[0], id: "three-x-ui-worker", nodeId: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
-    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "worker", publicAddress: "203.0.113.20", regionCode: "US", prefix: "🇺🇸 美国", source: "country.is" });
+    vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "worker", publicAddress: "203.0.113.20", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
     const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-worker-reality", applicationId: "three-x-ui-worker", gatewayNodeId: "worker", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.30", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64500, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
     const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue({ id: "worker-reality", applicationId: "three-x-ui-worker", gatewayNodeId: "worker", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", action: "create", clientCreated: false, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -1761,7 +1761,7 @@ describe("network and app views", () => {
 
   it("shows a confirmed Center update instead of exposing Docker access", () => {
     const data = dashboard();
-    data.centerUpdate = { currentVersion: "0.1.0-alpha.47", latestVersion: "0.1.0-alpha.48", updateAvailable: true, automatic: true, state: "idle", checkedAt: "2026-08-25T00:00:00Z" };
+    data.centerUpdate = { currentVersion: "0.1.0-alpha.47", latestVersion: "0.1.0-alpha.48", updateAvailable: true, releaseCheckAvailable: true, automatic: true, state: "idle", checkedAt: "2026-08-25T00:00:00Z" };
     const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     expect(container.textContent).toContain("Center 更新");
     expect(container.textContent).toContain("0.1.0-alpha.48");

@@ -15,11 +15,9 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-const publicEntryVerificationURL = "https://vastora.petauron.com/network/verify-public-entry"
-
-func vastoraPublicAddressLookup(client *http.Client) func(context.Context) (string, error) {
+func publicAddressLookup(client *http.Client, endpoint string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
-		address, err := networking.LookupPublicIPv4(ctx, client, networking.PublicAddressLookupURL)
+		address, err := networking.LookupPublicIPv4(ctx, client, endpoint)
 		if err != nil {
 			return "", fmt.Errorf("center: detect public address: %w", err)
 		}
@@ -27,7 +25,7 @@ func vastoraPublicAddressLookup(client *http.Client) func(context.Context) (stri
 	}
 }
 
-func vastoraPublicEntryVerifier(client *http.Client) func(context.Context, string, deployapi.PublicEntryProbe) error {
+func publicEntryVerifier(client *http.Client, endpoint string) func(context.Context, string, deployapi.PublicEntryProbe) error {
 	return func(ctx context.Context, publicAddress string, probe deployapi.PublicEntryProbe) error {
 		publicIP := net.ParseIP(strings.TrimSpace(publicAddress))
 		if publicIP == nil || publicIP.To4() == nil || publicIP.IsPrivate() || !publicIP.IsGlobalUnicast() {
@@ -37,7 +35,7 @@ func vastoraPublicEntryVerifier(client *http.Client) func(context.Context, strin
 		if err != nil {
 			return err
 		}
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, publicEntryVerificationURL, bytes.NewReader(payload))
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 		if err != nil {
 			return err
 		}

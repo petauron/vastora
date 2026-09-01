@@ -41,7 +41,7 @@ func NormalizeHeadscaleDNS(policy string, resolvers []string) (string, []string,
 		policy = HeadscaleDNSPolicySystem
 	}
 	if policy != HeadscaleDNSPolicySystem && policy != HeadscaleDNSPolicyCustom {
-		return "", nil, errors.New("Headscale DNS policy must be system or custom")
+		return "", nil, errors.New("headscale DNS policy must be system or custom")
 	}
 	if policy == HeadscaleDNSPolicySystem {
 		if len(resolvers) != 0 {
@@ -57,7 +57,7 @@ func NormalizeHeadscaleDNS(policy string, resolvers []string) (string, []string,
 	for _, resolver := range resolvers {
 		address, err := netip.ParseAddr(strings.TrimSpace(resolver))
 		if err != nil || !address.IsValid() || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() {
-			return "", nil, fmt.Errorf("Headscale DNS resolver %q is not a valid unicast IP address", resolver)
+			return "", nil, fmt.Errorf("headscale DNS resolver %q is not a valid unicast IP address", resolver)
 		}
 		value := address.Unmap().String()
 		if _, exists := seen[value]; exists {

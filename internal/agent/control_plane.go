@@ -486,14 +486,6 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
 	}
-	var publicEgress *networking.PublicEgress
-	var publicEgressErr error
-	if startup && c.PublicEgress != nil {
-		publicEgress, publicEgressErr = c.PublicEgress(ctx, candidates, now)
-		if publicEgressErr != nil {
-			publicEgressErr = fmt.Errorf("agent: observe public egress: %w", publicEgressErr)
-		}
-	}
 	endpoints, observeErr := observeThreeXUI(ctx, store)
 	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
 	if errors.Is(observeErr, errApplicationNotInstalled) {
@@ -502,14 +494,17 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		observeErr = fmt.Errorf("agent: observe 3x-ui: %w", observeErr)
 	}
 	var response struct {
-		CenterURL          string                          `json:"centerUrl"`
-		TailscaleIsolation *TailscaleIsolationDesiredState `json:"tailscaleIsolation,omitempty"`
+		CenterURL                string                          `json:"centerUrl"`
+		TailscaleIsolation       *TailscaleIsolationDesiredState `json:"tailscaleIsolation,omitempty"`
+		PublicAddressLookupURL   string                          `json:"publicAddressLookupUrl"`
+		PublicHelperAllowPrivate bool                            `json:"publicHelperAllowPrivate"`
 	}
 	publicKey, err := controlplane.PublicKey(connection.PrivateKey)
 	if err != nil {
 		return observeErr, err
 	}
-	err = c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/heartbeat", map[string]any{
+	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
+	payload := map[string]any{
 		"publicKey": publicKey,
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
@@ -520,17 +515,30 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
 		"tailscaleOwnership":           c.TailscaleOwnership,
 		"startup":                      startup,
-		"publicEgress":                 publicEgress,
-	}, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response)
+		"publicEgress":                 nil,
+	}
+	err = c.post(ctx, heartbeatURL, payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response)
 	if err != nil {
-		return errors.Join(observeErr, publicEgressErr), err
+		return observeErr, err
 	}
 	if err := c.applyDesiredCenterURL(ctx, store, connection, response.CenterURL); err != nil {
-		return errors.Join(observeErr, publicEgressErr), err
+		return observeErr, err
 	}
 	if response.TailscaleIsolation != nil && c.TailscaleIsolation != nil {
 		if err := c.TailscaleIsolation(ctx, *response.TailscaleIsolation); err != nil {
-			return errors.Join(observeErr, publicEgressErr), fmt.Errorf("agent: apply Tailscale isolation: %w", err)
+			return observeErr, fmt.Errorf("agent: apply Tailscale isolation: %w", err)
+		}
+	}
+	var publicEgressErr error
+	if startup && c.PublicEgress != nil && strings.TrimSpace(response.PublicAddressLookupURL) != "" {
+		publicEgress, err := c.PublicEgress(ctx, response.PublicAddressLookupURL, response.PublicHelperAllowPrivate, candidates, now)
+		if err != nil {
+			publicEgressErr = fmt.Errorf("agent: observe public egress: %w", err)
+		} else if publicEgress != nil {
+			payload["publicEgress"] = publicEgress
+			if err := c.post(ctx, heartbeatURL, payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &struct{}{}); err != nil {
+				return errors.Join(observeErr, publicEgressErr), err
+			}
 		}
 	}
 	return errors.Join(observeErr, publicEgressErr), nil

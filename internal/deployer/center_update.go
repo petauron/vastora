@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,11 +53,19 @@ func (updater FileCenterUpdater) CenterUpdateStatus(context.Context) (deployapi.
 	return result, nil
 }
 
-func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, version string) (deployapi.CenterUpdateExecution, error) {
-	version = strings.TrimSpace(version)
+func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, input deployapi.CenterUpdateRequest) (deployapi.CenterUpdateExecution, error) {
+	version := strings.TrimSpace(input.Version)
 	if !semver.IsValid("v" + version) {
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: requested Center version is invalid")
 	}
+	installerBaseURL, err := validateInstallerBaseURL(input.InstallerBaseURL)
+	if err != nil {
+		return deployapi.CenterUpdateExecution{}, err
+	}
+	if err := validateInstallerPin(input, installerBaseURL); err != nil {
+		return deployapi.CenterUpdateExecution{}, err
+	}
+	requestPayload := []byte(strings.Join([]string{version, installerBaseURL, input.InstallerHost, input.InstallerPort, input.InstallerAddress, ""}, "\n"))
 	status, err := updater.CenterUpdateStatus(ctx)
 	if err != nil {
 		return deployapi.CenterUpdateExecution{}, err
@@ -70,7 +81,7 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, version 
 		if status.TargetVersion == version {
 			requestPath := filepath.Join(updater.InstallDir, ".update-request")
 			if !regularFile(requestPath) {
-				if err := writeCenterUpdateFile(requestPath, []byte(version+"\n"), 0o600); err != nil {
+				if err := writeCenterUpdateFile(requestPath, requestPayload, 0o600); err != nil {
 					return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: recover Center update request: %w", err)
 				}
 			}
@@ -87,7 +98,7 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, version 
 	if err := writeCenterUpdateStatus(statusPath, queued); err != nil {
 		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: queue Center update status: %w", err)
 	}
-	if err := writeCenterUpdateFile(filepath.Join(updater.InstallDir, ".update-request"), []byte(version+"\n"), 0o600); err != nil {
+	if err := writeCenterUpdateFile(filepath.Join(updater.InstallDir, ".update-request"), requestPayload, 0o600); err != nil {
 		failed := queued
 		failed.State = "failed"
 		failed.Message = "The update request could not be queued."
@@ -100,6 +111,32 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, version 
 		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: queue Center update request: %w", err)
 	}
 	return queued, nil
+}
+
+func validateInstallerPin(input deployapi.CenterUpdateRequest, installerBaseURL string) error {
+	parsed, _ := url.Parse(installerBaseURL)
+	host := strings.TrimSpace(input.InstallerHost)
+	port := strings.TrimSpace(input.InstallerPort)
+	address := net.ParseIP(strings.TrimSpace(input.InstallerAddress))
+	expectedPort := parsed.Port()
+	if expectedPort == "" {
+		expectedPort = "443"
+	}
+	portNumber, portErr := strconv.Atoi(port)
+	if !strings.EqualFold(host, parsed.Hostname()) || strings.ContainsAny(host, "\r\n\t") || portErr != nil || portNumber < 1 || portNumber > 65535 || port != expectedPort || address == nil || strings.ContainsAny(input.InstallerAddress, "\r\n\t") {
+		return errors.New("deployer: release installer DNS pin is invalid")
+	}
+	return nil
+}
+
+func validateInstallerBaseURL(value string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("deployer: release installer base URL must be an exact credential-free HTTPS URL")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }
 
 func writeCenterUpdateStatus(path string, status deployapi.CenterUpdateExecution) error {

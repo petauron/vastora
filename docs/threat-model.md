@@ -37,9 +37,11 @@
   than every host interface. A public address is accepted only when Agent finds
   it on a local interface and an administrator explicitly enables direct ingress.
 - When suggesting a VLESS node region, Center sends only that node's confirmed
-  public IP address to `api.country.is`. No credentials, node secrets,
-  private addresses, or application data are included. The lookup is optional;
-  failure leaves the searchable manual region selector available.
+  public IP address to the explicitly configured region service. No credentials,
+  node secrets, private addresses, or application data are included. The
+  official package currently configures `api.country.is`; private packages may
+  replace or disable it, and the searchable manual region selector remains
+  available.
 - LAN and Headscale Web entries use selected Caddy Gateway nodes. They may use
   HTTP inside the private network, or a browser-trusted certificate obtained
   through Cloudflare DNS-01 without exposing the service publicly. Public Web

@@ -3,12 +3,13 @@ set -eu
 
 default_release_url="https://vastora.petauron.com/vastora-center-install.tar.gz"
 release_url="$default_release_url"
+release_resolve=""
 install_dir="/opt/vastora/center"
 expected_version=""
 
 usage() {
   cat <<'EOF'
-Usage: install.sh center [--release-url HTTPS_URL] [--install-dir DIR] [--expected-version VERSION] [-- SETUP_OPTIONS]
+Usage: install.sh center [--release-url HTTPS_URL] [--release-resolve HOST:PORT:ADDRESS] [--install-dir DIR] [--expected-version VERSION] [-- SETUP_OPTIONS]
        install.sh center uninstall [--release-url HTTPS_URL] [--install-dir DIR]
 
 Installs the verified Vastora Center release bundle on loopback, then prints an
@@ -43,6 +44,11 @@ while [ "$#" -gt 0 ]; do
     --release-url)
       [ "$#" -ge 2 ] || { echo "--release-url requires a value." >&2; exit 2; }
       release_url="$2"
+      shift 2
+      ;;
+    --release-resolve)
+      [ "$#" -ge 2 ] || { echo "--release-resolve requires a value." >&2; exit 2; }
+      release_resolve="$2"
       shift 2
       ;;
     --install-dir)
@@ -82,6 +88,16 @@ case "$release_url" in
   https://*) ;;
   *) echo "The Center release URL must use HTTPS." >&2; exit 2 ;;
 esac
+if [ -n "$release_resolve" ]; then
+  case "$release_resolve" in
+    *:*:*) ;;
+    *) echo "The release DNS pin is invalid." >&2; exit 2 ;;
+  esac
+  if printf '%s\n' "$release_resolve" | grep -Eq '[[:space:]]'; then
+    echo "The release DNS pin is invalid." >&2
+    exit 2
+  fi
+fi
 case "$install_dir" in
   /*) ;;
   *) echo "The installation directory must be an absolute path." >&2; exit 2 ;;
@@ -118,11 +134,21 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 echo "Downloading the Vastora Center release bundle..."
-if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$release_url" -o "$archive"; then
+if [ -n "$release_resolve" ]; then
+  if ! curl --proto '=https' --tlsv1.2 -fsS --resolve "$release_resolve" "$release_url" -o "$archive"; then
+    echo "No installable Center release was found. Check the release URL and try again." >&2
+    exit 1
+  fi
+elif ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$release_url" -o "$archive"; then
   echo "No installable Center release was found. Check the release URL and try again." >&2
   exit 1
 fi
-if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$release_url.sha256" -o "$checksum"; then
+if [ -n "$release_resolve" ]; then
+  if ! curl --proto '=https' --tlsv1.2 -fsS --resolve "$release_resolve" "$release_url.sha256" -o "$checksum"; then
+    echo "The release checksum could not be downloaded; nothing was installed." >&2
+    exit 1
+  fi
+elif ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$release_url.sha256" -o "$checksum"; then
   echo "The release checksum could not be downloaded; nothing was installed." >&2
   exit 1
 fi

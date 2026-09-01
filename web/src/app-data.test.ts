@@ -21,7 +21,7 @@ describe("screen-scoped data loading", () => {
   it("loads only the home summary resources", async () => {
     const controller = new AbortController();
     vi.spyOn(api, "status").mockResolvedValue(status);
-    vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, automatic: true, state: "idle" });
+    vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
     vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
     vi.spyOn(api, "applications").mockResolvedValue({ applications: [] });

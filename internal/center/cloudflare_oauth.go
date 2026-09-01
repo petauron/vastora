@@ -20,8 +20,6 @@ import (
 )
 
 const (
-	cloudflareOAuthClientID    = "565bf36df0a8deb0fde1bd27367a44bd"
-	cloudflareOAuthRedirectURI = "https://vastora.petauron.com/oauth/cloudflare/callback"
 	cloudflareOAuthLifetime    = 10 * time.Minute
 	cloudflareOAuthScopes      = "zone.read dns.write argotunnel.write access.write access-acct.write offline_access"
 	setupGatewayBindingSetting = "cloudflare_setup_gateway_binding"
@@ -29,6 +27,7 @@ const (
 
 type cloudflareOAuthConfig struct {
 	ClientID         string
+	RedirectURL      string
 	AuthorizationURL string
 	TokenURL         string
 	RelayURL         string
@@ -101,17 +100,6 @@ type setupGatewayBinding struct {
 	BindAddress   string `json:"bindAddress"`
 }
 
-func defaultCloudflareOAuthConfig() cloudflareOAuthConfig {
-	return cloudflareOAuthConfig{
-		ClientID:         cloudflareOAuthClientID,
-		AuthorizationURL: "https://dash.cloudflare.com/oauth2/auth",
-		TokenURL:         "https://dash.cloudflare.com/oauth2/token",
-		RelayURL:         "https://vastora.petauron.com/oauth/cloudflare",
-		APIURL:           cloudflareAPIURL,
-		HTTPClient:       &http.Client{Timeout: 20 * time.Second},
-	}
-}
-
 func (s *Store) CloudflareOAuthAvailable() bool {
 	return strings.TrimSpace(s.cloudflareOAuth.ClientID) != ""
 }
@@ -147,7 +135,7 @@ func (s *Store) StartCloudflareOAuth() (CloudflareOAuthStart, error) {
 
 	values := url.Values{
 		"client_id":             {config.ClientID},
-		"redirect_uri":          {cloudflareOAuthRedirectURI},
+		"redirect_uri":          {config.RedirectURL},
 		"response_type":         {"code"},
 		"scope":                 {cloudflareOAuthScopes},
 		"state":                 {state},
@@ -434,7 +422,7 @@ func (s *Store) resolveSetupGatewayBinding(ctx context.Context, input SetupDNSIn
 			break
 		}
 	}
-	if !directPublicAddress {
+	if !directPublicAddress && s.lookupPublicAddress != nil {
 		if observed, lookupErr := s.lookupPublicAddress(ctx); lookupErr == nil {
 			observedPublicAddress = observed
 			if suggested, routeErr := s.lookupGatewayAddress(observed); routeErr == nil {
@@ -561,7 +549,7 @@ func (s *Store) exchangeCloudflareCode(ctx context.Context, code, verifier strin
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"client_id":     {s.cloudflareOAuth.ClientID},
-		"redirect_uri":  {cloudflareOAuthRedirectURI},
+		"redirect_uri":  {s.cloudflareOAuth.RedirectURL},
 		"code_verifier": {verifier},
 	}
 	response, err := s.postCloudflareToken(ctx, values)

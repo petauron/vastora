@@ -22,6 +22,7 @@ func TestCloudflareOAuthStartUsesPKCEWithoutExposingSecrets(t *testing.T) {
 	fixed := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return fixed }
 	store.cloudflareOAuth.ClientID = "oauth-client"
+	store.cloudflareOAuth.RedirectURL = "https://callback.example.com/oauth/cloudflare"
 	store.cloudflareOAuth.AuthorizationURL = "https://dash.cloudflare.test/oauth2/auth"
 
 	started, err := store.StartCloudflareOAuth()
@@ -39,7 +40,7 @@ func TestCloudflareOAuthStartUsesPKCEWithoutExposingSecrets(t *testing.T) {
 		t.Fatal("OAuth session was not saved")
 	}
 	query := parsed.Query()
-	if query.Get("client_id") != "oauth-client" || query.Get("redirect_uri") != cloudflareOAuthRedirectURI || query.Get("response_type") != "code" {
+	if query.Get("client_id") != "oauth-client" || query.Get("redirect_uri") != store.cloudflareOAuth.RedirectURL || query.Get("response_type") != "code" {
 		t.Fatalf("unexpected authorization URL: %s", started.AuthorizationURL)
 	}
 	if query.Get("state") != session.State || query.Get("code_challenge") != oauthSHA256(session.PKCEVerifier) || query.Get("code_challenge_method") != "S256" {

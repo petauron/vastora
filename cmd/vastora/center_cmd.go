@@ -125,6 +125,14 @@ func runCenter(arguments []string) error {
 		hostNetworkAddresses := flags.String("host-network-addresses", "", "comma-separated host interface=IPv4 values supplied by the container installer")
 		deployerSocket := flags.String("deployer-socket", "", "Unix socket for the restricted infrastructure deployment helper")
 		allowContainerHTTP := flags.Bool("allow-container-http", false, "allow the official bridge-network container listener")
+		releaseMetadataURL := flags.String("release-metadata-url", "", "HTTPS endpoint exposing immutable release metadata")
+		releaseInstallerBaseURL := flags.String("release-installer-base-url", "", "HTTPS base URL containing immutable versioned installers")
+		publicHelperOrigin := flags.String("public-helper-origin", "", "HTTPS origin providing public-address and public-entry verification")
+		regionLookupURL := flags.String("region-lookup-url", "", "HTTPS base URL providing public-IP region lookup")
+		cloudflareOAuthClientID := flags.String("cloudflare-oauth-client-id", "", "Cloudflare OAuth application client ID")
+		cloudflareOAuthRedirectURL := flags.String("cloudflare-oauth-redirect-url", "", "HTTPS Cloudflare OAuth callback URL")
+		cloudflareOAuthRelayURL := flags.String("cloudflare-oauth-relay-url", "", "HTTPS Cloudflare OAuth callback relay URL")
+		allowPrivateHelpers := flags.Bool("allow-private-helper-endpoints", false, "allow explicitly configured HTTPS helper hostnames to resolve to private addresses")
 		var headscaleAllowedURLs stringListFlag
 		flags.Var(&headscaleAllowedURLs, "headscale-allowed-url", "authorized Headscale control-plane URL (repeat for multiple URLs)")
 		tlsCert := flags.String("tls-cert", "", "PEM certificate path")
@@ -171,6 +179,19 @@ func runCenter(arguments []string) error {
 			return err
 		}
 		defer store.Close()
+		helperRuntime, err := store.ConfigureExternalHelpers(center.ExternalHelperConfig{
+			ReleaseMetadataURL:         *releaseMetadataURL,
+			ReleaseInstallerBaseURL:    *releaseInstallerBaseURL,
+			PublicHelperOrigin:         *publicHelperOrigin,
+			RegionLookupURL:            *regionLookupURL,
+			CloudflareOAuthClientID:    *cloudflareOAuthClientID,
+			CloudflareOAuthRedirectURL: *cloudflareOAuthRedirectURL,
+			CloudflareOAuthRelayURL:    *cloudflareOAuthRelayURL,
+			AllowPrivate:               *allowPrivateHelpers,
+		})
+		if err != nil {
+			return err
+		}
 		if err := store.UseHostNetworkAddresses(*hostNetworkAddresses); err != nil {
 			return err
 		}
@@ -202,7 +223,10 @@ func runCenter(arguments []string) error {
 			WithAgentBinaries(*agentBinariesDir).
 			WithSetupAgentConnectURL(normalizedAgentConnectURL).
 			WithCoLocatedAgentURL(normalizedCoLocatedAgentURL).
-			WithCenterReleaseChecker(center.NewOfficialReleaseChecker(""))
+			WithCenterReleaseChecker(helperRuntime.ReleaseChecker).
+			WithReleaseInstallerBaseURL(helperRuntime.ReleaseInstallerBaseURL).
+			WithReleaseInstallerResolver(helperRuntime.ResolveReleaseInstaller).
+			WithPublicAddressLookupURL(helperRuntime.PublicAddressLookupURL, helperRuntime.PublicHelperAllowPrivate)
 		go centerServer.RunCatalogRefresh(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center catalog refresh: %v\n", err)
 		})

@@ -54,6 +54,9 @@ func (s *Server) verifySetupPublicEntry(ctx context.Context, input SetupPublicEn
 	if s.infrastructure == nil {
 		return SetupPublicEntryResult{}, errors.New("center: this installation cannot verify a public entry")
 	}
+	if s.store.verifyPublicEntry == nil {
+		return SetupPublicEntryResult{}, errors.New("center: public entry verification is disabled; configure a public network helper before continuing")
+	}
 	candidates, err := s.store.discoverNetworkCandidates(s.store.now().UTC())
 	if err != nil {
 		return SetupPublicEntryResult{}, fmt.Errorf("center: discover local addresses: %w", err)
