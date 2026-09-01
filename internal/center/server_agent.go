@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,6 +74,18 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
+	}
+	if input.UseHeadscale && s.coLocatedAgentURL != "" {
+		var agentCount int
+		if err := s.store.db.QueryRowContext(request.Context(), `SELECT COUNT(*) FROM agents`).Scan(&agentCount); err != nil {
+			writeError(writer, http.StatusInternalServerError, fmt.Errorf("center: inspect existing Agents: %w", err))
+			return
+		}
+		if agentCount == 0 {
+			input.CenterURL = s.coLocatedAgentURL
+			input.CAFingerprint = ""
+			input.CACertificatePEM = ""
+		}
 	}
 	enrollment, err := s.store.CreateAgentEnrollment(request.Context(), AgentEnrollmentSpec{
 		SiteID: input.SiteID, Name: input.Name, CenterURL: input.CenterURL,

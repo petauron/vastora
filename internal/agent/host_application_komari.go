@@ -60,7 +60,8 @@ type komariRemovalFile struct {
 }
 
 func (manager SystemdHostApplicationManager) ApplyKomari(ctx context.Context, task DeploymentTask) error {
-	if task.Manifest.ID != "komari-agent" || task.Manifest.Version != "1.2.60" {
+	expectedVersion, official := OfficialAppVersion("komari-agent")
+	if task.Manifest.ID != "komari-agent" || !official || task.Manifest.Version != expectedVersion {
 		return errors.New("agent: unsupported Komari Agent package")
 	}
 	var input struct {
@@ -174,7 +175,8 @@ WantedBy=multi-user.target
 // whose bytes still match the last successful signed manifest. It deliberately
 // has no download path so Center outages cannot introduce new code.
 func (manager SystemdHostApplicationManager) RestoreKomari(ctx context.Context, task DeploymentTask) error {
-	if task.Manifest.ID != "komari-agent" || task.Manifest.Version != "1.2.60" || !strings.HasSuffix(task.AppKey, "/"+task.Manifest.ID) {
+	expectedVersion, official := OfficialAppVersion(task.Manifest.ID)
+	if task.Manifest.ID != "komari-agent" || !official || task.Manifest.Version != expectedVersion || !strings.HasSuffix(task.AppKey, "/"+task.Manifest.ID) {
 		return errors.New("agent: invalid Komari Agent restore state")
 	}
 	var input struct {

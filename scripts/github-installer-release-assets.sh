@@ -16,6 +16,10 @@ the GitHub Release in draft state, then verifies every asset digest.
 EOF
 }
 
+case "$command_name" in
+  -h|--help) usage; exit 0 ;;
+esac
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --tag) tag="${2:-}"; shift 2 ;;

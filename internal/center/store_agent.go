@@ -28,6 +28,7 @@ const agentConnectedMaxAge = 45 * time.Second
 type AgentEnrollment struct {
 	Token            string    `json:"token"`
 	SiteID           string    `json:"siteId"`
+	CenterURL        string    `json:"centerUrl"`
 	InstallerURL     string    `json:"installerUrl"`
 	CACertificatePEM string    `json:"caCertificatePem,omitempty"`
 	ExpiresAt        time.Time `json:"expiresAt"`
@@ -163,7 +164,7 @@ func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentS
 			return AgentEnrollment{}, errors.New("center: Headscale is not configured for public Agent bootstrap")
 		}
 	}
-	enrollment := AgentEnrollment{Token: token, SiteID: spec.SiteID, InstallerURL: installerURL, CACertificatePEM: spec.CACertificatePEM, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
+	enrollment := AgentEnrollment{Token: token, SiteID: spec.SiteID, CenterURL: centerURL, InstallerURL: installerURL, CACertificatePEM: spec.CACertificatePEM, ExpiresAt: s.now().UTC().Add(10 * time.Minute)}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return AgentEnrollment{}, fmt.Errorf("center: begin agent enrollment: %w", err)

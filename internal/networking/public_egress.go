@@ -58,7 +58,7 @@ func DetectPublicEgress(ctx context.Context, client *http.Client, candidates []C
 	if err != nil {
 		return nil, err
 	}
-	bindAddress, err := DefaultRouteAddress("1.1.1.1")
+	bindAddress, err := DefaultRouteAddress(publicAddress)
 	if err != nil {
 		return nil, err
 	}
