@@ -70,6 +70,10 @@ jobs:
         env:
           VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"
         run: go test ./internal/deployer -run '^TestGeneratedHeadscaleConfigAcceptedByPinnedBinary$' -count=1
+      - name: Verify Agent decommission on real systemd
+        run: |
+          go test -c -o /tmp/vastora-systemd-decommission.test ./cmd/vastora
+          sudo env VASTORA_SYSTEMD_DECOMMISSION_INTEGRATION=1 /tmp/vastora-systemd-decommission.test -test.run '^TestHostDecommissionRealSystemdEndToEnd$' -test.v
       - run: make go-security-check
 
   go-build:
