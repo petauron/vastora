@@ -900,6 +900,26 @@ describe("network and app views", () => {
     expect(update).toHaveBeenCalledWith("private-panel", true);
   });
 
+  it.each([
+    { nodeAsn: 64500, targetAsn: 64500, message: "同 ASN 仅作选站参考" },
+    { nodeAsn: 64500, targetAsn: 64501, message: "节点与目标 ASN 不同，仅作选站提示" },
+    { nodeAsn: 0, targetAsn: 0, message: "节点 未知 · 目标 未知" },
+    { nodeAsn: 64500, targetAsn: 0, message: "节点 AS64500 · 目标 未知" },
+  ])("shows advisory REALITY ASNs without blocking ready results: $nodeAsn/$targetAsn", async ({ nodeAsn, targetAsn, message }) => {
+    const data = realityDashboard();
+    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "asn-advisory", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.example.com", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", nodeAsn, targetAsn, guardStatus: "ready", resultAvailable: false, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("回落目标限制已启用");
+    expect(document.body.textContent).toContain(message);
+    expect(document.body.textContent).toContain("未认证连接仍可能访问此回落网站并消耗流量");
+    expect(document.body.textContent).not.toContain("AS0");
+    expect(document.body.textContent).not.toContain("防盗保护已启用");
+  });
+
 	it("reveals a REALITY client link only after explicit confirmation", async () => {
     const data = realityDashboard();
 	    vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-1", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", targetAsn: 64500, guardStatus: "ready", clientCreated: true, resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });

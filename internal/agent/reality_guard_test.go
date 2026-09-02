@@ -30,20 +30,57 @@ func TestRealityTargetNetworkPolicyRejectsSharedProvidersAndValidationFailure(t 
 	ip := net.ParseIP("203.0.113.10")
 
 	realityNetworkChecker = fakeRealityTargetNetworkChecker{cdnProvider: "cloudfront"}
-	if provider, err := checkRealityTargetNetworkPolicy(64500, 64500, ip); err != nil || provider != "cloudfront" {
+	if provider, err := checkRealityTargetNetworkPolicy(ip); err != nil || provider != "cloudfront" {
 		t.Fatalf("CDN result = %q, %v", provider, err)
 	}
 	realityNetworkChecker = fakeRealityTargetNetworkChecker{wafProvider: "cloudflare"}
-	if provider, err := checkRealityTargetNetworkPolicy(64500, 64500, ip); err != nil || provider != "cloudflare" {
+	if provider, err := checkRealityTargetNetworkPolicy(ip); err != nil || provider != "cloudflare" {
 		t.Fatalf("WAF result = %q, %v", provider, err)
 	}
 	realityNetworkChecker = fakeRealityTargetNetworkChecker{err: errors.New("dataset unavailable")}
-	if _, err := checkRealityTargetNetworkPolicy(64500, 64500, ip); err == nil {
+	if _, err := checkRealityTargetNetworkPolicy(ip); err == nil {
 		t.Fatal("CDN/WAF validation failure was accepted")
 	}
 	realityNetworkChecker = fakeRealityTargetNetworkChecker{}
-	if _, err := checkRealityTargetNetworkPolicy(64500, 64501, ip); err == nil {
-		t.Fatal("a target in a different ASN was accepted")
+	if provider, err := checkRealityTargetNetworkPolicy(ip); err != nil || provider != "" {
+		t.Fatalf("independent target rejected: %q, %v", provider, err)
+	}
+}
+
+func TestRealityASNHintIsOptionalAndBounded(t *testing.T) {
+	previous := realityASNLookup
+	t.Cleanup(func() { realityASNLookup = previous })
+	for _, value := range []struct {
+		name string
+		asn  int64
+		err  error
+		want int64
+	}{
+		{name: "known", asn: 64500, want: 64500},
+		{name: "different network", asn: 64501, want: 64501},
+		{name: "unavailable", err: errors.New("DNS unavailable")},
+		{name: "invalid", asn: -1},
+	} {
+		t.Run(value.name, func(t *testing.T) {
+			realityASNLookup = func(ctx context.Context, _ net.IP) (int64, error) {
+				if _, ok := ctx.Deadline(); !ok {
+					t.Fatal("ASN hint lookup has no deadline")
+				}
+				return value.asn, value.err
+			}
+			if got := realityASNHint(context.Background(), net.ParseIP("203.0.113.10")); got != value.want {
+				t.Fatalf("ASN hint = %d, want %d", got, value.want)
+			}
+		})
+	}
+	realityASNLookup = func(context.Context, net.IP) (int64, error) {
+		t.Fatal("missing or private node address must not be sent to ASN lookup")
+		return 0, nil
+	}
+	for _, ip := range []net.IP{nil, net.ParseIP("10.0.0.1")} {
+		if got := realityASNHint(context.Background(), ip); got != 0 {
+			t.Fatalf("missing ASN = %d, want unknown", got)
+		}
 	}
 }
 

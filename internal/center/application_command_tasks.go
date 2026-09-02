@@ -330,7 +330,7 @@ func (s *Store) completeRealityVerifyCommand(ctx context.Context, tx *sql.Tx, ta
 			taskError = "center: Agent returned an invalid REALITY verification result"
 		} else {
 			result := envelope.ApplicationCommand
-			if result.Action != "verify" || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || !validRealityTargetHostname(result.TargetHost) || !validRealityTargetHostname(result.ServerName) || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid {
+			if result.Action != "verify" || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || !validRealityTargetProof(*result) {
 				succeeded = false
 				taskError = "center: Agent returned an unsafe REALITY target verification"
 			}

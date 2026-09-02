@@ -330,6 +330,16 @@ func validRealityTargetHostname(hostname string) bool {
 	return domainSuffixPattern.MatchString(hostname) && strings.HasSuffix(hostname, ".com")
 }
 
+// ASN is advisory metadata: zero means unknown, and different ASNs are allowed.
+// The fixed public target, CDN/WAF decision and TLS proof remain mandatory.
+func validRealityTargetProof(result RealityCommandResult) bool {
+	ip := net.ParseIP(result.TargetIP)
+	return validRealityTargetHostname(result.TargetHost) && validRealityTargetHostname(result.ServerName) &&
+		ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() &&
+		result.NodeASN >= 0 && result.TargetASN >= 0 && result.CDNProvider == "" &&
+		result.TLS13 && result.X25519 && result.HTTP2 && result.CertificateValid
+}
+
 func validateRealityCommandResult(input RealityCommandTask, result RealityCommandResult) error {
 	expectedTag := input.InboundTag
 	if input.TargetNodeID > 0 {
@@ -342,7 +352,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
-	if !validRealityTargetHostname(result.TargetHost) || !validRealityTargetHostname(result.ServerName) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
+	if !validRealityTargetProof(result) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {

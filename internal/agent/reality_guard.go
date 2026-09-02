@@ -53,6 +53,7 @@ var (
 	realityRoutingEnsurer                               = ensureRealityGuardRouting
 	realityInboundHardener                              = hardenThreeXUIRealityInbound
 	realityNetworkChecker   realityTargetNetworkChecker = cdncheck.New()
+	realityASNLookup                                    = lookupTeamCymruASN
 )
 
 func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublicAddress string) (realityTargetVerification, error) {
@@ -60,14 +61,6 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 	serverName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(serverName), "."))
 	if !validRealityTargetHostname(targetHost) || !validRealityTargetHostname(serverName) {
 		return realityTargetVerification{}, errors.New("agent: REALITY targetHost and serverName must be valid .com hostnames")
-	}
-	nodeIP := net.ParseIP(strings.TrimSpace(nodePublicAddress))
-	if nodeIP == nil || !nodeIP.IsGlobalUnicast() || nodeIP.IsPrivate() {
-		return realityTargetVerification{}, errors.New("agent: target VLESS node public address is unavailable for ASN validation")
-	}
-	nodeASN, err := lookupTeamCymruASN(ctx, nodeIP)
-	if err != nil {
-		return realityTargetVerification{}, fmt.Errorf("agent: resolve VLESS node ASN: %w", err)
 	}
 	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, targetHost)
 	if err != nil || len(addresses) == 0 {
@@ -92,12 +85,7 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 	rejections := make([]string, 0, len(ordered))
 	for _, value := range ordered {
 		ip := unique[value]
-		targetASN, lookupErr := lookupTeamCymruASN(ctx, ip)
-		if lookupErr != nil {
-			rejections = append(rejections, value+": ASN lookup failed")
-			continue
-		}
-		if provider, policyErr := checkRealityTargetNetworkPolicy(nodeASN, targetASN, ip); policyErr != nil {
+		if provider, policyErr := checkRealityTargetNetworkPolicy(ip); policyErr != nil {
 			rejections = append(rejections, value+": "+policyErr.Error())
 			continue
 		} else if provider != "" {
@@ -106,11 +94,17 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 		}
 		verification := realityTargetVerification{
 			TargetHost: targetHost, TargetIP: value, ServerName: serverName,
-			NodeASN: nodeASN, TargetASN: targetASN,
 		}
 		if tlsErr := verifyPinnedRealityTLS(ctx, &verification); tlsErr != nil {
 			rejections = append(rejections, value+": "+tlsErr.Error())
 			continue
+		}
+		// ASN describes the network, not the fallback authorization boundary.
+		// Collect it only for a target that already passed the security checks.
+		verification.NodeASN = realityASNHint(ctx, net.ParseIP(strings.TrimSpace(nodePublicAddress)))
+		verification.TargetASN = realityASNHint(ctx, ip)
+		if err := ctx.Err(); err != nil {
+			return realityTargetVerification{}, err
 		}
 		return verification, nil
 	}
@@ -121,10 +115,7 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 	return realityTargetVerification{}, errors.New(message)
 }
 
-func checkRealityTargetNetworkPolicy(nodeASN, targetASN int64, ip net.IP) (string, error) {
-	if nodeASN <= 0 || targetASN <= 0 || nodeASN != targetASN {
-		return "", errors.New("target ASN does not match the VLESS node ASN")
-	}
+func checkRealityTargetNetworkPolicy(ip net.IP) (string, error) {
 	if realityNetworkChecker == nil {
 		return "", errors.New("CDN/WAF validation is unavailable")
 	}
@@ -149,6 +140,19 @@ func checkRealityTargetNetworkPolicy(nodeASN, targetASN int64, ip net.IP) (strin
 		return provider, nil
 	}
 	return "", nil
+}
+
+func realityASNHint(ctx context.Context, ip net.IP) int64 {
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return 0
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	asn, err := realityASNLookup(lookupCtx, ip)
+	if err != nil || asn <= 0 {
+		return 0
+	}
+	return asn
 }
 
 func validRealityTargetHostname(hostname string) bool {

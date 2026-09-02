@@ -11,6 +11,41 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
+func TestRealityTargetProofTreatsASNAsAdvisory(t *testing.T) {
+	valid := RealityCommandResult{
+		TargetHost: "www.example.com", ServerName: "www.example.com", TargetIP: "203.0.113.10",
+		NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true,
+	}
+	for _, asns := range [][2]int64{{64500, 64500}, {64500, 64501}, {0, 0}, {0, 64501}, {64500, 0}} {
+		candidate := valid
+		candidate.NodeASN, candidate.TargetASN = asns[0], asns[1]
+		if !validRealityTargetProof(candidate) {
+			t.Fatalf("advisory ASN rejected a valid proof: node=%d target=%d", asns[0], asns[1])
+		}
+	}
+	for name, mutate := range map[string]func(*RealityCommandResult){
+		"CDN or WAF":       func(value *RealityCommandResult) { value.CDNProvider = "cloudflare" },
+		"certificate":      func(value *RealityCommandResult) { value.CertificateValid = false },
+		"TLS version":      func(value *RealityCommandResult) { value.TLS13 = false },
+		"key exchange":     func(value *RealityCommandResult) { value.X25519 = false },
+		"HTTP2":            func(value *RealityCommandResult) { value.HTTP2 = false },
+		"private IP":       func(value *RealityCommandResult) { value.TargetIP = "10.0.0.1" },
+		"loopback":         func(value *RealityCommandResult) { value.TargetIP = "127.0.0.1" },
+		"invalid IP":       func(value *RealityCommandResult) { value.TargetIP = "bad" },
+		"invalid hostname": func(value *RealityCommandResult) { value.TargetHost = "bad" },
+		"invalid SNI":      func(value *RealityCommandResult) { value.ServerName = "bad" },
+		"negative ASN":     func(value *RealityCommandResult) { value.TargetASN = -1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := valid
+			mutate(&candidate)
+			if validRealityTargetProof(candidate) {
+				t.Fatal("unsafe proof passed after relaxing the ASN policy")
+			}
+		})
+	}
+}
+
 func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -46,6 +81,13 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 	}
 	if readyDesired.SharedHTTPS == nil || len(readyDesired.SharedHTTPS.Routes) != 1 || readyDesired.SharedHTTPS.Routes[0].ProxyProtocol != gateway.ProxyProtocolV2 {
 		t.Fatalf("managed REALITY route did not request Proxy Protocol v2: %#v", readyDesired.SharedHTTPS)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE three_x_ui_reality_guards SET target_asn = 0 WHERE service_id = 'reality-guard-service'`); err != nil {
+		t.Fatal(err)
+	}
+	services, err := store.ListServices(ctx)
+	if err != nil || len(services) != 1 || !strings.Contains(services[0].GuardSummary, "ASN unknown (advisory)") {
+		t.Fatalf("unknown ASN service summary = %#v, err = %v", services, err)
 	}
 
 	if err := store.quarantineReadyRealityGuards(ctx); err != nil {

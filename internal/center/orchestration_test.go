@@ -1025,6 +1025,11 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 	if err := validateRealityCommandResult(input, valid); err != nil {
 		t.Fatalf("valid result rejected: %v", err)
 	}
+	unknownASN := valid
+	unknownASN.NodeASN, unknownASN.TargetASN = 0, 0
+	if err := validateRealityCommandResult(input, unknownASN); err != nil {
+		t.Fatalf("unknown advisory ASN rejected a valid result: %v", err)
+	}
 	for name, mutate := range map[string]func(*RealityCommandResult){
 		"private service address": func(value *RealityCommandResult) {
 			value.Listen = "10.0.0.62"

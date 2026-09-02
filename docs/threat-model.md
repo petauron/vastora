@@ -56,14 +56,20 @@
   cross-node VLESS relaying is rejected. Unknown SNI traffic is passed to Caddy,
   which has no matching application route for unconfigured hostnames.
 - Managed VLESS+REALITY fallback traffic requires an administrator-approved
-  `.com` target. Agent pins one resolved IP, requires its ASN to match the VLESS
-  node, rejects cdncheck CDN/WAF matches, verifies TLS 1.3, X25519, H2, SNI, and
+  `.com` target. Agent pins one resolved IP, rejects cdncheck CDN/WAF matches,
+  verifies TLS 1.3, X25519, H2, SNI, and
   the certificate, and points REALITY at a loopback Xray `tunnel`. Exact SNI is
   routed direct and the next same-inbound rule blackholes everything else. Any
   missing, stale, or failed guard blocks Center publication and leaves the
   inbound disabled. Invalid REALITY clients may still reach the one approved
-  camouflage IP, which is an intentional REALITY property; this control does
-  not claim to prevent volumetric DDoS.
+  camouflage IP and consume traffic, which is an intentional REALITY property.
+  ASN is only a network-selection hint: mismatches and failed lookups do not
+  reject a target or unpublish a ready service. SNI is not authentication;
+  passthrough cannot inspect the encrypted HTTP Host or ECH inner ClientHello.
+  A fixed IP and an outer SNI allowlist alone do not prove CDN tenant isolation,
+  so known shared CDN/WAF targets and unavailable safety checks remain rejected.
+  A dataset non-match is not proof that all shared hosting is absent. This
+  control does not claim zero unauthenticated traffic or volumetric DDoS protection.
 - Cloudflare and Headscale credentials are encrypted; list APIs return only
   configuration metadata. Connector tokens are delivered only to the selected
   Agent through authenticated, leased tasks. Enrollment registers an Agent

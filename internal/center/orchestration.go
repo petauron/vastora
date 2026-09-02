@@ -546,7 +546,11 @@ func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 			return nil, err
 		}
 		if value.GuardStatus != "" {
-			value.GuardSummary = fmt.Sprintf("%s -> %s:443; SNI %s; ASN %d", guardTargetHost, guardTargetIP, guardServerName, guardTargetASN)
+			asn := "unknown"
+			if guardTargetASN > 0 {
+				asn = fmt.Sprint(guardTargetASN)
+			}
+			value.GuardSummary = fmt.Sprintf("%s -> %s:443; SNI %s; ASN %s (advisory)", guardTargetHost, guardTargetIP, guardServerName, asn)
 			if value.GuardStatus == "action_required" {
 				value.ActionRequired = guardError
 			}
