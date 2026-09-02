@@ -19,6 +19,7 @@ const (
 	hostDecommissionDir           = "/var/lib/vastora-decommission"
 	hostDecommissionBinary        = hostDecommissionDir + "/vastora"
 	hostDecommissionOperationPath = hostDecommissionDir + "/operation.json"
+	hostDecommissionResultPath    = hostDecommissionDir + "/result.json"
 	hostDecommissionCompleted     = hostDecommissionDir + "/completed"
 	hostDecommissionUnit          = "/etc/systemd/system/vastora-agent-decommission.service"
 	hostDecommissionUnitName      = "vastora-agent-decommission.service"
@@ -27,10 +28,6 @@ const (
 type systemHostDecommissioner struct {
 	dataDir    string
 	executable string
-}
-
-func (d systemHostDecommissioner) Prepare(ctx context.Context, deleteData bool) error {
-	return agent.PurgeManagedRuntime(ctx, deleteData)
 }
 
 func (d systemHostDecommissioner) ScheduleFinalRemoval(ctx context.Context, request agent.HostDecommissionRequest) error {
@@ -105,34 +102,89 @@ func persistHostDecommission(executable string, operation hostDecommissionOperat
 }
 
 func runPersistentHostDecommission(ctx context.Context, operationPath string) error {
-	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionCompleted))
-	if completed, err := protectedCompletionMarkerExists(completionPath); err != nil {
-		return err
-	} else if completed {
-		return nil
-	}
+	return runHostDecommission(ctx, operationPath, agent.Client{}, func(ctx context.Context, operation hostDecommissionOperation) error {
+		return uninstallAgentHost(ctx, operation.DataDir, operation.DeleteData, false, false)
+	})
+}
+
+// hostDecommissionResult is written only after host cleanup succeeds. Keep it
+// independently of the acknowledgement so a lost callback never repeats an
+// already completed destructive operation.
+type hostDecommissionResult struct {
+	Version int    `json:"version"`
+	TaskID  string `json:"taskId"`
+	Attempt int64  `json:"attempt"`
+}
+
+func runHostDecommission(ctx context.Context, operationPath string, client agent.Client, cleanup func(context.Context, hostDecommissionOperation) error) error {
 	operation, err := readHostDecommissionOperation(operationPath)
 	if err != nil {
 		return err
 	}
-	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
-	client := agent.Client{}
-	requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
-	err = client.BeginHostDecommission(requestContext, connection, operation.TaskID, operation.Attempt)
-	cancel()
+	resultPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionResultPath))
+	cleaned, err := readHostDecommissionResult(resultPath, operation)
 	if err != nil {
-		return fmt.Errorf("agent: transfer host cleanup responsibility to Center: %w", err)
-	}
-	if err := uninstallAgentHost(ctx, operation.DataDir, operation.DeleteData, true, false); err != nil {
 		return err
 	}
-	requestContext, cancel = context.WithTimeout(ctx, 30*time.Second)
+	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionCompleted))
+	if completed, err := protectedCompletionMarkerExists(completionPath); err != nil {
+		return err
+	} else if completed {
+		if !cleaned {
+			return errors.New("agent: host cleanup acknowledgement has no matching result")
+		}
+		return nil
+	}
+	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
+	if !cleaned {
+		requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err = client.BeginHostDecommission(requestContext, connection, operation.TaskID, operation.Attempt)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("agent: transfer host cleanup responsibility to Center: %w", err)
+		}
+		if err := cleanup(ctx, operation); err != nil {
+			return err
+		}
+		raw, err := json.Marshal(hostDecommissionResult{Version: 1, TaskID: operation.TaskID, Attempt: operation.Attempt})
+		if err != nil {
+			return fmt.Errorf("agent: encode completed host cleanup: %w", err)
+		}
+		if err := writeRootFileAtomic(resultPath, append(raw, '\n'), 0o600); err != nil {
+			return fmt.Errorf("agent: persist completed host cleanup: %w", err)
+		}
+	}
+	requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
 	err = client.CompleteHostDecommission(requestContext, connection, operation.TaskID, operation.Attempt, nil)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("agent: report completed host cleanup: %w", err)
 	}
 	return writeRootFileAtomic(completionPath, []byte("completed\n"), 0o600)
+}
+
+func readHostDecommissionResult(path string, operation hostDecommissionOperation) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("agent: inspect host cleanup result: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+		return false, errors.New("agent: host cleanup result is not a protected regular file")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("agent: read host cleanup result: %w", err)
+	}
+	var result hostDecommissionResult
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&result) != nil || decoder.Decode(&struct{}{}) != io.EOF || result.Version != 1 || result.TaskID != operation.TaskID || result.Attempt != operation.Attempt {
+		return false, errors.New("agent: host cleanup result does not match the current operation")
+	}
+	return true, nil
 }
 
 func readHostDecommissionOperation(path string) (hostDecommissionOperation, error) {
@@ -160,7 +212,8 @@ func readHostDecommissionOperation(path string) (hostDecommissionOperation, erro
 }
 
 func cleanPersistentHostDecommission(operationPath string) error {
-	if _, err := readHostDecommissionOperation(operationPath); err != nil {
+	operation, err := readHostDecommissionOperation(operationPath)
+	if err != nil {
 		return err
 	}
 	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionCompleted))
@@ -170,6 +223,12 @@ func cleanPersistentHostDecommission(operationPath string) error {
 	}
 	if !completed {
 		return nil
+	}
+	resultPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionResultPath))
+	if cleaned, err := readHostDecommissionResult(resultPath, operation); err != nil {
+		return err
+	} else if !cleaned {
+		return errors.New("agent: refusing to discard a host cleanup acknowledgement without its result")
 	}
 	if output, err := exec.Command("systemctl", "disable", hostDecommissionUnitName).CombinedOutput(); err != nil {
 		return fmt.Errorf("disable persistent host cleanup: %s: %w", strings.TrimSpace(string(output)), err)
@@ -181,7 +240,7 @@ func cleanPersistentHostDecommission(operationPath string) error {
 		return fmt.Errorf("reload systemd after persistent host cleanup: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	var result error
-	for _, path := range []string{operationPath, completionPath, hostDecommissionBinary} {
+	for _, path := range []string{resultPath, operationPath, completionPath, hostDecommissionBinary} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			result = errors.Join(result, fmt.Errorf("remove persistent host cleanup state %s: %w", path, err))
 		}
@@ -238,7 +297,16 @@ func writeRootFileAtomic(path string, content []byte, mode os.FileMode) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, path)
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	// The filename is part of the durable journal as well as the file bytes.
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtimeCleaned, keepBinary bool) error {

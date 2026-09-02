@@ -54,7 +54,6 @@ type TailscaleIsolationDesiredState struct {
 }
 
 type HostDecommissioner interface {
-	Prepare(context.Context, bool) error
 	ScheduleFinalRemoval(context.Context, HostDecommissionRequest) error
 }
 
@@ -1092,7 +1091,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	case "agent.decommission":
 		if c.Decommissioner == nil {
 			err = errors.New("agent: host decommission capability is not configured")
-		} else if err = c.Decommissioner.Prepare(ctx, task.DeleteData); err == nil {
+		} else {
 			var connection Connection
 			connection, err = store.Connection(ctx)
 			if err == nil {
@@ -1296,7 +1295,16 @@ func (c Client) BeginHostDecommission(ctx context.Context, connection Connection
 		return errors.New("agent: invalid host decommission handoff")
 	}
 	payload := map[string]any{"taskId": taskID, "attempt": attempt}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/decommission/start", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	var response struct {
+		Started bool `json:"started"`
+	}
+	if err := c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/decommission/start", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
+		return err
+	}
+	if !response.Started {
+		return errors.New("agent: Center did not acknowledge host cleanup handoff")
+	}
+	return nil
 }
 
 // CompleteHostDecommission reports the actual helper outcome without relying
@@ -1306,7 +1314,16 @@ func (c Client) CompleteHostDecommission(ctx context.Context, connection Connect
 		return errors.New("agent: invalid host decommission completion")
 	}
 	payload := map[string]any{"attempt": attempt, "succeeded": cleanupErr == nil, "error": safeTaskError(cleanupErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
-	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+	var response struct {
+		Completed bool `json:"completed"`
+	}
+	if err := c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
+		return err
+	}
+	if !response.Completed {
+		return errors.New("agent: Center did not acknowledge host cleanup completion")
+	}
+	return nil
 }
 
 // BeginHostUpdate transfers a claimed update from the Agent lease to the
