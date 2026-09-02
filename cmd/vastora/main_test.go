@@ -623,6 +623,18 @@ func TestTailscaleIsolationRejectsUnexpectedRuntimeDERPMap(t *testing.T) {
 	if err := verifyTailscaleDERPMap(valid, desired); err != nil {
 		t.Fatalf("managed DERP map was rejected: %v", err)
 	}
+	for _, encodedPort := range []string{`"DERPPort":0,`, ``} {
+		payload := strings.Replace(string(valid), `"DERPPort":443,`, encodedPort, 1)
+		if err := verifyTailscaleDERPMap([]byte(payload), desired); err != nil {
+			t.Fatalf("default HTTPS DERP port was rejected: %v", err)
+		}
+	}
+	for _, port := range []string{"-1", "8443", "65536"} {
+		payload := strings.Replace(string(valid), `"DERPPort":443`, `"DERPPort":`+port, 1)
+		if err := verifyTailscaleDERPMap([]byte(payload), desired); err == nil {
+			t.Fatalf("unexpected DERP port %s was accepted", port)
+		}
+	}
 	for name, payload := range map[string][]byte{
 		"official relay added": []byte(`{"Regions":{"1":{"RegionID":1,"RegionCode":"nyc","Nodes":[{"HostName":"derp1.tailscale.com","DERPPort":443}]},"998":{"RegionID":998,"Nodes":[{"HostName":"stun.cloudflare.com","STUNOnly":true}]},"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"headscale.example.com","DERPPort":443}]}}}`),
 		"STUN can relay":       []byte(`{"Regions":{"998":{"RegionID":998,"Nodes":[{"HostName":"stun.cloudflare.com","DERPPort":443}]},"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"headscale.example.com","DERPPort":443}]}}}`),

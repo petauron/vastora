@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -194,6 +195,14 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 		return errors.New("verify Tailscale DERP map: an unexpected relay or STUN region is advertised")
 	}
 	controlURL, _ := url.Parse(desired.ControlURL)
+	relayPort := 443
+	if controlURL.Port() != "" {
+		var err error
+		relayPort, err = strconv.Atoi(controlURL.Port())
+		if err != nil || relayPort < 1 || relayPort > 65535 {
+			return errors.New("verify Tailscale DERP map: the managed relay port is invalid")
+		}
+	}
 	for regionID, region := range derpMap.Regions {
 		stunOnly, expected := allowed[regionID]
 		if !expected || region.RegionID != 0 && region.RegionID != regionID || len(region.Nodes) == 0 {
@@ -211,7 +220,13 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 			return errors.New("verify Tailscale DERP map: the managed relay region is invalid")
 		}
 		for _, node := range region.Nodes {
-			if node.STUNOnly || node.DERPPort == 0 || !strings.EqualFold(strings.TrimSuffix(node.HostName, "."), strings.TrimSuffix(controlURL.Hostname(), ".")) {
+			port := node.DERPPort
+			// tailcfg.DERPNode defines zero as the default HTTPS port, not
+			// a missing or disabled relay. Still reject unexpected ports.
+			if port == 0 {
+				port = 443
+			}
+			if node.STUNOnly || port != relayPort || !strings.EqualFold(strings.TrimSuffix(node.HostName, "."), strings.TrimSuffix(controlURL.Hostname(), ".")) {
 				return errors.New("verify Tailscale DERP map: the managed relay does not use the current Headscale endpoint")
 			}
 		}
