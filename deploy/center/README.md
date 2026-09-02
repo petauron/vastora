@@ -144,6 +144,12 @@ terminal menu. Emergency cleanup remains available without Center:
 sudo vastora agent uninstall --purge
 ```
 
+This explicit local command stops the Agent, durably cancels any pending
+host-decommission helper, and removes its proven-owned service and recovery
+state before continuing the local uninstall. It does not contact Center or
+report an automatic decommission as successful. A failed cancellation remains
+cancelled across helper restarts; repeat the same command to finish cleanup.
+
 Tailscale is removed only when the Agent installer recorded it as
 Vastora-managed. A Tailscale installation that already existed on the host is
 disconnected from Vastora but its package and repository are preserved.
