@@ -109,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /install/agent.sh", s.handleAgentInstallScript)
 	mux.HandleFunc("GET /api/v1/agent-binaries/{os}/{arch}", s.handleAgentBinary)
+	mux.HandleFunc("POST /api/v1/agent-decommission-results/{taskID}", s.handleCompleteAgentDecommissionCallback)
 	mux.HandleFunc("GET /api/v1/agents/{id}/binary/{os}/{arch}", s.handleAgentUpdateBinary)
 	mux.HandleFunc("GET /api/v1/setup/status", s.handleSetupStatus)
 	mux.HandleFunc("POST /api/v1/setup/admin", s.handleSetupAdmin)

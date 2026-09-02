@@ -50,6 +50,7 @@ function tagFor(routePath) {
   const segment = routePath.split("/")[3] || "system";
   const tags = {
     "agent-binaries": "Agents",
+    "agent-decommission-results": "Agents",
     agents: "Agents",
     "agent-enrollments": "Agents",
     "application-commands": "Applications",
@@ -86,6 +87,7 @@ function securityFor(route) {
   }
   if (route.path === "/api/v1/setup/status") return [{}, { AdminSession: [] }];
   if (route.path === "/api/v1/agent-binaries/{os}/{arch}") return [{ EnrollmentBearer: [] }];
+  if (route.path === "/api/v1/agent-decommission-results/{taskID}") return [{ DecommissionCallbackBearer: [] }];
   if (route.path.startsWith("/api/v1/agents/{id}/") && route.path !== "/api/v1/agents/{id}/region-suggestion" && route.path !== "/api/v1/agents/{id}/headscale-join" && route.path !== "/api/v1/agents/{id}/revoke") {
     return [{ AgentBearer: [] }];
   }
@@ -172,7 +174,7 @@ const document = {
     title: "Vastora Center API",
     version: "v1",
     summary: "Administrator and Agent control-plane contract",
-    description: "The current prerelease /api/v1 contract. Browser administrator reads require the SameSite session cookie; mutations additionally require the X-CSRF-Token header. Agent endpoints use a per-Agent bearer credential, while initial binary download uses a one-time enrollment bearer token. JSON requests must use application/json, contain one value, be at most 1 MiB, and contain no unknown fields. Error responses use the Error envelope and never include secrets. Binary downloads and event streams declare their actual media types.",
+    description: "The current prerelease /api/v1 contract. Browser administrator reads require the SameSite session cookie; mutations additionally require the X-CSRF-Token header. Agent endpoints use a per-Agent bearer credential, initial binary download uses a one-time enrollment bearer token, and host-removal completion uses a token bound to one decommission task. JSON requests must use application/json, contain one value, be at most 1 MiB, and contain no unknown fields. Error responses use the Error envelope and never include secrets. Binary downloads and event streams declare their actual media types.",
   },
   servers: [{ url: "/", description: "The current Center" }],
   tags: ["Authentication", "Setup", "System", "Sites", "Agents", "Deployments", "Applications", "Publications", "Integrations", "Network", "Catalog"].map((name) => ({ name })),
@@ -183,6 +185,7 @@ const document = {
       AdminCSRF: { type: "apiKey", in: "header", name: "X-CSRF-Token", description: "Required together with AdminSession for browser mutations." },
       AgentBearer: { type: "http", scheme: "bearer", bearerFormat: "opaque Agent credential", description: "Credential bound to the Agent id in the path." },
       EnrollmentBearer: { type: "http", scheme: "bearer", bearerFormat: "one-time enrollment token", description: "Short-lived token used only to download the initial Agent binary." },
+      DecommissionCallbackBearer: { type: "http", scheme: "bearer", bearerFormat: "task-bound callback token", description: "Single-task token used only to acknowledge completed local Agent removal." },
     },
     schemas: {
       Error: {
@@ -254,7 +257,7 @@ for (const route of routes) {
     tags: [tagFor(route.path)],
     summary: words(route.handler),
     operationId: `${route.handler.replace(/^handle/, "").replace(/^./, (value) => value.toLowerCase())}_${route.method}`,
-    "x-vastora-audience": route.admin ? "browser-admin" : route.path === "/api/v1/setup/status" ? "bootstrap-optional-admin" : securityFor(route).some((entry) => entry.AgentBearer) ? "agent" : securityFor(route).some((entry) => entry.EnrollmentBearer) ? "agent-enrollment" : "bootstrap-public",
+    "x-vastora-audience": route.admin ? "browser-admin" : route.path === "/api/v1/setup/status" ? "bootstrap-optional-admin" : securityFor(route).some((entry) => entry.AgentBearer) ? "agent" : securityFor(route).some((entry) => entry.EnrollmentBearer) ? "agent-enrollment" : securityFor(route).some((entry) => entry.DecommissionCallbackBearer) ? "agent-decommission-callback" : "bootstrap-public",
     security: securityFor(route),
     responses: {
       [status]: {

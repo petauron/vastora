@@ -41,7 +41,7 @@ func (d systemHostDecommissioner) ScheduleFinalRemoval(ctx context.Context, requ
 		return fmt.Errorf("agent: resolve decommission executable: %w", err)
 	}
 	operation := hostDecommissionOperation{
-		Version: 1, TaskID: request.TaskID, Attempt: request.Attempt, DeleteData: request.DeleteData, DataDir: d.dataDir,
+		Version: 2, TaskID: request.TaskID, Attempt: request.Attempt, DeleteData: request.DeleteData, DataDir: d.dataDir, CallbackURL: request.CallbackURL, CallbackToken: request.CallbackToken,
 		AgentID: request.Connection.AgentID, CenterURL: request.Connection.CenterURL, Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint, CACertificatePEM: request.Connection.CACertificatePEM,
 	}
 	if err := persistHostDecommission(executable, operation); err != nil {
@@ -67,10 +67,12 @@ type hostDecommissionOperation struct {
 	Credential       string `json:"credential"`
 	CAFingerprint    string `json:"caFingerprint"`
 	CACertificatePEM string `json:"caCertificatePem,omitempty"`
+	CallbackURL      string `json:"callbackUrl"`
+	CallbackToken    string `json:"callbackToken"`
 }
 
 func persistHostDecommission(executable string, operation hostDecommissionOperation) error {
-	if operation.Version != 1 || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" {
+	if operation.Version != 2 || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" || strings.TrimSpace(operation.CallbackURL) == "" || strings.TrimSpace(operation.CallbackToken) == "" {
 		return errors.New("agent: invalid persistent host cleanup operation")
 	}
 	if _, err := safeAgentDataDir(operation.DataDir); err != nil {
@@ -100,7 +102,7 @@ func persistHostDecommission(executable string, operation hostDecommissionOperat
 		return fmt.Errorf("agent: persist host cleanup operation: %w", err)
 	}
 	unit := hostDecommissionServiceUnit()
-	if strings.Contains(unit, operation.Credential) {
+	if strings.Contains(unit, operation.Credential) || strings.Contains(unit, operation.CallbackToken) {
 		return errors.New("agent: refusing to expose host cleanup credentials in systemd")
 	}
 	if err := writeRootFileAtomic(hostDecommissionUnit, []byte(unit), 0o644); err != nil {
@@ -178,7 +180,7 @@ func runHostDecommission(ctx context.Context, operationPath string, client agent
 		}
 	}
 	requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
-	err = client.CompleteHostDecommission(requestContext, connection, operation.TaskID, operation.Attempt, nil)
+	err = client.CompleteHostDecommission(requestContext, operation.CallbackURL, operation.CallbackToken, operation.TaskID, operation.Attempt)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("agent: report completed host cleanup: %w", err)
@@ -225,7 +227,7 @@ func readHostDecommissionOperation(path string) (hostDecommissionOperation, erro
 	var operation hostDecommissionOperation
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&operation) != nil || decoder.Decode(&struct{}{}) != io.EOF || operation.Version != 1 || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" {
+	if decoder.Decode(&operation) != nil || decoder.Decode(&struct{}{}) != io.EOF || operation.Version != 2 || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" || strings.TrimSpace(operation.CallbackURL) == "" || strings.TrimSpace(operation.CallbackToken) == "" {
 		return hostDecommissionOperation{}, errors.New("agent: invalid persistent host cleanup operation")
 	}
 	if _, err := safeAgentDataDir(operation.DataDir); err != nil {

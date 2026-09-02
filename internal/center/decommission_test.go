@@ -2,6 +2,9 @@ package center
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 		t.Run(map[bool]string{false: "keep-data", true: "delete-data"}[deleteData], func(t *testing.T) {
 			store := openOrchestrationStore(t)
 			defer store.Close()
+			configureDecommissionCallbackForTest(t, store)
 			node := enrollOrchestrationNode(t, store, "decommission-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 			installCPA(t, store, node, "10.0.0.90")
 
@@ -33,13 +37,13 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			hostTask := waitForDecommissionTask(t, store, node)
-			if hostTask.Kind != "agent.decommission" || hostTask.DeleteData != deleteData {
-				t.Fatalf("unexpected Agent host cleanup task: %#v", hostTask)
+			if hostTask.Kind != "agent.decommission" || hostTask.DeleteData != deleteData || hostTask.DecommissionCallbackURL == "" || hostTask.DecommissionCallbackToken == "" {
+				t.Fatal("Agent host cleanup task is missing its callback binding")
 			}
 			if err := store.beginAgentDecommission(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.CompleteTask(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt, true, "", nil, hostTask.RequiredRuntimeGeneration); err != nil {
+			if err := store.completeAgentDecommissionCallback(ctx, hostTask.ID, hostTask.DecommissionCallbackToken, hostTask.Attempt); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-finished; err != nil {
@@ -65,11 +69,15 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 func TestAgentDecommissionRequiresDurableCleanupHandoff(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
+	configureBuiltinHeadscaleForTest(t, store)
 	node := enrollOrchestrationNode(t, store, "durable-cleanup-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
 	if err := store.queueAgentDecommission(context.Background(), node.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	task := waitForDecommissionTask(t, store, node)
+	if !strings.HasPrefix(task.DecommissionCallbackURL, "https://headscale.example.test/api/v1/agent-decommission-results/") || task.DecommissionCallbackToken == "" {
+		t.Fatal("cleanup task did not use the public Agent bootstrap origin")
+	}
 	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
 		t.Fatal("scheduled cleanup was accepted as completed before helper handoff")
 	}
@@ -86,11 +94,48 @@ func TestAgentDecommissionRequiresDurableCleanupHandoff(t *testing.T) {
 	if state != "cleaning" || lease != "" {
 		t.Fatalf("durable cleanup state = %q lease=%q", state, lease)
 	}
-	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
+	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, "wrong-token", task.Attempt); err == nil {
+		t.Fatal("invalid callback token was accepted")
+	}
+	request := httptest.NewRequest(http.MethodPost, task.DecommissionCallbackURL, strings.NewReader(fmt.Sprintf(`{"attempt":%d}`, task.Attempt)))
+	request.Header.Set("Authorization", "Bearer "+task.DecommissionCallbackToken)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewServer(store, "", false).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("public cleanup callback status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, task.DecommissionCallbackToken, task.Attempt); err != nil {
+		t.Fatalf("duplicate final callback was not idempotent: %v", err)
+	}
+}
+
+func TestAgentDecommissionScheduleFailureRotatesCallback(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	configureDecommissionCallbackForTest(t, store)
+	node := enrollOrchestrationNode(t, store, "cleanup-retry-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.94", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.94", LANAddress: "10.0.0.94", EnabledKinds: []string{networking.KindLAN}})
+	if err := store.queueAgentDecommission(context.Background(), node.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
-		t.Fatalf("duplicate final callback was not idempotent: %v", err)
+	first := waitForDecommissionTask(t, store, node)
+	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, first.ID, first.Attempt, false, "persistent helper could not start", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.completeAgentDecommissionCallback(context.Background(), first.ID, first.DecommissionCallbackToken, first.Attempt); err == nil {
+		t.Fatal("failed claim retained an active callback token")
+	}
+	second := waitForDecommissionTask(t, store, node)
+	if second.Attempt != first.Attempt+1 || second.DecommissionCallbackToken == first.DecommissionCallbackToken {
+		t.Fatalf("cleanup retry did not rotate its task-bound callback: first attempt=%d second attempt=%d", first.Attempt, second.Attempt)
+	}
+}
+
+func configureDecommissionCallbackForTest(t *testing.T, store *Store) {
+	t.Helper()
+	if _, err := store.db.ExecContext(context.Background(), `INSERT INTO settings(key, value) VALUES(?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, agentConnectURLSetting, "https://center.example.test"); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -62,8 +62,12 @@ Center verifies Headscale before saving the encrypted key. The bundled
 deployment helper accepts only this fixed Headscale/Caddy operation over a Unix
 socket; Center does not mount the Docker socket. External Headscale URLs must be
 added to Center's repeated `--headscale-allowed-url` startup option before they
-can be selected in the browser. Agent enrollment tokens expire after ten
-minutes and work only once.
+can be selected in the browser. Its public reverse proxy must send
+`/install/agent.sh`, `/api/v1/agent-binaries/*`, and
+`/api/v1/agent-decommission-results/*` to Center while leaving all other paths
+on Headscale. Agent enrollment tokens expire after ten minutes and work only
+once. The cleanup result path accepts only the callback token generated for the
+matching decommission task.
 
 ## Optional fixed Tailscale direct endpoint
 
@@ -154,6 +158,12 @@ Both local uninstall and Center-orchestrated host cleanup also cancel any
 pending Agent updater before removing the runtime or executable. The updater's
 start and stop hooks honor the cancellation, so a retry cannot reinstall or
 roll back the Agent while uninstall is in progress.
+
+Center-orchestrated cleanup hands responsibility to the persistent local helper
+before disconnecting Tailscale. After local removal succeeds, the helper sends
+only the task attempt to the task-bound callback on the same public hostname
+used by `agent.sh`; it does not need a public Agent port or reuse the Agent's
+long-lived credential on that public route.
 
 Tailscale is removed only when the Agent installer recorded it as
 Vastora-managed. A Tailscale installation that already existed on the host is

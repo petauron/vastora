@@ -193,9 +193,11 @@ Caddy receives explicit listeners for LAN, Headscale, public, and control-plane
 loopback addresses. For bundled infrastructure, Headscale is the only public
 HTTPS service. Center binds its Web route to the co-located node's Headscale
 address and uses a Cloudflare DNS-01 certificate. The public Headscale hostname
-also exposes only the exact `/install/agent.sh` bootstrap path to Center; the
-short-lived enrollment token is still required before any private bootstrap
-material is returned.
+also exposes only `/install/agent.sh`, `/api/v1/agent-binaries/*`, and
+`/api/v1/agent-decommission-results/*` to Center. Enrollment downloads require
+a short-lived one-time token. A decommission result requires the separate token
+bound to that exact cleanup task and attempt; it cannot call any other Center
+API.
 Routes reference exactly one listener kind, so the same hostname can be scoped
 to separate private entry networks without a wildcard bind. Caddy has no Docker
 socket; its Admin API is a permissioned Unix socket shared only with Agent.

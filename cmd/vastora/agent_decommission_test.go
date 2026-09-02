@@ -19,21 +19,28 @@ func TestHostDecommissionPersistsResultAcrossCallbackFailure(t *testing.T) {
 	environment := newAgentUninstallFixture(t)
 	var handoffs, callbacks atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.Header.Get("Authorization") != "Bearer synthetic-cleanup-credential" {
+		if request.Method != http.MethodPost {
 			t.Error("cleanup callback was not authenticated")
 			http.Error(response, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		if strings.HasSuffix(request.URL.Path, "/decommission/start") {
+			if request.Header.Get("Authorization") != "Bearer synthetic-cleanup-credential" {
+				t.Error("cleanup handoff did not use the Agent credential")
+			}
 			handoffs.Add(1)
 			_ = json.NewEncoder(response).Encode(map[string]bool{"started": true})
 			return
 		}
-		var result struct {
-			Attempt   int64 `json:"attempt"`
-			Succeeded bool  `json:"succeeded"`
+		if request.Header.Get("Authorization") != "Bearer synthetic-callback-token" || request.URL.Path != "/api/v1/agent-decommission-results/agent-decommission-fixture" {
+			t.Error("cleanup completion did not use its task-bound callback")
+			http.Error(response, "unauthorized", http.StatusUnauthorized)
+			return
 		}
-		if json.NewDecoder(request.Body).Decode(&result) != nil || result.Attempt != 2 || !result.Succeeded {
+		var result struct {
+			Attempt int64 `json:"attempt"`
+		}
+		if json.NewDecoder(request.Body).Decode(&result) != nil || result.Attempt != 2 {
 			t.Error("cleanup callback did not contain the successful attempt")
 			http.Error(response, "invalid result", http.StatusBadRequest)
 			return
@@ -68,7 +75,7 @@ func TestHostDecommissionPersistsResultAcrossCallbackFailure(t *testing.T) {
 	if found, err := readHostDecommissionResult(resultPath, operation); err != nil || !found {
 		t.Fatalf("lost completed cleanup result: %v", err)
 	}
-	if raw, err := os.ReadFile(resultPath); err != nil || strings.Contains(string(raw), operation.Credential) {
+	if raw, err := os.ReadFile(resultPath); err != nil || strings.Contains(string(raw), operation.Credential) || strings.Contains(string(raw), operation.CallbackToken) {
 		t.Fatalf("cleanup result is unavailable or contains credentials: %v", err)
 	}
 	completionPath := filepath.Join(filepath.Dir(operationPath), "completed")
@@ -90,7 +97,7 @@ func TestHostDecommissionRetainsOperationAfterCleanupFailure(t *testing.T) {
 	environment := newAgentUninstallFixture(t)
 	var callbacks atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if strings.HasSuffix(request.URL.Path, "/result") {
+		if strings.HasPrefix(request.URL.Path, "/api/v1/agent-decommission-results/") {
 			callbacks.Add(1)
 			_ = json.NewEncoder(response).Encode(map[string]bool{"completed": true})
 			return
@@ -176,8 +183,9 @@ func TestHostDecommissionRejectsUntrustedOrStaleResult(t *testing.T) {
 func writeHostDecommissionFixture(t *testing.T, dataDir, centerURL string) (string, hostDecommissionOperation) {
 	t.Helper()
 	operation := hostDecommissionOperation{
-		Version: 1, TaskID: "agent-decommission-fixture", Attempt: 2, DeleteData: true,
+		Version: 2, TaskID: "agent-decommission-fixture", Attempt: 2, DeleteData: true,
 		DataDir: dataDir, AgentID: "fixture", CenterURL: centerURL, Credential: "synthetic-cleanup-credential",
+		CallbackURL: centerURL + "/api/v1/agent-decommission-results/agent-decommission-fixture", CallbackToken: "synthetic-callback-token",
 	}
 	raw, err := json.Marshal(operation)
 	if err != nil {
