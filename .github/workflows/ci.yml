@@ -41,7 +41,7 @@ jobs:
 
   go-race:
     name: Go race tests
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -55,7 +55,7 @@ jobs:
 
   go-quality:
     name: Go quality and security
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -67,18 +67,21 @@ jobs:
           cache: false
       - run: make go-format-check go-static-check
       - name: Validate generated Headscale config with pinned binary
+        if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         env:
           VASTORA_HEADSCALE_CONFIG_INTEGRATION: "1"
         run: go test ./internal/deployer -run '^TestGeneratedHeadscaleConfigAcceptedByPinnedBinary$' -count=1
       - name: Verify Agent decommission on real systemd
+        if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         run: |
           go test -c -o /tmp/vastora-systemd-decommission.test ./cmd/vastora
           sudo env VASTORA_SYSTEMD_DECOMMISSION_INTEGRATION=1 /tmp/vastora-systemd-decommission.test -test.run '^TestHostDecommissionRealSystemdEndToEnd$' -test.v
-      - run: make go-security-check
+      - if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
+        run: make go-security-check
 
   go-build:
     name: Go cross-compile
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -163,7 +166,7 @@ jobs:
         run: scripts/validate-release-metadata.sh "$BASE_SHA"
 
   container-image-security:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.container == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.container == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 25

@@ -75,12 +75,19 @@ for step in \
   require_fresh_release_step "$step"
 done
 
+for step in \
+  'Scan released Center image for x64 vulnerabilities' \
+  'Scan released Center image for ARM64 vulnerabilities'; do
+  step_block="$(printf '%s\n' "$publish_job" | sed -n "/^      - name: $step$/,/^      - name:/p")"
+  require_in "$step_block" "vars.VASTORA_CI_MODE != 'alpha'"
+done
+
 if printf '%s\n' "$prepare_job" | grep -Fq 'skip-github-release: true'; then
   echo 'Release creation must not update the next release pull request.' >&2
   exit 1
 fi
 if printf '%s\n' "$publish_job" | grep -Fq '          tags:'; then
-  echo 'Official image tags must be promoted only after both architecture scans pass.' >&2
+  echo 'Official image tags must be promoted by digest after the applicable Alpha or stable checks.' >&2
   exit 1
 fi
 

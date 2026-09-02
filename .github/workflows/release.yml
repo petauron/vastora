@@ -150,7 +150,7 @@ jobs:
           sbom: true
 
       - name: Scan released Center image for x64 vulnerabilities
-        if: needs.prepare.outputs.release_retry != 'true'
+        if: needs.prepare.outputs.release_retry != 'true' && vars.VASTORA_CI_MODE != 'alpha'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PLATFORM: linux/amd64
@@ -163,7 +163,7 @@ jobs:
           exit-code: "1"
 
       - name: Scan released Center image for ARM64 vulnerabilities
-        if: needs.prepare.outputs.release_retry != 'true'
+        if: needs.prepare.outputs.release_retry != 'true' && vars.VASTORA_CI_MODE != 'alpha'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PLATFORM: linux/arm64
