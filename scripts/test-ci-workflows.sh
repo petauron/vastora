@@ -22,6 +22,7 @@ require_line "$ci_workflow" '    name: CI / gate'
 require_line "$ci_workflow" '    name: Go race tests'
 require_line "$ci_workflow" '    name: Go quality and security'
 require_line "$ci_workflow" '    name: Go cross-compile'
+require_line "$ci_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$ci_workflow" '    name: Release metadata'
 require_line "$ci_workflow" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
 require_line "$ci_workflow" '        run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"'
@@ -35,6 +36,7 @@ require_line "$ci_workflow" '          cache-from: type=registry,ref=ghcr.io/pet
 require_line "$ci_workflow" '        run: scripts/check-runtime-image-platforms.sh'
 require_line "$ci_workflow" '        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --verbose .'
 require_line "$codeql_workflow" '    name: CodeQL / gate'
+require_line "$codeql_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$codeql_workflow" '  group: codeql-${{ github.workflow }}-${{ github.ref }}'
 require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
 

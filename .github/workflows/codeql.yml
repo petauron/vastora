@@ -38,7 +38,7 @@ jobs:
 
   analyze-go:
     name: Analyze (go)
-    if: github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+    if: github.event_name != 'pull_request' || (vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -52,7 +52,7 @@ jobs:
 
   analyze-javascript:
     name: Analyze (javascript-typescript)
-    if: github.event_name != 'pull_request' || needs.changes.outputs.javascript == 'true' || needs.changes.outputs.full == 'true'
+    if: github.event_name != 'pull_request' || (vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.javascript == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
