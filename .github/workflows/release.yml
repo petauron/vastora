@@ -268,11 +268,23 @@ jobs:
           EXPECTED_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: .release-tools/scripts/verify-installer-release.sh --base-url https://vastora.petauron.com --expected-version "$EXPECTED_VERSION" --attempts 18 --retry-delay 5
 
-      - name: Publish GitHub release metadata
+      - name: Generate and publish GitHub release notes
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-        run: gh release edit "$RELEASE_TAG" --draft=false
+        run: |
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$RELEASE_SHA" \
+            -f configuration_file_path='.github/release.yml' \
+            --jq '.body' > "$notes_file"
+          test -s "$notes_file"
+          gh release edit "$RELEASE_TAG" \
+            --title "Petauron Vastora $RELEASE_TAG" \
+            --notes-file "$notes_file" \
+            --draft=false
 
   release-pr:
     name: Prepare next release pull request

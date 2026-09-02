@@ -1,0 +1,21 @@
+changelog:
+  exclude:
+    labels:
+      - "autorelease: pending"
+      - "autorelease: tagged"
+    authors:
+      - "dependabot[bot]"
+      - "github-actions[bot]"
+  categories:
+    - title: 安全更新
+      labels:
+        - security
+    - title: 新功能
+      labels:
+        - enhancement
+    - title: 问题修复
+      labels:
+        - bug
+    - title: 维护与其他
+      labels:
+        - "*"
