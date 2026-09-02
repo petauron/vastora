@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.0-alpha.92](https://github.com/petauron/vastora/compare/v0.1.0-alpha.91...v0.1.0-alpha.92) (2026-09-02)
+
+
+### Features
+
+* **release:** publish GitHub-generated release notes ([93ab48a](https://github.com/petauron/vastora/commit/93ab48a1946b68b1cca465e076cc4ad8fd9fabe2))
+
+
+### Bug Fixes
+
+* address PR review and CI contract findings ([2e51600](https://github.com/petauron/vastora/commit/2e51600796bd2094d8d34e2aa164303d151de939))
+* **assistant:** isolate runtime diagnostics and inspect tool values ([4fc9c69](https://github.com/petauron/vastora/commit/4fc9c69bf2d260451ffdbc9b625ae82176faaf0e))
+* **assistant:** reject credential-like chat input ([ed4b866](https://github.com/petauron/vastora/commit/ed4b86644f0e9ce4039aaeb301bf3a5fb5c2bb7f))
+* **reality:** enforce pinned target network policy ([4eaf159](https://github.com/petauron/vastora/commit/4eaf1599f4611d49dc5bac054957c78b72df23e1))
+* **reality:** make ASN advisory behind HAProxy ([2e5fed5](https://github.com/petauron/vastora/commit/2e5fed5f68d8a7a71b730c15e1abc429b6b99b00))
+* **security:** close Headscale alternate HTTP routes ([e10d6ae](https://github.com/petauron/vastora/commit/e10d6ae41fe55eb7087025a0b50f56c01775882b))
+* **security:** construct a single-route Headscale transport ([b6721ed](https://github.com/petauron/vastora/commit/b6721edd74f4bdc50cc3f58927ad61eac60cad72))
+* **security:** pin Headscale HTTP destinations ([d3256f0](https://github.com/petauron/vastora/commit/d3256f0a05511befcaf4282ab24d2af9a3667671))
+* **tailscale:** repair fixed endpoint runtime drift ([d137a4b](https://github.com/petauron/vastora/commit/d137a4b0d14973753a906bf360a735a77a5bc03c))
+* **tailscale:** verify managed DERP map at runtime ([1bfe0a1](https://github.com/petauron/vastora/commit/1bfe0a1d5faad79d443b337ae5880694e3defaaf))
+* **web:** explain managed REALITY shared 443 ([6865d8f](https://github.com/petauron/vastora/commit/6865d8ffd5d8c6383fb08913fdbd8cc044cb83c5))
+
 ## [0.1.0-alpha.91](https://github.com/petauron/vastora/compare/v0.1.0-alpha.90...v0.1.0-alpha.91) (2026-09-02)
 
 
