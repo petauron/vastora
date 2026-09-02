@@ -128,6 +128,49 @@ func TestAgentUninstallPreservesBinaryWhenRequested(t *testing.T) {
 	}
 }
 
+func TestAgentUninstallRejectsInvalidOwnershipBeforeHostChanges(t *testing.T) {
+	for _, kind := range []string{"symlink", "permissions", "ambiguous-record"} {
+		t.Run(kind, func(t *testing.T) {
+			environment := newAgentUninstallFixture(t)
+			path := filepath.Join(environment.dataDir, agent.HostInstallStateName)
+			switch kind {
+			case "symlink":
+				target := filepath.Join(t.TempDir(), "state")
+				if err := os.Rename(path, target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, path); err != nil {
+					t.Fatal(err)
+				}
+			case "permissions":
+				if err := os.Chmod(path, 0o666); err != nil {
+					t.Fatal(err)
+				}
+			case "ambiguous-record":
+				if err := os.WriteFile(path, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP=external\nTAILSCALE_OWNERSHIP=managed\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			environment.run = func(context.Context, string, ...string) ([]byte, error) {
+				t.Fatal("invalid provenance triggered a host command")
+				return nil, nil
+			}
+			environment.purgeRuntime = func(context.Context, bool) error {
+				t.Fatal("invalid provenance triggered runtime removal")
+				return nil
+			}
+			if err := uninstallAgentHostWithEnvironment(context.Background(), true, false, false, environment); err == nil {
+				t.Fatal("uninstall accepted untrustworthy ownership evidence")
+			}
+			for _, path := range append([]string{path, environment.unitPath}, environment.binaryPaths...) {
+				if _, err := os.Lstat(path); err != nil {
+					t.Fatalf("invalid provenance caused file removal: %s (%v)", path, err)
+				}
+			}
+		})
+	}
+}
+
 func newAgentUninstallFixture(t *testing.T) agentUninstallEnvironment {
 	t.Helper()
 	root := t.TempDir()
