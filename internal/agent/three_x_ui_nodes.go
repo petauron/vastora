@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
+
+const threeXUINodeReadyTimeout = 15 * time.Second
 
 type threeXUINodeView struct {
 	ID      int    `json:"id"`
@@ -32,6 +35,9 @@ func applyThreeXUINodeCommand(ctx context.Context, store *Store, command ThreeXU
 	}
 	if ip := net.ParseIP(command.Address); command.Action != "reconcile" || ip == nil || ip.To4() == nil || command.Port < 1024 || command.Port > 65535 || strings.TrimSpace(command.APIToken) == "" {
 		return ThreeXUINodeCommandResult{}, errors.New("agent: invalid 3x-ui VLESS node configuration")
+	}
+	if err := waitForThreeXUINodeReady(ctx, command.Address, command.Port, command.APIToken); err != nil {
+		return ThreeXUINodeCommandResult{}, err
 	}
 	desiredName := threeXUINodeAPIName(command.WorkerApplicationID)
 	nodes, err := listThreeXUINodes(ctx, baseURL, masterToken)
@@ -71,6 +77,31 @@ func applyThreeXUINodeCommand(ctx context.Context, store *Store, command ThreeXU
 		return ThreeXUINodeCommandResult{}, errors.New("agent: 3x-ui controller returned an invalid VLESS node")
 	}
 	return ThreeXUINodeCommandResult{RemoteNodeID: node.ID, Status: "ready"}, nil
+}
+
+func waitForThreeXUINodeReady(ctx context.Context, address string, port int, token string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, threeXUINodeReadyTimeout)
+	defer cancel()
+	endpoint := "http://" + net.JoinHostPort(address, strconv.Itoa(port)) + "/panel/api/server/status"
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		payload, err := threeXUIAPI(waitCtx, http.MethodGet, endpoint, token, "", nil)
+		if err == nil && len(payload) > 0 && string(payload) != "null" {
+			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastErr = errors.New("3x-ui node status is not ready")
+		}
+		select {
+		case <-waitCtx.Done():
+			return fmt.Errorf("agent: wait for 3x-ui VLESS node API: %w", lastErr)
+		case <-ticker.C:
+		}
+	}
 }
 
 func listThreeXUINodes(ctx context.Context, baseURL, token string) ([]threeXUINodeView, error) {

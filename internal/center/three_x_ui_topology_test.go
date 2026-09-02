@@ -119,7 +119,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE services SET status = 'stopped' WHERE application_id = ? AND app_protocol = 'vless/tcp/reality'`, workerDeployment.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
-	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, RegionCode: "US", Name: "Worker", ClientName: "Phone", GatewayNodeID: worker.ID, Hostname: "reality.worker.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
+	reality, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: workerDeployment.ApplicationID, RegionCode: "US", Name: "Worker", ClientName: "Phone", Hostname: "reality.worker.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	if err := store.CompleteTask(ctx, master.ID, master.Credential, realityTask.ID, realityTask.Attempt, false, "simulated worker setup failure", nil, realityTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: masterDeployment.ApplicationID, RegionCode: "US", Name: "Controller", ClientName: "Phone", GatewayNodeID: master.ID, Hostname: "reality.controller.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
+	if _, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: masterDeployment.ApplicationID, RegionCode: "US", Name: "Controller", ClientName: "Phone", Hostname: "reality.controller.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
 		t.Fatal(err)
 	}
 	controllerRealityTask := claimTask(t, store, master)

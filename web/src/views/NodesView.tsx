@@ -161,8 +161,8 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
     setDanger(false);
     setConfirmation("");
   }, [agent?.id]);
-  const gatewayRequired = Boolean(agent && (data.sites.some((site) => site.gatewayNodes.includes(agent.id)) || data.publications.some((publication) => publication.gatewayNodeId === agent.id && publication.status !== "stopped")));
-  const tunnelRequired = Boolean(agent && data.publications.some((publication) => publication.gatewayNodeId === agent.id && publication.kind === "cloudflare_tunnel" && publication.status !== "stopped"));
+  const gatewayRequired = Boolean(agent && (data.sites.some((site) => site.gatewayNodes.includes(agent.id)) || data.publications.some((publication) => publication.ingress.owner === "site_gateway" && publication.ingress.entryNodeId === agent.id && publication.status !== "stopped")));
+  const tunnelRequired = Boolean(agent && data.publications.some((publication) => publication.ingress.owner === "tunnel_connector" && publication.ingress.entryNodeId === agent.id && publication.status !== "stopped"));
   const purposeChanged = Boolean(agent && (gateway !== agent.capabilities.gateway || tunnel !== agent.capabilities.tunnel));
   const roles = gateway ? "worker,gateway" : "worker";
   const capabilities = ["docker", gateway ? "gateway" : "", tunnel ? "tunnel" : ""].filter(Boolean).join(",");

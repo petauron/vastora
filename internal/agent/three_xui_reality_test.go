@@ -18,27 +18,16 @@ import (
 func installRealityGuardTestSeams(t *testing.T) {
 	t.Helper()
 	previousVerifier := realityTargetVerifier
-	previousCompanion := realityCompanionEnsurer
-	previousRouting := realityRoutingEnsurer
 	previousHardener := realityInboundHardener
 	realityTargetVerifier = func(context.Context, string, string, string) (realityTargetVerification, error) {
 		return realityTargetVerification{TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true}, nil
 	}
-	realityCompanionEnsurer = func(_ context.Context, _ string, _ string, _ int, realityPort int, inboundTag, _ string) (threeXUIRealityInbound, error) {
-		if realityPort != threeXUIRealityPort {
-			return threeXUIRealityInbound{}, errors.New("unexpected REALITY port")
-		}
-		return threeXUIRealityInbound{ID: 99, Tag: realityGuardTag(inboundTag), Port: threeXUIRealityGuardPort, Protocol: "tunnel", Listen: "127.0.0.1", Enable: true}, nil
-	}
-	realityRoutingEnsurer = func(context.Context, string, string, string, string) error { return nil }
-	realityInboundHardener = func(_ context.Context, _ string, _ string, inbound threeXUIRealityInbound, _ int, inboundTag string, _ realityTargetVerification) (threeXUIRealityInbound, threeXUIRealityInbound, error) {
+	realityInboundHardener = func(_ context.Context, _ string, _ string, inbound threeXUIRealityInbound, _ int, _ string, _ realityTargetVerification) (threeXUIRealityInbound, error) {
 		inbound.Enable = true
-		return inbound, threeXUIRealityInbound{ID: 99, Tag: realityGuardTag(inboundTag), Port: threeXUIRealityGuardPort, Protocol: "tunnel", Listen: "127.0.0.1", Enable: true}, nil
+		return inbound, nil
 	}
 	t.Cleanup(func() {
 		realityTargetVerifier = previousVerifier
-		realityCompanionEnsurer = previousCompanion
-		realityRoutingEnsurer = previousRouting
 		realityInboundHardener = previousHardener
 	})
 }

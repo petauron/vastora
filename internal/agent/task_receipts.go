@@ -150,6 +150,17 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 			}
 			return nil, nil
 		}
+		if taskReconcilesCompleteDesiredState(task.Kind) && task.Attempt > attempt {
+			result, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, task_hash = ?, state = 'processing', sealed_completion = NULL, updated_at = ?
+				WHERE task_id = ? AND attempt = ? AND state IN ('completed', 'acknowledged')`, task.Attempt, hash, s.now().UTC().Format(time.RFC3339Nano), task.ID, attempt)
+			if err != nil {
+				return nil, fmt.Errorf("agent: retry desired-state task: %w", err)
+			}
+			if changed, _ := result.RowsAffected(); changed != 1 {
+				return nil, errors.New("agent: desired-state task changed before retry")
+			}
+			return nil, nil
+		}
 		if task.Kind == "application.apply" && completion.ApplicationRuntimeGeneration != executorRuntimeGeneration {
 			return nil, errors.New("agent: stored task completion has invalid runtime generation evidence")
 		}
@@ -186,7 +197,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		}
 		return nil, nil
 	}
-	if task.Kind == "gateway.routes.apply" || task.Kind == "gateway.component.apply" || task.Kind == "tunnel.state.apply" {
+	if taskReconcilesCompleteDesiredState(task.Kind) {
 		// These tasks reconcile complete desired state. Reapplying that state is
 		// the recovery mechanism when the previous acknowledgement was lost.
 		if _, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, updated_at = ? WHERE task_id = ? AND state = 'processing'`, task.Attempt, s.now().UTC().Format(time.RFC3339Nano), task.ID); err != nil {
@@ -217,6 +228,10 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		return nil, err
 	}
 	return &completion, nil
+}
+
+func taskReconcilesCompleteDesiredState(kind string) bool {
+	return kind == "gateway.routes.apply" || kind == "gateway.component.apply" || kind == "node.listener.apply" || kind == "tunnel.state.apply"
 }
 
 func (s *Store) RecordTaskCompletion(ctx context.Context, completion TaskCompletion) error {

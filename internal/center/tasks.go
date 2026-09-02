@@ -43,6 +43,8 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 		if err == nil {
 			_, err = tx.ExecContext(ctx, `UPDATE routes SET status = 'pending', updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND status = 'applying'`, now, agentID, task.Revision)
 		}
+	case "node.listener.apply":
+		result, err = tx.ExecContext(ctx, `UPDATE node_listener_states SET status = 'pending', lease_expires_at = '', updated_at = ? WHERE node_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ?`, now, agentID, task.Revision, task.Attempt)
 	case "tunnel.state.apply":
 		result, err = tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'pending', lease_expires_at = '', updated_at = ? WHERE agent_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ?`, now, agentID, task.Revision, task.Attempt)
 	case "gateway.component.apply":
@@ -92,6 +94,9 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 	case func() bool { _, ok := gatewayTaskRevision(taskID); return ok }():
 		revision, _ := gatewayTaskRevision(taskID)
 		result, err = s.db.ExecContext(ctx, `UPDATE gateway_states SET lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, revision, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case func() bool { _, ok := nodeListenerTaskRevision(taskID); return ok }():
+		revision, _ := nodeListenerTaskRevision(taskID)
+		result, err = s.db.ExecContext(ctx, `UPDATE node_listener_states SET lease_expires_at = ?, updated_at = ? WHERE node_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, revision, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case func() bool { _, ok := tunnelTaskRevision(taskID); return ok }():
 		revision, _ := tunnelTaskRevision(taskID)
 		result, err = s.db.ExecContext(ctx, `UPDATE cloudflare_tunnels SET lease_expires_at = ?, updated_at = ? WHERE agent_id = ? AND desired_revision = ? AND status = 'applying' AND attempt = ? AND lease_expires_at > ?`, append(values, agentID, revision, expectedAttempt, now.Format(time.RFC3339Nano))...)
@@ -188,6 +193,7 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		{`SELECT id, 1 FROM application_commands WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "application.command"},
 		{`SELECT 'gateway-component-' || gateway_node_id || '-g' || generation, generation FROM gateway_components WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "gateway.component.apply"},
 		{`SELECT 'gateway-route-' || gateway_node_id || '-r' || desired_revision, desired_revision FROM gateway_states WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "gateway.routes.apply"},
+		{`SELECT 'node-listener-' || node_id || '-r' || desired_revision, desired_revision FROM node_listener_states WHERE node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "node.listener.apply"},
 		{`SELECT 'tunnel-' || agent_id || '-r' || desired_revision, desired_revision FROM cloudflare_tunnels WHERE agent_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "tunnel.state.apply"},
 		{`SELECT 'agent-decommission-' || agent_id, 1 FROM agent_decommissions WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "agent.decommission"},
 		{`SELECT id, 1 FROM agent_updates WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "agent.update"},
@@ -228,6 +234,9 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE node_listener_states SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {

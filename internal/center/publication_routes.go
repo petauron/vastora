@@ -191,22 +191,22 @@ func (s *Store) reconcileDockerGatewayEndpoints(ctx context.Context) error {
 }
 
 func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, p.gateway_node_id, p.hostname, p.tls_enabled, s.id, s.site_id, s.protocol, s.endpoint
+	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, p.ingress_owner, p.entry_node_id, p.hostname, p.tls_enabled, s.id, s.site_id, s.protocol, s.endpoint
 		FROM publications p JOIN services s ON s.id = p.service_id
 		WHERE s.application_id = ? AND p.status <> 'stopped' AND s.status <> 'stopped'`, applicationID)
 	if err != nil {
 		return err
 	}
 	type item struct {
-		publicationID, kind, gatewayID, hostname, serviceID, siteID, protocol, endpoint string
-		tls                                                                             bool
+		publicationID, kind, ingressOwner, gatewayID, hostname, serviceID, siteID, protocol, endpoint string
+		tls                                                                                           bool
 	}
 	items := []item{}
 	for rows.Next() {
 		var value item
 		var gatewayID sql.NullString
 		var tls int
-		if err := rows.Scan(&value.publicationID, &value.kind, &gatewayID, &value.hostname, &tls, &value.serviceID, &value.siteID, &value.protocol, &value.endpoint); err != nil {
+		if err := rows.Scan(&value.publicationID, &value.kind, &value.ingressOwner, &gatewayID, &value.hostname, &tls, &value.serviceID, &value.siteID, &value.protocol, &value.endpoint); err != nil {
 			rows.Close()
 			return err
 		}
@@ -216,19 +216,18 @@ func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	gateways, tunnels := map[string]bool{}, map[string]bool{}
+	gateways, nodeListeners, tunnels := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, value := range items {
-		web := value.protocol == "http" || value.protocol == "https"
-		if isGatewayPublication(value.kind, web) {
+		if isGatewayPublication(value.ingressOwner) {
 			if err := s.upsertPublicationRoute(ctx, tx, value.publicationID, value.siteID, value.serviceID, value.gatewayID, value.hostname, value.protocol, value.endpoint, value.tls, now); err != nil {
 				return err
 			}
 			gateways[value.gatewayID] = true
 		}
-		if value.kind == publicationShared443 {
-			gateways[value.gatewayID] = true
+		if value.ingressOwner == ingressApplicationNode && value.kind == publicationShared443 {
+			nodeListeners[value.gatewayID] = true
 		}
-		if value.kind == publicationCloudflare {
+		if value.ingressOwner == ingressTunnelConnector {
 			tunnels[value.gatewayID] = true
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'pending', desired_revision = desired_revision + 1, last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), value.publicationID); err != nil {
@@ -240,12 +239,17 @@ func (s *Store) reconcileApplicationPublications(ctx context.Context, tx *sql.Tx
 			return err
 		}
 	}
+	for id := range nodeListeners {
+		if err := s.queueNodeListenerState(ctx, tx, id, now); err != nil {
+			return err
+		}
+	}
 	for id := range tunnels {
 		if err := s.queueTunnelState(ctx, tx, id, now); err != nil {
 			return err
 		}
 	}
-	return nil
+	return s.retireStoppedMigratedTunnelConnectors(ctx, tx, applicationID, now)
 }
 
 func validateGatewayForPublication(ctx context.Context, tx *sql.Tx, siteID, gatewayID, kind string) error {
@@ -354,29 +358,31 @@ func validatePublicationOrigin(ctx context.Context, tx *sql.Tx, applicationNodeI
 	return errors.New("center: entry node cannot reach the application private service network")
 }
 
-func validateDirectPublicNode(ctx context.Context, tx *sql.Tx, nodeID string) (string, error) {
-	var publicAddress, publicMode, enabledJSON string
+func validateNodeDirectPublicIngress(ctx context.Context, tx *sql.Tx, nodeID string) (string, string, error) {
+	var publicAddress, publicBindAddress, publicMode, enabledJSON string
 	var direct int
-	if err := tx.QueryRowContext(ctx, `SELECT public_address, public_mode, CAST(enabled_kinds_json AS TEXT), direct_public FROM agent_network_profiles WHERE agent_id = ?`, nodeID).Scan(&publicAddress, &publicMode, &enabledJSON, &direct); errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("center: application node needs a confirmed public network profile")
+	if err := tx.QueryRowContext(ctx, `SELECT public_address, public_bind_address, public_mode, CAST(enabled_kinds_json AS TEXT), direct_public FROM agent_network_profiles WHERE agent_id = ?`, nodeID).Scan(&publicAddress, &publicBindAddress, &publicMode, &enabledJSON, &direct); errors.Is(err, sql.ErrNoRows) {
+		return "", "", errors.New("center: application node needs a confirmed public network profile")
 	} else if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var enabled []string
-	if json.Unmarshal([]byte(enabledJSON), &enabled) != nil || direct != 1 || publicMode != networking.PublicModeDirect || net.ParseIP(publicAddress) == nil {
-		return "", errors.New("center: application node is not approved for direct public ingress")
+	publicIP := net.ParseIP(publicAddress)
+	bindIP := net.ParseIP(publicBindAddress)
+	if json.Unmarshal([]byte(enabledJSON), &enabled) != nil || direct != 1 || publicIP == nil || bindIP == nil || (publicMode != networking.PublicModeDirect && publicMode != networking.PublicModeNAT) {
+		return "", "", errors.New("center: application node is not approved for node-direct public ingress")
 	}
 	for _, kind := range enabled {
 		if kind == networking.KindPublic {
-			return net.ParseIP(publicAddress).String(), nil
+			return publicIP.String(), bindIP.String(), nil
 		}
 	}
-	return "", errors.New("center: application node does not have public networking enabled")
+	return "", "", errors.New("center: application node does not have public networking enabled")
 }
 
 func gatewayHasDirectRaw443(ctx context.Context, tx *sql.Tx, gatewayID string) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT s.endpoint FROM publications p JOIN services s ON s.id = p.service_id
-		WHERE p.gateway_node_id = ? AND p.kind = 'public_direct' AND p.status <> 'stopped' AND s.protocol IN ('tcp', 'udp')`, gatewayID)
+		WHERE p.ingress_owner = 'application_node' AND p.entry_node_id = ? AND p.kind = 'public_direct' AND p.status <> 'stopped' AND s.protocol IN ('tcp', 'udp')`, gatewayID)
 	if err != nil {
 		return false, err
 	}
@@ -416,8 +422,8 @@ func validPublicationDNS(kind, provider string) bool {
 	}
 }
 
-func isGatewayPublication(kind string, web bool) bool {
-	return web && (kind == publicationLAN || kind == publicationHeadscale || kind == publicationPublic || kind == publicationCloudflare)
+func isGatewayPublication(ingressOwner string) bool {
+	return ingressOwner == ingressSiteGateway
 }
 
 func nullableString(value string) any {

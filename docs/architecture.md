@@ -20,8 +20,8 @@ flowchart LR
   Center -->|"authenticated leased tasks"| Agent["Vastora Agent"]
   Agent --> Docker["Host Docker Engine"]
   Docker --> App["Private application origin"]
-  Agent -->|"private Unix Admin socket"| Caddy["Caddy Gateway"]
-  Agent --> HAProxy["Optional HAProxy L4 Gateway"]
+  Agent -->|"private Unix Admin socket"| Caddy["Caddy Site Gateway"]
+  Agent --> HAProxy["Optional node-local HAProxy listener"]
   Agent --> Cloudflared["cloudflared connector"]
   LAN["LAN clients"] --> Caddy
   Tailnet["Headscale clients"] --> Caddy
@@ -141,8 +141,8 @@ still depends on it.
 2. Agent starts the allowlisted Docker workload on the confirmed private service address, or installs a platform-pinned native probe through its typed systemd executor.
 3. Agent reports declared Service endpoints. Center validates protocol, ports, and address against the signed manifest and Network Profile.
 4. The administrator independently adds one or more Publications to each Service.
-5. LAN and Headscale Web Publications queue a complete Caddy desired state on the selected Site Gateway. They use HTTP by default, or browser-trusted HTTPS when the user enables Cloudflare DNS-01 certificate management. Direct-public Web Publications use the public listener and force HTTPS. A shared-443 raw TCP Publication additionally places HAProxy in front of Caddy on that Gateway.
-6. Cloudflare Tunnel Publications update the remotely managed Tunnel ingress and DNS records, then queue a versioned cloudflared connector task on the selected node.
+5. LAN, Headscale, and direct-public Web Publications queue a complete Caddy desired state on the selected Site Gateway. A node-direct protocol Publication instead queues an independent listener desired state on the Application Node; callers cannot redirect it through another Site Gateway.
+6. Cloudflare Tunnel Publications update the remotely managed Tunnel ingress and DNS records, then queue a versioned cloudflared connector task on the selected node. The connector reaches the Service directly over the validated private path; it does not require that node to be a Site Gateway or route through Caddy.
 7. Gateway and Tunnel task results advance only the exact desired revision and claim attempt. DNS and reachability checks provide the final ready state where propagation is asynchronous.
 
 The optional Center remote fallback is separate from application publications.
@@ -164,7 +164,7 @@ chooses permanent data deletion.
 
 When an Agent release changes the runtime contract, it reports a monotonic
 runtime generation. Center then queues one forward reconciliation of every
-running application plus that node's Gateway and Tunnel desired state. A
+running application plus that node's Site Gateway, node-listener, and Tunnel desired state. A
 successful task records the new generation; failed tasks retain their data and
 remain visible in Actions. This is also the one-time migration from the former
 host-network containers to the shared bridge. The Komari migration installs the
@@ -177,8 +177,8 @@ service, and only then removes the obsolete Docker container.
 | --- | --- | --- | --- |
 | `lan_gateway` | HTTP/HTTPS | selected Site Gateway with LAN address | HTTP by default; optional public-trust HTTPS through Cloudflare DNS-01 |
 | `headscale_gateway` | HTTP/HTTPS | selected Site Gateway with Headscale address | HTTP by default; optional public-trust HTTPS through Cloudflare DNS-01 |
-| `public_direct` | Web or raw TCP/UDP | public Gateway for Web; application node for raw ports | HTTPS for Web; app-controlled raw protocol |
-| `public_shared_443` | raw TLS-over-TCP with a distinct protocol SNI | selected public Site Gateway | DNS uses the connection hostname; HAProxy routes the separately stored protocol SNI on public 443; Caddy retains Web TLS |
+| `public_direct` | Web or raw TCP/UDP | public Site Gateway for Web; application node for raw ports | HTTPS for Web; app-controlled raw protocol |
+| `public_shared_443` | raw TLS-over-TCP with a distinct protocol SNI | Application Node only | exact DNS-only record targets that node; its local HAProxy routes the separately stored protocol SNI on public 443 |
 | `cloudflare_tunnel` | HTTP/HTTPS | selected Tunnel-capable node | Cloudflare HTTPS to a private origin |
 
 Direct-public DNS managed through Cloudflare is always DNS-only. A standard
@@ -187,7 +187,7 @@ inbounds remain owned by 3x-ui. Vastora can request a new VLESS REALITY inbound
 through Agent's node-local API, then observes its protocol, transport, security,
 port, listen address, and reachability without managing nftables.
 
-## Gateway and Tunnel desired state
+## Site Gateway, node-listener, and Tunnel desired state
 
 Caddy receives explicit listeners for LAN, Headscale, public, and control-plane
 loopback addresses. For bundled infrastructure, Headscale is the only public
@@ -216,20 +216,40 @@ the canonical Caddy route onto that address. Later nodes fetch the token-bound
 installer from the public Headscale hostname, join the private network, and only
 then contact Center.
 
-HAProxy is absent by default. When at least one `public_shared_443` Publication
-exists, Docker removes Caddy's public TCP `443` host mapping and starts a fixed,
-digest-pinned HAProxy container with that mapping. HAProxy routes explicitly
-configured SNI hostnames to raw TCP origins and sends all remaining Web TLS to
-Caddy through the private `vastora-runtime` bridge. Caddy continues to obtain
-certificates and terminate HTTPS. Removing the final shared-443 Publication
-removes HAProxy and maps public TCP `443` directly to Caddy again. Services
+HAProxy is absent by default. A `public_shared_443` Publication creates an
+independently versioned node-listener state on its Application Node. A VLESS-only
+node runs HAProxy without Caddy and rejects unmatched SNI. When the Application
+Node is also a Site Gateway, Docker moves Caddy behind the same HAProxy; exact
+protocol SNI goes to the local application and unmatched Web TLS goes to local
+Caddy through `vastora-runtime`. Removing the final node-direct 443 Publication
+removes HAProxy and restores Caddy's public binding on a dual-role node. Services
 without a distinct TLS SNI must use another port or public address.
+
+The schema-56 cutover is two phase and durable. Center first queues the complete
+node-listener state on every replacement Application Node and keeps the legacy
+Site Gateway state active. Only an acknowledged node-listener revision plus a
+successful exact-DNS and exact-SNI external probe permits Center to queue the
+legacy Gateway revision that removes the old shared-443 route. Until then the
+migrated Publication stays pending rather than reporting a false ready state.
+Entries that cannot satisfy the new node-local prerequisites are stopped with
+`action_required`; their legacy Gateway state is retired through the same
+desired-state path instead of being silently reinterpreted.
+
+Center and Agent both reject a managed REALITY route unless it resolves to that
+same node's `vastora-3x-ui:443` endpoint with Proxy Protocol v2. The Agent reads
+the live HAProxy configuration back from the running container and reports the
+listener healthy only when its content hash matches the desired revision. Center
+then performs an exact-SNI TLS 1.3 handshake before marking the Publication ready.
 
 Each Cloudflare entry node owns one remotely managed Tunnel. One Tunnel can
 carry multiple Web ingress rules. Agent runs the fixed cloudflared image on the
-private runtime bridge. Removing the final ingress stops the connector but
-retains the remote Tunnel until the administrator explicitly disconnects the
-integration.
+private runtime bridge and forwards each hostname directly to its validated Web
+Service origin. The Tunnel connector role is independent from the Site Gateway
+role. During the schema-56 migration, Center applies and externally verifies
+the direct connector target before removing the former loopback Caddy route;
+the existing Tunnel and DNS identity are preserved throughout the cutover.
+Removing the final ingress stops the connector but retains the remote Tunnel
+until the administrator explicitly disconnects the integration.
 
 ## Headscale
 
@@ -352,38 +372,37 @@ first client locally and creates the node's sole REALITY inbound on container
 port `443`. Later subscribers are clients of that inbound rather than new
 inbounds.
 
-Each physical 3x-ui host can have only one managed REALITY inbound. It has a
-deterministic loopback `tunnel` companion on `21000`. REALITY targets only that
-companion. TLS sniffing with
-`routeOnly` permits `full:<serverName>` to the Vastora direct outbound; the
-immediately following same-inbound catch-all uses a blackhole outbound. The
-tunnel itself has exactly one destination, the validated pinned IP on port 443.
-HAProxy's exact-SNI routing blocks the usual alternate-SNI relay path, but SNI
-is not client authentication. TCP passthrough cannot authorize encrypted HTTP
-Host values or an ECH inner ClientHello. Unauthenticated connections with the
+Each physical 3x-ui host can have only one managed REALITY inbound. REALITY
+points directly at the validated pinned IP on port 443 and permits exactly the
+verified `serverName`. The node-local HAProxy accepts that exact outer SNI,
+forwards Proxy Protocol v2 to the local 3x-ui `:443`, and rejects unmatched SNI
+on VLESS-only nodes. A dual-role Site Gateway sends unmatched SNI only to its
+local Caddy. This blocks the usual alternate-SNI relay path, but SNI is not
+client authentication. TCP passthrough cannot authorize encrypted HTTP Host
+values or an ECH inner ClientHello. Unauthenticated connections with the
 allowed SNI may still reach the pinned fallback site and consume node traffic.
 The guard restricts fallback destinations; it does not promise zero anonymous
-traffic, complete CDN detection, or volumetric DDoS protection.
-Only Vastora-tagged outbounds and rules are replaced; user Xray configuration
-is retained, restarted through 3x-ui's config path, and read back. A failed
-config test restores the prior template and leaves the REALITY inbound disabled.
+traffic, complete CDN detection, or volumetric DDoS protection. During upgrade,
+Agent removes the obsolete loopback `tunnel` inbound and reserved Xray routes
+only after the main REALITY inbound has passed disabled and enabled read-back.
 
 Center records this proof in `three_x_ui_reality_guards`. A service whose guard
 is not `ready` cannot create or recover a Publication. Center then creates a
-`public_shared_443` Publication on that same node; selecting another Gateway is
-rejected because it would turn the Gateway into a VLESS relay. The connection
+`public_shared_443` Publication on that same node; supplying another entry node is
+rejected because it would create a cross-node VLESS relay. The connection
 hostname resolves to the VLESS node's public address, while its camouflage SNI
 is the separate local HAProxy routing key. The generated VLESS URI is
 encrypted at rest and can be revealed only once. Existing pre-guard services
 are unpublished first and remain `action_required` until their original inbound
-is disabled, validated, converted, config-tested, and read back. External 443,
+is disabled, validated, converted, and read back. External 443,
 keys, short IDs, clients, and subscription identity are unchanged.
 
 ## Offline and backup boundaries
 
-Agent persists the last successfully applied Gateway state and restores it
-before contacting Center. Existing containers, Caddy routes, and connectors
-continue while Center is unavailable; only desired-state changes pause.
+Agent persists the last successfully applied Site Gateway and node-listener
+states and restores them before contacting Center. Existing containers, Caddy
+routes, and connectors continue while Center is unavailable; only desired-state
+changes pause.
 
 Center backup contains a consistent Center SQLite snapshot and its encryption
 key. ACME account keys and certificates are encrypted records in that snapshot,

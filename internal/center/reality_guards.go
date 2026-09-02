@@ -63,24 +63,24 @@ func (s *Store) quarantineReadyRealityGuardsForAgent(ctx context.Context, agentI
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT publication.gateway_node_id
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT publication.entry_node_id
 		FROM three_x_ui_reality_guards guard
 		JOIN services service ON service.id = guard.service_id
 		JOIN applications application ON application.id = service.application_id
 		JOIN publications publication ON publication.service_id = guard.service_id
-		WHERE guard.status = 'ready' AND publication.gateway_node_id IS NOT NULL
+		WHERE guard.status = 'ready' AND publication.entry_node_id IS NOT NULL
 		 AND publication.status <> 'stopped' AND (? = '' OR application.node_id = ?)`, agentID, agentID)
 	if err != nil {
 		return err
 	}
-	gateways := []string{}
+	listenerNodes := []string{}
 	for rows.Next() {
-		var gatewayID string
-		if err := rows.Scan(&gatewayID); err != nil {
+		var nodeID string
+		if err := rows.Scan(&nodeID); err != nil {
 			rows.Close()
 			return err
 		}
-		gateways = append(gateways, gatewayID)
+		listenerNodes = append(listenerNodes, nodeID)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -119,8 +119,8 @@ func (s *Store) quarantineReadyRealityGuardsForAgent(ctx context.Context, agentI
 		AND status <> 'stopped'`, nowText); err != nil {
 		return err
 	}
-	for _, gatewayID := range gateways {
-		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
+	for _, nodeID := range listenerNodes {
+		if err := s.queueNodeListenerState(ctx, tx, nodeID, now); err != nil {
 			return err
 		}
 	}
@@ -128,7 +128,7 @@ func (s *Store) quarantineReadyRealityGuardsForAgent(ctx context.Context, agentI
 }
 
 func (s *Store) startRealityGuardHardening(ctx context.Context) error {
-	if err := s.queueRealityGuardGatewayIsolation(ctx); err != nil {
+	if err := s.queueRealityGuardListenerIsolation(ctx); err != nil {
 		return err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT service_id FROM three_x_ui_reality_guards WHERE status = 'action_required' ORDER BY updated_at, service_id`)
@@ -155,37 +155,37 @@ func (s *Store) startRealityGuardHardening(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) queueRealityGuardGatewayIsolation(ctx context.Context) error {
+func (s *Store) queueRealityGuardListenerIsolation(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT publication.gateway_node_id
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT publication.entry_node_id
 		FROM publications publication
 		JOIN three_x_ui_reality_guards guard ON guard.service_id = publication.service_id
-		WHERE publication.gateway_node_id IS NOT NULL
+		WHERE publication.entry_node_id IS NOT NULL
 		 AND publication.status = 'stopped'
 		 AND publication.last_error = 'REALITY guard requires hardening before publication'
 		 AND guard.status <> 'ready'`)
 	if err != nil {
 		return err
 	}
-	gateways := []string{}
+	listenerNodes := []string{}
 	for rows.Next() {
-		var gatewayID string
-		if err := rows.Scan(&gatewayID); err != nil {
+		var nodeID string
+		if err := rows.Scan(&nodeID); err != nil {
 			rows.Close()
 			return err
 		}
-		gateways = append(gateways, gatewayID)
+		listenerNodes = append(listenerNodes, nodeID)
 	}
 	if err := rows.Close(); err != nil {
 		return err
 	}
 	now := s.now().UTC()
-	for _, gatewayID := range gateways {
-		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
+	for _, nodeID := range listenerNodes {
+		if err := s.queueNodeListenerState(ctx, tx, nodeID, now); err != nil {
 			return err
 		}
 	}
@@ -260,7 +260,7 @@ func (s *Store) queueRealityGuardHardening(ctx context.Context, serviceID string
 		return ApplicationCommandView{}, errors.New("center: this 3x-ui controller already has an operation in progress")
 	}
 	var gatewayID, connectHostname, dnsProvider string
-	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(gateway_node_id, ''), hostname, dns_provider FROM publications
+	_ = tx.QueryRowContext(ctx, `SELECT COALESCE(entry_node_id, ''), hostname, dns_provider FROM publications
 		WHERE service_id = ? AND kind = 'public_shared_443' ORDER BY updated_at DESC LIMIT 1`, serviceID).Scan(&gatewayID, &connectHostname, &dnsProvider)
 	if gatewayID == "" {
 		gatewayID = agentID
@@ -311,14 +311,11 @@ func (s *Store) completeRealityHardenCommand(ctx context.Context, tx *sql.Tx, ta
 			taskError = "center: Agent returned an invalid REALITY hardening result"
 		} else {
 			result := envelope.ApplicationCommand
-			expectedGuardPort := threeXUIRealityGuardPort
 			expectedInboundTag := input.InboundTag
-			expectedCompanionTag := input.InboundTag + "-guard"
 			if input.TargetNodeID > 0 {
 				expectedInboundTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + input.InboundTag
-				expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 			}
-			if result.Action != "harden" || result.InboundID != input.InboundID || result.Listen != input.TargetAddress || result.Port != centerThreeXUIRealityPort || (result.InboundTag != input.InboundTag && result.InboundTag != expectedInboundTag) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || !validRealityTargetProof(*result) || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != expectedGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
+			if result.Action != "harden" || result.InboundID != input.InboundID || result.Listen != input.TargetAddress || result.Port != centerThreeXUIRealityPort || (result.InboundTag != input.InboundTag && result.InboundTag != expectedInboundTag) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || !validRealityTargetProof(*result) || result.GuardStatus != "ready" || !result.ProxyProtocol {
 				succeeded = false
 				taskError = "center: Agent returned an unsafe REALITY hardening result"
 			}
@@ -330,7 +327,7 @@ func (s *Store) completeRealityHardenCommand(ctx context.Context, tx *sql.Tx, ta
 	if succeeded {
 		result := envelope.ApplicationCommand
 		resultJSON, _ = json.Marshal(result)
-		updated, err := tx.ExecContext(ctx, `UPDATE three_x_ui_reality_guards SET target_host = ?, target_ip = ?, server_name = ?, node_asn = ?, target_asn = ?, cdn_provider = ?, companion_inbound_id = ?, companion_tag = ?, companion_port = ?, status = 'ready', verified_at = ?, last_error = '', updated_at = ? WHERE service_id = ? AND revision = ? AND status = 'hardening'`, result.TargetHost, result.TargetIP, result.ServerName, result.NodeASN, result.TargetASN, result.CDNProvider, result.CompanionInboundID, result.CompanionTag, result.CompanionPort, now, now, input.ServiceID, input.GuardRevision)
+		updated, err := tx.ExecContext(ctx, `UPDATE three_x_ui_reality_guards SET target_host = ?, target_ip = ?, server_name = ?, node_asn = ?, target_asn = ?, cdn_provider = ?, companion_inbound_id = 0, companion_tag = '', companion_port = 0, status = 'ready', verified_at = ?, last_error = '', updated_at = ? WHERE service_id = ? AND revision = ? AND status = 'hardening'`, result.TargetHost, result.TargetIP, result.ServerName, result.NodeASN, result.TargetASN, result.CDNProvider, now, now, input.ServiceID, input.GuardRevision)
 		if err != nil {
 			return err
 		}
@@ -365,7 +362,7 @@ func (s *Store) completeRealityHardenCommand(ctx context.Context, tx *sql.Tx, ta
 	if input.ConnectHostname == "" {
 		return nil
 	}
-	_, publicationErr := s.CreatePublication(ctx, PublicationInput{ServiceID: input.ServiceID, Kind: publicationShared443, GatewayNodeID: gatewayID, Hostname: input.ConnectHostname, SNIHostname: input.ServerName, DNSProvider: input.DNSProvider})
+	_, publicationErr := s.CreatePublication(ctx, PublicationInput{ServiceID: input.ServiceID, Kind: publicationShared443, Ingress: PublicationIngress{Owner: ingressApplicationNode}, Hostname: input.ConnectHostname, SNIHostname: input.ServerName, DNSProvider: input.DNSProvider})
 	warning := ""
 	if publicationErr != nil {
 		warning = "center: restore hardened REALITY access entry: " + publicationErr.Error()

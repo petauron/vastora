@@ -145,7 +145,7 @@ func TestSwitchSystemDomainRequiresStoppedAccessPoints(t *testing.T) {
 		`INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id) VALUES('node', 'Node', X'01', 'test', 'active', '` + now + `', '` + now + `', '` + siteID + `')`,
 		`INSERT INTO applications(id, name, node_id, site_id, app_key, status, created_at, updated_at) VALUES('app', 'App', 'node', '` + siteID + `', 'test/app', 'running', '` + now + `', '` + now + `')`,
 		`INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, status, created_at, updated_at) VALUES('service', 'app', '` + siteID + `', 'web', 'http', 80, 8080, '127.0.0.1:8080', 'catalog', 'ready', '` + now + `', '` + now + `')`,
-		`INSERT INTO publications(id, service_id, kind, hostname, dns_provider, status, created_at, updated_at) VALUES('publication', 'service', 'headscale_gateway', 'app.example.com', 'headscale', 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider, status, created_at, updated_at) VALUES('publication', 'service', 'headscale_gateway', 'site_gateway', 'node', 'app.example.com', 'headscale', 'ready', '` + now + `', '` + now + `')`,
 	} {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)

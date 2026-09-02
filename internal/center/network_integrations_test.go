@@ -65,6 +65,33 @@ func TestEnsureCloudflareDNSRecordRejectsConflict(t *testing.T) {
 	}
 }
 
+func TestUpdateCloudflareDNSRecordForcesExactDNSOnlyAddress(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut || request.URL.Path != "/zones/zone/dns_records/record-id" {
+			t.Fatalf("unexpected Cloudflare request: %s %s", request.Method, request.URL.Path)
+		}
+		var body struct {
+			Type    string `json:"type"`
+			Name    string `json:"name"`
+			Content string `json:"content"`
+			Proxied bool   `json:"proxied"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Type != "A" || body.Name != "reality.example.com" || body.Content != "203.0.113.10" || body.Proxied {
+			t.Fatalf("unexpected DNS update: %#v", body)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"success":true,"errors":[],"result":{"id":"record-id"}}`))
+	}))
+	defer server.Close()
+	client := cloudflareClient{zoneID: "zone", token: "token", baseURL: server.URL, http: server.Client()}
+	if err := client.updateDNSRecord(context.Background(), "record-id", "A", "reality.example.com", "203.0.113.10", false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEnsureCloudflareDNSRecordRecoversCommittedLostResponse(t *testing.T) {
 	created := false
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

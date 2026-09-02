@@ -45,6 +45,9 @@ type NodeHeartbeat struct {
 	GatewayHealthy               bool
 	GatewayRevision              int64
 	GatewayConfigHash            string
+	NodeListenerHealthy          bool
+	NodeListenerRevision         int64
+	NodeListenerConfigHash       string
 	ApplicationRuntimeGeneration int
 	RemoteUpdateSupported        bool
 	TailscaleOwnership           string
@@ -291,7 +294,7 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 			continue
 		}
 		var active int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND status <> 'stopped'`, agentID).Scan(&active); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE entry_node_id = ? AND ingress_owner = 'site_gateway' AND status <> 'stopped'`, agentID).Scan(&active); err != nil {
 			return err
 		}
 		if active != 0 {
@@ -338,6 +341,15 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 					return err
 				}
 			}
+			var nodeListener int
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListener); err != nil {
+				return err
+			}
+			if nodeListener != 0 {
+				if err := s.queueNodeListenerState(ctx, tx, agentID, now); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	for agentID := range previous {
@@ -346,6 +358,15 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE site_id = ? AND gateway_node_id = ?`, siteID, agentID); err != nil {
 			return fmt.Errorf("center: remove gateway routes: %w", err)
+		}
+		var nodeListener int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListener); err != nil {
+			return err
+		}
+		if nodeListener != 0 {
+			if err := s.queueNodeListenerState(ctx, tx, agentID, now); err != nil {
+				return err
+			}
 		}
 		state := gateway.DesiredState{Revision: 1}
 		if err := s.appendSystemGatewayRoutes(ctx, tx, agentID, &state, map[string]gateway.Listener{}); err != nil {
@@ -377,7 +398,7 @@ func (s *Store) replaceSiteGateways(ctx context.Context, tx *sql.Tx, siteID stri
 func (s *Store) backfillGatewayRoutes(ctx context.Context, tx *sql.Tx, siteID, gatewayID string, now time.Time) (int, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT p.id, s.id, p.hostname, s.protocol, s.endpoint, p.tls_enabled
 		FROM publications p JOIN services s ON s.id = p.service_id
-		WHERE s.site_id = ? AND p.gateway_node_id = ? AND p.kind IN ('lan_gateway', 'headscale_gateway', 'public_direct')
+		WHERE s.site_id = ? AND p.ingress_owner = 'site_gateway' AND p.entry_node_id = ? AND p.kind IN ('lan_gateway', 'headscale_gateway', 'public_direct')
 		AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.id`, siteID, gatewayID)
 	if err != nil {
 		return 0, fmt.Errorf("center: list services for gateway backfill: %w", err)
@@ -438,12 +459,20 @@ func (s *Store) UpdateAgent(ctx context.Context, agentID, name, siteID string) e
 		return fmt.Errorf("center: begin node site assignment: %w", err)
 	}
 	defer tx.Rollback()
-	var blockedGateways, activeApplications int
+	var blockedGateways, activeApplications, activeIngress int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM site_gateways WHERE agent_id = ? AND site_id <> ?`, agentID, siteID).Scan(&blockedGateways); err != nil {
 		return fmt.Errorf("center: inspect node gateway assignment: %w", err)
 	}
 	if blockedGateways != 0 {
 		return errors.New("center: remove the node as a gateway from its current site before moving it")
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p
+		JOIN services s ON s.id = p.service_id
+		WHERE p.entry_node_id = ? AND s.site_id <> ? AND p.status <> 'stopped'`, agentID, siteID).Scan(&activeIngress); err != nil {
+		return fmt.Errorf("center: inspect node ingress ownership: %w", err)
+	}
+	if activeIngress != 0 {
+		return errors.New("center: stop active publications before moving their entry node to another site")
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications WHERE node_id = ? AND site_id <> ? AND status <> 'stopped'`, agentID, siteID).Scan(&activeApplications); err != nil {
 		return fmt.Errorf("center: inspect node applications: %w", err)
@@ -474,7 +503,7 @@ func (s *Store) DisableAgent(ctx context.Context, agentID string) error {
 	}{
 		{`SELECT COUNT(*) FROM applications WHERE node_id = ? AND status <> 'stopped'`, "center: uninstall active applications before disabling this node"},
 		{`SELECT COUNT(*) FROM site_gateways WHERE agent_id = ?`, "center: remove this node as a Site gateway before disabling it"},
-		{`SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND status <> 'stopped'`, "center: stop publications using this node before disabling it"},
+		{`SELECT COUNT(*) FROM publications WHERE entry_node_id = ? AND status <> 'stopped'`, "center: stop publications using this node before disabling it"},
 		{`SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, "center: wait for active node tasks before disabling it"},
 		{`SELECT COUNT(*) FROM cloudflare_tunnels WHERE agent_id = ? AND status <> 'stopped'`, "center: stop the Cloudflare Tunnel connector before disabling this node"},
 	}

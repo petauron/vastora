@@ -31,7 +31,7 @@ func publicationCleanups(rows *sql.Rows) ([]publicationCleanup, error) {
 }
 
 func (s *Store) servicePublicationCleanups(ctx context.Context, tx *sql.Tx, serviceID string) ([]publicationCleanup, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, kind, COALESCE(gateway_node_id, ''), dns_provider, dns_record_id, desired_revision + 1
+	rows, err := tx.QueryContext(ctx, `SELECT id, kind, COALESCE(entry_node_id, ''), dns_provider, dns_record_id, desired_revision + 1
 		FROM publications WHERE service_id = ? AND status <> 'stopped' ORDER BY id`, serviceID)
 	if err != nil {
 		return nil, err
@@ -40,7 +40,7 @@ func (s *Store) servicePublicationCleanups(ctx context.Context, tx *sql.Tx, serv
 }
 
 func (s *Store) applicationPublicationCleanups(ctx context.Context, tx *sql.Tx, applicationID string) ([]publicationCleanup, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, COALESCE(p.gateway_node_id, ''), p.dns_provider, p.dns_record_id, p.desired_revision + 1
+	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.kind, COALESCE(p.entry_node_id, ''), p.dns_provider, p.dns_record_id, p.desired_revision + 1
 		FROM publications p JOIN services s ON s.id = p.service_id
 		WHERE s.application_id = ? AND p.status <> 'stopped' ORDER BY p.id`, applicationID)
 	if err != nil {
@@ -57,7 +57,7 @@ func (s *Store) cleanupStoppedPublications(ctx context.Context, values []publica
 	headscaleValues := []publicationCleanup{}
 	for _, queued := range values {
 		var value publicationCleanup
-		err := s.db.QueryRowContext(ctx, `SELECT id, kind, COALESCE(gateway_node_id, ''), dns_provider, dns_record_id, desired_revision
+		err := s.db.QueryRowContext(ctx, `SELECT id, kind, COALESCE(entry_node_id, ''), dns_provider, dns_record_id, desired_revision
 			FROM publications WHERE id = ? AND status = 'stopped' AND cleanup_pending = 1`, queued.ID).Scan(&value.ID, &value.Kind, &value.GatewayID, &value.DNSProvider, &value.DNSRecordID, &value.Revision)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -130,7 +130,7 @@ func (s *Store) recordDNSRemoval(ctx context.Context, publicationID, agentID str
 
 func (s *Store) retryPublicationCleanups(ctx context.Context) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, COALESCE(gateway_node_id, ''), dns_provider, dns_record_id, desired_revision
+	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, COALESCE(entry_node_id, ''), dns_provider, dns_record_id, desired_revision
 		FROM publications
 		WHERE status = 'stopped' AND cleanup_pending = 1 AND (cleanup_retry_at = '' OR cleanup_retry_at <= ?)
 		ORDER BY cleanup_retry_at, updated_at, id LIMIT 20`, now)

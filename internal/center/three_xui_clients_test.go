@@ -26,9 +26,9 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 		('subscription-service', 'three-x-ui-clients', ?, 'subscription', 'http', 2096, 2096, '10.0.0.80:2096', 'catalog', '', 0, '', 'ready', ?, ?)`, siteID, now, now, siteID, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
-		VALUES('reality-publication', 'reality-service', 'public_shared_443', ?, 'reality.example.test', 'www.example.com', 'manual', 0, 'ready', ?, ?),
-		('subscription-publication', 'subscription-service', 'public_direct', ?, 'subscription.example.test', '', 'manual', 1, 'ready', ?, ?)`, node.ID, now, now, node.ID, now, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
+		VALUES('reality-publication', 'reality-service', 'public_shared_443', 'application_node', ?, 'reality.example.test', 'www.example.com', 'manual', 0, 'ready', ?, ?),
+		('subscription-publication', 'subscription-service', 'public_direct', 'site_gateway', ?, 'subscription.example.test', '', 'manual', 1, 'ready', ?, ?)`, node.ID, now, now, node.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_day, next_reset_at, revision, status, updated_at)

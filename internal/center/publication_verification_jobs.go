@@ -186,7 +186,7 @@ func (s *Store) finishPublicationVerification(ctx context.Context, id string, re
 
 func (s *Store) publicationVerificationTargetsForGateway(ctx context.Context, tx *sql.Tx, gatewayID string) ([]publicationVerificationTarget, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, desired_revision FROM publications
-		WHERE gateway_node_id = ? AND kind IN ('public_direct', 'public_shared_443', 'cloudflare_tunnel') AND status <> 'stopped'`, gatewayID)
+		WHERE entry_node_id = ? AND ingress_owner = 'site_gateway' AND kind = 'public_direct' AND status <> 'stopped'`, gatewayID)
 	if err != nil {
 		return nil, err
 	}

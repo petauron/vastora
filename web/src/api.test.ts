@@ -47,12 +47,12 @@ describe("Center API client", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "publication-1" }), { status: 201, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.createPublication({ serviceId: "service-1", kind: "headscale_gateway", gatewayNodeId: "agent-1", hostname: "cpa.internal.example", dnsProvider: "headscale" });
+    await api.createPublication({ serviceId: "service-1", kind: "headscale_gateway", ingress: { owner: "site_gateway", entryNodeId: "agent-1" }, hostname: "cpa.internal.example", dnsProvider: "headscale" });
 
     const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(path).toBe("/api/v1/publications");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(String(init.body))).toEqual({ serviceId: "service-1", kind: "headscale_gateway", gatewayNodeId: "agent-1", hostname: "cpa.internal.example", dnsProvider: "headscale" });
+    expect(JSON.parse(String(init.body))).toEqual({ serviceId: "service-1", kind: "headscale_gateway", ingress: { owner: "site_gateway", entryNodeId: "agent-1" }, hostname: "cpa.internal.example", dnsProvider: "headscale" });
   });
 
   it("reauthenticates for application credentials and uses an idempotency key for rotation", async () => {

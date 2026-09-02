@@ -34,34 +34,39 @@
   available to the local Vastora Agent and the restricted deployment helper;
   the Center process cannot access either Docker or the Admin socket.
 - Application Web ports bind to the confirmed private service address rather
-  than every host interface. A public address is accepted only when Agent finds
-  it on a local interface and an administrator explicitly enables direct ingress.
+  than every host interface. A direct-public address and its local bind address
+  are accepted only from the Agent-confirmed network profile after an
+  administrator explicitly enables direct ingress; explicit NAT mappings keep
+  the public and local addresses distinct.
 - When suggesting a VLESS node region, Center sends only that node's confirmed
   public IP address to the explicitly configured region service. No credentials,
   node secrets, private addresses, or application data are included. The
   official package currently configures `api.country.is`; private packages may
   replace or disable it, and the searchable manual region selector remains
   available.
-- LAN and Headscale Web entries use selected Caddy Gateway nodes. They may use
+- LAN and Headscale Web entries use selected Caddy Site Gateway nodes. They may use
   HTTP inside the private network, or a browser-trusted certificate obtained
   through Cloudflare DNS-01 without exposing the service publicly. Public Web
   entries require HTTPS. Caddy Admin remains reachable only over its Unix socket.
 - ACME account keys and private HTTPS certificates are encrypted in Center.
   Certificate keys are absent from desired-state JSON and task-event records,
   delivered only with a claimed Gateway task, and encrypted at rest by Agent.
-- HAProxy is installed on each VLESS node when its explicit shared-443
-  Publication is created. It performs TCP ClientHello SNI routing without
-  terminating TLS, uses no Docker socket, and binds only that node's confirmed
-  public address. A REALITY route can target only the same node's 3x-ui alias;
-  cross-node VLESS relaying is rejected. Unknown SNI traffic is passed to Caddy,
-  which has no matching application route for unconfigured hostnames.
+- HAProxy is installed on each VLESS node when its explicit node-direct
+  shared-443 Publication is created. It performs TCP ClientHello SNI routing
+  without terminating TLS, uses no Docker socket, and binds only that node's
+  confirmed local receive address. A REALITY route can target only the same node's
+  3x-ui alias; cross-node VLESS relaying is rejected. A VLESS-only node rejects
+  unknown SNI and does not install Caddy. Only a node separately selected as a
+  Site Gateway sends unmatched SNI to that node's local Caddy.
 - Managed VLESS+REALITY fallback traffic requires an administrator-approved
   `.com` target. Agent pins one resolved IP, rejects cdncheck CDN/WAF matches,
-  verifies TLS 1.3, X25519, H2, SNI, and
-  the certificate, and points REALITY at a loopback Xray `tunnel`. Exact SNI is
-  routed direct and the next same-inbound rule blackholes everything else. Any
-  missing, stale, or failed guard blocks Center publication and leaves the
-  inbound disabled. Invalid REALITY clients may still reach the one approved
+  verifies TLS 1.3, X25519, H2, SNI, and the certificate, and pins REALITY
+  directly to that address on port 443. Node-local HAProxy permits only the
+  verified outer SNI and sends Proxy Protocol v2 to the local 3x-ui inbound;
+  VLESS-only nodes reject unmatched SNI. Any missing, stale, or failed guard
+  blocks Center publication and leaves the inbound disabled. Upgrades remove
+  obsolete loopback guard inbounds and reserved Xray rules after read-back.
+  Invalid REALITY clients may still reach the one approved
   camouflage IP and consume traffic, which is an intentional REALITY property.
   ASN is only a network-selection hint: mismatches and failed lookups do not
   reject a target or unpublish a ready service. SNI is not authentication;
@@ -80,6 +85,11 @@
   errors redact credential-shaped material, and an encrypted local result
   outbox makes disconnect and restart acknowledgement replay safe. Immediate
   credential revocation is separate from workload-aware node disable.
+- An application Cloudflare Tunnel connector is not a Site Gateway. Center
+  accepts only HTTP/HTTPS Services, validates cross-node private reachability,
+  and sends cloudflared directly to that origin. Existing Tunnel migrations
+  keep the former Caddy route until the replacement connector revision and
+  external hostname probe succeed, then remove it through desired state.
 - CPA management and client credentials are generated independently with the
   Center cryptographic token facility. They are removed from the Catalog form,
   encrypted in deployment state, preserved unchanged during ordinary upgrades

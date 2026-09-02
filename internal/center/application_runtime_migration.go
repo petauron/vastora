@@ -50,6 +50,15 @@ func (s *Store) queueApplicationRuntimeMigration(ctx context.Context, tx *sql.Tx
 			return err
 		}
 	}
+	var nodeListenerExists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListenerExists); err != nil {
+		return err
+	}
+	if nodeListenerExists {
+		if err := s.queueNodeListenerState(ctx, tx, agentID, now); err != nil {
+			return err
+		}
+	}
 	var tunnelExists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cloudflare_tunnels WHERE agent_id = ?)`, agentID).Scan(&tunnelExists); err != nil {
 		return err

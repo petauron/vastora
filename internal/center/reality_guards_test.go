@@ -63,8 +63,8 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 		 VALUES('reality-guard-service', 'reality-guard-app', '` + siteID + `', 'inbound-9', 'Guarded', 'tcp', 443, 443, '10.0.0.80:443', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `')`,
 		`INSERT INTO three_x_ui_reality_guards(service_id, target_host, target_ip, server_name, node_asn, target_asn, companion_inbound_id, companion_tag, companion_port, revision, status, verified_at, created_at, updated_at)
 		 VALUES('reality-guard-service', 'www.example.com', '203.0.113.90', 'www.example.com', 64500, 64500, 10, 'vastora-test-guard', 21000, 1, 'ready', '` + now + `', '` + now + `', '` + now + `')`,
-		`INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
-		 VALUES('reality-guard-publication', 'reality-guard-service', 'public_shared_443', '` + node.ID + `', 'reality.example.test', 'www.example.com', 'manual', 1, 1, 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, sni_hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
+		 VALUES('reality-guard-publication', 'reality-guard-service', 'public_shared_443', 'application_node', '` + node.ID + `', 'reality.example.test', 'www.example.com', 'manual', 1, 1, 'ready', '` + now + `', '` + now + `')`,
 	} {
 		if _, err := store.db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
@@ -74,13 +74,42 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	readyDesired, err := store.desiredGatewayState(ctx, tx, node.ID, 1)
+	readyDesired, err := store.desiredNodeListenerState(ctx, tx, node.ID, 1)
 	_ = tx.Rollback()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if readyDesired.SharedHTTPS == nil || len(readyDesired.SharedHTTPS.Routes) != 1 || readyDesired.SharedHTTPS.Routes[0].ProxyProtocol != gateway.ProxyProtocolV2 {
-		t.Fatalf("managed REALITY route did not request Proxy Protocol v2: %#v", readyDesired.SharedHTTPS)
+	if len(readyDesired.Listener.Routes) != 1 || !readyDesired.Listener.Routes[0].ManagedReality || readyDesired.Listener.Routes[0].ProxyProtocol != gateway.ProxyProtocolV2 || !readyDesired.Listener.RejectUnmatched {
+		t.Fatalf("managed REALITY route did not request a local Proxy Protocol v2 listener: %#v", readyDesired.Listener)
+	}
+	tx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.queueNodeListenerState(ctx, tx, node.ID, time.Now().UTC()); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var gatewayGeneration int64
+	if err := store.db.QueryRowContext(ctx, `SELECT generation FROM gateway_components WHERE gateway_node_id = ?`, node.ID).Scan(&gatewayGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_components SET status = 'applying', attempt = 1 WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.completeGatewayComponent(ctx, node.ID, gatewayGeneration, 1, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	var dualRoleJSON []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_json FROM node_listener_states WHERE node_id = ?`, node.ID).Scan(&dualRoleJSON); err != nil {
+		t.Fatal(err)
+	}
+	var dualRole gateway.NodeListenerState
+	if json.Unmarshal(dualRoleJSON, &dualRole) != nil || dualRole.Listener.RejectUnmatched || dualRole.Listener.CaddyAddress != "vastora-gateway-caddy" || dualRole.Listener.CaddyPort != 443 {
+		t.Fatalf("ready Site Gateway was not added as the local node-listener fallback: %#v", dualRole.Listener)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE three_x_ui_reality_guards SET target_asn = 0 WHERE service_id = 'reality-guard-service'`); err != nil {
 		t.Fatal(err)
@@ -104,18 +133,16 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 		t.Fatalf("quarantined guard=%q error=%q service=%q publication=%q", guardStatus, guardError, serviceStatus, publicationStatus)
 	}
 	var desiredJSON []byte
-	if err := store.db.QueryRowContext(ctx, `SELECT desired_json FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&desiredJSON); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_json FROM node_listener_states WHERE node_id = ?`, node.ID).Scan(&desiredJSON); err != nil {
 		t.Fatal(err)
 	}
-	var desired gateway.DesiredState
+	var desired gateway.NodeListenerState
 	if json.Unmarshal(desiredJSON, &desired) != nil {
-		t.Fatalf("invalid gateway state: %s", desiredJSON)
+		t.Fatalf("invalid node-listener state: %s", desiredJSON)
 	}
-	if desired.SharedHTTPS != nil {
-		for _, route := range desired.SharedHTTPS.Routes {
-			if route.Hostname == "www.example.com" {
-				t.Fatalf("quarantined REALITY SNI remained published: %#v", desired.SharedHTTPS.Routes)
-			}
+	for _, route := range desired.Listener.Routes {
+		if route.Hostname == "www.example.com" {
+			t.Fatalf("quarantined REALITY SNI remained published: %#v", desired.Listener.Routes)
 		}
 	}
 }

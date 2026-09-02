@@ -36,6 +36,7 @@ type AgentTask struct {
 	ApplicationRole           string                         `json:"applicationRole,omitempty"`
 	ServiceAddress            string                         `json:"serviceAddress,omitempty"`
 	GatewayState              *gateway.DesiredState          `json:"gatewayState,omitempty"`
+	NodeListenerState         *gateway.NodeListenerState     `json:"nodeListenerState,omitempty"`
 	GatewayCertificates       []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
 	TunnelState               *TunnelTaskState               `json:"tunnelState,omitempty"`
 	ApplicationCommand        *RealityCommandTask            `json:"applicationCommand,omitempty"`
@@ -141,6 +142,16 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 				return nil, err
 			}
 			return commandTask, nil
+		}
+		listenerTask, listenerErr := s.claimNodeListenerTask(ctx, tx, agentID)
+		if listenerErr != nil {
+			return nil, listenerErr
+		}
+		if listenerTask != nil {
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return listenerTask, nil
 		}
 		var desiredStatus string
 		var generation int64
@@ -357,6 +368,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		}
 		return s.CompleteGatewayState(ctx, agentID, credential, revision, expectedAttempt, succeeded, taskError)
 	}
+	if revision, listenerTask := nodeListenerTaskRevision(taskID); listenerTask {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeNodeListenerState(ctx, agentID, revision, expectedAttempt, succeeded, taskError)
+	}
 	if revision, tunnelTask := tunnelTaskRevision(taskID); tunnelTask {
 		if reconciliationRequired {
 			return errInvalidReconciliationDisposition
@@ -565,6 +582,17 @@ func (s *Store) completeGatewayComponent(ctx context.Context, agentID string, ge
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE gateway_components SET applied_generation = CASE WHEN ? THEN ? ELSE applied_generation END, status = ?, lease_expires_at = '', last_error = ?, updated_at = ? WHERE gateway_node_id = ? AND generation = ?`, succeeded, generation, status, taskError, s.now().UTC().Format(time.RFC3339Nano), agentID, generation); err != nil {
 		return err
+	}
+	if succeeded && desiredStatus == "running" {
+		var nodeListenerExists int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListenerExists); err != nil {
+			return err
+		}
+		if nodeListenerExists != 0 {
+			if err := s.queueNodeListenerState(ctx, tx, agentID, s.now().UTC()); err != nil {
+				return err
+			}
+		}
 	}
 	event := "succeeded"
 	if !succeeded {

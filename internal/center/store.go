@@ -232,6 +232,16 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.activateMigratedNodeListeners(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.activateMigratedTunnelConnectors(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.discardEmptyRetiredSharedPublicationMarker(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()

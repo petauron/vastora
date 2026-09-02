@@ -180,7 +180,6 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 			RegionCode:    "US",
 			Name:          name,
 			ClientName:    "Phone",
-			GatewayNodeID: controller.ID,
 			Hostname:      "reality-reservation.example.test",
 			DNSProvider:   "manual",
 			TargetHost:    "www.example.com",

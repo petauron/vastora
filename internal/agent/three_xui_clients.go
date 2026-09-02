@@ -260,7 +260,32 @@ func getThreeXUIClient(ctx context.Context, baseURL, token, email string) (three
 	if json.Unmarshal(payload, &detail) != nil || len(detail.Client) == 0 {
 		return detail, errors.New("agent: 3x-ui returned invalid client details")
 	}
+	normalizeThreeXUIClientDetail(detail.Client)
 	return detail, nil
+}
+
+func normalizeThreeXUIClientDetail(client map[string]json.RawMessage) {
+	if uuid := clientJSONText(client, "uuid"); uuid != "" {
+		setClientJSONField(client, "id", uuid)
+	} else {
+		var numericID int
+		if json.Unmarshal(client["id"], &numericID) == nil {
+			delete(client, "id")
+		}
+	}
+	delete(client, "uuid")
+	if raw := client["allowedIPs"]; len(raw) != 0 {
+		var encoded string
+		if json.Unmarshal(raw, &encoded) == nil {
+			allowed := make([]string, 0)
+			for _, value := range strings.Split(encoded, ",") {
+				if value = strings.TrimSpace(value); value != "" {
+					allowed = append(allowed, value)
+				}
+			}
+			setClientJSONField(client, "allowedIPs", allowed)
+		}
+	}
 }
 
 func findListedThreeXUIClient(ctx context.Context, baseURL, token, email string) (threeXUIClientDetail, bool, error) {
@@ -399,6 +424,32 @@ func clientJSONText(client map[string]json.RawMessage, key string) string {
 	return strings.TrimSpace(value)
 }
 
+func ensureThreeXUIClientSubscriptionID(ctx context.Context, baseURL, token, email string) (string, error) {
+	detail, err := getThreeXUIClient(ctx, baseURL, token, email)
+	if err != nil {
+		return "", err
+	}
+	if subID := clientJSONText(detail.Client, "subId"); subID != "" {
+		return subID, nil
+	}
+	subID, err := randomClientToken()
+	if err != nil {
+		return "", err
+	}
+	setClientJSONField(detail.Client, "subId", subID)
+	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(email), token, "application/json", detail.Client); err != nil {
+		return "", err
+	}
+	observed, err := getThreeXUIClient(ctx, baseURL, token, email)
+	if err != nil {
+		return "", err
+	}
+	if clientJSONText(observed.Client, "subId") != subID {
+		return "", errors.New("3x-ui client subscription identity repair failed read-back")
+	}
+	return subID, nil
+}
+
 func clientInboundsAvailable(inbounds []ThreeXUIClientInbound, ids []int) bool {
 	if len(ids) == 0 {
 		return false
@@ -529,20 +580,9 @@ func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string
 	if err != nil {
 		return "", err
 	}
-	detail, err := getThreeXUIClient(ctx, baseURL, token, command.Email)
+	subID, err := ensureThreeXUIClientSubscriptionID(ctx, baseURL, token, command.Email)
 	if err != nil {
-		return "", err
-	}
-	subID := clientJSONText(detail.Client, "subId")
-	if subID == "" {
-		subID, err = randomClientToken()
-		if err != nil {
-			return "", err
-		}
-		setClientJSONField(detail.Client, "subId", subID)
-		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(command.Email), token, "application/json", detail.Client); err != nil {
-			return "", fmt.Errorf("agent: enable 3x-ui client subscription: %w", err)
-		}
+		return "", fmt.Errorf("agent: enable 3x-ui client subscription: %w", err)
 	}
 	base.Path = strings.TrimSuffix(base.Path, "/") + "/" + subID
 	return base.String(), nil

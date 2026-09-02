@@ -19,7 +19,6 @@ import (
 
 const (
 	centerThreeXUIRealityPort = 443
-	threeXUIRealityGuardPort  = 21000
 	realityCommandKind        = "3xui.reality.create"
 	realityVerifyCommandKind  = "3xui.reality.verify"
 	realityHardenCommandKind  = "3xui.reality.harden"
@@ -35,7 +34,6 @@ type RealityCommandInput struct {
 	RegionCode        string `json:"regionCode"`
 	Name              string `json:"name"`
 	ClientName        string `json:"clientName"`
-	GatewayNodeID     string `json:"gatewayNodeId"`
 	Hostname          string `json:"hostname"`
 	DNSProvider       string `json:"dnsProvider"`
 	TargetHost        string `json:"targetHost"`
@@ -86,32 +84,29 @@ type RealityCommandTask struct {
 }
 
 type RealityCommandResult struct {
-	Action             string `json:"action"`
-	InboundID          int    `json:"inboundId"`
-	DisplayName        string `json:"displayName"`
-	ClientName         string `json:"clientName,omitempty"`
-	Listen             string `json:"listen"`
-	Port               int    `json:"port"`
-	TargetHost         string `json:"targetHost"`
-	TargetIP           string `json:"targetIp"`
-	ServerName         string `json:"serverName"`
-	NodeASN            int64  `json:"nodeAsn"`
-	TargetASN          int64  `json:"targetAsn"`
-	CDNProvider        string `json:"cdnProvider,omitempty"`
-	TLS13              bool   `json:"tls13"`
-	X25519             bool   `json:"x25519"`
-	HTTP2              bool   `json:"http2"`
-	CertificateValid   bool   `json:"certificateValid"`
-	CompanionInboundID int    `json:"companionInboundId,omitempty"`
-	CompanionTag       string `json:"companionTag,omitempty"`
-	CompanionPort      int    `json:"companionPort,omitempty"`
-	GuardStatus        string `json:"guardStatus"`
-	ProxyProtocol      bool   `json:"proxyProtocol"`
-	ConnectHostname    string `json:"connectHostname"`
-	ShareURI           string `json:"shareUri"`
-	InboundTag         string `json:"inboundTag"`
-	ClientCreated      bool   `json:"clientCreated"`
-	InboundTotalBytes  int64  `json:"inboundTotalBytes"`
+	Action            string `json:"action"`
+	InboundID         int    `json:"inboundId"`
+	DisplayName       string `json:"displayName"`
+	ClientName        string `json:"clientName,omitempty"`
+	Listen            string `json:"listen"`
+	Port              int    `json:"port"`
+	TargetHost        string `json:"targetHost"`
+	TargetIP          string `json:"targetIp"`
+	ServerName        string `json:"serverName"`
+	NodeASN           int64  `json:"nodeAsn"`
+	TargetASN         int64  `json:"targetAsn"`
+	CDNProvider       string `json:"cdnProvider,omitempty"`
+	TLS13             bool   `json:"tls13"`
+	X25519            bool   `json:"x25519"`
+	HTTP2             bool   `json:"http2"`
+	CertificateValid  bool   `json:"certificateValid"`
+	GuardStatus       string `json:"guardStatus"`
+	ProxyProtocol     bool   `json:"proxyProtocol"`
+	ConnectHostname   string `json:"connectHostname"`
+	ShareURI          string `json:"shareUri"`
+	InboundTag        string `json:"inboundTag"`
+	ClientCreated     bool   `json:"clientCreated"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandInput struct {
@@ -305,7 +300,6 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	input.RegionCode = region
 	input.Name = name
 	input.ClientName = strings.TrimSpace(input.ClientName)
-	input.GatewayNodeID = strings.TrimSpace(input.GatewayNodeID)
 	input.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.Hostname), "."))
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
 	input.TargetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.TargetHost), "."))
@@ -313,8 +307,8 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	if input.InboundTotalBytes < 0 || input.InboundResetDay < 0 || input.InboundResetDay > maxThreeXUIResetDay || input.ClientTotalBytes < 0 || input.ClientResetDays < 0 || input.ClientResetDays > maxThreeXUIResetDays || input.ClientExpiryTime < 0 {
 		return input, "", errors.New("center: REALITY node or subscription traffic plan is invalid")
 	}
-	if input.ApplicationID == "" || input.GatewayNodeID == "" || !domainSuffixPattern.MatchString(input.Hostname) {
-		return input, "", errors.New("center: application, region, node name, gateway, and a valid connection hostname are required")
+	if input.ApplicationID == "" || input.Hostname != "" && !domainSuffixPattern.MatchString(input.Hostname) {
+		return input, "", errors.New("center: application, region, node name, and a valid optional connection hostname are required")
 	}
 	if input.DNSProvider != "manual" && input.DNSProvider != "cloudflare" {
 		return input, "", errors.New("center: REALITY DNS must be manual or Cloudflare")
@@ -348,11 +342,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Listen != input.TargetAddress || result.Port != centerThreeXUIRealityPort || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.ServerName) || result.InboundTotalBytes != input.InboundTotalBytes {
 		return errors.New("center: Agent returned an unsafe REALITY result")
 	}
-	expectedCompanionTag := input.InboundTag + "-guard"
-	if input.TargetNodeID > 0 {
-		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
-	}
-	if !validRealityTargetProof(result) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
+	if !validRealityTargetProof(result) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
@@ -475,8 +465,8 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if net.ParseIP(targetPublicAddress) == nil {
 		return ApplicationCommandView{}, errors.New("center: target VLESS node has no confirmed public address for ASN validation")
 	}
-	if input.GatewayNodeID != targetAgentID {
-		return ApplicationCommandView{}, errors.New("center: a VLESS node must use its own public gateway so traffic exits directly from that node")
+	if _, _, err := validateNodeDirectPublicIngress(ctx, tx, targetAgentID); err != nil {
+		return ApplicationCommandView{}, err
 	}
 	var agentID string
 	var targetNodeID int
@@ -501,9 +491,6 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if json.Unmarshal(targetConfig, &targetSettings) != nil || targetSettings.PanelPort < 1024 || targetSettings.PanelPort > 65535 {
 		return ApplicationCommandView{}, errors.New("center: target VLESS node configuration is invalid")
 	}
-	if err := validateGatewayForPublication(ctx, tx, siteID, input.GatewayNodeID, publicationShared443); err != nil {
-		return ApplicationCommandView{}, err
-	}
 	if input.DNSProvider == "cloudflare" {
 		var zoneName string
 		if err := tx.QueryRowContext(ctx, `SELECT endpoint FROM network_integrations WHERE kind = 'cloudflare' AND status = 'configured'`).Scan(&zoneName); errors.Is(err, sql.ErrNoRows) {
@@ -512,7 +499,24 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 			return ApplicationCommandView{}, err
 		}
 		if input.Hostname != zoneName && !strings.HasSuffix(input.Hostname, "."+zoneName) {
-			return ApplicationCommandView{}, errors.New("center: connection hostname must belong to the configured Cloudflare Zone")
+			if input.Hostname != "" {
+				return ApplicationCommandView{}, errors.New("center: connection hostname must belong to the configured Cloudflare Zone")
+			}
+		}
+		if input.Hostname == "" {
+			input.Hostname, err = randomPublicationHostnameInZone(ctx, tx, zoneName)
+			if err != nil {
+				return ApplicationCommandView{}, err
+			}
+		}
+	} else if input.Hostname == "" {
+		var zoneName string
+		if err := tx.QueryRowContext(ctx, `SELECT domain_suffix FROM sites WHERE id = ?`, siteID).Scan(&zoneName); err != nil {
+			return ApplicationCommandView{}, errors.New("center: Site public domain is unavailable")
+		}
+		input.Hostname, err = randomPublicationHostnameInZone(ctx, tx, zoneName)
+		if err != nil {
+			return ApplicationCommandView{}, err
 		}
 	}
 	var duplicateDisplayName int
@@ -564,7 +568,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	}
 	encoded, _ := json.Marshal(task)
 	now := s.now().UTC()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, site_id, display_name, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ApplicationID, siteID, displayName, agentID, input.GatewayNodeID, realityCommandKind, encoded, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, site_id, display_name, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ApplicationID, siteID, displayName, agentID, targetAgentID, realityCommandKind, encoded, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		if strings.Contains(err.Error(), "application_commands.site_id") {
 			return ApplicationCommandView{}, errors.New("center: this Site already has a REALITY operation reserving that node name")
 		}

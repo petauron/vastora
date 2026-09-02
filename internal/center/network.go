@@ -129,10 +129,10 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err != nil {
 		return nil, err
 	}
-	if previous != nil && previous.PublicAddress != input.PublicAddress {
+	if previous != nil && (previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode) {
 		var publicationCount int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
-			WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications
+			WHERE entry_node_id = ? AND kind IN ('public_direct', 'public_shared_443') AND status <> 'stopped'`, agentID).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
 		if publicationCount != 0 {
@@ -189,7 +189,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 				continue
 			}
 			var publicationCount int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.kind).Scan(&publicationCount); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE entry_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.kind).Scan(&publicationCount); err != nil {
 				return nil, err
 			}
 			if publicationCount != 0 {
@@ -207,7 +207,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	input.ConfirmedAt = s.now().UTC()
 	if !input.DirectPublic {
 		var publicationCount int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE (a.node_id = ? OR p.gateway_node_id = ?) AND p.kind IN ('public_direct', 'public_shared_443') AND p.status <> 'stopped'`, agentID, agentID).Scan(&publicationCount); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE entry_node_id = ? AND kind IN ('public_direct', 'public_shared_443') AND status <> 'stopped'`, agentID).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
 		if publicationCount != 0 {
@@ -224,7 +224,7 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 			continue
 		}
 		var publicationCount int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.publication).Scan(&publicationCount); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE entry_node_id = ? AND kind = ? AND status <> 'stopped'`, agentID, check.publication).Scan(&publicationCount); err != nil {
 			return nil, err
 		}
 		if publicationCount != 0 {

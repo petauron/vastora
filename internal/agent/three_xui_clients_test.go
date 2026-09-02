@@ -64,7 +64,7 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
 		case "GET /panel/api/clients/get/MacBook":
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","id":"11111111-2222-4333-8444-555555555555","subId":"","flow":"xtls-rprx-vision","enable":true},"inboundIds":[9]}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","id":17,"uuid":"11111111-2222-4333-8444-555555555555","subId":"","flow":"xtls-rprx-vision","allowedIPs":"10.0.0.0/8, 192.168.0.0/16","enable":true},"inboundIds":[9]}}`))
 		case "GET /panel/api/inbounds/get/9":
 			minClientVersion := ""
 			proxySettings := ""
@@ -87,8 +87,13 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 			clientVersionUpdated.Store(true)
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
 		case "POST /panel/api/clients/update/MacBook":
-			var payload map[string]json.RawMessage
-			if json.NewDecoder(request.Body).Decode(&payload) != nil || json.Unmarshal(payload["subId"], &updatedSubID) != nil || updatedSubID == "" {
+			var payload map[string]any
+			if json.NewDecoder(request.Body).Decode(&payload) != nil {
+				t.Fatal("subscription client update was not decoded")
+			}
+			updatedSubID, _ = payload["subId"].(string)
+			allowedIPs, _ := payload["allowedIPs"].([]any)
+			if updatedSubID == "" || payload["id"] != "11111111-2222-4333-8444-555555555555" || payload["uuid"] != nil || len(allowedIPs) != 2 || allowedIPs[0] != "10.0.0.0/8" || allowedIPs[1] != "192.168.0.0/16" {
 				t.Fatal("subscription id was not generated in the full client payload")
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
