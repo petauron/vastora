@@ -9,12 +9,16 @@ import (
 	"strings"
 )
 
-type hostDecommissionCancellationEnvironment struct {
-	directory     string
-	unitPath      string
-	enabledLink   string
-	generatorPath string
-	run           func(context.Context, string, ...string) ([]byte, error)
+type hostHelperCancellationEnvironment struct {
+	directory         string
+	unitName          string
+	unitPath          string
+	unitContents      string
+	enabledLink       string
+	generatorPath     string
+	generatorContents string
+	operationDataDir  func(string) (string, error)
+	run               func(context.Context, string, ...string) ([]byte, error)
 }
 
 // An explicit local uninstall takes ownership from the autonomous helper.
@@ -25,27 +29,31 @@ func uninstallAgentHostLocally(ctx context.Context, dataDir string, deleteData, 
 	if err != nil {
 		return err
 	}
-	if _, err := stopAgentUnit(ctx, agentUninstallEnvironment{unitPath: "/etc/systemd/system/vastora-agent.service", run: runHostCommand}); err != nil {
+	if _, err := stopAgentUnit(ctx, agentUninstallEnvironment{unitPath: vastoraAgentUnitPath, run: runHostCommand}); err != nil {
 		return err
 	}
-	if err := cancelHostDecommission(ctx, dataDir, hostDecommissionCancellationEnvironment{
-		directory: hostDecommissionDir, unitPath: hostDecommissionUnit, enabledLink: hostDecommissionEnabledLink,
-		generatorPath: hostDecommissionGenerator, run: runHostCommand,
+	if err := cancelHostHelper(ctx, dataDir, hostHelperCancellationEnvironment{
+		directory: hostDecommissionDir, unitName: hostDecommissionUnitName, unitPath: hostDecommissionUnit, unitContents: hostDecommissionServiceUnit(), enabledLink: hostDecommissionEnabledLink,
+		generatorPath:     hostDecommissionGenerator,
+		generatorContents: hostDecommissionGeneratorScript(hostDecommissionDir, hostDecommissionFinalizerUnit(hostDecommissionDir, hostDecommissionUnit, hostDecommissionEnabledLink, hostDecommissionGenerator)),
+		operationDataDir:  hostDecommissionDataDir, run: runHostCommand,
 	}); err != nil {
 		return err
 	}
 	return uninstallAgentHost(ctx, dataDir, deleteData, runtimeCleaned, keepBinary)
 }
 
-func cancelHostDecommission(ctx context.Context, dataDir string, environment hostDecommissionCancellationEnvironment) error {
-	unitExists, err := ownedHostCleanupFile(environment.unitPath, hostDecommissionServiceUnit())
+func cancelHostHelper(ctx context.Context, dataDir string, environment hostHelperCancellationEnvironment) error {
+	unitExists, err := ownedHostCleanupFile(environment.unitPath, environment.unitContents)
 	if err != nil {
 		return err
 	}
-	finalizer := hostDecommissionFinalizerUnit(environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath)
-	generatorExists, err := ownedHostCleanupFile(environment.generatorPath, hostDecommissionGeneratorScript(environment.directory, finalizer))
-	if err != nil {
-		return err
+	generatorExists := false
+	if environment.generatorPath != "" {
+		generatorExists, err = ownedHostCleanupFile(environment.generatorPath, environment.generatorContents)
+		if err != nil {
+			return err
+		}
 	}
 	directoryExists := false
 	if info, err := os.Lstat(environment.directory); err == nil {
@@ -59,11 +67,11 @@ func cancelHostDecommission(ctx context.Context, dataDir string, environment hos
 	operationPath := filepath.Join(environment.directory, "operation.json")
 	operationExists := false
 	if _, err := os.Lstat(operationPath); err == nil {
-		operation, err := readHostDecommissionOperation(operationPath)
+		operationDataDir, err := environment.operationDataDir(operationPath)
 		if err != nil {
 			return err
 		}
-		if filepath.Clean(operation.DataDir) != filepath.Clean(dataDir) {
+		if filepath.Clean(operationDataDir) != filepath.Clean(dataDir) {
 			return errors.New("agent: pending host cleanup belongs to a different Agent state directory")
 		}
 		operationExists = true
@@ -106,8 +114,8 @@ func cancelHostDecommission(ctx context.Context, dataDir string, environment hos
 	if output, err := environment.run(ctx, "sync", "-f", environment.directory); err != nil {
 		return fmt.Errorf("agent: persist local host cleanup cancellation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
-	if output, err := environment.run(ctx, "systemctl", "stop", hostDecommissionUnitName); err != nil {
-		status, statusErr := environment.run(ctx, "systemctl", "show", "--property=LoadState", "--property=ActiveState", hostDecommissionUnitName)
+	if output, err := environment.run(ctx, "systemctl", "stop", environment.unitName); err != nil {
+		status, statusErr := environment.run(ctx, "systemctl", "show", "--property=LoadState", "--property=ActiveState", environment.unitName)
 		lines := "\n" + strings.TrimSpace(string(status)) + "\n"
 		if statusErr != nil || !strings.Contains(lines, "\nLoadState=not-found\n") || !strings.Contains(lines, "\nActiveState=inactive\n") {
 			return fmt.Errorf("agent: stop pending host cleanup before local uninstall: %s: %w", strings.TrimSpace(string(output)), err)
@@ -116,6 +124,9 @@ func cancelHostDecommission(ctx context.Context, dataDir string, environment hos
 	// Keep the cancellation marker until all restart mechanisms have been
 	// removed and synced. A crash must not reactivate a cancelled operation.
 	for _, path := range []string{environment.generatorPath, environment.enabledLink, environment.unitPath} {
+		if path == "" {
+			continue
+		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("agent: remove cancelled host cleanup service: %w", err)
 		}
@@ -154,6 +165,11 @@ func cancelHostDecommission(ctx context.Context, dataDir string, environment hos
 		return fmt.Errorf("agent: sync completed local cleanup cancellation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+func hostDecommissionDataDir(path string) (string, error) {
+	operation, err := readHostDecommissionOperation(path)
+	return operation.DataDir, err
 }
 
 func ownedHostCleanupFile(path, expected string) (bool, error) {

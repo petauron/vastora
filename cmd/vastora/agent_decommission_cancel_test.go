@@ -28,7 +28,7 @@ func TestLocalUninstallCancelsPendingHostCleanupWithoutCenter(t *testing.T) {
 				}
 			}
 			for range 2 {
-				if err := cancelHostDecommission(context.Background(), dataDir, environment); err != nil {
+				if err := cancelHostHelper(context.Background(), dataDir, environment); err != nil {
 					t.Fatal(err)
 				}
 				assertUninstallPathsAbsent(t, environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath)
@@ -48,7 +48,7 @@ func TestLocalCleanupCancellationRemainsEffectiveAfterStopFailure(t *testing.T) 
 		}
 		return nil, nil
 	}
-	if err := cancelHostDecommission(context.Background(), dataDir, environment); err == nil {
+	if err := cancelHostHelper(context.Background(), dataDir, environment); err == nil {
 		t.Fatal("stop failure was ignored")
 	}
 	operationPath := filepath.Join(environment.directory, "operation.json")
@@ -66,7 +66,7 @@ func TestLocalCleanupCancellationRemainsEffectiveAfterStopFailure(t *testing.T) 
 		assertUninstallPathsAbsent(t, filepath.Join(output, hostDecommissionUnitName))
 	}
 	environment.run = func(context.Context, string, ...string) ([]byte, error) { return nil, nil }
-	if err := cancelHostDecommission(context.Background(), dataDir, environment); err != nil {
+	if err := cancelHostHelper(context.Background(), dataDir, environment); err != nil {
 		t.Fatalf("local cancellation did not resume: %v", err)
 	}
 	assertUninstallPathsAbsent(t, environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath)
@@ -95,7 +95,7 @@ func TestLocalCleanupCancellationRetriesAfterReloadAndDeletionFailure(t *testing
 					return nil, nil
 				}
 			}
-			if err := cancelHostDecommission(context.Background(), dataDir, environment); err == nil {
+			if err := cancelHostHelper(context.Background(), dataDir, environment); err == nil {
 				t.Fatal("cleanup interruption was ignored")
 			}
 			if cancelled, err := protectedCleanupMarkerExists(filepath.Join(environment.directory, "cancelled"), "cancelled\n"); err != nil || !cancelled {
@@ -107,7 +107,7 @@ func TestLocalCleanupCancellationRetriesAfterReloadAndDeletionFailure(t *testing
 				}
 			}
 			environment.run = func(context.Context, string, ...string) ([]byte, error) { return nil, nil }
-			if err := cancelHostDecommission(context.Background(), dataDir, environment); err != nil {
+			if err := cancelHostHelper(context.Background(), dataDir, environment); err != nil {
 				t.Fatalf("partial cancellation did not resume: %v", err)
 			}
 			assertUninstallPathsAbsent(t, environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath)
@@ -142,7 +142,7 @@ func TestLocalCleanupCancellationRejectsUnrelatedState(t *testing.T) {
 				t.Fatal("unrelated state triggered a host command")
 				return nil, nil
 			}
-			if err := cancelHostDecommission(context.Background(), dataDir, environment); err == nil {
+			if err := cancelHostHelper(context.Background(), dataDir, environment); err == nil {
 				t.Fatal("unrelated cleanup state was accepted")
 			}
 			for _, path := range []string{environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath} {
@@ -166,13 +166,13 @@ func TestLocalCleanupCancellationAcceptsMissingInactiveService(t *testing.T) {
 		}
 		return nil, nil
 	}
-	if err := cancelHostDecommission(context.Background(), dataDir, environment); err != nil {
+	if err := cancelHostHelper(context.Background(), dataDir, environment); err != nil {
 		t.Fatal(err)
 	}
 	assertUninstallPathsAbsent(t, environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath)
 }
 
-func newHostCancellationFixture(t *testing.T) (hostDecommissionCancellationEnvironment, string) {
+func newHostCancellationFixture(t *testing.T) (hostHelperCancellationEnvironment, string) {
 	t.Helper()
 	directory, unitPath, enabledLink, generatorPath := newHostFinalizerFixture(t)
 	if err := os.Chmod(directory, 0o700); err != nil {
@@ -187,8 +187,9 @@ func newHostCancellationFixture(t *testing.T) (hostDecommissionCancellationEnvir
 	if err := writeRootFileAtomic(filepath.Join(directory, "operation.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return hostDecommissionCancellationEnvironment{
-		directory: directory, unitPath: unitPath, enabledLink: enabledLink, generatorPath: generatorPath,
+	return hostHelperCancellationEnvironment{
+		directory: directory, unitName: hostDecommissionUnitName, unitPath: unitPath, unitContents: hostDecommissionServiceUnit(), enabledLink: enabledLink, generatorPath: generatorPath,
+		generatorContents: hostDecommissionGeneratorScript(directory, hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPath)), operationDataDir: hostDecommissionDataDir,
 		run: func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 			if name != "systemctl" && name != "sync" {
 				t.Fatalf("unexpected cancellation command: %s %s", name, strings.Join(arguments, " "))

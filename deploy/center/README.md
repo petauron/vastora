@@ -150,6 +150,11 @@ state before continuing the local uninstall. It does not contact Center or
 report an automatic decommission as successful. A failed cancellation remains
 cancelled across helper restarts; repeat the same command to finish cleanup.
 
+Both local uninstall and Center-orchestrated host cleanup also cancel any
+pending Agent updater before removing the runtime or executable. The updater's
+start and stop hooks honor the cancellation, so a retry cannot reinstall or
+roll back the Agent while uninstall is in progress.
+
 Tailscale is removed only when the Agent installer recorded it as
 Vastora-managed. A Tailscale installation that already existed on the host is
 disconnected from Vastora but its package and repository are preserved.
