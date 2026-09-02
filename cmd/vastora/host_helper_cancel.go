@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/petauron/vastora/internal/agent"
 )
 
 type hostHelperCancellationEnvironment struct {
@@ -27,6 +29,9 @@ type hostHelperCancellationEnvironment struct {
 func uninstallAgentHostLocally(ctx context.Context, dataDir string, deleteData, runtimeCleaned, keepBinary bool) error {
 	dataDir, err := safeAgentDataDir(dataDir)
 	if err != nil {
+		return err
+	}
+	if _, err := agent.ReadHostInstallState(dataDir); err != nil {
 		return err
 	}
 	if _, err := stopAgentUnit(ctx, agentUninstallEnvironment{unitPath: vastoraAgentUnitPath, run: runHostCommand}); err != nil {

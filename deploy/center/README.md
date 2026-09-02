@@ -158,6 +158,10 @@ roll back the Agent while uninstall is in progress.
 Tailscale is removed only when the Agent installer recorded it as
 Vastora-managed. A Tailscale installation that already existed on the host is
 disconnected from Vastora but its package and repository are preserved.
+The ownership record must be a private regular file with unambiguous fields.
+Invalid permissions, symbolic links, and malformed records stop cleanup rather
+than granting permission to remove host dependencies. A missing record does not
+establish Vastora ownership.
 
 ## Release packaging
 
