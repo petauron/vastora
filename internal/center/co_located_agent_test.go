@@ -33,7 +33,7 @@ func TestNetworkCandidatesAreCoLocatedOnlyForAssignedHostAddress(t *testing.T) {
 	}
 }
 
-func TestCoLocatedHeadscaleAddressRequiresCurrentAgentCandidate(t *testing.T) {
+func TestCoLocatedHeadscaleAddressSurvivesAgentReconnect(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -50,11 +50,12 @@ func TestCoLocatedHeadscaleAddressRequiresCurrentAgentCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	timestamp := now.Format(time.RFC3339Nano)
+	staleHeartbeat := now.Add(-time.Hour).Format(time.RFC3339Nano)
 	statements := []struct {
 		query string
 		args  []any
 	}{
-		{`INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id) VALUES('center-node', 'Center', X'01', 'test', 'active', ?, ?, ?)`, []any{timestamp, timestamp, site.ID}},
+		{`INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id) VALUES('center-node', 'Center', X'01', 'test', 'active', ?, ?, ?)`, []any{timestamp, staleHeartbeat, site.ID}},
 		{`INSERT INTO agent_network_profiles(agent_id, service_address, headscale_address, enabled_kinds_json, confirmed_at, candidate_observed_at) VALUES('center-node', '100.64.0.1', '100.64.0.1', '["headscale"]', ?, ?)`, []any{timestamp, timestamp}},
 		{`INSERT INTO agent_network_candidates(agent_id, address, interface_name, kind, observed_at) VALUES('center-node', '10.0.0.10', 'ens3', 'lan', ?), ('center-node', '100.64.0.1', 'tailscale0', 'headscale', ?)`, []any{timestamp, timestamp}},
 	}

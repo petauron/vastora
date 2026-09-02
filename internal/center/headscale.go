@@ -585,12 +585,16 @@ func (s *Store) coLocatedHeadscaleAddress(ctx context.Context) (string, error) {
 			local[candidate.Kind+"\x00"+candidate.Address] = candidate.Address
 		}
 	}
+	// The confirmed co-located topology must survive a temporary Agent outage.
+	// This DNS record is what lets remote Agents reconnect after Center or the
+	// co-located Agent restarts, so gating it on recent heartbeats creates a
+	// circular dependency and can disconnect the entire tailnet.
 	rows, err := s.db.QueryContext(ctx, `SELECT n.headscale_address, c.kind, c.address
 		FROM agent_network_profiles n JOIN agents a ON a.id = n.agent_id
 		JOIN agent_network_candidates c ON c.agent_id = n.agent_id
-		WHERE a.status = 'active' AND a.last_seen_at >= ? AND n.headscale_address <> ''
+		WHERE a.status = 'active' AND n.headscale_address <> ''
 		AND EXISTS(SELECT 1 FROM agent_network_candidates h WHERE h.agent_id = n.agent_id AND h.kind = ? AND h.address = n.headscale_address)
-		ORDER BY a.enrolled_at, c.kind, c.address`, s.now().UTC().Add(-45*time.Second).Format(time.RFC3339Nano), networking.KindHeadscale)
+		ORDER BY a.enrolled_at, c.kind, c.address`, networking.KindHeadscale)
 	if err != nil {
 		return "", err
 	}
