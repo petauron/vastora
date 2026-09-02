@@ -251,24 +251,43 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 	}
 }
 
-func TestInvalidReconciliationDispositionIsRejected(t *testing.T) {
+func TestNonThreeXUIDeploymentCanBeQuarantinedAndRetried(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "invalid-reconciliation", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.16", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.16", LANAddress: "10.0.0.16", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config}); err != nil {
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: config})
+	if err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "uncertain non-3x-ui state", nil, true); !errors.Is(err, errInvalidReconciliationDisposition) {
-		t.Fatalf("non-3x-ui task accepted reconciliation disposition: %v", err)
-	}
 	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, true); !errors.Is(err, errInvalidReconciliationDisposition) {
 		t.Fatalf("successful task accepted reconciliation disposition: %v", err)
 	}
 	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "", nil, true); !errors.Is(err, errInvalidReconciliationDisposition) {
 		t.Fatalf("reconciliation disposition without an error was accepted: %v", err)
+	}
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "uncertain CPA state", nil, true, task.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	var state, applicationStatus string
+	var reconciliationRequired int
+	if err := store.db.QueryRowContext(ctx, `SELECT deployment.state, deployment.reconciliation_required, application.status
+		FROM deployments deployment JOIN applications application ON application.id = deployment.application_id
+		WHERE deployment.id = ?`, created.ID).Scan(&state, &reconciliationRequired, &applicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if state != "failed" || reconciliationRequired != 1 || applicationStatus != "failed" {
+		t.Fatalf("quarantined CPA state=%q reconciliation=%d application=%q", state, reconciliationRequired, applicationStatus)
+	}
+	retry, err := store.RetryTaskReconciliation(ctx, task.ID)
+	if err != nil || !retry.Queued || retry.TaskID != task.ID || retry.Kind != "application.apply" {
+		t.Fatalf("CPA reconciliation retry = %#v, err=%v", retry, err)
+	}
+	replayed := claimTask(t, store, node)
+	if replayed.ID != task.ID || replayed.Attempt != task.Attempt+1 || !replayed.Reconcile {
+		t.Fatalf("CPA reconciliation changed task identity or attempt: first=%#v replay=%#v", task, replayed)
 	}
 }
 

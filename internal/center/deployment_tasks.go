@@ -391,9 +391,6 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		FROM deployments d JOIN applications a ON a.id = d.application_id JOIN agents agent ON agent.id = d.agent_id WHERE d.id = ? AND d.agent_id = ?`, taskID, agentID).Scan(&applicationID, &appKey, &role, &operation, &currentState, &currentReconciliationRequired, &manifestJSON, &configJSON, &serviceAddress, &attempt, &requiredRuntimeGeneration, &agentRuntimeGeneration); err != nil {
 		return errors.New("center: task not found")
 	}
-	if reconciliationRequired && appKey != threeXUIAppKey {
-		return errInvalidReconciliationDisposition
-	}
 	if currentState == "succeeded" || currentState == "failed" {
 		if reconciliationRequired && (currentState != "failed" || currentReconciliationRequired != 1) {
 			return errInvalidReconciliationDisposition
