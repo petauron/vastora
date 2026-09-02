@@ -338,9 +338,15 @@ grouping prefixes stable even when a 3x-ui controller manages nodes on other
 hosts.
 The administrator must provide a `.com` `targetHost` and exact `.com`
 `serverName`; target port is fixed to 443. Agent resolves the target, pins one
-IP, requires the target and VLESS node to have the same ASN, rejects addresses
-identified by cdncheck as shared CDN or WAF infrastructure, and verifies TLS
-1.3, X25519, H2, SNI, and the certificate against that pinned IP.
+IP, rejects addresses identified by cdncheck as shared CDN or WAF infrastructure,
+and verifies TLS 1.3, X25519, H2, SNI, and the certificate against that pinned IP.
+ASN is advisory metadata, not an authorization boundary: different ASNs are
+allowed. After the security checks, node and target ASN lookups each have a
+one-second deadline. Missing or failed lookups return `0` (unknown), never
+block creation or trigger quarantine, and are displayed as unknown rather than
+AS0. Center uses the same target-proof predicate for verify, create, and harden.
+Known shared CDN/WAF targets remain rejected because fixed IP plus an outer
+SNI allowlist does not prove cross-tenant isolation; no override is offered.
 It then generates the keys and optional
 first client locally and creates the node's sole REALITY inbound on container
 port `443`. Later subscribers are clients of that inbound rather than new
@@ -352,6 +358,12 @@ companion. TLS sniffing with
 `routeOnly` permits `full:<serverName>` to the Vastora direct outbound; the
 immediately following same-inbound catch-all uses a blackhole outbound. The
 tunnel itself has exactly one destination, the validated pinned IP on port 443.
+HAProxy's exact-SNI routing blocks the usual alternate-SNI relay path, but SNI
+is not client authentication. TCP passthrough cannot authorize encrypted HTTP
+Host values or an ECH inner ClientHello. Unauthenticated connections with the
+allowed SNI may still reach the pinned fallback site and consume node traffic.
+The guard restricts fallback destinations; it does not promise zero anonymous
+traffic, complete CDN detection, or volumetric DDoS protection.
 Only Vastora-tagged outbounds and rules are replaced; user Xray configuration
 is retained, restarted through 3x-ui's config path, and read back. A failed
 config test restores the prior template and leaves the REALITY inbound disabled.
