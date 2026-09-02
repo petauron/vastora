@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.95](https://github.com/petauron/vastora/compare/v0.1.0-alpha.94...v0.1.0-alpha.95) (2026-09-02)
+
+
+### Bug Fixes
+
+* **upgrade:** defer loopback Center verification ([1b521bc](https://github.com/petauron/vastora/commit/1b521bc596ab4eb0ef4000b840119545a5c03a40))
+
 ## [0.1.0-alpha.94](https://github.com/petauron/vastora/compare/v0.1.0-alpha.93...v0.1.0-alpha.94) (2026-09-02)
 
 
