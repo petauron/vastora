@@ -125,7 +125,11 @@
   uploaded to Tailscale. Before starting or restarting the daemon, Agent pins
   the verified bundled Headscale address (including active domain aliases) in
   a Vastora-owned resolver section and removes malformed or Tailscale-hosted
-  DERP cache data without touching `tailscaled.state` or node keys. Public
+  DERP cache data without touching `tailscaled.state` or node keys. Before the
+  isolation state is marked applied, Agent reads the live map from the local
+  Tailscale API: region 998 must remain STUN-only and region 999 must be the sole
+  relay at the current bundled Headscale hostname. Any additional relay keeps
+  reconciliation pending and prevents silent fallback. Public
   application traffic and explicitly configured public integrations remain
   outside this private-network isolation boundary.
 - A fixed `public-ipv4:41641` Tailscale endpoint is never inferred from HTTP,

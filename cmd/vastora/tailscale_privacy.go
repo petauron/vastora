@@ -101,7 +101,7 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 	if err != nil {
 		return fmt.Errorf("start Tailscale with Vastora isolation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
-	if err := verifyTailscaleRuntimePrivacy(commandContext, environment.run); err != nil {
+	if err := verifyTailscaleRuntimePrivacy(commandContext, environment.run, desired); err != nil {
 		return err
 	}
 	if err := writeAtomicHostFile(tailscalePrivacyAppliedPath(environment.overridePath), tailscalePrivacyAppliedMarker, 0o644); err != nil {
@@ -137,26 +137,14 @@ func tailscaleIsolationCurrent(ctx context.Context, environment tailscaleIsolati
 	}
 	runtimeContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	return tailscaleRuntimePrivacyCurrent(runtimeContext, environment.run), nil
+	return tailscaleRuntimePrivacyCurrent(runtimeContext, environment.run, desired), nil
 }
 
-func tailscaleRuntimePrivacyCurrent(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) bool {
-	if _, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service"); err != nil {
-		return false
-	}
-	output, err := run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
-	if err != nil {
-		return false
-	}
-	for _, value := range strings.Fields(string(output)) {
-		if strings.Trim(value, "\"") == "TS_NO_LOGS_NO_SUPPORT=true" {
-			return true
-		}
-	}
-	return false
+func tailscaleRuntimePrivacyCurrent(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), desired agent.TailscaleIsolationDesiredState) bool {
+	return verifyTailscaleRuntimePrivacy(ctx, run, desired) == nil
 }
 
-func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error)) error {
+func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), desired agent.TailscaleIsolationDesiredState) error {
 	output, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service")
 	if err != nil {
 		return fmt.Errorf("verify Tailscale service is active after isolation: %s: %w", strings.TrimSpace(string(output)), err)
@@ -167,10 +155,68 @@ func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context
 	}
 	for _, value := range strings.Fields(string(output)) {
 		if strings.Trim(value, "\"") == "TS_NO_LOGS_NO_SUPPORT=true" {
-			return nil
+			if desired.RelayRegionID == 0 {
+				return nil
+			}
+			derpMap, mapErr := run(ctx, "tailscale", "debug", "derp-map")
+			if mapErr != nil {
+				return fmt.Errorf("verify Tailscale DERP map: %s: %w", strings.TrimSpace(string(derpMap)), mapErr)
+			}
+			return verifyTailscaleDERPMap(derpMap, desired)
 		}
 	}
 	return errors.New("verify Tailscale privacy environment: TS_NO_LOGS_NO_SUPPORT=true is not loaded")
+}
+
+func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesiredState) error {
+	var derpMap struct {
+		Regions map[int]struct {
+			RegionID   int    `json:"RegionID"`
+			RegionCode string `json:"RegionCode"`
+			Nodes      []struct {
+				HostName string `json:"HostName"`
+				DERPPort int    `json:"DERPPort"`
+				STUNOnly bool   `json:"STUNOnly"`
+			} `json:"Nodes"`
+		} `json:"Regions"`
+	}
+	if json.Unmarshal(payload, &derpMap) != nil || len(derpMap.Regions) == 0 {
+		return errors.New("verify Tailscale DERP map: tailscaled returned invalid data")
+	}
+	allowed := map[int]bool{desired.RelayRegionID: false}
+	for _, regionID := range desired.STUNOnlyRegionIDs {
+		if regionID <= 0 || regionID == desired.RelayRegionID {
+			return errors.New("verify Tailscale DERP map: desired region policy is invalid")
+		}
+		allowed[regionID] = true
+	}
+	if len(derpMap.Regions) != len(allowed) {
+		return errors.New("verify Tailscale DERP map: an unexpected relay or STUN region is advertised")
+	}
+	controlURL, _ := url.Parse(desired.ControlURL)
+	for regionID, region := range derpMap.Regions {
+		stunOnly, expected := allowed[regionID]
+		if !expected || region.RegionID != 0 && region.RegionID != regionID || len(region.Nodes) == 0 {
+			return errors.New("verify Tailscale DERP map: an unexpected or invalid region is advertised")
+		}
+		if stunOnly {
+			for _, node := range region.Nodes {
+				if !node.STUNOnly || node.DERPPort != 0 {
+					return errors.New("verify Tailscale DERP map: an external STUN region can relay traffic")
+				}
+			}
+			continue
+		}
+		if regionID != desired.RelayRegionID || region.RegionCode != "vastora" {
+			return errors.New("verify Tailscale DERP map: the managed relay region is invalid")
+		}
+		for _, node := range region.Nodes {
+			if node.STUNOnly || node.DERPPort == 0 || !strings.EqualFold(strings.TrimSuffix(node.HostName, "."), strings.TrimSuffix(controlURL.Hostname(), ".")) {
+				return errors.New("verify Tailscale DERP map: the managed relay does not use the current Headscale endpoint")
+			}
+		}
+	}
+	return nil
 }
 
 func validateTailscaleIsolationDesiredState(desired agent.TailscaleIsolationDesiredState) (agent.TailscaleIsolationDesiredState, error) {
@@ -208,6 +254,22 @@ func validateTailscaleIsolationDesiredState(desired agent.TailscaleIsolationDesi
 		addresses = append(addresses, address)
 	}
 	desired.ControlAddresses = addresses
+	if desired.RelayRegionID < 0 || desired.RelayRegionID == 0 && len(desired.STUNOnlyRegionIDs) > 0 {
+		return agent.TailscaleIsolationDesiredState{}, errors.New("configure Tailscale isolation: DERP region policy is invalid")
+	}
+	seenRegions := map[int]struct{}{}
+	if desired.RelayRegionID > 0 {
+		seenRegions[desired.RelayRegionID] = struct{}{}
+	}
+	for _, regionID := range desired.STUNOnlyRegionIDs {
+		if regionID <= 0 {
+			return agent.TailscaleIsolationDesiredState{}, errors.New("configure Tailscale isolation: STUN-only region is invalid")
+		}
+		if _, exists := seenRegions[regionID]; exists {
+			return agent.TailscaleIsolationDesiredState{}, errors.New("configure Tailscale isolation: DERP region policy contains duplicates")
+		}
+		seenRegions[regionID] = struct{}{}
+	}
 	return desired, nil
 }
 

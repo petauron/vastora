@@ -615,6 +615,27 @@ func TestTailscaleIsolationFailsBeforeChangingHostStateWhenTLSVerificationFails(
 	}
 }
 
+func TestTailscaleIsolationRejectsUnexpectedRuntimeDERPMap(t *testing.T) {
+	desired := agent.TailscaleIsolationDesiredState{
+		ControlURL: "https://headscale.example.com", RelayRegionID: 999, STUNOnlyRegionIDs: []int{998},
+	}
+	valid := []byte(`{"Regions":{"998":{"RegionID":998,"RegionCode":"cloudflare-stun","Nodes":[{"HostName":"stun.cloudflare.com","DERPPort":0,"STUNOnly":true}]},"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"headscale.example.com","DERPPort":443,"STUNOnly":false}]}}}`)
+	if err := verifyTailscaleDERPMap(valid, desired); err != nil {
+		t.Fatalf("managed DERP map was rejected: %v", err)
+	}
+	for name, payload := range map[string][]byte{
+		"official relay added": []byte(`{"Regions":{"1":{"RegionID":1,"RegionCode":"nyc","Nodes":[{"HostName":"derp1.tailscale.com","DERPPort":443}]},"998":{"RegionID":998,"Nodes":[{"HostName":"stun.cloudflare.com","STUNOnly":true}]},"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"headscale.example.com","DERPPort":443}]}}}`),
+		"STUN can relay":       []byte(`{"Regions":{"998":{"RegionID":998,"Nodes":[{"HostName":"stun.cloudflare.com","DERPPort":443}]},"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"headscale.example.com","DERPPort":443}]}}}`),
+		"wrong relay host":     []byte(`{"Regions":{"998":{"RegionID":998,"Nodes":[{"HostName":"stun.cloudflare.com","STUNOnly":true}]},"999":{"RegionID":999,"RegionCode":"vastora","Nodes":[{"HostName":"derp.example.net","DERPPort":443}]}}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := verifyTailscaleDERPMap(payload, desired); err == nil {
+				t.Fatal("unsafe DERP map was accepted")
+			}
+		})
+	}
+}
+
 func TestAgentUpdateVerifiesAndKeepsRollbackBinary(t *testing.T) {
 	newBinary := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then printf '0.2.0\\n'; fi\n")
 	digest := sha256.Sum256(newBinary)
