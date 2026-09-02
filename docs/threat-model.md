@@ -110,7 +110,13 @@
   persisted; known credential formats, sensitive assignments, and suspicious
   opaque values are rejected before model delivery. This input gate is defense
   in depth for accidental pastes and does not replace the structural exclusion
-  of Center-managed secrets.
+  of Center-managed secrets. Free-form chat remains supported: an arbitrary
+  user-supplied password can be indistinguishable from ordinary text, so this
+  gate does not guarantee detection of every secret. Accepted chat text may be
+  saved in conversation history and sent to the configured model provider.
+  Users must enter credentials through the trusted credential forms, not chat.
+  The provider API key is used only for request authentication, never as model
+  message content or tool data. Approval requirements are unchanged.
   Raw deployment, credential-rotation and node-sync diagnostics are excluded
   from assistant tools, conversation history, execution events and audit
   payloads; only finite error categories and execution state are exposed.
