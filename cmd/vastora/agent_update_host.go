@@ -128,7 +128,7 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 
 func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostUpdateCompleted))
-	if completed, err := protectedCompletionMarkerExists(completionPath); err != nil {
+	if completed, err := protectedCleanupMarkerExists(completionPath, "completed\n"); err != nil {
 		return err
 	} else if completed {
 		return nil
@@ -383,7 +383,7 @@ func cleanPersistentHostUpdate(operationPath string) error {
 		return err
 	}
 	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostUpdateCompleted))
-	completed, err := protectedCompletionMarkerExists(completionPath)
+	completed, err := protectedCleanupMarkerExists(completionPath, "completed\n")
 	if err != nil || !completed {
 		return err
 	}

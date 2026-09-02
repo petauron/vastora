@@ -305,7 +305,7 @@ func runAgent(arguments []string) error {
 		if err := requireLinuxRoot("agent uninstall"); err != nil {
 			return err
 		}
-		if err := uninstallAgentHost(context.Background(), *dataDir, *deleteData, *runtimeCleaned, *keepBinary); err != nil {
+		if err := uninstallAgentHostLocally(context.Background(), *dataDir, *deleteData, *runtimeCleaned, *keepBinary); err != nil {
 			return err
 		}
 		fmt.Println("Vastora Agent and its managed host state were removed")

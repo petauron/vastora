@@ -15,6 +15,11 @@ func hostDecommissionServiceUnit() string {
 }
 
 func checkHostDecommissionOwnership(unitPath, operationPath, generatorPath string, operation hostDecommissionOperation) error {
+	if cancelled, err := protectedCleanupMarkerExists(filepath.Join(filepath.Dir(operationPath), "cancelled"), "cancelled\n"); err != nil {
+		return err
+	} else if cancelled {
+		return errors.New("agent: previous host cleanup was cancelled locally; finish the local purge first")
+	}
 	if _, err := os.Lstat(generatorPath); err == nil {
 		return errors.New("agent: previous host cleanup is already finalizing")
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -106,9 +111,10 @@ func hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPa
 // The early directory intentionally replaces this helper's own unit, including
 // after its persistent unit/link disappear. No unrelated service is changed.
 // https://github.com/systemd/systemd/blob/main/man/systemd.generator.xml
-func hostDecommissionGeneratorScript(finalizer string) string {
+func hostDecommissionGeneratorScript(directory, finalizer string) string {
 	quoted := "'" + strings.ReplaceAll(finalizer, "'", "'\\''") + "'"
-	return "#!/bin/sh\nset -eu\noutput=\"${2:-$1}\"\nmkdir -p -- \"$output/multi-user.target.wants\"\nprintf '%s' " + quoted + " > \"$output/" + hostDecommissionUnitName + "\"\nln -sfn -- ../" + hostDecommissionUnitName + " \"$output/multi-user.target.wants/" + hostDecommissionUnitName + "\"\n"
+	cancelled := "'" + strings.ReplaceAll(filepath.Join(directory, "cancelled"), "'", "'\\''") + "'"
+	return "#!/bin/sh\nset -eu\nif [ -e " + cancelled + " ] || [ -L " + cancelled + " ]; then exit 0; fi\noutput=\"${2:-$1}\"\nmkdir -p -- \"$output/multi-user.target.wants\"\nprintf '%s' " + quoted + " > \"$output/" + hostDecommissionUnitName + "\"\nln -sfn -- ../" + hostDecommissionUnitName + " \"$output/multi-user.target.wants/" + hostDecommissionUnitName + "\"\n"
 }
 
 func activateHostDecommissionFinalizer(ctx context.Context, unitPath, generatorPath, generator string, run func(context.Context, string, ...string) ([]byte, error)) error {

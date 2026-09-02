@@ -81,7 +81,7 @@ func TestHostDecommissionPersistsResultAcrossCallbackFailure(t *testing.T) {
 	if cleanups != 1 || handoffs.Load() != 1 || callbacks.Load() != 2 {
 		t.Fatalf("cleanup was repeated: cleanup=%d handoffs=%d callbacks=%d", cleanups, handoffs.Load(), callbacks.Load())
 	}
-	if completed, err := protectedCompletionMarkerExists(completionPath); err != nil || !completed {
+	if completed, err := protectedCleanupMarkerExists(completionPath, "completed\n"); err != nil || !completed {
 		t.Fatalf("acknowledgement was not persisted: %v", err)
 	}
 }

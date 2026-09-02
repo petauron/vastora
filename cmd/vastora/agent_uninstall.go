@@ -21,11 +21,14 @@ const (
 	hostDecommissionOperationPath = hostDecommissionDir + "/operation.json"
 	hostDecommissionResultPath    = hostDecommissionDir + "/result.json"
 	hostDecommissionCompleted     = hostDecommissionDir + "/completed"
+	hostDecommissionCancelled     = hostDecommissionDir + "/cancelled"
 	hostDecommissionUnit          = "/etc/systemd/system/vastora-agent-decommission.service"
 	hostDecommissionUnitName      = "vastora-agent-decommission.service"
 	hostDecommissionEnabledLink   = "/etc/systemd/system/multi-user.target.wants/" + hostDecommissionUnitName
 	hostDecommissionGenerator     = "/etc/systemd/system-generators/vastora-agent-decommission"
 )
+
+var errHostDecommissionCancelled = errors.New("agent: host cleanup was cancelled locally")
 
 type systemHostDecommissioner struct {
 	dataDir    string
@@ -113,10 +116,13 @@ func runPersistentHostDecommission(ctx context.Context, operationPath string) er
 	if err := runHostDecommission(ctx, operationPath, agent.Client{}, func(ctx context.Context, operation hostDecommissionOperation) error {
 		return uninstallAgentHost(ctx, operation.DataDir, operation.DeleteData, false, false)
 	}); err != nil {
+		if errors.Is(err, errHostDecommissionCancelled) {
+			return nil
+		}
 		return err
 	}
 	finalizer := hostDecommissionFinalizerUnit(hostDecommissionDir, hostDecommissionUnit, hostDecommissionEnabledLink, hostDecommissionGenerator)
-	return activateHostDecommissionFinalizer(ctx, hostDecommissionUnit, hostDecommissionGenerator, hostDecommissionGeneratorScript(finalizer), runHostCommand)
+	return activateHostDecommissionFinalizer(ctx, hostDecommissionUnit, hostDecommissionGenerator, hostDecommissionGeneratorScript(hostDecommissionDir, finalizer), runHostCommand)
 }
 
 // hostDecommissionResult is written only after host cleanup succeeds. Keep it
@@ -129,6 +135,11 @@ type hostDecommissionResult struct {
 }
 
 func runHostDecommission(ctx context.Context, operationPath string, client agent.Client, cleanup func(context.Context, hostDecommissionOperation) error) error {
+	if cancelled, err := protectedCleanupMarkerExists(filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionCancelled)), "cancelled\n"); err != nil {
+		return err
+	} else if cancelled {
+		return errHostDecommissionCancelled
+	}
 	operation, err := readHostDecommissionOperation(operationPath)
 	if err != nil {
 		return err
@@ -139,7 +150,7 @@ func runHostDecommission(ctx context.Context, operationPath string, client agent
 		return err
 	}
 	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionCompleted))
-	if completed, err := protectedCompletionMarkerExists(completionPath); err != nil {
+	if completed, err := protectedCleanupMarkerExists(completionPath, "completed\n"); err != nil {
 		return err
 	} else if completed {
 		if !cleaned {
@@ -223,7 +234,7 @@ func readHostDecommissionOperation(path string) (hostDecommissionOperation, erro
 	return operation, nil
 }
 
-func protectedCompletionMarkerExists(path string) (bool, error) {
+func protectedCleanupMarkerExists(path, expected string) (bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -238,7 +249,7 @@ func protectedCompletionMarkerExists(path string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("agent: read persistent host cleanup completion: %w", err)
 	}
-	if string(raw) != "completed\n" {
+	if string(raw) != expected {
 		return false, errors.New("agent: invalid persistent host cleanup completion")
 	}
 	return true, nil

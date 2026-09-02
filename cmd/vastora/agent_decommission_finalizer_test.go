@@ -86,7 +86,7 @@ func TestHostDecommissionFinalizerActivationRetainsIndependentUnit(t *testing.T)
 		t.Run(failure, func(t *testing.T) {
 			directory, unitPath, enabledLink, generatorPath := newHostFinalizerFixture(t)
 			finalizer := hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPath)
-			generator := hostDecommissionGeneratorScript(finalizer)
+			generator := hostDecommissionGeneratorScript(directory, finalizer)
 			if err := os.Remove(generatorPath); err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +136,7 @@ func TestHostDecommissionSchedulingDoesNotReplacePendingCleanup(t *testing.T) {
 	if err := writeRootFileAtomic(unitPath, []byte("unrelated service"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	generator := hostDecommissionGeneratorScript(hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPath))
+	generator := hostDecommissionGeneratorScript(directory, hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPath))
 	if err := activateHostDecommissionFinalizer(context.Background(), unitPath, generatorPath, generator, func(context.Context, string, ...string) ([]byte, error) {
 		t.Fatal("unrelated service triggered systemctl")
 		return nil, nil
@@ -178,7 +178,7 @@ func newHostFinalizerFixture(t *testing.T) (directory, unitPath, enabledLink, ge
 	if err := writeRootFileAtomic(unitPath, []byte(hostDecommissionServiceUnit()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	generator := hostDecommissionGeneratorScript(hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPath))
+	generator := hostDecommissionGeneratorScript(directory, hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPath))
 	if err := writeRootFileAtomic(generatorPath, []byte(generator), 0o700); err != nil {
 		t.Fatal(err)
 	}
