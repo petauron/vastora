@@ -474,6 +474,7 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 		`ALTER TABLE agents DROP COLUMN public_egress_mode`,
 		`ALTER TABLE agents DROP COLUMN public_egress_bind_address`,
 		`ALTER TABLE agents DROP COLUMN public_egress_address`,
+		`ALTER TABLE agent_decommissions DROP COLUMN callback_token_hash`,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
@@ -517,6 +518,7 @@ func TestVersion52MigrationPreservesBuiltinHeadscaleCloudflareDNS(t *testing.T) 
 	if _, err := store.db.Exec(`INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at)
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', NULL, 'failed', ?, ?);
 		DELETE FROM settings WHERE key IN ('headscale_dns_policy', 'headscale_dns_resolvers');
+		ALTER TABLE agent_decommissions DROP COLUMN callback_token_hash;
 		DELETE FROM goose_db_version WHERE version_id >= 52;
 		PRAGMA user_version = 51`, now, now); err != nil {
 		t.Fatal(err)

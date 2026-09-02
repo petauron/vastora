@@ -676,9 +676,13 @@ func TestAgentDecommissionRetriesAfterHelperScheduleFailure(t *testing.T) {
 	}
 	decommissioner := &fakeHostDecommissioner{scheduleErr: errors.New("systemd unavailable")}
 	client := Client{HTTPClient: server.Client(), Decommissioner: decommissioner}
+	var firstTaskErr error
 	client.processTask(context.Background(), store, DeploymentTask{
 		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 1, DeleteData: true, DecommissionCallbackURL: server.URL + "/api/v1/agent-decommission-results/agent-decommission-agent-1", DecommissionCallbackToken: "callback-token-1",
-	}, func(err error) { t.Errorf("first task error: %v", err) })
+	}, func(err error) { firstTaskErr = err })
+	if firstTaskErr == nil || firstTaskErr.Error() != "systemd unavailable" {
+		t.Fatalf("first task error = %v", firstTaskErr)
+	}
 	decommissioner.scheduleErr = nil
 	client.processTask(context.Background(), store, DeploymentTask{
 		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 2, DeleteData: true, DecommissionCallbackURL: server.URL + "/api/v1/agent-decommission-results/agent-decommission-agent-1", DecommissionCallbackToken: "callback-token-2",
