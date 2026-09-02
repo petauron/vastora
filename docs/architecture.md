@@ -260,10 +260,12 @@ Network page with an explicit mapping confirmation. Center stores the choice
 and sends it only to the single active, co-located Vastora-managed Agent. Agent
 uses the pinned Tailscale version, writes a dedicated configuration and systemd
 drop-in atomically, restarts and checks the daemon and UDP listener, and rolls
-back both files on failure. Disabling the option removes only Vastora-owned
-files. External Headscale and user-managed Tailscale installations never
-receive or display this setting. Public HTTP/HTTPS reachability is not treated
-as proof that UDP `41641` works.
+back both files on failure. Every heartbeat also checks the live session,
+loaded systemd environment, and UDP listener even when the managed files are
+unchanged; runtime drift triggers a managed restart. Disabling the option
+removes only Vastora-owned files. External Headscale and user-managed Tailscale
+installations never receive or display this setting. Public HTTP/HTTPS
+reachability is not treated as proof that UDP `41641` works.
 
 The strict no-external-telemetry boundary applies to Vastora-managed Linux
 `tailscaled`. Tailscale's macOS GUI clients do not support the equivalent opt-out;

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/petauron/vastora/internal/tailscalehost"
 )
 
 func TestTailscaleEndpointReconcileIsIdempotentAndRemovesDisabledState(t *testing.T) {
@@ -22,6 +24,8 @@ func TestTailscaleEndpointReconcileIsIdempotentAndRemovesDisabledState(t *testin
 			return []byte("1.102.3\n"), nil
 		case "tailscale status --json":
 			return []byte(`{"BackendState":"Running"}`), nil
+		case "systemctl show --property=Environment --value tailscaled.service":
+			return []byte("PORT=41641 FLAGS=--config=" + configPath + "\n"), nil
 		case "ss -H -lun sport = :41641":
 			return []byte("0.0.0.0:41641\n"), nil
 		default:
@@ -50,6 +54,55 @@ func TestTailscaleEndpointReconcileIsIdempotentAndRemovesDisabledState(t *testin
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("disabled endpoint state remained at %s: %v", path, err)
 		}
+	}
+}
+
+func TestTailscaleEndpointReconcileRepairsRuntimeDriftWithCurrentFiles(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "etc", "vastora", "tailscaled.json")
+	overridePath := filepath.Join(root, "systemd", "tailscaled.service.d", "91-vastora-endpoint.conf")
+	config, err := tailscalehost.RenderConfig([]string{"203.0.113.30:41641"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	override, err := renderTailscaleEndpointOverride(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyHostFile(configPath, config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyHostFile(overridePath, override, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commands := []string{}
+	statusChecks := 0
+	run := func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+		command := name + " " + strings.Join(arguments, " ")
+		commands = append(commands, command)
+		switch command {
+		case "tailscale version":
+			return []byte("1.102.3\n"), nil
+		case "tailscale status --json":
+			statusChecks++
+			if statusChecks == 1 {
+				return []byte(`{"BackendState":"Stopped"}`), nil
+			}
+			return []byte(`{"BackendState":"Running"}`), nil
+		case "systemctl show --property=Environment --value tailscaled.service":
+			return []byte("PORT=41641 FLAGS=--config=" + configPath + "\n"), nil
+		case "ss -H -lun sport = :41641":
+			return []byte("0.0.0.0:41641\n"), nil
+		default:
+			return nil, nil
+		}
+	}
+	environment := tailscaleEndpointEnvironment{configPath: configPath, overridePath: overridePath, run: run}
+	if err := reconcileTailscaleEndpoint(context.Background(), []string{"203.0.113.30:41641"}, environment); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(strings.Join(commands, "\n"), "systemctl restart tailscaled.service") != 1 || statusChecks != 2 {
+		t.Fatalf("runtime drift was not repaired: %v", commands)
 	}
 }
 
