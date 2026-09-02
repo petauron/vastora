@@ -519,7 +519,7 @@ func (s *Store) reconcileHeadscaleDNSForSystem(ctx context.Context, primaryCente
 		return errors.Join(modeErr, endpointErr)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT p.hostname, n.headscale_address FROM publications p
-		JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
+		JOIN agent_network_profiles n ON n.agent_id = p.entry_node_id
 		WHERE p.kind = 'headscale_gateway' AND p.dns_provider = 'headscale' AND p.status <> 'stopped'
 		ORDER BY p.hostname, p.id`)
 	if err != nil {

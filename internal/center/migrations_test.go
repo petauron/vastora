@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,6 +55,154 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 	migratedShape := databaseSchemaShape(t, migrated.db)
 	if !reflect.DeepEqual(freshShape, migratedShape) {
 		t.Fatalf("fresh and migrated schema differ:\nfresh=%#v\nmigrated=%#v", freshShape, migratedShape)
+	}
+}
+
+func TestVersion56MigrationSeparatesNodeDirectIngressAndFailsClosedOnCrossNodeRows(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	statements := []string{
+		`INSERT INTO sites(id, organization_id, name, code, timezone, status, created_at, updated_at) VALUES('site-v55', '` + defaultOrganizationID + `', 'Legacy', 'legacy-v55', 'UTC', 'active', '` + now + `', '` + now + `')`,
+		`INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json) VALUES('node-v55-a', 'A', X'5601', '0.1.0-alpha.1', 'active', '` + now + `', '` + now + `', 'site-v55', '["worker","gateway"]', '{"docker":true,"gateway":true,"tunnel":true}'), ('node-v55-b', 'B', X'5602', '0.1.0-alpha.1', 'active', '` + now + `', '` + now + `', 'site-v55', '["worker"]', '{"docker":true}'), ('node-v55-c', 'C', X'5603', '0.1.0-alpha.1', 'active', '` + now + `', '` + now + `', 'site-v55', '["worker"]', '{"docker":true}')`,
+		`INSERT INTO agent_network_profiles(agent_id, service_address, public_address, public_bind_address, public_mode, enabled_kinds_json, direct_public, public_verified_at, confirmed_at, candidate_observed_at) VALUES('node-v55-a', '10.0.0.10', '203.0.113.10', '203.0.113.10', 'direct', '["public"]', 1, '` + now + `', '` + now + `', '` + now + `')`,
+		`INSERT INTO site_gateways(site_id, agent_id, created_at) VALUES('site-v55', 'node-v55-a', '` + now + `')`,
+		`INSERT INTO gateway_components(gateway_node_id, desired_status, generation, applied_generation, status, updated_at) VALUES('node-v55-a', 'running', 1, 1, 'ready', '` + now + `')`,
+		`INSERT INTO applications(id, name, node_id, site_id, app_key, status, runtime, created_at, updated_at) VALUES('app-v55', '3x-ui', 'node-v55-a', 'site-v55', 'vastora-official/3x-ui', 'running', 'docker', '` + now + `', '` + now + `'), ('app-v55-unready', '3x-ui C', 'node-v55-c', 'site-v55', 'vastora-official/3x-ui', 'running', 'docker', '` + now + `', '` + now + `'), ('app-v55-web', 'Web', 'node-v55-a', 'site-v55', 'test/web', 'running', 'systemd', '` + now + `', '` + now + `')`,
+		`INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, status, created_at, updated_at) VALUES('service-v55-valid', 'app-v55', 'site-v55', 'valid', 'tcp', 443, 443, '10.0.0.10:443', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `'), ('service-v55-cross', 'app-v55', 'site-v55', 'cross', 'tcp', 2443, 2443, '10.0.0.10:2443', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `'), ('service-v55-unready', 'app-v55-unready', 'site-v55', 'unready', 'tcp', 443, 443, '10.0.0.30:443', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `'), ('service-v55-web', 'app-v55-web', 'site-v55', 'web', 'http', 8080, 8080, '10.0.0.10:8080', 'observed', 'http', 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO three_x_ui_reality_guards(service_id, target_host, target_ip, server_name, companion_tag, status, created_at, updated_at) VALUES('service-v55-valid', 'www.example.com:443', '93.184.216.34', 'www.example.com', 'valid-guard', 'ready', '` + now + `', '` + now + `'), ('service-v55-unready', 'www.example.com:443', '93.184.216.34', 'www.example.com', 'unready-guard', 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, sni_hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at) VALUES('publication-v55-valid', 'service-v55-valid', 'public_shared_443', 'application_node', 'node-v55-a', 'valid.example.test', 'www.example.com', 'manual', 7, 7, 'ready', '` + now + `', '` + now + `'), ('publication-v55-cross', 'service-v55-cross', 'public_shared_443', 'application_node', 'node-v55-b', 'cross.example.test', 'www.example.com', 'manual', 4, 4, 'ready', '` + now + `', '` + now + `'), ('publication-v55-unready', 'service-v55-unready', 'public_shared_443', 'application_node', 'node-v55-c', 'unready.example.test', 'www.example.com', 'manual', 2, 2, 'ready', '` + now + `', '` + now + `'), ('publication-v55-tunnel', 'service-v55-web', 'cloudflare_tunnel', 'tunnel_connector', 'node-v55-a', 'tunnel.example.test', '', 'cloudflare', 9, 9, 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO routes(id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, desired_revision, applied_revision, status, created_at, updated_at) VALUES('route-v55-tunnel', 'publication-v55-tunnel', 'site-v55', 'service-v55-web', 'node-v55-a', 'tunnel.example.test', 'http', '["10.0.0.10:8080"]', 9, 9, 'ready', '` + now + `', '` + now + `')`,
+	}
+	for _, statement := range statements {
+		if _, err := store.db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.ExecContext(ctx, `PRAGMA foreign_keys = OFF;
+		CREATE TABLE publications_v55 (
+			id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'public_shared_443', 'cloudflare_tunnel')),
+			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT, hostname TEXT NOT NULL,
+			sni_hostname TEXT NOT NULL DEFAULT '', dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
+			dns_record_id TEXT NOT NULL DEFAULT '', access_application_id TEXT NOT NULL DEFAULT '', tls_enabled INTEGER NOT NULL DEFAULT 0,
+			desired_revision INTEGER NOT NULL DEFAULT 1, applied_revision INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'degraded', 'failed', 'stopped')),
+			last_error TEXT NOT NULL DEFAULT '', cleanup_pending INTEGER NOT NULL DEFAULT 0, cleanup_attempt INTEGER NOT NULL DEFAULT 0,
+			cleanup_retry_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			UNIQUE(service_id, kind, hostname));
+		INSERT INTO publications_v55(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, dns_record_id, access_application_id, tls_enabled, desired_revision, applied_revision, status, last_error, cleanup_pending, cleanup_attempt, cleanup_retry_at, created_at, updated_at)
+			SELECT id, service_id, kind, entry_node_id, hostname, sni_hostname, dns_provider, dns_record_id, access_application_id, tls_enabled, desired_revision, applied_revision, status, last_error, cleanup_pending, cleanup_attempt, cleanup_retry_at, created_at, updated_at FROM publications;
+		DROP TABLE publications;
+		ALTER TABLE publications_v55 RENAME TO publications;
+		DROP TABLE node_listener_states;
+		DELETE FROM goose_db_version WHERE version_id >= 56;
+		PRAGMA user_version = 55;
+		PRAGMA foreign_keys = ON;`)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var owner, entryNode, status, lastError string
+	var actionRequired int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT ingress_owner, entry_node_id, status, action_required FROM publications WHERE id = 'publication-v55-valid'`).Scan(&owner, &entryNode, &status, &actionRequired); err != nil {
+		t.Fatal(err)
+	}
+	if owner != ingressApplicationNode || entryNode != "node-v55-a" || status != "pending" || actionRequired != 0 {
+		t.Fatalf("valid migration = owner:%q entry:%q status:%q action:%d", owner, entryNode, status, actionRequired)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT ingress_owner, entry_node_id, status, action_required, last_error FROM publications WHERE id = 'publication-v55-cross'`).Scan(&owner, &entryNode, &status, &actionRequired, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if owner != ingressApplicationNode || entryNode != "node-v55-a" || status != "stopped" || actionRequired != 1 || !strings.Contains(lastError, "node-direct entry") {
+		t.Fatalf("cross-node migration = owner:%q entry:%q status:%q action:%d error:%q", owner, entryNode, status, actionRequired, lastError)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT ingress_owner, entry_node_id, status, action_required, last_error FROM publications WHERE id = 'publication-v55-unready'`).Scan(&owner, &entryNode, &status, &actionRequired, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if owner != ingressApplicationNode || entryNode != "node-v55-c" || status != "stopped" || actionRequired != 1 || !strings.Contains(lastError, "confirmed public network profile") {
+		t.Fatalf("unready migration = owner:%q entry:%q status:%q action:%d error:%q", owner, entryNode, status, actionRequired, lastError)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT ingress_owner, entry_node_id, status FROM publications WHERE id = 'publication-v55-tunnel'`).Scan(&owner, &entryNode, &status); err != nil {
+		t.Fatal(err)
+	}
+	if owner != ingressTunnelConnector || entryNode != "node-v55-a" || status != "pending" {
+		t.Fatalf("Tunnel migration = owner:%q entry:%q status:%q", owner, entryNode, status)
+	}
+	var tunnelCutovers int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tunnel_connector_migration_cutovers WHERE publication_id = 'publication-v55-tunnel' AND legacy_gateway_id = 'node-v55-a' AND connector_reconciled = 0`).Scan(&tunnelCutovers); err != nil || tunnelCutovers != 1 {
+		t.Fatalf("pending Tunnel connector cutover = %d, err = %v", tunnelCutovers, err)
+	}
+	var queued int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_listener_states WHERE node_id = 'node-v55-a' AND status = 'pending'`).Scan(&queued); err != nil || queued != 1 {
+		t.Fatalf("migrated node listener queue = %d, err = %v", queued, err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_listener_states WHERE node_id = 'node-v55-c'`).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("unready migration queued an unusable listener = %d, err = %v", queued, err)
+	}
+	var cutovers int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_listener_migration_cutovers`).Scan(&cutovers); err != nil || cutovers != 2 {
+		t.Fatalf("pending node-listener migration cutovers = %d, err = %v", cutovers, err)
+	}
+	var marker string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, nodeListenerMigrationSetting).Scan(&marker); err != nil || marker != "applying" {
+		t.Fatalf("node-listener migration marker = %q, err = %v", marker, err)
+	}
+	var revision int64
+	if err := migrated.db.QueryRowContext(ctx, `SELECT desired_revision FROM node_listener_states WHERE node_id = 'node-v55-a'`).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrated.db.ExecContext(ctx, `UPDATE node_listener_states SET status = 'applying', attempt = 1 WHERE node_id = 'node-v55-a'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.completeNodeListenerState(ctx, "node-v55-a", revision, 1, true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_listener_migration_cutovers`).Scan(&cutovers); err != nil || cutovers != 1 {
+		t.Fatalf("legacy ingress retired before external replacement verification: %d, err = %v", cutovers, err)
+	}
+	if _, err := migrated.markPublicationReady(ctx, "publication-v55-valid", 7); err != nil {
+		t.Fatal(err)
+	}
+	var markerTables int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'node_listener_migration_cutovers'`).Scan(&markerTables); err != nil || markerTables != 0 {
+		t.Fatalf("completed node-listener migration cutover tables = %d, err = %v", markerTables, err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, nodeListenerMigrationSetting).Scan(&marker); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("completed node-listener migration marker = %q, err = %v", marker, err)
+	}
+	if err := migrated.completeTunnelConnectorMigrationReconcile(ctx, "publication-v55-tunnel"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrated.markPublicationReady(ctx, "publication-v55-tunnel", 9); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM routes WHERE id = 'route-v55-tunnel'`).Scan(&tunnelCutovers); err != nil || tunnelCutovers != 0 {
+		t.Fatalf("retired Tunnel connector Caddy route = %d, err = %v", tunnelCutovers, err)
+	}
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'tunnel_connector_migration_cutovers'`).Scan(&markerTables); err != nil || markerTables != 0 {
+		t.Fatalf("completed Tunnel connector migration table = %d, err = %v", markerTables, err)
 	}
 }
 
@@ -167,8 +316,8 @@ func TestOpenMigratesVersion3WithoutLosingPublicationsOrRoutes(t *testing.T) {
 		t.Fatalf("route publication = %q, err = %v", routePublication, err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(
-		id, service_id, kind, gateway_node_id, hostname, dns_provider, status, created_at, updated_at
-	) VALUES('publication-v4', 'service-v3', 'public_shared_443', 'agent-v3', 'raw.example.test', 'manual', 'pending', ?, ?)`, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider, status, created_at, updated_at
+	) VALUES('publication-v4', 'service-v3', 'public_shared_443', 'application_node', 'agent-v3', 'raw.example.test', 'manual', 'pending', ?, ?)`, time.Now().UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("new publication kind was not accepted: %v", err)
 	}
 	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v3-before-v%d-*.db", centerSchemaVersion)))
@@ -1178,7 +1327,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id) VALUES('agent-v3', 'Legacy Agent', X'0102', '0.1.0-alpha.1', 'active', '` + now + `', '` + now + `', 'site-v3')`,
 		`INSERT INTO applications(id, name, node_id, site_id, app_key, status, created_at, updated_at) VALUES('application-v3', 'Legacy App', 'agent-v3', 'site-v3', 'legacy/app', 'running', '` + now + `', '` + now + `')`,
 		`INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, status, created_at, updated_at) VALUES('service-v3', 'application-v3', 'site-v3', 'manager', 'http', 8080, 8080, '10.0.0.2:8080', 'catalog', 'ready', '` + now + `', '` + now + `')`,
-		`INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, dns_provider, status, created_at, updated_at) VALUES('publication-v3', 'service-v3', 'lan_gateway', 'agent-v3', 'legacy.example.test', 'manual', 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider, status, created_at, updated_at) VALUES('publication-v3', 'service-v3', 'lan_gateway', 'site_gateway', 'agent-v3', 'legacy.example.test', 'manual', 'ready', '` + now + `', '` + now + `')`,
 		`INSERT INTO routes(id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, status, created_at, updated_at) VALUES('route-v3', 'publication-v3', 'site-v3', 'service-v3', 'agent-v3', 'legacy.example.test', 'http', '[]', 'ready', '` + now + `', '` + now + `')`,
 	}
 	for _, statement := range statements {
@@ -1279,7 +1428,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 			last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
 			UNIQUE(service_id, kind, hostname))`,
 		`INSERT INTO publications_v3(id, service_id, kind, gateway_node_id, hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at)
-		 SELECT id, service_id, kind, gateway_node_id, hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at FROM publications`,
+		 SELECT id, service_id, kind, entry_node_id, hostname, dns_provider, dns_record_id, tls_enabled, desired_revision, applied_revision, status, last_error, created_at, updated_at FROM publications`,
 		`CREATE TABLE routes_v3 (
 			id TEXT PRIMARY KEY, publication_id TEXT NOT NULL REFERENCES publications_v3(id) ON DELETE CASCADE,
 			site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,

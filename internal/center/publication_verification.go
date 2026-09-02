@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -39,7 +40,7 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 		return s.recordPublicationVerification(ctx, id, expectedRevision, err.Error())
 	}
 	if publication.Status == "failed" && publication.DNSProvider != "manual" && (publication.Kind != publicationCloudflare || publication.DNSRecordID == "") {
-		succeeded, reconcileErr := s.reconcilePublicationDNS(ctx, publication.ID, publication.GatewayNodeID, publication.DNSProvider, publication.DesiredRevision)
+		succeeded, reconcileErr := s.reconcilePublicationDNS(ctx, publication.ID, publication.EntryNodeID, publication.DNSProvider, publication.DesiredRevision)
 		if reconcileErr != nil {
 			return PublicationView{}, reconcileErr
 		}
@@ -55,9 +56,32 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 		}
 	}
 	if publication.Kind == publicationCloudflare {
+		migrationPending, migrationErr := s.tunnelConnectorMigrationReconcilePending(ctx, publication.ID)
+		if migrationErr != nil {
+			return s.recordPublicationVerification(ctx, id, expectedRevision, migrationErr.Error())
+		}
+		if migrationPending {
+			succeeded, reconcileErr := s.reconcilePublicationDNS(ctx, publication.ID, publication.EntryNodeID, publication.DNSProvider, publication.DesiredRevision)
+			if reconcileErr != nil {
+				return PublicationView{}, reconcileErr
+			}
+			if !succeeded {
+				return s.Publication(ctx, id)
+			}
+			if err := s.completeTunnelConnectorMigrationReconcile(ctx, publication.ID); err != nil {
+				return PublicationView{}, err
+			}
+			publication, err = s.Publication(ctx, id)
+			if err != nil {
+				return PublicationView{}, err
+			}
+			if expectedRevision > 0 && publication.DesiredRevision != expectedRevision {
+				return publication, nil
+			}
+		}
 		var tunnelStatus string
 		var tunnelAppliedRevision int64
-		if err := s.db.QueryRowContext(ctx, `SELECT status, applied_revision FROM cloudflare_tunnels WHERE agent_id = ?`, publication.GatewayNodeID).Scan(&tunnelStatus, &tunnelAppliedRevision); err != nil {
+		if err := s.db.QueryRowContext(ctx, `SELECT status, applied_revision FROM cloudflare_tunnels WHERE agent_id = ?`, publication.EntryNodeID).Scan(&tunnelStatus, &tunnelAppliedRevision); err != nil {
 			return PublicationView{}, err
 		}
 		if tunnelStatus != "ready" || tunnelAppliedRevision < publication.DesiredRevision {
@@ -77,6 +101,28 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	if routeStatus != "" && routeStatus != "ready" {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, "gateway configuration is not ready")
 	}
+	if publication.Kind == publicationShared443 && publication.DNSProvider == "cloudflare" {
+		pendingDNS, pendingErr := s.nodeListenerMigrationDNSPending(ctx, publication.ID)
+		if pendingErr != nil {
+			return s.recordPublicationVerification(ctx, id, expectedRevision, pendingErr.Error())
+		}
+		if pendingDNS {
+			succeeded, reconcileErr := s.reconcilePublicationDNS(ctx, publication.ID, publication.EntryNodeID, publication.DNSProvider, publication.DesiredRevision)
+			if reconcileErr != nil {
+				return PublicationView{}, reconcileErr
+			}
+			if !succeeded {
+				return s.Publication(ctx, id)
+			}
+			if err := s.completeNodeListenerMigrationDNS(ctx, publication.ID); err != nil {
+				return PublicationView{}, err
+			}
+			publication, err = s.Publication(ctx, id)
+			if err != nil {
+				return PublicationView{}, err
+			}
+		}
+	}
 	verificationAddress, targetErr := publicationVerificationAddress(ctx, publication)
 	if targetErr != nil {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, targetErr.Error())
@@ -91,7 +137,19 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 			return s.recordPublicationVerification(ctx, id, expectedRevision, "UDP reachability cannot be proven automatically; verify it from an external client")
 		}
 		if publication.Kind == publicationShared443 {
-			port = "443"
+			connection, dialErr := (&tls.Dialer{
+				NetDialer: &net.Dialer{Timeout: 8 * time.Second},
+				Config: &tls.Config{
+					MinVersion: tls.VersionTLS13,
+					ServerName: publication.SNIHostname,
+					NextProtos: []string{"h2", "http/1.1"},
+				},
+			}).DialContext(ctx, "tcp", net.JoinHostPort(verificationAddress, "443"))
+			if dialErr != nil {
+				return s.recordPublicationVerification(ctx, id, expectedRevision, "exact-SNI TLS 1.3 health check did not pass")
+			}
+			_ = connection.Close()
+			return s.markPublicationReady(ctx, id, expectedRevision)
 		}
 		connection, dialErr := (&net.Dialer{Timeout: 8 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(verificationAddress, port))
 		if dialErr != nil {
@@ -226,6 +284,11 @@ func (s *Store) recordPublicationVerification(ctx context.Context, id string, ex
 }
 
 func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRevision int64) (PublicationView, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PublicationView{}, err
+	}
+	defer tx.Rollback()
 	query := `UPDATE publications SET applied_revision = desired_revision, status = 'ready', last_error = '', updated_at = ?
 		WHERE id = ? AND status <> 'stopped' AND EXISTS (
 			SELECT 1 FROM services s JOIN applications a ON a.id = s.application_id
@@ -238,7 +301,19 @@ func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRev
 		query += ` AND desired_revision = ?`
 		arguments = append(arguments, expectedRevision)
 	}
-	if _, err := s.db.ExecContext(ctx, query, arguments...); err != nil {
+	result, err := tx.ExecContext(ctx, query, arguments...)
+	if err != nil {
+		return PublicationView{}, err
+	}
+	if changed, _ := result.RowsAffected(); changed == 1 {
+		if err := s.completeNodeListenerMigrationPublication(ctx, tx, id, s.now().UTC()); err != nil {
+			return PublicationView{}, err
+		}
+		if err := s.retireMigratedTunnelConnector(ctx, tx, id, s.now().UTC()); err != nil {
+			return PublicationView{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return PublicationView{}, err
 	}
 	return s.Publication(ctx, id)

@@ -44,10 +44,11 @@ func TestStaticHandlerKeepsRequestsInsideStaticRoot(t *testing.T) {
 		target     string
 		wantBody   string
 		forbidBody string
+		wantCache  string
 	}{
-		{name: "existing asset", target: "http://example.test/asset.txt", wantBody: "public-asset"},
-		{name: "SPA fallback", target: "http://example.test/dashboard/settings", wantBody: "spa-index"},
-		{name: "path traversal", target: "http://example.test/%2e%2e/secret.txt", forbidBody: "outside-secret"},
+		{name: "existing asset", target: "http://example.test/asset.txt", wantBody: "public-asset", wantCache: "no-store"},
+		{name: "SPA fallback", target: "http://example.test/dashboard/settings", wantBody: "spa-index", wantCache: "no-store"},
+		{name: "path traversal", target: "http://example.test/%2e%2e/secret.txt", forbidBody: "outside-secret", wantCache: "no-store"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, test.target, nil)
@@ -63,7 +64,24 @@ func TestStaticHandlerKeepsRequestsInsideStaticRoot(t *testing.T) {
 			if test.forbidBody != "" && strings.Contains(string(body), test.forbidBody) {
 				t.Fatalf("response exposed a file outside the static root: %q", body)
 			}
+			if cache := response.Header().Get("Cache-Control"); cache != test.wantCache {
+				t.Fatalf("Cache-Control = %q, want %q", cache, test.wantCache)
+			}
 		})
+	}
+
+	assetDir := filepath.Join(staticDir, "assets")
+	if err := os.Mkdir(assetDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetDir, "app-hash.js"), []byte("hashed-asset"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://example.test/assets/app-hash.js", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if cache := response.Header().Get("Cache-Control"); cache != "public, max-age=31536000, immutable" {
+		t.Fatalf("hashed asset Cache-Control = %q", cache)
 	}
 }
 

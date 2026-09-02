@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +16,7 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -30,6 +34,7 @@ const (
 	haproxyConfigurationDir  = "/usr/local/etc/haproxy"
 	haproxyConfigurationPath = haproxyConfigurationDir + "/haproxy.cfg"
 	haproxyConfigurationEnv  = "VASTORA_HAPROXY_CONFIG"
+	layer4ConfigurationLabel = "io.vastora.layer4.configuration-hash"
 	haproxyBootstrapCommand  = "umask 077\nprintf '%s' \"$" + haproxyConfigurationEnv + "\" > " + haproxyConfigurationPath + "\nexec haproxy -W -db -f " + haproxyConfigurationPath
 )
 
@@ -39,12 +44,23 @@ type Layer4Provisioner interface {
 	Health(context.Context) error
 }
 
+type Layer4ConfigurationReader interface {
+	ConfigurationHash(context.Context) (string, error)
+}
+
+type NodeListenerProvisioner interface {
+	Layer4Provisioner
+	Layer4ConfigurationReader
+	Absent(context.Context) error
+}
+
 type GatewayRuntimeProvisioner interface {
 	Reconcile(context.Context, gateway.DesiredState) error
 }
 
-// ManagedGatewayDriver keeps Caddy as the HTTPS endpoint and adds HAProxy only
-// while a shared-443 publication exists in the desired state.
+// ManagedGatewayDriver owns only Site Gateway Caddy state. On a dual-role node
+// it coordinates Caddy's host binding with the independent node-listener
+// controller that owns HAProxy.
 type ManagedGatewayDriver struct {
 	Caddy   *CaddyGatewayDriver
 	Layer4  Layer4Provisioner
@@ -54,6 +70,7 @@ type ManagedGatewayDriver struct {
 	mu           sync.RWMutex
 	state        gateway.DesiredState
 	certificates []gateway.Certificate
+	nodeListener bool
 }
 
 func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
@@ -86,10 +103,21 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 
 func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	if desired.SharedHTTPS == nil {
-		if err := driver.Layer4.Remove(ctx); err != nil {
-			return err
+		runtimeDesired := desired
+		driver.mu.RLock()
+		nodeListener := driver.nodeListener
+		driver.mu.RUnlock()
+		if nodeListener {
+			for _, listener := range desired.Listeners {
+				if listener.Kind == "public" {
+					runtimeDesired.SharedHTTPS = &gateway.SharedHTTPS{Address: listener.Address, Port: listener.HTTPSPort, CaddyAddress: dockerruntime.CaddyAlias, CaddyPort: 443}
+					break
+				}
+			}
+		} else if err := driver.Layer4.Remove(ctx); err != nil {
+			return fmt.Errorf("agent: remove retired shared HTTPS frontend: %w", err)
 		}
-		if err := driver.Runtime.Reconcile(ctx, desired); err != nil {
+		if err := driver.Runtime.Reconcile(ctx, runtimeDesired); err != nil {
 			return err
 		}
 		return driver.Caddy.ApplyConfiguration(ctx, desired, certificates)
@@ -113,6 +141,91 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 		return fmt.Errorf("agent: apply shared 443 frontend: %w", err)
 	}
 	return nil
+}
+
+func (driver *ManagedGatewayDriver) PrepareNodeListener(ctx context.Context) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
+	driver.mu.RLock()
+	current := driver.state.Sorted()
+	certificates := append([]gateway.Certificate(nil), driver.certificates...)
+	driver.mu.RUnlock()
+	if current.Revision == 0 {
+		driver.setNodeListenerActive(true)
+		return nil
+	}
+	var public *gateway.Listener
+	for index := range current.Listeners {
+		if current.Listeners[index].Kind == "public" {
+			public = &current.Listeners[index]
+			break
+		}
+	}
+	if public == nil {
+		driver.setNodeListenerActive(true)
+		return nil
+	}
+	runtimeState := current
+	runtimeState.SharedHTTPS = &gateway.SharedHTTPS{Address: public.Address, Port: public.HTTPSPort, CaddyAddress: dockerruntime.CaddyAlias, CaddyPort: 443}
+	if err := driver.Runtime.Reconcile(ctx, runtimeState); err != nil {
+		return err
+	}
+	if err := driver.Caddy.ApplyConfiguration(ctx, current, certificates); err != nil {
+		return err
+	}
+	driver.setNodeListenerActive(true)
+	return nil
+}
+
+func (driver *ManagedGatewayDriver) RestoreGatewayPublicBindings(ctx context.Context) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
+	driver.mu.RLock()
+	current := driver.state.Sorted()
+	certificates := append([]gateway.Certificate(nil), driver.certificates...)
+	driver.mu.RUnlock()
+	driver.setNodeListenerActive(false)
+	if current.Revision == 0 {
+		return nil
+	}
+	retiredLegacySharedHTTPS := current.SharedHTTPS != nil
+	current.SharedHTTPS = nil
+	if err := driver.Runtime.Reconcile(ctx, current); err != nil {
+		return err
+	}
+	if err := driver.Caddy.ApplyConfiguration(ctx, current, certificates); err != nil {
+		return err
+	}
+	if retiredLegacySharedHTTPS {
+		driver.mu.Lock()
+		driver.state = current
+		driver.mu.Unlock()
+	}
+	return nil
+}
+
+// RestoreGatewayAfterNodeListenerFailure rolls back a failed first handoff to
+// the exact previously applied Gateway state. Unlike an intentional empty
+// node-listener revision, a failed cutover must retain legacy shared-443 routes
+// until Center has verified their replacements.
+func (driver *ManagedGatewayDriver) RestoreGatewayAfterNodeListenerFailure(ctx context.Context) error {
+	driver.mutationMu.Lock()
+	defer driver.mutationMu.Unlock()
+	driver.mu.RLock()
+	current := driver.state.Sorted()
+	certificates := append([]gateway.Certificate(nil), driver.certificates...)
+	driver.mu.RUnlock()
+	driver.setNodeListenerActive(false)
+	if current.Revision == 0 {
+		return nil
+	}
+	return driver.apply(ctx, current, certificates)
+}
+
+func (driver *ManagedGatewayDriver) setNodeListenerActive(active bool) {
+	driver.mu.Lock()
+	driver.nodeListener = active
+	driver.mu.Unlock()
 }
 
 // RetainSystemRoutes removes application ingress while keeping the Center and
@@ -232,6 +345,7 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 	if err != nil {
 		return err
 	}
+	configurationHash := haproxyConfigurationHash(configuration)
 	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("agent: pull HAProxy image: %w", err)
@@ -241,7 +355,7 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 	if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("agent: replace HAProxy container: %w", err)
 	}
-	created, err := docker.ContainerCreate(ctx, haproxyContainerCreateOptions(settings, desired, configuration))
+	created, err := docker.ContainerCreate(ctx, haproxyContainerCreateOptions(settings, desired, configuration, configurationHash))
 	if err != nil {
 		return fmt.Errorf("agent: create HAProxy container: %w", err)
 	}
@@ -252,7 +366,7 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 	return provisioner.waitHealthy(ctx, docker, created.ID)
 }
 
-func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, desired gateway.SharedHTTPS, configuration []byte) client.ContainerCreateOptions {
+func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, desired gateway.SharedHTTPS, configuration []byte, configurationHash string) client.ContainerCreateOptions {
 	port := dockernetwork.MustParsePort("443/tcp")
 	return client.ContainerCreateOptions{
 		Config: &container.Config{
@@ -264,6 +378,7 @@ func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, desired gat
 			Labels: map[string]string{
 				gatewayruntime.ManagedLabel:   "true",
 				gatewayruntime.ComponentLabel: gatewayruntime.Layer4ComponentLabel,
+				layer4ConfigurationLabel:      configurationHash,
 			},
 			ExposedPorts: dockernetwork.PortSet{port: struct{}{}},
 		},
@@ -297,6 +412,22 @@ func (provisioner DockerLayer4Provisioner) Remove(ctx context.Context) error {
 	return nil
 }
 
+func (provisioner DockerLayer4Provisioner) Absent(ctx context.Context) error {
+	docker, err := provisioner.client()
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	_, err = docker.ContainerInspect(ctx, provisioner.settings().Container, client.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("agent: inspect removed HAProxy container: %w", err)
+	}
+	return errors.New("agent: HAProxy container still exists after removal")
+}
+
 func (provisioner DockerLayer4Provisioner) Health(ctx context.Context) error {
 	docker, err := provisioner.client()
 	if err != nil {
@@ -311,6 +442,72 @@ func (provisioner DockerLayer4Provisioner) Health(ctx context.Context) error {
 		return errors.New("agent: HAProxy gateway is not running")
 	}
 	return nil
+}
+
+func (provisioner DockerLayer4Provisioner) ConfigurationHash(ctx context.Context) (string, error) {
+	docker, err := provisioner.client()
+	if err != nil {
+		return "", err
+	}
+	defer docker.Close()
+	inspection, err := docker.ContainerInspect(ctx, provisioner.settings().Container, client.ContainerInspectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("agent: inspect HAProxy configuration: %w", err)
+	}
+	if inspection.Container.Config == nil || inspection.Container.Config.Labels[gatewayruntime.ManagedLabel] != "true" || inspection.Container.Config.Labels[gatewayruntime.ComponentLabel] != gatewayruntime.Layer4ComponentLabel {
+		return "", errors.New("agent: HAProxy container ownership is invalid")
+	}
+	expectedHash := strings.ToLower(strings.TrimSpace(inspection.Container.Config.Labels[layer4ConfigurationLabel]))
+	decoded, err := hex.DecodeString(expectedHash)
+	if err != nil || len(decoded) != 32 {
+		return "", errors.New("agent: HAProxy configuration read-back is invalid")
+	}
+	configuration, err := readLiveHAProxyConfiguration(ctx, docker, inspection.Container.ID)
+	if err != nil {
+		return "", fmt.Errorf("agent: read HAProxy configuration: %w", err)
+	}
+	actualHash := haproxyConfigurationHash(configuration)
+	if actualHash != expectedHash {
+		return "", errors.New("agent: live HAProxy configuration differs from its managed revision")
+	}
+	return actualHash, nil
+}
+
+func readLiveHAProxyConfiguration(ctx context.Context, docker *client.Client, containerID string) ([]byte, error) {
+	execution, err := docker.ExecCreate(ctx, containerID, client.ExecCreateOptions{
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          []string{"/bin/cat", haproxyConfigurationPath},
+		WorkingDir:   "/",
+	})
+	if err != nil {
+		return nil, err
+	}
+	attached, err := docker.ExecAttach(ctx, execution.ID, client.ExecAttachOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer attached.Close()
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, io.LimitReader(attached.Reader, (1<<20)+(64<<10))); err != nil {
+		return nil, err
+	}
+	inspection, err := docker.ExecInspect(ctx, execution.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if inspection.Running || inspection.ExitCode != 0 {
+		return nil, fmt.Errorf("configuration read exited with status %d", inspection.ExitCode)
+	}
+	if stdout.Len() < 1 || stdout.Len() > 1<<20 {
+		return nil, errors.New("live configuration size is invalid")
+	}
+	return stdout.Bytes(), nil
+}
+
+func haproxyConfigurationHash(configuration []byte) string {
+	digest := sha256.Sum256(configuration)
+	return hex.EncodeToString(digest[:])
 }
 
 func (provisioner DockerLayer4Provisioner) waitHealthy(ctx context.Context, docker *client.Client, containerID string) error {
@@ -372,10 +569,14 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 	for index, route := range desired.Routes {
 		configuration.WriteString(fmt.Sprintf("  use_backend vastora-raw-%d if { req.ssl_sni -i %s }\n", index, route.Hostname))
 	}
-	configuration.WriteString("  default_backend vastora-caddy\n\nbackend vastora-caddy\n")
-	configuration.WriteString("  server caddy ")
-	configuration.WriteString(net.JoinHostPort(desired.CaddyAddress, strconv.Itoa(desired.CaddyPort)))
-	configuration.WriteString(" check\n")
+	if desired.RejectUnmatched {
+		configuration.WriteString("  default_backend vastora-reject\n\nbackend vastora-reject\n  server reject 127.0.0.1:1\n")
+	} else {
+		configuration.WriteString("  default_backend vastora-caddy\n\nbackend vastora-caddy\n")
+		configuration.WriteString("  server caddy ")
+		configuration.WriteString(net.JoinHostPort(desired.CaddyAddress, strconv.Itoa(desired.CaddyPort)))
+		configuration.WriteString(" check\n")
+	}
 	for index, route := range desired.Routes {
 		configuration.WriteString(fmt.Sprintf("\nbackend vastora-raw-%d\n", index))
 		for upstreamIndex, upstream := range route.Upstreams {
@@ -405,9 +606,6 @@ func (provisioner ManagedGatewayProvisioner) Ensure(ctx context.Context) error {
 func (provisioner ManagedGatewayProvisioner) Remove(ctx context.Context) error {
 	if provisioner.Caddy == nil || provisioner.Layer4 == nil {
 		return errors.New("agent: managed gateway provisioner is not configured")
-	}
-	if err := provisioner.Layer4.Remove(ctx); err != nil {
-		return err
 	}
 	if provisioner.Driver != nil {
 		retained, err := provisioner.Driver.RetainSystemRoutes(ctx)

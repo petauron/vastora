@@ -16,7 +16,7 @@ import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { ThemeProvider } from "../components/theme";
-import { defaultPublicationHostname, defaultRealityHostname } from "./appAccess";
+import { defaultPublicationHostname } from "./appAccess";
 import { CopyButton, userError } from "./shared";
 import { commandSecretScope, secretOperation } from "../secret-delivery";
 
@@ -117,7 +117,6 @@ describe("network and app views", () => {
     data.services.push({ ...service, id: "subscription", name: "订阅服务" });
     expect(defaultPublicationHostname(data, service)).toBe("manager-komari-agent.home.vastora.example.com");
     expect(defaultPublicationHostname(data, service, "cloudflare_tunnel")).toBe("");
-    expect(defaultRealityHostname(data, data.applications[0])).toBe("reality.home-server.home.vastora.example.com");
   });
 
   it("keeps Cloudflare zones separate from the Vastora service namespace", () => {
@@ -159,7 +158,7 @@ describe("network and app views", () => {
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
     const nodeButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("修改") && button.closest("div")?.parentElement?.textContent?.includes("home-server"));
     act(() => nodeButton?.click());
-    const publicSwitch = document.querySelector<HTMLButtonElement>("#public-web-enabled")!;
+    const publicSwitch = document.querySelector<HTMLButtonElement>("#public-ingress-enabled")!;
     expect(publicSwitch.disabled).toBe(false);
     act(() => publicSwitch.click());
     expect(document.body.textContent).toContain("198.51.100.27 → 192.168.1.2 · 云 NAT");
@@ -176,7 +175,7 @@ describe("network and app views", () => {
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async () => undefined} />);
     const nodeButton = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("修改") && button.closest("div")?.parentElement?.textContent?.includes("home-server"));
     act(() => nodeButton?.click());
-    expect(document.querySelector<HTMLButtonElement>("#public-web-enabled")?.disabled).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>("#public-ingress-enabled")?.disabled).toBe(true);
     expect(document.body.textContent).toContain("等待 Agent 启动检测公网出口");
     expect(document.body.textContent).not.toContain("与 Center 同机");
   });
@@ -378,7 +377,7 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("已复制");
   });
 
-  it("offers an automatic shared 443 gateway for raw TLS services", () => {
+  it("offers an automatic node-direct shared 443 listener for raw TLS services", () => {
 	const data = dashboard();
 	data.agents[0].networkCandidates = [{ address: "203.0.113.10", interface: "eth0", kind: "public", observedAt: "2026-08-18T00:00:00Z" }];
 	data.agents[0].networkProfile = { serviceAddress: "203.0.113.10", publicAddress: "203.0.113.10", publicBindAddress: "203.0.113.10", publicMode: "direct", enabledKinds: ["public"], directPublic: true };
@@ -387,9 +386,9 @@ describe("network and app views", () => {
 	const add = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"));
 	act(() => add?.click());
 	act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
-	expect(document.body.textContent).toContain("共享 443");
-	expect(document.body.textContent).toContain("自动启用 HAProxy");
-	act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("共享 443"))?.click());
+		expect(document.body.textContent).toContain("节点直连 443");
+	expect(document.body.textContent).toContain("自动启用本机 HAProxy");
+		act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("节点直连 443"))?.click());
 	expect(document.body.textContent).toContain("普通应用与入口位于同一节点时");
   });
 
@@ -399,7 +398,7 @@ describe("network and app views", () => {
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
-    act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("共享 443"))?.click());
+    act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("节点直连 443"))?.click());
     expect(document.body.textContent).toContain("容器内部 443 合法");
     expect(document.body.textContent).toContain("宿主机公网 443 由 HAProxy 独占");
     expect(document.body.textContent).not.toContain("应用内部端口不能是 443");
@@ -448,6 +447,25 @@ describe("network and app views", () => {
     expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("创建访问方式"))?.disabled).toBe(true);
   });
 
+  it("loads a missing Center remote entry status when the publication sheet opens", async () => {
+    const data = dashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
+    data.centerRemoteAccess = null;
+    data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const status = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center-vastora.example.com", audienceKind: "email", audienceValue: "admin@example.com", status: "configured" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click();
+      await Promise.resolve();
+    });
+    act(() => document.querySelector<HTMLInputElement>('input[value="public_web"]')?.click());
+
+    expect(status).toHaveBeenCalledOnce();
+    expect(document.body.textContent).not.toContain("尚未读取 Center 远程入口状态");
+    expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("创建访问方式"))?.disabled).toBe(false);
+  });
+
 	it("shows a failed install with its reason and a retry action", () => {
     const data = dashboard();
     data.deployments = [{ id: "failed-install", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "install", deleteData: false, error: "container could not start", applicationId: "failed", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
@@ -480,7 +498,7 @@ describe("network and app views", () => {
 		data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
 		data.deployments = [{ id: "deploy-recovery", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", reconciliationRequired: true, operation: "configure", deleteData: false, error: "container outcome is unknown", applicationId: "running", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
 		data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-		data.publications = [{ id: "private-panel", serviceId: "manager", kind: "headscale_gateway", gatewayNodeId: "agent", hostname: "panel.home.example", dnsProvider: "headscale", tlsEnabled: false, desiredRevision: 2, appliedRevision: 1, status: "degraded", accessUrl: "http://panel.home.example/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+		data.publications = [{ id: "private-panel", serviceId: "manager", kind: "headscale_gateway", ingress: { owner: "site_gateway", entryNodeId: "agent" }, hostname: "panel.home.example", dnsProvider: "headscale", tlsEnabled: false, desiredRevision: 2, appliedRevision: 1, status: "degraded", accessUrl: "http://panel.home.example/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
 		const stop = vi.spyOn(api, "stopPublication").mockResolvedValue({ stopped: true });
 		const verify = vi.spyOn(api, "verifyPublication");
 		const updateTLS = vi.spyOn(api, "updatePublicationTLS");
@@ -542,7 +560,7 @@ describe("network and app views", () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("填写节点名称和安全目标");
+		expect(document.body.textContent).toContain("填写节点名称和套餐即可");
     expect(document.querySelector<HTMLInputElement>("#reality-name")?.value).toBe("home-server");
     expect(document.body.textContent).toContain("🇺🇸 美国home-server");
     expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
@@ -550,16 +568,16 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("客户端额度（可选）");
     expect(document.querySelector<HTMLInputElement>("#reality-inbound-quota")).not.toBeNull();
     expect(document.querySelector<HTMLInputElement>("#reality-subscription-quota")).not.toBeNull();
-    expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("reality.home-server.home.vastora.example.com");
-    expect(document.querySelector<HTMLButtonElement>("#reality-gateway")?.textContent).toContain("home-server");
-    expect(document.body.textContent).toContain("需要在高级设置中填写");
+		expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("");
+		expect(document.body.textContent).toContain("home-server");
+		expect(document.body.textContent).toContain("www.intel.com");
     expect(document.body.textContent).toContain("REALITY 回落目标（必填）");
-    expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.required).toBe(true);
-    expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.required).toBe(true);
+		expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.value).toBe("www.intel.com");
+		expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.value).toBe("www.intel.com");
     expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("校验并创建"))).toBe(true);
   });
 
-  it("offers an approved NAT-mapped site Gateway for REALITY", async () => {
+  it("offers an approved NAT-mapped node-direct entry for REALITY", async () => {
     const data = realityDashboard();
     data.agents[0].networkProfile = { ...data.agents[0].networkProfile!, publicBindAddress: "10.0.0.10", publicMode: "nat" };
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
@@ -571,7 +589,7 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
 
-    expect(document.querySelector<HTMLButtonElement>("#reality-gateway")?.textContent).toContain("home-server");
+		expect(document.body.textContent).toContain("home-server");
   });
 
   it("offers a separate one-click public 3x-ui subscription", async () => {
@@ -596,7 +614,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
     data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", gatewayNodeId: "agent", hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "ready", accessUrl: "https://subscription.example.test/sub/", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
+    data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "ready", accessUrl: "https://subscription.example.test/sub/", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     const create = vi.spyOn(api, "createSubscriptionCommand").mockResolvedValue({ id: "subscription-resync", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: "subscription.example.test", dnsProvider: "cloudflare", publicationId: "subscription-publication", resultAvailable: false, createdAt: "2026-08-24T00:00:02Z", updatedAt: "2026-08-24T00:00:03Z" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
@@ -615,7 +633,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
     data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    const publication = { id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel" as const, gatewayNodeId: "agent", hostname: "subscription.example.test", dnsProvider: "cloudflare" as const, tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "applying" as const, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" };
+    const publication = { id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel" as const, ingress: { owner: "tunnel_connector" as const, entryNodeId: "agent" }, hostname: "subscription.example.test", dnsProvider: "cloudflare" as const, tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "applying" as const, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" };
     data.publications = [publication];
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "subscription-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: publication.hostname, dnsProvider: "cloudflare", publicationId: publication.id, resultAvailable: false, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" });
     const verify = vi.spyOn(api, "verifyPublication").mockResolvedValue({ ...publication, status: "ready", accessUrl: `https://${publication.hostname}/` });
@@ -641,7 +659,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
     data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", gatewayNodeId: "agent", hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "degraded", lastError: "TLS health check failed", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
+    data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "degraded", lastError: "TLS health check failed", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "subscription-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: "subscription.example.test", dnsProvider: "cloudflare", publicationId: "subscription-publication", resultAvailable: false, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
@@ -877,7 +895,7 @@ describe("network and app views", () => {
     const data = dashboard();
     data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const accessUrl = "https://komari-agent-home-server.example.com/";
-    data.publications = [{ id: "public-panel", serviceId: "manager", kind: "cloudflare_tunnel", gatewayNodeId: "agent", hostname: "komari-agent-home-server.example.com", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.publications = [{ id: "public-panel", serviceId: "manager", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: "komari-agent-home-server.example.com", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
 
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
@@ -889,11 +907,11 @@ describe("network and app views", () => {
     const data = dashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
     data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    data.publications = [{ id: "private-panel", serviceId: "manager", kind: "headscale_gateway", gatewayNodeId: "agent", hostname: "panel.home.example", dnsProvider: "headscale", tlsEnabled: false, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl: "http://panel.home.example/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.publications = [{ id: "private-panel", serviceId: "manager", kind: "headscale_gateway", ingress: { owner: "site_gateway", entryNodeId: "agent" }, hostname: "panel.home.example", dnsProvider: "headscale", tlsEnabled: false, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl: "http://panel.home.example/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const update = vi.spyOn(api, "updatePublicationTLS").mockResolvedValue({ ...data.publications[0], tlsEnabled: true });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
 
-    expect(container.textContent).toContain("安全私网 · HTTP");
+    expect(container.textContent).toContain("安全私网 · Site Gateway · HTTP");
     const tlsSwitch = container.querySelector<HTMLElement>('[role="switch"][aria-label="开启 HTTPS"]');
     expect(tlsSwitch?.getAttribute("aria-label")).toBe("开启 HTTPS");
     await act(async () => { tlsSwitch?.click(); await Promise.resolve(); });
@@ -1031,7 +1049,7 @@ describe("network and app views", () => {
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
 		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
-		const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.20", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64500, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
+		const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.20", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64501, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
 		mockCommandEvent(pending);
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -1058,7 +1076,7 @@ describe("network and app views", () => {
 			await Promise.resolve();
 		});
 		expect(verify).toHaveBeenCalledWith("three-x-ui", "www.example.com", "www.example.com");
-		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", regionCode: "US", name: "Oracle", clientName: "我的设备", gatewayNodeId: "agent", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
+		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", regionCode: "US", name: "Oracle", clientName: "我的设备", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
 		});
 
   it("keeps subscriber quotas on the controller even when a worker creates the first VLESS node", async () => {
@@ -1095,7 +1113,7 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
     expect(verify).toHaveBeenCalledWith("three-x-ui-worker", "www.example.com", "www.example.com");
-    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", regionCode: "US", name: "oracle-worker", gatewayNodeId: "worker", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1 });
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", regionCode: "US", name: "oracle-worker", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1 });
     expect(document.body.textContent).not.toContain("客户端链接只显示一次");
   });
 

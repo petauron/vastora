@@ -168,6 +168,53 @@ function requestSchema(source) {
   return named ? schemaForGoType(named[1]) : { $ref: "#/components/schemas/JsonObject" };
 }
 
+const publicationIngressRequestSchema = {
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["owner", "entryNodeId"],
+      properties: {
+        owner: { type: "string", const: "site_gateway" },
+        entryNodeId: { type: "string", minLength: 1 },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["owner"],
+      properties: {
+        owner: { type: "string", const: "application_node" },
+      },
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["owner", "entryNodeId"],
+      properties: {
+        owner: { type: "string", const: "tunnel_connector" },
+        entryNodeId: { type: "string", minLength: 1 },
+      },
+    },
+  ],
+};
+
+const publicationIngressResponseSchema = {
+  oneOf: ["site_gateway", "application_node", "tunnel_connector"].map((owner) => ({
+    type: "object",
+    additionalProperties: false,
+    required: ["owner", "entryNodeId"],
+    properties: {
+      owner: { type: "string", const: owner },
+      entryNodeId: { type: "string", minLength: 1 },
+    },
+  })),
+};
+
+const publicationResponseSchema = schemaForGoType("PublicationView");
+publicationResponseSchema.required = ["id", "serviceId", "kind", "ingress", "hostname", "dnsProvider", "tlsEnabled", "desiredRevision", "appliedRevision", "status", "createdAt", "updatedAt"];
+publicationResponseSchema.properties.ingress = { $ref: "#/components/schemas/PublicationIngress" };
+
 const document = {
   openapi: "3.1.0",
   info: {
@@ -198,6 +245,8 @@ const document = {
         },
       },
       JsonObject: { type: "object", additionalProperties: true, description: "Endpoint-specific JSON object. Runtime decoding rejects fields not declared by the corresponding Go request type." },
+      PublicationIngress: publicationIngressResponseSchema,
+      Publication: publicationResponseSchema,
       ApplicationCredentials: {
         oneOf: [
           {
@@ -293,9 +342,13 @@ for (const route of routes) {
   };
   if (route.handler === "handleCreateRealityCommand") {
     operation.requestBody.content["application/json"].schema.required = [
-      "applicationId", "regionCode", "name", "gatewayNodeId", "hostname",
+      "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName",
     ];
+  } else if (route.handler === "handleCreatePublication") {
+    const schema = operation.requestBody.content["application/json"].schema;
+    schema.required = ["serviceId", "kind", "ingress", "dnsProvider"];
+    schema.properties.ingress = publicationIngressRequestSchema;
   } else if (route.handler === "handleVerifyRealityTarget") {
     operation.requestBody.content["application/json"].schema.required = ["targetHost", "serverName"];
   } else if (route.handler === "handleRevealApplicationCredentials") {
@@ -327,6 +380,16 @@ for (const route of routes) {
     operation.responses["200"].description = "Current durable rotation state.";
     operation.responses["200"].headers = noStoreHeaders;
     operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/ApplicationCredentialRotation" };
+  }
+  if (route.handler === "handleListPublications") {
+    operation.responses["200"].content["application/json"].schema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["publications"],
+      properties: { publications: { type: "array", items: { $ref: "#/components/schemas/Publication" } } },
+    };
+  } else if (["handleCreatePublication", "handleUpdatePublicationTLS", "handleVerifyPublication"].includes(route.handler)) {
+    operation.responses[status].content["application/json"].schema = { $ref: "#/components/schemas/Publication" };
   }
   document.paths[route.path] ||= {};
   document.paths[route.path][route.method] = operation;

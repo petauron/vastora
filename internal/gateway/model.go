@@ -166,23 +166,69 @@ func certificateCoversName(certificate *x509.Certificate, name string) bool {
 // Layer4Route is a raw TCP upstream selected from the TLS ClientHello SNI.
 // TLS remains end-to-end; HAProxy never terminates certificates.
 type Layer4Route struct {
-	ID            string     `json:"id"`
-	Hostname      string     `json:"hostname"`
-	ProxyProtocol string     `json:"proxyProtocol,omitempty"`
-	Upstreams     []Upstream `json:"upstreams"`
+	ID                string     `json:"id"`
+	Hostname          string     `json:"hostname"`
+	ApplicationNodeID string     `json:"applicationNodeId,omitempty"`
+	ManagedReality    bool       `json:"managedReality,omitempty"`
+	ProxyProtocol     string     `json:"proxyProtocol,omitempty"`
+	Upstreams         []Upstream `json:"upstreams"`
 }
 
 const ProxyProtocolV2 = "v2"
 
-// SharedHTTPS describes the optional public TCP frontend that owns port 443.
-// Unknown and Web SNI values are passed through to Caddy, which remains the
-// HTTPS endpoint and certificate manager.
+// SharedHTTPS describes a node-local public TCP frontend that owns port 443.
+// A dual-role Site Gateway passes unmatched SNI to its local Caddy; a
+// protocol-only node rejects unmatched SNI.
 type SharedHTTPS struct {
-	Address      string        `json:"address"`
-	Port         int           `json:"port"`
-	CaddyAddress string        `json:"caddyAddress"`
-	CaddyPort    int           `json:"caddyPort"`
-	Routes       []Layer4Route `json:"routes"`
+	Address         string        `json:"address"`
+	Port            int           `json:"port"`
+	CaddyAddress    string        `json:"caddyAddress"`
+	CaddyPort       int           `json:"caddyPort"`
+	RejectUnmatched bool          `json:"rejectUnmatched,omitempty"`
+	Routes          []Layer4Route `json:"routes"`
+}
+
+// NodeListenerState is the independent desired state for a protocol listener
+// owned by an application node. It contains no Site Gateway or Caddy state.
+type NodeListenerState struct {
+	Revision int64       `json:"revision"`
+	NodeID   string      `json:"nodeId"`
+	Listener SharedHTTPS `json:"listener"`
+}
+
+func (state NodeListenerState) Validate() error {
+	if state.Revision < 1 {
+		return errors.New("node listener: revision must be positive")
+	}
+	if strings.TrimSpace(state.NodeID) == "" {
+		return errors.New("node listener: accepting node is required")
+	}
+	for _, route := range state.Listener.Routes {
+		if route.ApplicationNodeID != state.NodeID {
+			return errors.New("node listener: every upstream must belong to the accepting application node")
+		}
+	}
+	listener := state.Listener
+	probe := DesiredState{Revision: state.Revision, Listeners: []Listener{{Kind: "public", Address: listener.Address, HTTPPort: 80, HTTPSPort: listener.Port}}, SharedHTTPS: &listener}
+	return probe.Validate()
+}
+
+func (state NodeListenerState) Sorted() NodeListenerState {
+	listener := state.Listener
+	probe := DesiredState{Revision: state.Revision, Listeners: []Listener{{Kind: "public", Address: listener.Address, HTTPPort: 80, HTTPSPort: listener.Port}}, SharedHTTPS: &listener}.Sorted()
+	return NodeListenerState{Revision: state.Revision, NodeID: state.NodeID, Listener: *probe.SharedHTTPS}
+}
+
+func NodeListenerConfigurationHash(state NodeListenerState) (string, error) {
+	if err := state.Validate(); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(state.Sorted())
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 type DesiredState struct {
@@ -248,10 +294,13 @@ func (state DesiredState) Validate() error {
 	if state.SharedHTTPS != nil {
 		shared := state.SharedHTTPS
 		sharedIP := net.ParseIP(shared.Address)
-		if sharedIP == nil || sharedIP.To4() == nil || shared.Port < 1 || shared.Port > 65535 || !validUpstreamAddress(shared.CaddyAddress) || shared.CaddyPort < 1 || shared.CaddyPort > 65535 {
+		if sharedIP == nil || sharedIP.To4() == nil || shared.Port < 1 || shared.Port > 65535 {
 			return errors.New("gateway: invalid shared HTTPS frontend")
 		}
-		if shared.Address == shared.CaddyAddress && shared.Port == shared.CaddyPort {
+		if !shared.RejectUnmatched && (!validUpstreamAddress(shared.CaddyAddress) || shared.CaddyPort < 1 || shared.CaddyPort > 65535) {
+			return errors.New("gateway: shared HTTPS frontend requires a Caddy backend")
+		}
+		if !shared.RejectUnmatched && shared.Address == shared.CaddyAddress && shared.Port == shared.CaddyPort {
 			return errors.New("gateway: shared HTTPS frontend and Caddy backend must use different sockets")
 		}
 		publicListener, exists := listeners["public"]

@@ -15,13 +15,13 @@ export function publicationOptions(data: AppData, service: Service | null, langu
     const tunnel = available("cloudflare_tunnel") && cloudflare;
     options.push({ kind: "lan_gateway", enabled: lan, reason: lan ? cloudflare ? "HTTPS · LAN Gateway" : copy(language, "HTTP · 连接 Cloudflare 后可启用 HTTPS", "HTTP · connect Cloudflare to enable HTTPS") : copy(language, "没有可用的局域网 Gateway", "No LAN Gateway is available") });
     options.push({ kind: "headscale_gateway", enabled: headscale, reason: headscale ? cloudflare ? "HTTPS · Headscale Gateway" : copy(language, "HTTP · 连接 Cloudflare 后可启用 HTTPS", "HTTP · connect Cloudflare to enable HTTPS") : copy(language, "没有可用的 Headscale Gateway", "No Headscale Gateway is available") });
-    options.push({ kind: "public_direct", enabled: direct, reason: direct ? "HTTPS · Public Gateway" : copy(language, "没有已批准的公网 Gateway", "No approved public Gateway is available") });
+    options.push({ kind: "public_direct", enabled: direct, reason: direct ? "HTTPS · Public Site Gateway" : copy(language, "没有已批准的公网 Site Gateway", "No approved public Site Gateway is available") });
     options.push({ kind: "cloudflare_tunnel", enabled: tunnel, reason: tunnel ? "HTTPS · Cloudflare Tunnel" : copy(language, "请先连接 Cloudflare 并启用 Tunnel 节点", "Connect Cloudflare and enable a Tunnel node first") });
   } else {
     const direct = available("public_direct");
     const shared443 = available("public_shared_443");
     options.push({ kind: "public_direct", enabled: direct, reason: direct ? copy(language, "原始端口 · 仅应用节点", "Direct raw port · app node only") : copy(language, "应用节点没有已批准的公网地址", "The app node has no approved public address") });
-    if (service.protocol === "tcp") options.push({ kind: "public_shared_443", enabled: shared443, reason: shared443 ? copy(language, "与 Web 共用公网 443 · 自动启用 HAProxy", "Share public 443 with Web · enables HAProxy automatically") : copy(language, "没有可用的公网 Gateway", "No public Gateway is available") });
+    if (service.protocol === "tcp") options.push({ kind: "public_shared_443", enabled: shared443, reason: shared443 ? copy(language, "应用节点公网 443 · 自动启用本机 HAProxy", "Application-node public 443 · enables local HAProxy automatically") : copy(language, "应用节点没有已批准的公网地址", "The application node has no approved public address") });
   }
   return options;
 }
@@ -88,7 +88,7 @@ export function gatewaysForKind(data: AppData, service: Service, kind: Publicati
   return data.agents.filter((agent) => {
     if (!agent.connected || agent.siteId !== service.siteId || !agent.networkProfile) return false;
     if (kind === "cloudflare_tunnel") return agent.capabilities.tunnel;
-    if (kind === "public_direct" && service.protocol !== "http" && service.protocol !== "https") return agent.id === app?.nodeId && agent.networkProfile.directPublic && agent.networkProfile.publicMode === "direct" && agent.networkProfile.enabledKinds.includes("public");
+    if ((kind === "public_direct" && service.protocol !== "http" && service.protocol !== "https") || kind === "public_shared_443") return agent.id === app?.nodeId && (kind !== "public_shared_443" || agent.capabilities.docker) && agent.networkProfile.directPublic && agent.networkProfile.enabledKinds.includes("public");
     if (!agent.capabilities.gateway || !site?.gatewayNodes.includes(agent.id)) return false;
     if (kind === "lan_gateway") return agent.networkProfile.enabledKinds.includes("lan");
     if (kind === "headscale_gateway") return agent.networkProfile.enabledKinds.includes("headscale");
@@ -129,13 +129,6 @@ export function defaultPublicationHostname(data: AppData, service: Service, kind
   return `${dnsLabel(`${serviceLabel}-${appLabel}`)}.${siteLabel}.${site.domainSuffix}`.toLowerCase();
 }
 
-export function defaultRealityHostname(data: AppData, application: AppData["applications"][number]) {
-  const site = data.sites.find((value) => value.id === application.siteId);
-  const agent = data.agents.find((value) => value.id === application.nodeId);
-  if (!site?.domainSuffix) return "";
-  return `reality.${dnsLabel(agent?.name || "node")}.${dnsLabel(site.code) || "site"}.${site.domainSuffix}`.toLowerCase();
-}
-
 function dnsLabel(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63).replace(/-+$/g, "");
 }
@@ -159,6 +152,6 @@ export function localized(app: AppView, language: Language, field: "name" | "des
 }
 
 export function publicationKindLabel(language: Language, kind: PublicationKind) {
-  const labels: Record<PublicationKind, [string, string]> = { lan_gateway: ["局域网访问", "Local network"], headscale_gateway: ["安全私网", "Secure private network"], public_direct: ["公网直连", "Direct public"], public_shared_443: ["共享 443（公网）", "Shared 443 (public)"], cloudflare_tunnel: ["Cloudflare 安全通道", "Cloudflare secure tunnel"] };
+  const labels: Record<PublicationKind, [string, string]> = { lan_gateway: ["局域网访问", "Local network"], headscale_gateway: ["安全私网", "Secure private network"], public_direct: ["公网直连", "Direct public"], public_shared_443: ["节点直连 443", "Node-direct 443"], cloudflare_tunnel: ["Cloudflare 安全通道", "Cloudflare secure tunnel"] };
   return copy(language, ...labels[kind]);
 }

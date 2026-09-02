@@ -467,6 +467,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if heartbeat.GatewayRevision < 0 || (heartbeat.GatewayRevision == 0 && heartbeat.GatewayConfigHash != "") || (heartbeat.GatewayRevision > 0 && (gatewayHashErr != nil || len(decodedGatewayHash) != sha256.Size)) {
 		return errors.New("center: Agent reported an invalid live Gateway revision")
 	}
+	heartbeat.NodeListenerConfigHash = strings.ToLower(strings.TrimSpace(heartbeat.NodeListenerConfigHash))
+	decodedNodeListenerHash, nodeListenerHashErr := hex.DecodeString(heartbeat.NodeListenerConfigHash)
+	if heartbeat.NodeListenerRevision < 0 || (heartbeat.NodeListenerRevision == 0 && heartbeat.NodeListenerConfigHash != "") || (heartbeat.NodeListenerRevision > 0 && (nodeListenerHashErr != nil || len(decodedNodeListenerHash) != sha256.Size)) {
+		return errors.New("center: Agent reported an invalid live node-listener revision")
+	}
 	if heartbeat.TailscaleOwnership != "managed" && heartbeat.TailscaleOwnership != "external" && heartbeat.TailscaleOwnership != "" {
 		return errors.New("center: Agent reported an unsupported Tailscale ownership")
 	}
@@ -604,6 +609,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			if err := s.queueGatewayState(ctx, tx, id, now); err != nil {
 				return err
 			}
+		}
+	}
+	if heartbeat.Capabilities.Docker {
+		if err := s.queueMismatchedNodeListenerReconcile(ctx, tx, id, heartbeat.NodeListenerHealthy, heartbeat.NodeListenerRevision, heartbeat.NodeListenerConfigHash, now); err != nil {
+			return err
 		}
 	}
 	if err := s.queueScheduledThreeXUIBackup(ctx, tx, id, now); err != nil {

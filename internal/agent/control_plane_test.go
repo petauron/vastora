@@ -971,6 +971,36 @@ func TestProcessingReceiptAfterRestartFailsClosedWithoutRepeatingEffect(t *testi
 	}
 }
 
+func TestDesiredStateReceiptReopensForHigherAttempt(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task := DeploymentTask{Kind: "node.listener.apply", ID: "listener-state-1", Attempt: 1}
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("initial receipt = %#v, err=%v", completion, err)
+	}
+	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "first attempt failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
+		t.Fatal(err)
+	}
+	task.Attempt = 2
+	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
+		t.Fatalf("retried desired-state receipt = %#v, err=%v", completion, err)
+	}
+	var attempt int64
+	var state string
+	if err := store.db.QueryRowContext(context.Background(), `SELECT attempt, state FROM task_receipts WHERE task_id = ?`, task.ID).Scan(&attempt, &state); err != nil {
+		t.Fatal(err)
+	}
+	if attempt != 2 || state != "processing" {
+		t.Fatalf("retried desired-state receipt = attempt %d, state %q", attempt, state)
+	}
+}
+
 func TestProcessingApplicationCommandReceiptRequiresExplicitReconciliation(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)

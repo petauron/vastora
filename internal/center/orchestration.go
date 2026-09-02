@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
-	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"golang.org/x/mod/semver"
 )
@@ -203,9 +202,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 }
 
 func (s *Store) queueAffectedGateways(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT r.gateway_node_id FROM routes r JOIN services s ON s.id = r.service_id WHERE s.application_id = ?
-		UNION SELECT DISTINCT p.gateway_node_id FROM publications p JOIN services s ON s.id = p.service_id
-		WHERE s.application_id = ? AND p.kind = 'public_shared_443' AND p.gateway_node_id IS NOT NULL`, applicationID, applicationID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT r.gateway_node_id FROM routes r JOIN services s ON s.id = r.service_id WHERE s.application_id = ?`, applicationID)
 	if err != nil {
 		return err
 	}
@@ -227,7 +224,29 @@ func (s *Store) queueAffectedGateways(ctx context.Context, tx *sql.Tx, applicati
 			return err
 		}
 	}
-	return nil
+	listenerRows, err := tx.QueryContext(ctx, `SELECT DISTINCT p.entry_node_id FROM publications p JOIN services s ON s.id = p.service_id
+		WHERE s.application_id = ? AND p.ingress_owner = 'application_node' AND p.kind = 'public_shared_443' AND p.entry_node_id IS NOT NULL`, applicationID)
+	if err != nil {
+		return err
+	}
+	var listenerIDs []string
+	for listenerRows.Next() {
+		var id string
+		if err := listenerRows.Scan(&id); err != nil {
+			listenerRows.Close()
+			return err
+		}
+		listenerIDs = append(listenerIDs, id)
+	}
+	if err := listenerRows.Close(); err != nil {
+		return err
+	}
+	for _, nodeID := range listenerIDs {
+		if err := s.queueNodeListenerState(ctx, tx, nodeID, now); err != nil {
+			return err
+		}
+	}
+	return s.retireStoppedMigratedTunnelConnectors(ctx, tx, applicationID, now)
 }
 
 func (s *Store) queueGatewayState(ctx context.Context, tx *sql.Tx, gatewayID string, now time.Time) error {
@@ -316,48 +335,6 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 	if err := rows.Close(); err != nil {
 		return gateway.DesiredState{}, err
 	}
-	sharedRows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, n.public_bind_address,
-		application.node_id, application.runtime, application.app_key, s.container_port,
-		CASE WHEN application.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' AND guard.status = 'ready' THEN 'v2' ELSE '' END
-		FROM publications p JOIN services s ON s.id = p.service_id
-		JOIN applications application ON application.id = s.application_id
-		JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
-		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = s.id
-		WHERE p.gateway_node_id = ? AND p.kind = 'public_shared_443'
-		AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.id`, gatewayID)
-	if err != nil {
-		return gateway.DesiredState{}, err
-	}
-	var shared *gateway.SharedHTTPS
-	for sharedRows.Next() {
-		var route gateway.Layer4Route
-		var endpoint, publicAddress, applicationNodeID, runtime, appKey string
-		var containerPort int
-		if err := sharedRows.Scan(&route.ID, &route.Hostname, &endpoint, &publicAddress, &applicationNodeID, &runtime, &appKey, &containerPort, &route.ProxyProtocol); err != nil {
-			sharedRows.Close()
-			return gateway.DesiredState{}, err
-		}
-		endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, gatewayID, containerPort, endpoint)
-		host, portValue, err := net.SplitHostPort(endpoint)
-		if err != nil {
-			sharedRows.Close()
-			return gateway.DesiredState{}, errors.New("center: invalid stored shared 443 endpoint")
-		}
-		port, _ := strconv.Atoi(portValue)
-		route.Upstreams = []gateway.Upstream{{Address: host, Port: port}}
-		if shared == nil {
-			shared = &gateway.SharedHTTPS{Address: publicAddress, Port: 443, CaddyAddress: dockerruntime.CaddyAlias, CaddyPort: 443}
-			listeners["public"] = gateway.Listener{Kind: "public", Address: publicAddress, HTTPPort: 80, HTTPSPort: 443}
-		} else if shared.Address != publicAddress {
-			sharedRows.Close()
-			return gateway.DesiredState{}, errors.New("center: shared 443 publications disagree on the public address")
-		}
-		shared.Routes = append(shared.Routes, route)
-	}
-	if err := sharedRows.Close(); err != nil {
-		return gateway.DesiredState{}, err
-	}
-	state.SharedHTTPS = shared
 	for _, listener := range listeners {
 		state.Listeners = append(state.Listeners, listener)
 	}
@@ -415,10 +392,6 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 			WHERE id IN (SELECT publication_id FROM routes WHERE gateway_node_id = ? AND desired_revision = ?)`, taskError, now, agentID, revision); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'failed', last_error = ?, updated_at = ?
-			WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, taskError, now, agentID); err != nil {
-			return err
-		}
 	} else {
 		if _, err := tx.ExecContext(ctx, `UPDATE gateway_states SET applied_revision = ?, status = 'ready', lease_expires_at = '', last_error = '', updated_at = ? WHERE gateway_node_id = ?`, revision, now, agentID); err != nil {
 			return err
@@ -435,13 +408,6 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 			last_error = CASE WHEN status = 'failed' AND dns_provider <> 'manual' THEN last_error ELSE '' END,
 			updated_at = ?
 			WHERE id IN (SELECT publication_id FROM routes WHERE gateway_node_id = ? AND applied_revision = ?)`, now, agentID, revision); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision,
-			status = CASE WHEN status = 'failed' AND dns_provider <> 'manual' THEN 'failed' ELSE 'applying' END,
-			last_error = CASE WHEN status = 'failed' AND dns_provider <> 'manual' THEN last_error ELSE '' END,
-			updated_at = ?
-			WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, now, agentID); err != nil {
 			return err
 		}
 	}

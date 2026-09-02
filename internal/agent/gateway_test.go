@@ -582,12 +582,90 @@ func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
 	}
 }
 
+func TestGatewayRemovesLegacyHAProxyUnlessNodeListenerOwnsIt(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/load" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer admin.Close()
+	state := gateway.DesiredState{
+		Revision:  1,
+		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
+		Routes: []gateway.Route{{
+			ID: "system-center", Hostname: "center.example.test", Protocol: "http", ListenerKind: "public", System: true,
+			Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}},
+		}},
+	}
+	newDriver := func() (*ManagedGatewayDriver, *fakeLayer4Provisioner, *fakeGatewayRuntimeProvisioner) {
+		caddy, err := NewCaddyGatewayDriver(admin.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		layer4 := &fakeLayer4Provisioner{}
+		runtime := &fakeGatewayRuntimeProvisioner{}
+		return &ManagedGatewayDriver{Caddy: caddy, Layer4: layer4, Runtime: runtime}, layer4, runtime
+	}
+
+	legacy, legacyLayer4, legacyRuntime := newDriver()
+	if err := legacy.ApplyConfiguration(context.Background(), state, nil); err != nil {
+		t.Fatal(err)
+	}
+	if legacyLayer4.removed != 1 || len(legacyRuntime.states) != 1 || legacyRuntime.states[0].SharedHTTPS != nil {
+		t.Fatalf("legacy HAProxy retirement = removals:%d runtime:%#v", legacyLayer4.removed, legacyRuntime.states)
+	}
+
+	owned, ownedLayer4, ownedRuntime := newDriver()
+	if err := owned.PrepareNodeListener(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := owned.ApplyConfiguration(context.Background(), state, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ownedLayer4.removed != 0 || len(ownedRuntime.states) != 1 || ownedRuntime.states[0].SharedHTTPS == nil {
+		t.Fatalf("node-listener HAProxy ownership = removals:%d runtime:%#v", ownedLayer4.removed, ownedRuntime.states)
+	}
+
+	migrated, _, migratedRuntime := newDriver()
+	legacyState := state
+	legacyState.SharedHTTPS = &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{{ID: "legacy-reality", Hostname: "reality.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}}
+	rollback, _, rollbackRuntime := newDriver()
+	if err := rollback.ApplyConfiguration(context.Background(), legacyState, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollback.PrepareNodeListener(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollback.RestoreGatewayAfterNodeListenerFailure(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rollbackCurrent, _ := rollback.CurrentConfiguration()
+	if rollbackCurrent.SharedHTTPS == nil || len(rollbackCurrent.SharedHTTPS.Routes) != 1 || len(rollbackRuntime.states) != 3 || rollbackRuntime.states[2].SharedHTTPS == nil || len(rollbackRuntime.states[2].SharedHTTPS.Routes) != 1 {
+		t.Fatalf("failed node-listener handoff did not restore the legacy Gateway state: current=%#v runtime=%#v", rollbackCurrent, rollbackRuntime.states)
+	}
+	if err := migrated.ApplyConfiguration(context.Background(), legacyState, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.RestoreGatewayPublicBindings(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current, _ := migrated.CurrentConfiguration()
+	if current.SharedHTTPS != nil || len(migratedRuntime.states) != 2 || migratedRuntime.states[1].SharedHTTPS != nil {
+		t.Fatalf("legacy shared-443 state was not retired during node-listener removal: current=%#v runtime=%#v", current, migratedRuntime.states)
+	}
+}
+
 func TestHAProxyContainerBootstrapsConfigurationInWritableTmpfs(t *testing.T) {
 	configuration := []byte("global\n  maxconn 4096\n")
+	desired := gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true}
+	configurationHash := haproxyConfigurationHash(configuration)
 	options := haproxyContainerCreateOptions(
 		DockerLayer4Provisioner{Image: DefaultHAProxyImage, Container: defaultHAProxyContainer},
-		gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443},
+		desired,
 		configuration,
+		configurationHash,
 	)
 	if !options.HostConfig.ReadonlyRootfs {
 		t.Fatal("HAProxy container root filesystem must remain read-only")
@@ -603,6 +681,9 @@ func TestHAProxyContainerBootstrapsConfigurationInWritableTmpfs(t *testing.T) {
 	}
 	if len(options.Config.Cmd) != 1 || !strings.Contains(options.Config.Cmd[0], "exec haproxy") || !strings.Contains(options.Config.Cmd[0], haproxyConfigurationPath) {
 		t.Fatalf("HAProxy bootstrap command does not install and launch the configuration: %#v", options.Config.Cmd)
+	}
+	if options.Config.Labels[layer4ConfigurationLabel] != configurationHash {
+		t.Fatalf("HAProxy configuration read-back label = %q", options.Config.Labels[layer4ConfigurationLabel])
 	}
 }
 

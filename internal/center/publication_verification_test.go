@@ -402,6 +402,41 @@ func TestTunnelCompletionWaitsForHTTPSVerification(t *testing.T) {
 	}
 }
 
+func TestTunnelCompletionAcknowledgesSupersededAgentOutboxResult(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	node := seedVerificationPublication(t, store, publicationCloudflare, "cloudflare", 2, 0, "pending")
+	ctx := context.Background()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID, err := store.putSecret(ctx, tx, []byte("test-tunnel-token"), "cloudflare-tunnel:"+node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO cloudflare_tunnels(agent_id, tunnel_id, tunnel_name, token_secret_id, desired_revision, applied_revision, desired_json, status, attempt, created_at, updated_at)
+		VALUES(?, 'test-tunnel-id', 'test-tunnel', ?, 2, 0, '{}', 'applying', 2, ?, ?)`, node.ID, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.completeTunnelState(ctx, node.ID, 1, 1, true, ""); err != nil {
+		t.Fatalf("superseded completion was not acknowledged: %v", err)
+	}
+	var desired, applied, attempt int64
+	var status string
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, attempt FROM cloudflare_tunnels WHERE agent_id = ?`, node.ID).Scan(&desired, &applied, &status, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if desired != 2 || applied != 0 || status != "applying" || attempt != 2 {
+		t.Fatalf("superseded completion changed desired state: desired=%d applied=%d status=%q attempt=%d", desired, applied, status, attempt)
+	}
+}
+
 func TestStoppedPublicationCompensatesInFlightCloudflareDNSCreation(t *testing.T) {
 	createStarted := make(chan struct{})
 	releaseCreate := make(chan struct{})
@@ -484,6 +519,54 @@ func TestStoppedPublicationCompensatesInFlightCloudflareDNSCreation(t *testing.T
 	}
 }
 
+func TestGatewayVerificationTargetsExcludeIndependentIngressOwners(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := seedVerificationPublication(t, store, publicationShared443, "manual", 3, 3, "ready")
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(
+		id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider,
+		desired_revision, applied_revision, status, created_at, updated_at
+	) VALUES
+		('gateway-publication', 'verification-service', 'public_direct', 'site_gateway', ?, 'gateway.example.test', 'manual', 4, 4, 'ready', ?, ?),
+		('tunnel-publication', 'verification-service', 'cloudflare_tunnel', 'tunnel_connector', ?, 'tunnel.example.test', 'cloudflare', 5, 5, 'ready', ?, ?)`, node.ID, now, now, node.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	targets, err := store.publicationVerificationTargetsForGateway(ctx, tx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].id != "gateway-publication" || targets[0].revision != 4 {
+		t.Fatalf("Gateway completion crossed ingress ownership boundaries: %#v", targets)
+	}
+}
+
+func TestTunnelConnectorTargetsTheWebServiceWithoutSiteCaddy(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := seedVerificationPublication(t, store, publicationPublic, "manual", 1, 1, "ready")
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET protocol = 'http', container_port = 8080, host_port = 8080, endpoint = '203.0.113.40:8080', app_protocol = 'http' WHERE id = 'verification-service'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET kind = 'cloudflare_tunnel', ingress_owner = 'tunnel_connector', dns_provider = 'cloudflare' WHERE id = 'verification-publication'`); err != nil {
+		t.Fatal(err)
+	}
+	ingress, err := tunnelIngressForNode(ctx, store.db, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ingress) != 1 || ingress[0].Hostname != "verification.example.test" || ingress[0].Service != "http://203.0.113.40:8080" {
+		t.Fatalf("Tunnel connector did not target the service directly: %#v", ingress)
+	}
+}
+
 func seedVerificationPublication(t *testing.T, store *Store, kind, dnsProvider string, desiredRevision, appliedRevision int64, status string) AgentCredential {
 	t.Helper()
 	ctx := context.Background()
@@ -497,8 +580,8 @@ func seedVerificationPublication(t *testing.T, store *Store, kind, dnsProvider s
 		VALUES('verification-service', 'verification-app', ?, 'tcp', 'tcp', 443, 443, '203.0.113.40:443', 'observed', 'tcp', '203.0.113.40', 'ready', ?, ?)`, testSiteID(t, store), now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
-		VALUES('verification-publication', 'verification-service', ?, ?, 'verification.example.test', ?, ?, ?, ?, ?, ?)`, kind, node.ID, dnsProvider, desiredRevision, appliedRevision, status, now, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
+		VALUES('verification-publication', 'verification-service', ?, 'application_node', ?, 'verification.example.test', ?, ?, ?, ?, ?, ?)`, kind, node.ID, dnsProvider, desiredRevision, appliedRevision, status, now, now); err != nil {
 		t.Fatal(err)
 	}
 	return node

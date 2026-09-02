@@ -458,7 +458,7 @@ func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gateway
 		return errors.New("center: REALITY service is not protected by a ready fallback guard")
 	}
 	var existingID, existingGateway, existingSNI, existingDNS, existingStatus string
-	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(gateway_node_id, ''), sni_hostname, dns_provider, status FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ?`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS, &existingStatus)
+	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(entry_node_id, ''), sni_hostname, dns_provider, status FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ?`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS, &existingStatus)
 	if err == nil {
 		// A stopped publication is an explicit user decision. Startup recovery is
 		// allowed to finish a projection that never existed, but must never turn an
@@ -474,14 +474,14 @@ func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gateway
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, createErr := s.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: publicationShared443, GatewayNodeID: gatewayID, Hostname: input.ConnectHostname, SNIHostname: sniHostname, DNSProvider: input.DNSProvider})
+	_, createErr := s.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: publicationShared443, Ingress: PublicationIngress{Owner: ingressApplicationNode}, Hostname: input.ConnectHostname, SNIHostname: sniHostname, DNSProvider: input.DNSProvider})
 	if createErr == nil {
 		return nil
 	}
 	// CreatePublication commits desired state before external reconciliation.
 	// If only its post-commit projection failed, the matching durable entry is
 	// already the recovery source of truth and must not fail the parent command.
-	lookupErr := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(gateway_node_id, ''), sni_hostname, dns_provider, status FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ?`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS, &existingStatus)
+	lookupErr := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(entry_node_id, ''), sni_hostname, dns_provider, status FROM publications WHERE service_id = ? AND kind = 'public_shared_443' AND hostname = ?`, serviceID, input.ConnectHostname).Scan(&existingID, &existingGateway, &existingSNI, &existingDNS, &existingStatus)
 	if lookupErr == nil && (existingStatus == "stopped" || existingGateway == gatewayID && existingSNI == sniHostname && existingDNS == input.DNSProvider) {
 		return nil
 	}

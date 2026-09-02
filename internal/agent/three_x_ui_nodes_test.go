@@ -3,14 +3,33 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 )
 
 func TestThreeXUINodeReconcileUsesControllerNodeAPI(t *testing.T) {
 	applicationID := "worker-application"
 	desiredName := threeXUINodeAPIName(applicationID)
+	worker := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer worker-token" || request.URL.Path != "/panel/api/server/status" {
+			t.Fatalf("unexpected worker request: %s %s", request.Method, request.URL.Path)
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"success":true,"obj":{"xray":{"state":"running"}}}`))
+	}))
+	defer worker.Close()
+	workerAddress, workerPortValue, err := net.SplitHostPort(strings.TrimPrefix(worker.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerPort, err := strconv.Atoi(workerPortValue)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer master-token" {
 			t.Fatalf("controller token = %q", request.Header.Get("Authorization"))
@@ -29,10 +48,10 @@ func TestThreeXUINodeReconcileUsesControllerNodeAPI(t *testing.T) {
 				AllowPrivateAddress bool   `json:"allowPrivateAddress"`
 				InboundSyncMode     string `json:"inboundSyncMode"`
 			}
-			if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.Name != desiredName || payload.Scheme != "http" || payload.Address != "100.64.0.20" || payload.Port != 2053 || payload.APIToken != "worker-token" || !payload.AllowPrivateAddress || payload.InboundSyncMode != "all" {
+			if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.Name != desiredName || payload.Scheme != "http" || payload.Address != workerAddress || payload.Port != workerPort || payload.APIToken != "worker-token" || !payload.AllowPrivateAddress || payload.InboundSyncMode != "all" {
 				t.Fatalf("unexpected node payload: %#v", payload)
 			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":7,"name":"` + desiredName + `","address":"100.64.0.20","port":2053,"status":"online"}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":7,"name":"` + desiredName + `","address":"` + workerAddress + `","port":` + workerPortValue + `,"status":"online"}}`))
 		default:
 			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
 		}
@@ -41,7 +60,7 @@ func TestThreeXUINodeReconcileUsesControllerNodeAPI(t *testing.T) {
 	store := threeXUIClientTestStore(t, server, "master-token")
 	defer store.Close()
 
-	result, err := applyThreeXUINodeCommand(context.Background(), store, ThreeXUINodeCommandTask{Action: "reconcile", WorkerApplicationID: applicationID, Name: "edge-2", Address: "100.64.0.20", Port: 2053, APIToken: "worker-token"})
+	result, err := applyThreeXUINodeCommand(context.Background(), store, ThreeXUINodeCommandTask{Action: "reconcile", WorkerApplicationID: applicationID, Name: "edge-2", Address: workerAddress, Port: workerPort, APIToken: "worker-token"})
 	if err != nil {
 		t.Fatal(err)
 	}

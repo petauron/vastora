@@ -265,9 +265,9 @@ func TestNetworkEntryAddressChangesAreBlockedByActivePublications(t *testing.T) 
 	}
 	serviceID := services[0].ID
 	for _, input := range []PublicationInput{
-		{ServiceID: serviceID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.lan.example.test", DNSProvider: "manual"},
-		{ServiceID: serviceID, Kind: publicationHeadscale, GatewayNodeID: node.ID, Hostname: "cpa.headscale.example.test", DNSProvider: "manual"},
-		{ServiceID: serviceID, Kind: publicationPublic, GatewayNodeID: node.ID, Hostname: "cpa.public.example.test", DNSProvider: "manual", ConfirmHighRisk: true},
+		{ServiceID: serviceID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.lan.example.test", DNSProvider: "manual"},
+		{ServiceID: serviceID, Kind: publicationHeadscale, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.headscale.example.test", DNSProvider: "manual"},
+		{ServiceID: serviceID, Kind: publicationPublic, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.public.example.test", DNSProvider: "manual", ConfirmHighRisk: true},
 	} {
 		if _, err := store.CreatePublication(ctx, input); err != nil {
 			t.Fatal(err)
@@ -295,6 +295,12 @@ func TestNetworkEntryAddressChangesAreBlockedByActivePublications(t *testing.T) 
 			name: "public",
 			profile: networking.Profile{ServiceAddress: oldProfile.ServiceAddress, LANAddress: oldProfile.LANAddress, HeadscaleAddress: oldProfile.HeadscaleAddress, PublicAddress: "203.0.113.95",
 				PublicBindAddress: "203.0.113.95", PublicMode: oldProfile.PublicMode, EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
+			errContains: "stop direct public publications",
+		},
+		{
+			name: "public bind",
+			profile: networking.Profile{ServiceAddress: oldProfile.ServiceAddress, LANAddress: oldProfile.LANAddress, HeadscaleAddress: oldProfile.HeadscaleAddress, PublicAddress: oldProfile.PublicAddress,
+				PublicBindAddress: "10.0.0.95", PublicMode: networking.PublicModeNAT, EnabledKinds: oldProfile.EnabledKinds, DirectPublic: true},
 			errContains: "stop direct public publications",
 		},
 	}
@@ -330,7 +336,7 @@ func TestPublicationChangesAreBlockedDuringApplicationReconciliation(t *testing.
 				t.Fatalf("services=%#v err=%v", services, err)
 			}
 			publication, err := store.CreatePublication(ctx, PublicationInput{
-				ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.guard.example.test", DNSProvider: "manual",
+				ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.guard.example.test", DNSProvider: "manual",
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -338,7 +344,7 @@ func TestPublicationChangesAreBlockedDuringApplicationReconciliation(t *testing.
 			seedApplicationReconciliationBlock(t, store, node.ID, applicationID, blocker)
 
 			_, err = store.CreatePublication(ctx, PublicationInput{
-				ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.second.example.test", DNSProvider: "manual",
+				ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.second.example.test", DNSProvider: "manual",
 			})
 			if err == nil || !strings.Contains(err.Error(), "recover or finish the application operation") {
 				t.Fatalf("publication creation raced %s reconciliation: %v", blocker, err)

@@ -63,23 +63,23 @@ func (s *Store) publicationDNSRecord(ctx context.Context, publication Publicatio
 	var address string
 	switch publication.Kind {
 	case publicationLAN:
-		err := s.db.QueryRowContext(ctx, `SELECT n.lan_address FROM agent_network_profiles n JOIN publications p ON p.gateway_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
+		err := s.db.QueryRowContext(ctx, `SELECT n.lan_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
 		if err != nil {
 			return nil, err
 		}
 	case publicationHeadscale:
-		err := s.db.QueryRowContext(ctx, `SELECT n.headscale_address FROM agent_network_profiles n JOIN publications p ON p.gateway_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
+		err := s.db.QueryRowContext(ctx, `SELECT n.headscale_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
 		if err != nil {
 			return nil, err
 		}
 	case publicationPublic, publicationShared443:
-		err := s.db.QueryRowContext(ctx, `SELECT n.public_address FROM agent_network_profiles n JOIN publications p ON p.gateway_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
+		err := s.db.QueryRowContext(ctx, `SELECT n.public_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
 		if err != nil {
 			return nil, err
 		}
 	case publicationCloudflare:
 		var tunnelID string
-		err := s.db.QueryRowContext(ctx, `SELECT t.tunnel_id FROM cloudflare_tunnels t JOIN publications p ON p.gateway_node_id = t.agent_id WHERE p.id = ?`, publication.ID).Scan(&tunnelID)
+		err := s.db.QueryRowContext(ctx, `SELECT t.tunnel_id FROM cloudflare_tunnels t JOIN publications p ON p.entry_node_id = t.agent_id WHERE p.id = ?`, publication.ID).Scan(&tunnelID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}

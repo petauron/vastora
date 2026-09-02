@@ -50,7 +50,7 @@ func (s *Store) UpdatePublicationTLS(ctx context.Context, id string, enabled boo
 func (s *Store) publicationTLSState(ctx context.Context, id string) (publicationTLSState, error) {
 	var value publicationTLSState
 	var enabled int
-	err := s.db.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id, s.id
+	err := s.db.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.entry_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id, s.id
 		FROM publications p JOIN services s ON s.id = p.service_id WHERE p.id = ?`, id).Scan(
 		&value.kind, &value.gatewayID, &value.hostname, &value.protocol, &value.status, &enabled, &value.siteID, &value.serviceID,
 	)
@@ -89,7 +89,7 @@ func (s *Store) applyPublicationTLS(ctx context.Context, id string, enabled bool
 
 	var current publicationTLSState
 	var currentEnabled int
-	if err := tx.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id, s.id
+	if err := tx.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.entry_node_id, ''), p.hostname, s.protocol, p.status, p.tls_enabled, s.site_id, s.id
 		FROM publications p JOIN services s ON s.id = p.service_id WHERE p.id = ?`, id).Scan(
 		&current.kind, &current.gatewayID, &current.hostname, &current.protocol, &current.status, &currentEnabled, &current.siteID, &current.serviceID,
 	); errors.Is(err, sql.ErrNoRows) {

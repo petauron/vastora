@@ -179,8 +179,9 @@ func TestAgentReportedNATEnablesPublicWebProfileWithoutCenterCoLocation(t *testi
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if _, err := validateDirectPublicNode(ctx, tx, node.ID); err == nil || !strings.Contains(err.Error(), "not approved") {
-		t.Fatalf("NAT mapping was accepted for a raw public port: %v", err)
+	publicAddress, bindAddress, err := validateNodeDirectPublicIngress(ctx, tx, node.ID)
+	if err != nil || publicAddress != "198.51.100.27" || bindAddress != "10.0.0.27" {
+		t.Fatalf("confirmed NAT mapping was not accepted for node-direct ingress: public=%q bind=%q err=%v", publicAddress, bindAddress, err)
 	}
 }
 

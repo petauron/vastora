@@ -75,7 +75,7 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, ta
 					revision = three_x_ui_reality_guards.revision + 1, status = 'ready',
 					verified_at = excluded.verified_at, last_error = '', updated_at = excluded.updated_at`,
 					serviceID, result.TargetHost, result.TargetIP, result.ServerName, result.NodeASN, result.TargetASN, result.CDNProvider,
-					result.CompanionInboundID, result.CompanionTag, result.CompanionPort,
+					0, "", 0,
 					now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 				if guardErr != nil {
 					succeeded = false

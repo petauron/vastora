@@ -562,6 +562,9 @@ func runAgent(arguments []string) error {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
 		}
 		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
+		if capabilities.Docker {
+			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
+		}
 		if capabilities.Gateway {
 			caddyDriver, err := agent.NewCaddyGatewayDriver(*caddyAdmin)
 			if err != nil {
@@ -584,9 +587,13 @@ func runAgent(arguments []string) error {
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 		restoreContext, restoreCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		err = client.PrepareGatewayStartup(restoreContext, store)
+		if err == nil {
+			coordinator, _ := client.GatewayDriver.(agent.NodeListenerCoordinator)
+			err = agent.RestoreNodeListenerStartup(restoreContext, store, client.NodeListener, coordinator)
+		}
 		restoreCancel()
 		if err != nil {
-			return fmt.Errorf("restore Gateway before starting the Agent control plane: %w", err)
+			return fmt.Errorf("restore ingress state before starting the Agent control plane: %w", err)
 		}
 		if err := client.Heartbeat(context.Background(), store); err != nil {
 			controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))

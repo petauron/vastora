@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 55
+const centerSchemaVersion = 56
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -349,7 +349,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'public_shared_443', 'cloudflare_tunnel')),
-			gateway_node_id TEXT REFERENCES agents(id) ON DELETE RESTRICT,
+			ingress_owner TEXT NOT NULL CHECK(ingress_owner IN ('site_gateway', 'application_node', 'tunnel_connector')),
+			entry_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
 			hostname TEXT NOT NULL,
 			sni_hostname TEXT NOT NULL DEFAULT '',
 			dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
@@ -360,11 +361,17 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			applied_revision INTEGER NOT NULL DEFAULT 0,
 			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'degraded', 'failed', 'stopped')),
 			last_error TEXT NOT NULL DEFAULT '',
+			action_required INTEGER NOT NULL DEFAULT 0,
 			cleanup_pending INTEGER NOT NULL DEFAULT 0,
 			cleanup_attempt INTEGER NOT NULL DEFAULT 0,
 			cleanup_retry_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
+			CHECK(
+				(ingress_owner = 'site_gateway' AND kind IN ('lan_gateway', 'headscale_gateway', 'public_direct')) OR
+				(ingress_owner = 'application_node' AND kind IN ('public_direct', 'public_shared_443')) OR
+				(ingress_owner = 'tunnel_connector' AND kind = 'cloudflare_tunnel')
+			),
 			UNIQUE(service_id, kind, hostname)
 		)`,
 		`CREATE TABLE certificate_authorities (
@@ -419,6 +426,17 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			applied_revision INTEGER NOT NULL DEFAULT 0,
 			desired_json BLOB NOT NULL,
 			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'failed')),
+			attempt INTEGER NOT NULL DEFAULT 0,
+			lease_expires_at TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE node_listener_states (
+			node_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+			desired_revision INTEGER NOT NULL,
+			applied_revision INTEGER NOT NULL DEFAULT 0,
+			desired_json BLOB NOT NULL,
+			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'failed', 'stopped')),
 			attempt INTEGER NOT NULL DEFAULT 0,
 			lease_expires_at TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT '',

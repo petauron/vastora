@@ -13,9 +13,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/petauron/vastora/internal/dockerruntime"
-	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
 const cloudflareAPIURL = "https://api.cloudflare.com/client/v4"
@@ -212,13 +209,19 @@ func (s *Store) CloudflareZones(ctx context.Context) ([]CloudflareZone, error) {
 }
 
 func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationID string, revision int64) error {
-	var kind, gatewayID, hostname, dnsRecordID, accessApplicationID, appKey, serviceName string
-	if err := s.db.QueryRowContext(ctx, `SELECT p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.dns_record_id, p.access_application_id, a.app_key, s.name
+	var kind, ingressOwner, gatewayID, hostname, dnsRecordID, accessApplicationID, appKey, serviceName string
+	if err := s.db.QueryRowContext(ctx, `SELECT p.kind, p.ingress_owner, COALESCE(p.entry_node_id, ''), p.hostname, p.dns_record_id, p.access_application_id, a.app_key, s.name
 		FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
-		WHERE p.id = ? AND p.desired_revision = ? AND p.status <> 'stopped'`, publicationID, revision).Scan(&kind, &gatewayID, &hostname, &dnsRecordID, &accessApplicationID, &appKey, &serviceName); errors.Is(err, sql.ErrNoRows) {
+		WHERE p.id = ? AND p.desired_revision = ? AND p.status <> 'stopped'`, publicationID, revision).Scan(&kind, &ingressOwner, &gatewayID, &hostname, &dnsRecordID, &accessApplicationID, &appKey, &serviceName); errors.Is(err, sql.ErrNoRows) {
 		return errStalePublicationReconcile
 	} else if err != nil {
 		return err
+	}
+	if kind == publicationCloudflare && ingressOwner != ingressTunnelConnector {
+		return errors.New("center: Cloudflare Tunnel publication has an invalid ingress owner")
+	}
+	if kind == publicationShared443 && ingressOwner != ingressApplicationNode {
+		return errors.New("center: shared 443 publication has an invalid ingress owner")
 	}
 	client, err := s.cloudflare(ctx)
 	if err != nil {
@@ -245,6 +248,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 				return err
 			}
 		}
+		existingDNSRecord := dnsRecordID != ""
 		if dnsRecordID == "" {
 			createdRecordID, created, createErr := client.ensureDNSRecord(ctx, "CNAME", hostname, tunnelID+".cfargotunnel.com", true)
 			err = createErr
@@ -267,6 +271,11 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 				return errStalePublicationReconcile
 			}
 			dnsRecordID = createdRecordID
+		}
+		if existingDNSRecord {
+			if err := client.updateDNSRecord(ctx, dnsRecordID, "CNAME", hostname, tunnelID+".cfargotunnel.com", true); err != nil {
+				return err
+			}
 		}
 		if !(appKey == threeXUIAppKey && serviceName == "subscription") && accessApplicationID == "" {
 			if err := s.ensureCloudflareServiceAccess(ctx, publicationID, revision, hostname); err != nil {
@@ -305,6 +314,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 				return err
 			}
 		}
+		existingDNSRecord := dnsRecordID != ""
 		if dnsRecordID == "" {
 			createdRecordID, created, createErr := client.ensureDNSRecord(ctx, recordType, hostname, ip.String(), false)
 			if createErr != nil {
@@ -325,6 +335,12 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 				}
 				return errStalePublicationReconcile
 			}
+			dnsRecordID = createdRecordID
+		}
+		if existingDNSRecord {
+			if err := client.updateDNSRecord(ctx, dnsRecordID, recordType, hostname, ip.String(), false); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -334,7 +350,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 func (s *Store) reusePublicationDNSRecord(ctx context.Context, publicationID, kind, gatewayID, hostname string) (string, error) {
 	var recordID string
 	err := s.db.QueryRowContext(ctx, `SELECT dns_record_id FROM publications
-		WHERE id <> ? AND kind = ? AND COALESCE(gateway_node_id, '') = ? AND hostname = ?
+		WHERE id <> ? AND kind = ? AND entry_node_id = ? AND hostname = ?
 		AND status <> 'stopped' AND dns_record_id <> '' ORDER BY created_at LIMIT 1`, publicationID, kind, gatewayID, hostname).Scan(&recordID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
@@ -465,22 +481,7 @@ func (s *Store) removeCloudflarePublication(ctx context.Context, id, kind, gatew
 }
 
 func (s *Store) cloudflareIngress(ctx context.Context, agentID string) ([]TunnelTaskIngress, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT p.hostname FROM publications p JOIN services s ON s.id = p.service_id WHERE p.gateway_node_id = ? AND p.kind = 'cloudflare_tunnel' AND p.status <> 'stopped' AND s.status <> 'stopped' ORDER BY p.hostname`, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	values := []TunnelTaskIngress{}
-	for rows.Next() {
-		var value TunnelTaskIngress
-		if err := rows.Scan(&value.Hostname); err != nil {
-			return nil, err
-		}
-		httpPort, _, _ := gatewayruntime.CaddyListenerPorts("system")
-		value.Service = fmt.Sprintf("http://%s:%d", dockerruntime.CaddyAlias, httpPort)
-		values = append(values, value)
-	}
-	return values, rows.Err()
+	return tunnelIngressForNode(ctx, s.db, agentID)
 }
 
 func (client cloudflareClient) verify(ctx context.Context) (string, error) {
@@ -687,6 +688,19 @@ func (client cloudflareClient) createDNSRecord(ctx context.Context, recordType, 
 		return "", errors.New("center: Cloudflare did not return a DNS record ID")
 	}
 	return result.ID, nil
+}
+
+func (client cloudflareClient) updateDNSRecord(ctx context.Context, recordID, recordType, name, content string, proxied bool) error {
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := client.do(ctx, http.MethodPut, "/zones/"+url.PathEscape(client.zoneID)+"/dns_records/"+url.PathEscape(recordID), map[string]any{"type": recordType, "name": name, "content": content, "proxied": proxied}, &result); err != nil {
+		return fmt.Errorf("center: update Cloudflare DNS record: %w", err)
+	}
+	if result.ID != recordID {
+		return errors.New("center: Cloudflare updated an unexpected DNS record")
+	}
+	return nil
 }
 
 func (client cloudflareClient) ensureDNSRecord(ctx context.Context, recordType, name, content string, proxied bool) (string, bool, error) {

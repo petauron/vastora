@@ -27,6 +27,7 @@ import (
 
 var errApplicationNotInstalled = errors.New("agent: application is not installed")
 var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
+var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener state")
 
 type Store struct {
 	db                *sql.DB
@@ -80,7 +81,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 15
+const agentSchemaVersion = 16
 
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
@@ -557,6 +558,29 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 15
 		}
+		if version == 15 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE node_listener_applied_state (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					applied_revision INTEGER NOT NULL,
+					desired_json BLOB NOT NULL,
+					config_hash TEXT NOT NULL,
+					applied_at TEXT NOT NULL
+				);
+				PRAGMA user_version = 16`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 15 to 16: %w", migrateErr)
+			}
+			version = 16
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -646,6 +670,13 @@ func Open(dataDir string) (*Store, error) {
 			config_hash TEXT NOT NULL,
 			applied_at TEXT NOT NULL
 		);
+		CREATE TABLE node_listener_applied_state (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			applied_revision INTEGER NOT NULL,
+			desired_json BLOB NOT NULL,
+			config_hash TEXT NOT NULL,
+			applied_at TEXT NOT NULL
+		);
 		CREATE TABLE three_x_ui_reset_journal (
 			operation_key TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL,
@@ -660,7 +691,7 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 15;`); err != nil {
+		PRAGMA user_version = 16;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}

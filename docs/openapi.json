@@ -2265,9 +2265,6 @@
                   "clientName": {
                     "type": "string"
                   },
-                  "gatewayNodeId": {
-                    "type": "string"
-                  },
                   "hostname": {
                     "type": "string"
                   },
@@ -2300,8 +2297,6 @@
                   "applicationId",
                   "regionCode",
                   "name",
-                  "gatewayNodeId",
-                  "hostname",
                   "dnsProvider",
                   "targetHost",
                   "serverName"
@@ -2889,7 +2884,21 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "publications"
+                  ],
+                  "properties": {
+                    "publications": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Publication"
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -2928,7 +2937,9 @@
             "description": "Created.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Publication"
+                }
               }
             }
           },
@@ -2963,8 +2974,58 @@
                   "kind": {
                     "type": "string"
                   },
-                  "gatewayNodeId": {
-                    "type": "string"
+                  "ingress": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "owner",
+                          "entryNodeId"
+                        ],
+                        "properties": {
+                          "owner": {
+                            "type": "string",
+                            "const": "site_gateway"
+                          },
+                          "entryNodeId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "owner"
+                        ],
+                        "properties": {
+                          "owner": {
+                            "type": "string",
+                            "const": "application_node"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "owner",
+                          "entryNodeId"
+                        ],
+                        "properties": {
+                          "owner": {
+                            "type": "string",
+                            "const": "tunnel_connector"
+                          },
+                          "entryNodeId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    ]
                   },
                   "hostname": {
                     "type": "string"
@@ -2981,7 +3042,13 @@
                   "confirmHighRisk": {
                     "type": "boolean"
                   }
-                }
+                },
+                "required": [
+                  "serviceId",
+                  "kind",
+                  "ingress",
+                  "dnsProvider"
+                ]
               }
             }
           }
@@ -3007,7 +3074,9 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Publication"
+                }
               }
             }
           },
@@ -3135,7 +3204,9 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/Publication"
+                }
               }
             }
           },
@@ -4815,6 +4886,15 @@
                     "type": "integer"
                   },
                   "gatewayConfigHash": {
+                    "type": "string"
+                  },
+                  "nodeListenerHealthy": {
+                    "type": "boolean"
+                  },
+                  "nodeListenerRevision": {
+                    "type": "integer"
+                  },
+                  "nodeListenerConfigHash": {
                     "type": "string"
                   },
                   "applicationRuntimeGeneration": {
@@ -6726,6 +6806,173 @@
         "type": "object",
         "additionalProperties": true,
         "description": "Endpoint-specific JSON object. Runtime decoding rejects fields not declared by the corresponding Go request type."
+      },
+      "PublicationIngress": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "owner",
+              "entryNodeId"
+            ],
+            "properties": {
+              "owner": {
+                "type": "string",
+                "const": "site_gateway"
+              },
+              "entryNodeId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "owner",
+              "entryNodeId"
+            ],
+            "properties": {
+              "owner": {
+                "type": "string",
+                "const": "application_node"
+              },
+              "entryNodeId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "owner",
+              "entryNodeId"
+            ],
+            "properties": {
+              "owner": {
+                "type": "string",
+                "const": "tunnel_connector"
+              },
+              "entryNodeId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      },
+      "Publication": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "ingress": {
+            "$ref": "#/components/schemas/PublicationIngress"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "sniHostname": {
+            "type": "string"
+          },
+          "dnsProvider": {
+            "type": "string"
+          },
+          "dnsRecordId": {
+            "type": "string"
+          },
+          "tlsEnabled": {
+            "type": "boolean"
+          },
+          "desiredRevision": {
+            "type": "integer"
+          },
+          "appliedRevision": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "lastError": {
+            "type": "string"
+          },
+          "actionRequired": {
+            "type": "boolean"
+          },
+          "accessUrl": {
+            "type": "string"
+          },
+          "certificateExpiresAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dnsRecord": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "proxy": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "serviceId",
+          "kind",
+          "ingress",
+          "hostname",
+          "dnsProvider",
+          "tlsEnabled",
+          "desiredRevision",
+          "appliedRevision",
+          "status",
+          "createdAt",
+          "updatedAt"
+        ]
       },
       "ApplicationCredentials": {
         "oneOf": [

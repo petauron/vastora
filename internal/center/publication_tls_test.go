@@ -23,7 +23,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
 		t.Fatalf("services = %#v, err=%v", services, err)
 	}
-	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.private.example.test", DNSProvider: "manual"})
+	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.private.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}

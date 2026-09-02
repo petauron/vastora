@@ -5,7 +5,6 @@ import type { AppData, Application, ApplicationCommand, AgentView } from "../typ
 import type { Language } from "../translations";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 import { clearSecretOperation, commandSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
-import { defaultRealityHostname } from "./appAccess";
 import { RegionCombobox, regionDisplayName } from "./RegionCombobox";
 import { bytesFromGB, dateInputValueInTimeZone, endOfDayEpochInTimeZone, InboundTrafficPlanFields, nextRenewalDateInTimeZone, SubscriptionTrafficPlanFields } from "./TrafficPlanFields";
 import { CopyButton, copy, userError } from "./shared";
@@ -18,6 +17,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 
 type RegionMatch = "idle" | "matching" | "matched" | "manual" | "unavailable";
+const defaultRealityTarget = "www.intel.com";
 type RealityDraft = {
   name: string;
   regionCode: string;
@@ -27,7 +27,6 @@ type RealityDraft = {
   clientQuota: string;
   clientResetDays: string;
   clientExpiry: string;
-  gatewayID: string;
   hostname: string;
   dnsProvider: "manual" | "cloudflare";
   targetHost: string;
@@ -49,7 +48,6 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
   const { execute } = useApplicationCommandExecutor(application?.id);
   const cloudflareReady = data.integrations.some((integration) => integration.kind === "cloudflare" && integration.status === "configured");
   const targetAgent = application ? data.agents.find((agent) => agent.id === application.nodeId) : undefined;
-  const gateways = application ? realityGateways(data, application) : [];
   const dirty = Boolean(application && !command && !sameDraft(draft, baseline.current));
 
   useEffect(() => {
@@ -64,11 +62,10 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
       clientQuota: "",
       clientResetDays: "0",
       clientExpiry: "",
-      gatewayID: gateways[0]?.id ?? "",
-      hostname: defaultRealityHostname(data, application),
+      hostname: "",
       dnsProvider: cloudflareReady ? "cloudflare" : "manual",
-      targetHost: "",
-      serverName: ""
+      targetHost: defaultRealityTarget,
+      serverName: defaultRealityTarget
     };
     regionRequest.current += 1;
     baseline.current = initial;
@@ -85,7 +82,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
 		void api.latestApplicationCommand(application.id, "3xui.reality.create").then((latest) => {
 			if (cancelled || latest.state === "failed" && !latest.reconciliationRequired) return;
       setCommand(latest);
-      setDraft((current) => ({ ...current, gatewayID: latest.gatewayNodeId, hostname: latest.hostname, dnsProvider: latest.dnsProvider }));
+			setDraft((current) => ({ ...current, hostname: latest.hostname, dnsProvider: latest.dnsProvider }));
 			if (latest.resultAvailable) {
 				const operationKey = readSecretOperation(commandSecretScope(application.id, latest.id));
 				if (operationKey) void api.revealApplicationCommand(latest.id, operationKey).then((result) => {
@@ -103,13 +100,13 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
 
   useEffect(() => {
     const request = ++regionRequest.current;
-    if (!application || !draft.gatewayID || command) {
-      if (!draft.gatewayID) setRegionMatch("idle");
+    if (!application || !targetAgent?.id || command) {
+      if (!targetAgent?.id) setRegionMatch("idle");
       return;
     }
-    const updateBaseline = baseline.current.gatewayID === draft.gatewayID && baseline.current.regionCode === "";
+    const updateBaseline = baseline.current.regionCode === "";
     setRegionMatch("matching");
-    void api.agentRegionSuggestion(draft.gatewayID).then((suggestion) => {
+    void api.agentRegionSuggestion(targetAgent.id).then((suggestion) => {
       if (request !== regionRequest.current) return;
       setDraft((current) => ({ ...current, regionCode: suggestion.regionCode }));
       if (updateBaseline) baseline.current = { ...baseline.current, regionCode: suggestion.regionCode };
@@ -119,13 +116,13 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
       setDraft((current) => ({ ...current, regionCode: "" }));
       setRegionMatch("unavailable");
     });
-  }, [application?.id, command?.id, draft.gatewayID]);
+  }, [application?.id, command?.id, targetAgent?.id]);
 
   const setField = <K extends keyof RealityDraft>(field: K, value: RealityDraft[K]) => {
     if (field === "targetHost" || field === "serverName") setVerification(null);
     setDraft((current) => ({ ...current, [field]: value }));
   };
-  const gateway = data.agents.find((agent) => agent.id === draft.gatewayID);
+  const gateway = targetAgent;
   const displayName = regionDisplayName(draft.regionCode, draft.name);
 
   const requestClose = () => {
@@ -203,14 +200,13 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     setError("");
     try {
       const checked = await execute(() => api.verifyRealityTarget(application.id, draft.targetHost, draft.serverName), setVerification);
-      if (!checked || checked.state !== "succeeded" || !checked.targetIp || checked.nodeAsn !== checked.targetAsn) {
+      if (!checked || checked.state !== "succeeded" || !checked.targetIp) {
         throw new Error(checked?.error || copy(language, "伪装目标未通过节点侧安全校验。", "The camouflage target did not pass node-side security validation."));
       }
       await execute(() => api.createRealityCommand({
         applicationId: application.id,
         regionCode: draft.regionCode,
         name: draft.name,
-        gatewayNodeId: draft.gatewayID,
         hostname: draft.hostname,
         dnsProvider: draft.dnsProvider,
         targetHost: draft.targetHost,
@@ -230,15 +226,15 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     <SheetContent className="sm:max-w-xl">
       <SheetHeader>
         <SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle>
-        <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、共享 443 网关和 DNS。", "Vastora is configuring 3x-ui, the shared 443 gateway, and DNS on the node.") : copy(language, "填写节点名称和安全目标；入口、地区、连接域名与 DNS 会自动处理。", "Enter the node name and secure target; entry, region, connection hostname, and DNS are handled automatically.")}</SheetDescription>
+        <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、节点直连 443 和 DNS。", "Vastora is configuring 3x-ui, node-direct port 443, and DNS on the node.") : copy(language, "填写节点名称和套餐即可；入口、地区、连接域名、DNS 与安全目标均有安全默认值。", "Enter the node name and plan; entry, region, connection hostname, DNS, and the secure target all have safe defaults.")}</SheetDescription>
       </SheetHeader>
-		{command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onAcknowledge={() => void acknowledgeShareURI()} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} gateways={gateways} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
+      {command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onAcknowledge={() => void acknowledgeShareURI()} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
       {command ? <SheetFooter><Button onClick={requestClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
 }
 
-function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName, draft, error, gateway, gateways, language, onCancel, onField, onRegion, onSubmit, regionMatch, siteTimezone, targetPublicAddress, verification }: {
+function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName, draft, error, gateway, language, onCancel, onField, onRegion, onSubmit, regionMatch, siteTimezone, targetPublicAddress, verification }: {
   busy: boolean;
   cloudflareReady: boolean;
   collectInitialClient: boolean;
@@ -246,7 +242,6 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
   draft: RealityDraft;
   error: string;
   gateway?: AgentView;
-  gateways: AgentView[];
   language: Language;
   onCancel: () => void;
   onField: <K extends keyof RealityDraft>(field: K, value: RealityDraft[K]) => void;
@@ -273,13 +268,13 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
           </Field>
         </> : null}
         <InboundTrafficPlanFields idPrefix="reality-inbound" language={language} nextResetAt="" onQuotaChange={(value) => onField("inboundQuota", value)} onResetDayChange={(value) => onField("inboundResetDay", value)} quota={draft.inboundQuota} resetDay={draft.inboundResetDay} />
-        <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "系统配置自动完成", "System configuration is automatic")}</AlertTitle><AlertDescription><dl className="mt-1 grid gap-1 text-xs"><div><dt className="inline text-muted-foreground">{copy(language, "公网入口：", "Public entry: ")}</dt><dd className="inline">{gateway?.name ?? copy(language, "等待可用入口", "Waiting for an available entry")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "订阅名称：", "Subscription name: ")}</dt><dd className="inline">{displayName || copy(language, "正在识别地区", "Detecting region")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "安全目标：", "Secure target: ")}</dt><dd className="inline">{draft.targetHost.trim() ? copy(language, "由 Agent 严格校验", "Strictly verified by the Agent") : copy(language, "需要在高级设置中填写", "Required in Advanced settings")}</dd></div></dl></AlertDescription></Alert>
+        <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "系统配置自动完成", "System configuration is automatic")}</AlertTitle><AlertDescription><dl className="mt-1 grid gap-1 text-xs"><div><dt className="inline text-muted-foreground">{copy(language, "公网入口：", "Public entry: ")}</dt><dd className="inline">{gateway?.name ?? copy(language, "等待可用入口", "Waiting for an available entry")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "订阅名称：", "Subscription name: ")}</dt><dd className="inline">{displayName || copy(language, "正在识别地区", "Detecting region")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "安全目标：", "Secure target: ")}</dt><dd className="inline">{draft.targetHost}</dd></div></dl></AlertDescription></Alert>
         <details className="group rounded-xl border p-3">
           <summary className="flex min-h-11 cursor-pointer list-none items-center text-sm font-medium">{copy(language, "高级设置", "Advanced settings")}<span className="ml-auto text-xs font-normal text-muted-foreground">{copy(language, "通常无需修改", "Usually leave unchanged")}</span></summary>
           <FieldGroup className="border-t pt-4">
-            <Field><FieldLabel htmlFor="reality-gateway">{copy(language, "节点公网入口", "Node public entry")}</FieldLabel><SelectControl id="reality-gateway" onValueChange={(value) => onField("gatewayID", value)} options={[{ value: "", label: copy(language, "当前节点没有可用的公网入口", "This node has no public entry"), disabled: true }, ...gateways.map((agent) => ({ value: agent.id, label: agent.name }))]} required value={draft.gatewayID} /><FieldDescription>{copy(language, "VLESS 始终通过当前节点自己的公网 443 提供服务，不会借用其他节点中继。", "VLESS always uses this node's own public port 443 and never relays through another node.")}</FieldDescription></Field>
+            <Field><FieldLabel>{copy(language, "节点直连", "Node direct")}</FieldLabel><div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm"><span className="font-medium">{gateway?.name ?? "—"}</span><span className="ml-2 font-mono text-xs text-muted-foreground">{targetPublicAddress || "—"}:443</span></div><FieldDescription>{copy(language, "入口固定为当前应用节点自己的公网 443，不使用或依赖 Site Gateway。", "The entry is fixed to this application node's own public port 443 and does not use or depend on a Site Gateway.")}</FieldDescription></Field>
             <Field><FieldLabel htmlFor="reality-region">{copy(language, "地区", "Region")}</FieldLabel><RegionCombobox id="reality-region" language={language} onValueChange={onRegion} value={draft.regionCode} /><FieldDescription aria-live="polite">{regionMatch === "matching" ? copy(language, "正在根据公网 IP 识别…", "Detecting from the public IP…") : regionMatch === "matched" ? copy(language, `已根据 ${gateway?.networkProfile?.publicAddress ?? "公网 IP"} 自动匹配。`, `Matched from ${gateway?.networkProfile?.publicAddress ?? "the public IP"}.`) : regionMatch === "unavailable" ? copy(language, "未能自动识别，请手动选择。", "Automatic detection was unavailable. Select it manually.") : copy(language, "只在自动识别不正确时修改。", "Change only when automatic detection is incorrect.")}</FieldDescription></Field>
-            <Field><FieldLabel htmlFor="reality-hostname">{copy(language, "连接域名", "Connection hostname")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-hostname" onChange={(event) => onField("hostname", event.target.value.toLowerCase())} required spellCheck={false} value={draft.hostname} /><FieldDescription>{copy(language, "已按节点与位置自动生成。", "Generated automatically from the node and location.")}</FieldDescription></Field>
+            <Field><FieldLabel htmlFor="reality-hostname">{copy(language, "连接域名（可选）", "Connection hostname (optional)")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="reality-hostname" onChange={(event) => onField("hostname", event.target.value.toLowerCase())} placeholder={copy(language, "留空时自动生成随机域名", "A random hostname is generated when empty")} spellCheck={false} value={draft.hostname} /><FieldDescription>{copy(language, "默认由 Center 生成不包含应用或节点信息的 128-bit 随机域名。", "Center generates a random 128-bit hostname without app or node details by default.")}</FieldDescription></Field>
             <Field><FieldLabel htmlFor="reality-dns">DNS</FieldLabel><SelectControl id="reality-dns" onValueChange={(value) => onField("dnsProvider", value as RealityDraft["dnsProvider"])} options={[{ value: "manual", label: copy(language, "手动添加 A 记录", "Add an A record manually") }, ...(cloudflareReady ? [{ value: "cloudflare", label: copy(language, "Cloudflare 自动管理", "Manage with Cloudflare") }] : [])]} value={draft.dnsProvider} /></Field>
             {collectInitialClient ? <SubscriptionTrafficPlanFields expiry={draft.clientExpiry} idPrefix="reality-subscription" language={language} minimumDate={dateInputValueInTimeZone(new Date(), siteTimezone)} onExpiryChange={(value) => onField("clientExpiry", value)} onQuotaChange={(value) => onField("clientQuota", value)} onResetDaysChange={(value) => { onField("clientResetDays", value); onField("clientExpiry", nextRenewalDateInTimeZone(Number(value), siteTimezone)); }} quota={draft.clientQuota} resetDays={draft.clientResetDays} /> : <Alert><UsersIcon /><AlertTitle>{copy(language, "订阅额度在主订阅机管理", "Manage subscriber limits on the controller")}</AlertTitle><AlertDescription>{copy(language, "这里只配置当前节点套餐。创建完成后，请在订阅主机的“管理客户端”中配置用户和订阅总额度；如果还没有用户，也可以在那里添加。", "Only the current node plan is configured here. After creation, use Manage clients on the subscription controller to configure subscribers and their total allowances, or add the first subscriber if none exists.")}</AlertDescription></Alert>}
             <div className="rounded-xl border p-4">
@@ -308,13 +303,12 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
             </div>
           </FieldGroup>
         </details>
-        {gateways.length === 0 ? <FieldError>{copy(language, "当前节点还不能独立提供公网 VLESS。请确认 Agent 启用了 Gateway 角色、已选为当前地点的网关，并在“网络”中确认公网地址和直接公网入口。", "This node cannot provide public VLESS independently yet. Enable its Agent Gateway role, select it as a gateway for this location, then confirm its public address and direct-public ingress in Network.")}</FieldError> : null}
-        {!targetPublicAddress ? <FieldError>{copy(language, "当前 3x-ui 节点还没有已确认的公网 IPv4，请先在“网络”中确认。", "The current 3x-ui node has no confirmed public IPv4 address. Confirm it in Network first.")}</FieldError> : null}
+        {!targetPublicAddress ? <FieldError>{copy(language, "当前节点还没有已确认的公网入口，请先在“网络”中确认。", "This node does not have a confirmed public ingress yet. Confirm it in Network first.")}</FieldError> : null}
         {regionMatch === "unavailable" && !draft.regionCode ? <FieldError>{copy(language, "地区自动识别失败，请在高级设置中选择地区。", "Automatic region detection failed. Select a region in Advanced settings.")}</FieldError> : null}
         {error ? <FieldError role="alert">{error}</FieldError> : null}
       </FieldGroup>
     </div>
-    <SheetFooter><Button onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !draft.regionCode || !draft.name.trim() || collectInitialClient && !draft.clientName.trim() || !draft.gatewayID || !draft.hostname || !draft.targetHost.trim() || !draft.serverName.trim() || !targetPublicAddress} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{copy(language, "校验并创建", "Verify and create")}</Button></SheetFooter>
+    <SheetFooter><Button onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !draft.regionCode || !draft.name.trim() || collectInitialClient && !draft.clientName.trim() || !draft.targetHost.trim() || !draft.serverName.trim() || !targetPublicAddress} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{copy(language, "校验并创建", "Verify and create")}</Button></SheetFooter>
   </form>;
 }
 
@@ -351,14 +345,8 @@ function RealityASNNotice({ result, language }: { result: ApplicationCommand; la
   return <span className="mt-1 block">{copy(language, `网络信息（参考）：节点 ${node} · 目标 ${target}。`, `Network information (advisory): node ${node} · target ${target}.`)} {advice}</span>;
 }
 
-function realityGateways(data: AppData, application: Application) {
-  // A VLESS node is its own ingress and egress. HAProxy and 3x-ui share the
-  // node's Docker network; selecting another Gateway would turn it into a relay.
-  return data.agents.filter((agent) => agent.id === application.nodeId && agent.siteId === application.siteId && agent.connected && agent.capabilities.gateway && agent.networkProfile?.directPublic && agent.networkProfile.enabledKinds.includes("public") && data.sites.some((site) => site.id === application.siteId && site.gatewayNodes.includes(agent.id)));
-}
-
 function emptyDraft(): RealityDraft {
-  return { name: "", regionCode: "", clientName: "", inboundQuota: "", inboundResetDay: "1", clientQuota: "", clientResetDays: "0", clientExpiry: "", gatewayID: "", hostname: "", dnsProvider: "manual", targetHost: "", serverName: "" };
+  return { name: "", regionCode: "", clientName: "", inboundQuota: "", inboundResetDay: "1", clientQuota: "", clientResetDays: "0", clientExpiry: "", hostname: "", dnsProvider: "manual", targetHost: defaultRealityTarget, serverName: defaultRealityTarget };
 }
 
 function sameDraft(left: RealityDraft, right: RealityDraft) {

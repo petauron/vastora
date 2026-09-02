@@ -161,7 +161,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		if verifyErr != nil {
 			return RealityCommandResult{}, deferUncertainRealityTask(attempt, verifyErr)
 		}
-		hardened, companion, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, command.InboundTag, verification)
+		hardened, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, command.InboundTag, verification)
 		if hardenErr != nil {
 			return RealityCommandResult{}, deferUncertainRealityTask(attempt, hardenErr)
 		}
@@ -172,7 +172,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		result.Action = "harden"
 		result.Listen = command.TargetAddress
 		result.ShareURI = ""
-		return guardedRealityResult(result, verification, companion), nil
+		return guardedRealityResult(result, verification), nil
 	}
 	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || !validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > 31 || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 {
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
@@ -209,7 +209,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		if err != nil {
 			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
 		}
-		existing, companion, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, existing, command.TargetNodeID, inboundTag, verification)
+		existing, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, existing, command.TargetNodeID, inboundTag, verification)
 		if hardenErr != nil {
 			return RealityCommandResult{}, deferUncertainRealityTask(attempt, hardenErr)
 		}
@@ -221,7 +221,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			}
 			return RealityCommandResult{}, err
 		}
-		result = guardedRealityResult(result, verification, companion)
+		result = guardedRealityResult(result, verification)
 		result.Listen = listen
 		if command.CreateInitialClient && command.ClientResetDays > 0 && command.ClientExpiryTime <= store.now().UTC().UnixMilli() {
 			cause := errors.New("agent: REALITY creation parameters are invalid")
@@ -302,22 +302,11 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		return RealityCommandResult{}, fmt.Errorf("agent: generate REALITY short id: %w", err)
 	}
 	shortID := hex.EncodeToString(shortBytes)
-	guardPort, err := realityGuardPort(port)
-	if err != nil {
-		return RealityCommandResult{}, err
-	}
-	companion, err := realityCompanionEnsurer(ctx, baseURL, masterToken, command.TargetNodeID, port, inboundTag, verification.TargetIP)
-	if err != nil {
-		return RealityCommandResult{}, err
-	}
-	if err := realityRoutingEnsurer(ctx, baseURL, masterToken, companion.Tag, verification.ServerName); err != nil {
-		return RealityCommandResult{}, err
-	}
 	payload := map[string]any{
 		"enable": false, "tag": inboundTag, "remark": command.DisplayName, "listen": "0.0.0.0", "port": port, "protocol": "vless", "expiryTime": 0,
 		"total": command.InboundTotalBytes, "trafficReset": "never", "trafficResetDay": 1,
 		"settings":       map[string]any{"clients": clients, "decryption": "none", "encryption": "none", "fallbacks": []any{}},
-		"streamSettings": threeXUIRealityStreamSettings(net.JoinHostPort("127.0.0.1", strconv.Itoa(guardPort)), verification.ServerName, keyPair.PrivateKey, keyPair.PublicKey, shortID),
+		"streamSettings": threeXUIRealityStreamSettings(net.JoinHostPort(verification.TargetIP, "443"), verification.ServerName, keyPair.PrivateKey, keyPair.PublicKey, shortID),
 		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}, "metadataOnly": false, "routeOnly": false},
 	}
 	if command.TargetNodeID > 0 {
@@ -376,7 +365,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			result.ShareURI = realityShareURI(clientID, command.ConnectHostname, command.DisplayName, verification.ServerName, keyPair.PublicKey, shortID)
 		}
 	}
-	result = guardedRealityResult(result, verification, companion)
+	result = guardedRealityResult(result, verification)
 	result.Listen = listen
 	if err := completeThreeXUIRealityCreation(ctx, baseURL, masterToken, result, clientEmail); err != nil {
 		rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, clientCreated)
@@ -385,12 +374,12 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		}
 		return RealityCommandResult{}, err
 	}
-	hardened, hardenedCompanion, err := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, inboundTag, verification)
+	hardened, err := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, inboundTag, verification)
 	if err != nil {
 		return RealityCommandResult{}, deferUncertainRealityTask(attempt, err)
 	}
 	result.InboundTag = hardened.Tag
-	result = guardedRealityResult(result, verification, hardenedCompanion)
+	result = guardedRealityResult(result, verification)
 	return result, nil
 }
 
@@ -542,6 +531,9 @@ func attachAllThreeXUIClientsToInbound(ctx context.Context, baseURL, token strin
 	emails := make([]string, 0, len(clients))
 	for _, client := range clients {
 		if !containsInt(client.InboundIDs, inboundID) {
+			if _, err := ensureThreeXUIClientSubscriptionID(ctx, baseURL, token, client.Email); err != nil {
+				return fmt.Errorf("agent: repair subscription identity before automatic node synchronization: %w", err)
+			}
 			emails = append(emails, client.Email)
 		}
 	}

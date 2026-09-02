@@ -35,6 +35,7 @@ func PurgeManagedRuntime(ctx context.Context, deleteApplicationData bool) error 
 	result = errors.Join(result, (SystemdHostApplicationManager{}).RemoveKomari(ctx))
 	result = errors.Join(result, (DockerTunnelProvisioner{}).Apply(ctx, TunnelDesiredState{Revision: 1, Status: "stopped"}))
 	result = errors.Join(result, (ManagedGatewayProvisioner{Caddy: DockerGatewayProvisioner{}, Layer4: DockerLayer4Provisioner{}}).Remove(ctx))
+	result = errors.Join(result, (DockerLayer4Provisioner{}).Remove(ctx))
 	if result != nil {
 		return result
 	}

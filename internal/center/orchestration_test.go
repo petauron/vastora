@@ -42,11 +42,11 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 		t.Fatalf("install unexpectedly published a route: routes=%#v err=%v", routes, err)
 	}
 
-	lan, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.lan.example.test", DNSProvider: "manual"})
+	lan, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.lan.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	headscale, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, GatewayNodeID: node.ID, Hostname: "cpa.tail.example.test", DNSProvider: "manual"})
+	headscale, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.tail.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	if stopped != 1 || ready != 1 {
 		t.Fatalf("stopping one publication affected its sibling: %#v", publications)
 	}
-	reactivated, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.lan.example.test", DNSProvider: "manual"})
+	reactivated, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.lan.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestCloudflareWebPublicationRequiresConfiguredCenterAccess(t *testing.T) {
 	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
-	_, err = store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationCloudflare, GatewayNodeID: node.ID, Hostname: "cpa-tunnel-node.example.com", DNSProvider: "cloudflare"})
+	_, err = store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationCloudflare, Ingress: PublicationIngress{Owner: ingressTunnelConnector, EntryNodeID: node.ID}, Hostname: "cpa-tunnel-node.example.com", DNSProvider: "cloudflare"})
 	if err == nil || !strings.Contains(err.Error(), "enable the Center Cloudflare Access entry") {
 		t.Fatalf("unconfigured Center Access returned the wrong publication error: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatalf("unexpected Web service: %#v err=%v", services, err)
 	}
-	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationPublic, GatewayNodeID: node.ID, Hostname: "center.example.test", DNSProvider: "manual", ConfirmHighRisk: true}); err != nil {
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationPublic, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "center.example.test", DNSProvider: "manual", ConfirmHighRisk: true}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -386,7 +386,10 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 		VALUES('vless-service', ?, ?, 'vless', 'tcp', 2443, 2443, '10.0.0.10:2443', 'observed', 'vless/tcp', '10.0.0.10', 'ready', ?, ?)`, applicationID, testSiteID(t, store), now, now); err != nil {
 		t.Fatal(err)
 	}
-	shared, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-service", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", SNIHostname: "www.example.test", DNSProvider: "manual"})
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-service", Kind: publicationShared443, Ingress: PublicationIngress{Owner: ingressApplicationNode, EntryNodeID: node.ID}, Hostname: "caller-selected.example.test", SNIHostname: "www.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "does not accept an entry node") {
+		t.Fatalf("application-node publication accepted caller-selected entry: %v", err)
+	}
+	shared, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-service", Kind: publicationShared443, Ingress: PublicationIngress{Owner: ingressApplicationNode}, Hostname: "vless.example.test", SNIHostname: "www.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,11 +398,11 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil || task.GatewayState.SharedHTTPS == nil {
-		t.Fatalf("shared 443 did not queue a combined gateway state: %#v", task)
+	if task.Kind != "node.listener.apply" || task.NodeListenerState == nil {
+		t.Fatalf("shared 443 did not queue an application-node listener state: %#v", task)
 	}
-	sharedState := task.GatewayState.SharedHTTPS
-	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "vastora-gateway-caddy" || sharedState.CaddyPort != 443 || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "www.example.test" {
+	sharedState := &task.NodeListenerState.Listener
+	if sharedState.Address != "203.0.113.10" || sharedState.Port != 443 || sharedState.CaddyAddress != "vastora-gateway-caddy" || sharedState.CaddyPort != 443 || sharedState.RejectUnmatched || len(sharedState.Routes) != 1 || sharedState.Routes[0].Hostname != "www.example.test" {
 		t.Fatalf("unexpected shared 443 desired state: %#v", sharedState)
 	}
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
@@ -408,14 +411,32 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	select {
 	case <-verificationDone:
 	case <-time.After(time.Second):
-		t.Fatal("shared 443 publication was not verified after gateway apply")
+		t.Fatal("shared 443 publication was not verified after node-listener apply")
 	}
 	if status := <-firstObservedStatus; status != "failed" {
-		t.Fatalf("gateway success discarded the managed DNS failure before retry: %q", status)
+		t.Fatalf("node-listener success discarded the managed DNS failure before retry: %q", status)
 	}
 	publication, err := store.Publication(ctx, shared.ID)
 	if err != nil || publication.Status != "ready" || publication.Hostname != "vless.example.test" || publication.SNIHostname != "www.example.test" || verificationAttempts.Load() != 3 {
 		t.Fatalf("shared publication did not converge after automatic verification: publication=%#v attempts=%d err=%v", publication, verificationAttempts.Load(), err)
+	}
+	var gatewayRevisionBefore int64
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&gatewayRevisionBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StopPublication(ctx, shared.ID); err != nil {
+		t.Fatal(err)
+	}
+	listenerRemoval := claimTask(t, store, node)
+	if listenerRemoval.Kind != "node.listener.apply" || listenerRemoval.NodeListenerState == nil || len(listenerRemoval.NodeListenerState.Listener.Routes) != 0 {
+		t.Fatalf("stopping node-direct access did not queue listener removal: %#v", listenerRemoval)
+	}
+	var gatewayRevisionAfter int64
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&gatewayRevisionAfter); err != nil {
+		t.Fatal(err)
+	}
+	if gatewayRevisionAfter != gatewayRevisionBefore {
+		t.Fatalf("stopping node-direct access changed Site Gateway state: before=%d after=%d", gatewayRevisionBefore, gatewayRevisionAfter)
 	}
 }
 
@@ -436,7 +457,7 @@ func TestShared443RejectsAnApplicationAlreadyUsing443(t *testing.T) {
 		VALUES('vless-443', 'xray-app', ?, 'vless', 'tcp', 443, 443, '10.0.0.20:443', 'observed', 'vless/tcp', '0.0.0.0', 'ready', ?, ?)`, testSiteID(t, store), now, now); err != nil {
 		t.Fatal(err)
 	}
-	_, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-443", Kind: publicationShared443, GatewayNodeID: node.ID, Hostname: "vless.example.test", SNIHostname: "www.example.test", DNSProvider: "manual"})
+	_, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "vless-443", Kind: publicationShared443, Ingress: PublicationIngress{Owner: ingressApplicationNode}, Hostname: "vless.example.test", SNIHostname: "www.example.test", DNSProvider: "manual"})
 	if err == nil || !strings.Contains(err.Error(), "away from port 443") {
 		t.Fatalf("shared 443 accepted an occupied local port: %v", err)
 	}
@@ -457,7 +478,7 @@ func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
-	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, GatewayNodeID: node.ID, Hostname: "cpa.tail.example.test", DNSProvider: "headscale"}); err != nil {
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.tail.example.test", DNSProvider: "headscale"}); err != nil {
 		t.Fatal(err)
 	}
 	completeNextTask(t, store, node, "gateway.routes.apply", nil)
@@ -506,7 +527,7 @@ func TestFailedPublicationCleanupIsPersistedAndRetried(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
-	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, GatewayNodeID: node.ID, Hostname: "retry.tail.example.test", DNSProvider: "headscale"})
+	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "retry.tail.example.test", DNSProvider: "headscale"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +579,7 @@ func TestPublicationCanUseGatewayOnAnotherNode(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
-	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: gateway.ID, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err != nil {
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: gateway.ID}, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, gateway)
@@ -585,7 +606,7 @@ func TestPublicationRejectsUnreachableCrossNodeOrigin(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE services SET endpoint = '127.0.0.1:8317' WHERE id = ?`, services[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: gateway.ID, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "routable private service address") {
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: gateway.ID}, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "routable private service address") {
 		t.Fatalf("cross-node loopback origin was accepted: %v", err)
 	}
 }
@@ -605,7 +626,7 @@ func TestPublicationRejectsCrossNodeWithoutSharedPrivateNetwork(t *testing.T) {
 	if err != nil || len(services) != 1 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
-	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: gateway.ID, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "cannot reach") {
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: gateway.ID}, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "cannot reach") {
 		t.Fatalf("cross-node publication without a shared private network was accepted: %v", err)
 	}
 }
@@ -819,7 +840,7 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 	}
 	installTask := claimTask(t, store, node)
 	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.61", "edge-api-token")
-	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", GatewayNodeID: node.ID, Hostname: "reality.edge.site.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
+	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", Hostname: "reality.edge.site.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -831,7 +852,7 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 		t.Fatalf("explicit REALITY target was not preserved: %#v", task.ApplicationCommand)
 	}
 	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 443, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, CompanionInboundID: 10, CompanionTag: task.ApplicationCommand.InboundTag + "-guard", CompanionPort: 21000, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 443, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
 	encoded, _ := json.Marshal(result)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
@@ -861,6 +882,35 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 	}
 }
 
+func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "random-host-edge", NodeCapabilities{Docker: true}, []networking.Candidate{
+		{Address: "10.0.0.64", Interface: "eth0", Kind: networking.KindLAN},
+		{Address: "203.0.113.64", Interface: "eth0", Kind: networking.KindPublic},
+	}, networking.Profile{ServiceAddress: "10.0.0.64", LANAddress: "10.0.0.64", PublicAddress: "203.0.113.64", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC", DomainSuffix: "example.test"}); err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTask := claimTask(t, store, node)
+	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.64", "edge-api-token")
+
+	deadline, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if _, err := store.CreateRealityCommand(deadline, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Random", ClientName: "MacBook", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
+		t.Fatalf("random hostname allocation blocked inside the command transaction: %v", err)
+	}
+	task := claimTask(t, store, node)
+	if task.ApplicationCommand == nil || !strings.HasSuffix(task.ApplicationCommand.ConnectHostname, ".example.test") {
+		t.Fatalf("random connection hostname = %#v", task.ApplicationCommand)
+	}
+}
+
 func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -886,7 +936,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET domain_suffix = 'example.test' WHERE id = ?`, testSiteID(t, store)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "three-x-ui-subscription", Kind: publicationPublic, GatewayNodeID: node.ID, Hostname: "wrong.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "public subscription workflow") {
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: "three-x-ui-subscription", Kind: publicationPublic, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "wrong.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "public subscription workflow") {
 		t.Fatalf("generic subscription publication error = %v", err)
 	}
 	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Kind: publicationPublic, DNSProvider: "manual"})
@@ -913,7 +963,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if err != nil || publication.ServiceID != "three-x-ui-subscription" || publication.TLSEnabled != true {
 		t.Fatalf("subscription publication = %#v, err=%v", publication, err)
 	}
-	resync, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Hostname: publication.Hostname, Kind: publicationPublic, DNSProvider: "manual"})
+	resync, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", Hostname: publication.Hostname, Kind: publicationPublic, DNSProvider: "manual"})
 	if err != nil || resync.PublicationID != publication.ID {
 		t.Fatalf("subscription resync = %#v, err=%v", resync, err)
 	}
@@ -948,7 +998,7 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
 		t.Fatalf("services = %#v, err=%v", services, err)
 	}
-	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, GatewayNodeID: node.ID, Hostname: "cpa.test.example.test", DNSProvider: "manual"})
+	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.test.example.test", DNSProvider: "manual"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1025,30 +1075,27 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", TargetHost: "www.example.com", ServerName: "www.example.com", TargetAddress: "10.0.0.61", InboundTag: "vastora-test", CreateInitialClient: true}
 	valid := RealityCommandResult{
-		Action:             "create",
-		InboundID:          9,
-		DisplayName:        "🇺🇸 美国Edge",
-		ClientName:         "MacBook",
-		Listen:             "10.0.0.61",
-		Port:               443,
-		TargetHost:         "www.example.com",
-		TargetIP:           "203.0.113.10",
-		ServerName:         "www.example.com",
-		NodeASN:            64500,
-		TargetASN:          64496,
-		TLS13:              true,
-		X25519:             true,
-		HTTP2:              true,
-		CertificateValid:   true,
-		CompanionInboundID: 10,
-		CompanionTag:       "vastora-test-guard",
-		CompanionPort:      21000,
-		GuardStatus:        "ready",
-		ProxyProtocol:      true,
-		ConnectHostname:    "reality.edge.site.example.test",
-		ShareURI:           "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
-		InboundTag:         "vastora-test",
-		ClientCreated:      true,
+		Action:           "create",
+		InboundID:        9,
+		DisplayName:      "🇺🇸 美国Edge",
+		ClientName:       "MacBook",
+		Listen:           "10.0.0.61",
+		Port:             443,
+		TargetHost:       "www.example.com",
+		TargetIP:         "203.0.113.10",
+		ServerName:       "www.example.com",
+		NodeASN:          64500,
+		TargetASN:        64496,
+		TLS13:            true,
+		X25519:           true,
+		HTTP2:            true,
+		CertificateValid: true,
+		GuardStatus:      "ready",
+		ProxyProtocol:    true,
+		ConnectHostname:  "reality.edge.site.example.test",
+		ShareURI:         "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
+		InboundTag:       "vastora-test",
+		ClientCreated:    true,
 	}
 	if err := validateRealityCommandResult(input, valid); err != nil {
 		t.Fatalf("valid result rejected: %v", err)

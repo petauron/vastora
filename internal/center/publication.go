@@ -19,22 +19,34 @@ const (
 	publicationCloudflare = "cloudflare_tunnel"
 )
 
+const (
+	ingressSiteGateway     = "site_gateway"
+	ingressApplicationNode = "application_node"
+	ingressTunnelConnector = "tunnel_connector"
+)
+
+type PublicationIngress struct {
+	Owner       string `json:"owner"`
+	EntryNodeID string `json:"entryNodeId,omitempty"`
+}
+
 type PublicationInput struct {
-	ServiceID       string `json:"serviceId"`
-	Kind            string `json:"kind"`
-	GatewayNodeID   string `json:"gatewayNodeId,omitempty"`
-	Hostname        string `json:"hostname,omitempty"`
-	SNIHostname     string `json:"sniHostname,omitempty"`
-	DNSProvider     string `json:"dnsProvider"`
-	TLSEnabled      bool   `json:"tlsEnabled,omitempty"`
-	ConfirmHighRisk bool   `json:"confirmHighRisk,omitempty"`
+	ServiceID       string             `json:"serviceId"`
+	Kind            string             `json:"kind"`
+	Ingress         PublicationIngress `json:"ingress"`
+	Hostname        string             `json:"hostname,omitempty"`
+	SNIHostname     string             `json:"sniHostname,omitempty"`
+	DNSProvider     string             `json:"dnsProvider"`
+	TLSEnabled      bool               `json:"tlsEnabled,omitempty"`
+	ConfirmHighRisk bool               `json:"confirmHighRisk,omitempty"`
 }
 
 type PublicationView struct {
 	ID                   string                `json:"id"`
 	ServiceID            string                `json:"serviceId"`
 	Kind                 string                `json:"kind"`
-	GatewayNodeID        string                `json:"gatewayNodeId,omitempty"`
+	Ingress              PublicationIngress    `json:"ingress"`
+	EntryNodeID          string                `json:"-"`
 	Hostname             string                `json:"hostname"`
 	SNIHostname          string                `json:"sniHostname,omitempty"`
 	DNSProvider          string                `json:"dnsProvider"`
@@ -44,6 +56,7 @@ type PublicationView struct {
 	AppliedRevision      int64                 `json:"appliedRevision"`
 	Status               string                `json:"status"`
 	LastError            string                `json:"lastError,omitempty"`
+	ActionRequired       bool                  `json:"actionRequired,omitempty"`
 	AccessURL            string                `json:"accessUrl,omitempty"`
 	CertificateExpiresAt *time.Time            `json:"certificateExpiresAt,omitempty"`
 	DNSRecord            *DNSRecordInstruction `json:"dnsRecord,omitempty"`
@@ -65,7 +78,8 @@ func (s *Store) CreatePublication(ctx context.Context, input PublicationInput) (
 func (s *Store) createPublication(ctx context.Context, input PublicationInput, managedSubscription bool) (PublicationView, error) {
 	input.ServiceID = strings.TrimSpace(input.ServiceID)
 	input.Kind = strings.TrimSpace(input.Kind)
-	input.GatewayNodeID = strings.TrimSpace(input.GatewayNodeID)
+	input.Ingress.Owner = strings.TrimSpace(input.Ingress.Owner)
+	input.Ingress.EntryNodeID = strings.TrimSpace(input.Ingress.EntryNodeID)
 	input.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.Hostname), "."))
 	input.SNIHostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.SNIHostname), "."))
 	input.DNSProvider = strings.TrimSpace(input.DNSProvider)
@@ -153,6 +167,32 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		return PublicationView{}, errors.New("center: stored service endpoint is invalid")
 	}
 	webService := protocol == "http" || protocol == "https"
+	switch input.Ingress.Owner {
+	case ingressApplicationNode:
+		if input.Ingress.EntryNodeID != "" {
+			return PublicationView{}, errors.New("center: application-node ingress does not accept an entry node")
+		}
+		if webService || (input.Kind != publicationPublic && input.Kind != publicationShared443) {
+			return PublicationView{}, errors.New("center: application-node ingress is only valid for direct protocol services")
+		}
+		input.Ingress.EntryNodeID = appNodeID
+	case ingressSiteGateway:
+		if !webService || input.Kind == publicationCloudflare {
+			return PublicationView{}, errors.New("center: Site Gateway ingress is only valid for Web services")
+		}
+		if input.Ingress.EntryNodeID == "" {
+			return PublicationView{}, errors.New("center: Site Gateway ingress requires an entry node")
+		}
+	case ingressTunnelConnector:
+		if !webService || input.Kind != publicationCloudflare {
+			return PublicationView{}, errors.New("center: tunnel connector ingress is only valid for tunneled Web services")
+		}
+		if input.Ingress.EntryNodeID == "" {
+			return PublicationView{}, errors.New("center: tunnel connector ingress requires an entry node")
+		}
+	default:
+		return PublicationView{}, errors.New("center: explicit ingress owner is required")
+	}
 	if applicationRole == threeXUIRoleWorker && webService {
 		return PublicationView{}, errors.New("center: a VLESS-only node does not publish its internal 3x-ui panel")
 	}
@@ -166,11 +206,8 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		return PublicationView{}, errors.New("center: shared 443 requires a raw TCP service with TLS SNI")
 	}
 
-	gatewayID := input.GatewayNodeID
-	if gatewayID == "" && (input.Kind == publicationPublic || input.Kind == publicationShared443 || input.Kind == publicationCloudflare) {
-		gatewayID = appNodeID
-	}
-	if input.Kind == publicationLAN || input.Kind == publicationHeadscale || input.Kind == publicationShared443 || (input.Kind == publicationPublic && webService) {
+	gatewayID := input.Ingress.EntryNodeID
+	if input.Kind == publicationLAN || input.Kind == publicationHeadscale || (input.Kind == publicationPublic && webService) {
 		if gatewayID == "" {
 			return PublicationView{}, errors.New("center: select an entry node for this publication")
 		}
@@ -182,47 +219,60 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		return PublicationView{}, errors.New("center: raw public ports must listen on the application node")
 	}
 	if input.Kind == publicationPublic && !webService {
-		publicAddress, err := validateDirectPublicNode(ctx, tx, appNodeID)
+		_, publicBindAddress, err := validateNodeDirectPublicIngress(ctx, tx, appNodeID)
 		if err != nil {
 			return PublicationView{}, err
 		}
 		listenIP := net.ParseIP(observedListen)
-		if listenIP != nil && !listenIP.IsUnspecified() && listenIP.String() != publicAddress {
-			return PublicationView{}, errors.New("center: raw port is not listening on the confirmed public address")
+		if listenIP != nil && !listenIP.IsUnspecified() && listenIP.String() != publicBindAddress {
+			return PublicationView{}, errors.New("center: raw port is not listening on the confirmed local address for public ingress")
 		}
 		_, port, _ := net.SplitHostPort(endpoint)
 		if port == "443" {
 			var shared int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, appNodeID).Scan(&shared); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE entry_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, appNodeID).Scan(&shared); err != nil {
 				return PublicationView{}, err
 			}
 			if shared != 0 {
-				return PublicationView{}, errors.New("center: this gateway already shares public port 443; use a non-443 application port and the shared 443 access method")
+				return PublicationView{}, errors.New("center: this application node already owns public port 443; use a non-443 application port and the shared 443 access method")
 			}
 		}
 	}
 	if input.Kind == publicationShared443 {
+		if gatewayID != appNodeID {
+			return PublicationView{}, errors.New("center: node-direct protocol entry must be owned by the application node")
+		}
+		if _, _, err := validateNodeDirectPublicIngress(ctx, tx, appNodeID); err != nil {
+			return PublicationView{}, err
+		}
+		var listenerCapable int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active' AND json_extract(capabilities_json, '$.docker') = 1`, appNodeID).Scan(&listenerCapable); err != nil {
+			return PublicationView{}, err
+		}
+		if listenerCapable != 1 {
+			return PublicationView{}, errors.New("center: node-direct shared 443 requires an active Docker Agent")
+		}
 		if err := validatePublicationOrigin(ctx, tx, appNodeID, gatewayID, endpoint); err != nil {
 			return PublicationView{}, err
 		}
 		_, port, _ := net.SplitHostPort(endpoint)
 		internalThreeXUIReality := appNodeID == gatewayID && appKey == threeXUIAppKey && appProtocol == "vless/tcp/reality"
 		if appNodeID == gatewayID && port == "443" && !internalThreeXUIReality {
-			return PublicationView{}, errors.New("center: move the application inbound away from port 443 before enabling the shared 443 gateway")
+			return PublicationView{}, errors.New("center: move the application inbound away from port 443 before enabling the node-direct shared listener")
 		}
 		occupied, err := gatewayHasDirectRaw443(ctx, tx, gatewayID)
 		if err != nil {
 			return PublicationView{}, err
 		}
 		if occupied {
-			return PublicationView{}, errors.New("center: a direct raw publication already owns port 443 on this gateway; move that inbound before enabling shared 443")
+			return PublicationView{}, errors.New("center: a direct raw publication already owns port 443 on this application node; move that inbound before enabling shared 443")
 		}
 		var duplicate int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE gateway_node_id = ? AND sni_hostname = ? AND status <> 'stopped'`, gatewayID, input.SNIHostname).Scan(&duplicate); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE entry_node_id = ? AND sni_hostname = ? AND status <> 'stopped'`, gatewayID, input.SNIHostname).Scan(&duplicate); err != nil {
 			return PublicationView{}, err
 		}
 		if duplicate != 0 {
-			return PublicationView{}, errors.New("center: this SNI hostname is already used on the selected gateway")
+			return PublicationView{}, errors.New("center: this SNI hostname is already used on the application node")
 		}
 	}
 	if input.Kind == publicationCloudflare {
@@ -300,8 +350,8 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		if err != nil {
 			return PublicationView{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, nullableString(gatewayID), input.Hostname, input.SNIHostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, sni_hostname, dns_provider, tls_enabled, status, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ServiceID, input.Kind, input.Ingress.Owner, gatewayID, input.Hostname, input.SNIHostname, input.DNSProvider, tlsEnabled, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 			return PublicationView{}, fmt.Errorf("center: create publication: %w", err)
 		}
 		revision = 1
@@ -315,7 +365,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 			return PublicationView{}, errors.New("center: the previous access entry is still removing external resources; retry after cleanup succeeds")
 		}
 		revision++
-		if _, err := tx.ExecContext(ctx, `UPDATE publications SET gateway_node_id = ?, sni_hostname = ?, dns_provider = ?, dns_record_id = '', access_application_id = ?, tls_enabled = ?, desired_revision = ?, status = 'pending', last_error = '', cleanup_attempt = 0, cleanup_retry_at = '', updated_at = ? WHERE id = ?`, nullableString(gatewayID), input.SNIHostname, input.DNSProvider, accessApplicationID, tlsEnabled, revision, now.Format(time.RFC3339Nano), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE publications SET ingress_owner = ?, entry_node_id = ?, sni_hostname = ?, dns_provider = ?, dns_record_id = '', access_application_id = ?, tls_enabled = ?, desired_revision = ?, status = 'pending', last_error = '', action_required = 0, cleanup_attempt = 0, cleanup_retry_at = '', updated_at = ? WHERE id = ?`, input.Ingress.Owner, gatewayID, input.SNIHostname, input.DNSProvider, accessApplicationID, tlsEnabled, revision, now.Format(time.RFC3339Nano), id); err != nil {
 			return PublicationView{}, fmt.Errorf("center: reactivate publication: %w", err)
 		}
 	}
@@ -325,7 +375,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 			return PublicationView{}, err
 		}
 	}
-	if isGatewayPublication(input.Kind, webService) {
+	if isGatewayPublication(input.Ingress.Owner) {
 		if err := s.upsertPublicationRoute(ctx, tx, id, siteID, input.ServiceID, gatewayID, input.Hostname, protocol, endpoint, tlsEnabled, now); err != nil {
 			return PublicationView{}, err
 		}
@@ -333,7 +383,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 			return PublicationView{}, err
 		}
 	} else if input.Kind == publicationShared443 {
-		if err := s.queueGatewayState(ctx, tx, gatewayID, now); err != nil {
+		if err := s.queueNodeListenerState(ctx, tx, appNodeID, now); err != nil {
 			return PublicationView{}, err
 		}
 	}
@@ -344,8 +394,8 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 	if err != nil {
 		return PublicationView{}, err
 	}
-	needsGatewayApply := isGatewayPublication(input.Kind, webService) || input.Kind == publicationShared443
-	if (input.Kind == publicationPublic || input.Kind == publicationShared443) && !needsGatewayApply {
+	needsGatewayApply := isGatewayPublication(input.Ingress.Owner)
+	if input.Kind == publicationPublic && !needsGatewayApply {
 		s.schedulePublicationVerification(id, revision)
 	} else if input.Kind == publicationCloudflare && !dnsReady {
 		s.schedulePublicationVerification(id, revision)
@@ -370,6 +420,11 @@ func (s *Store) randomPublicationHostname(ctx context.Context, serviceID, dnsPro
 		}
 	}
 	zone = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(zone), "."))
+	return randomPublicationHostnameInZone(ctx, s.db, zone)
+}
+
+func randomPublicationHostnameInZone(ctx context.Context, queryer networkQueryer, zone string) (string, error) {
+	zone = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(zone), "."))
 	if !domainSuffixPattern.MatchString(zone) {
 		return "", errors.New("center: enter a public hostname or configure a valid public domain")
 	}
@@ -380,7 +435,7 @@ func (s *Store) randomPublicationHostname(ctx context.Context, serviceID, dnsPro
 		}
 		hostname := label + "." + zone
 		var exists int
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM publications WHERE hostname = ?)`, hostname).Scan(&exists); err != nil {
+		if err := queryer.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM publications WHERE hostname = ?)`, hostname).Scan(&exists); err != nil {
 			return "", err
 		}
 		if exists == 0 {
@@ -419,10 +474,10 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
-	var kind, dnsProvider, dnsRecordID, status string
+	var kind, ingressOwner, dnsProvider, dnsRecordID, status string
 	var revision int64
 	var gatewayID sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT kind, gateway_node_id, dns_provider, dns_record_id, desired_revision, status FROM publications WHERE id = ?`, id).Scan(&kind, &gatewayID, &dnsProvider, &dnsRecordID, &revision, &status); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT kind, ingress_owner, entry_node_id, dns_provider, dns_record_id, desired_revision, status FROM publications WHERE id = ?`, id).Scan(&kind, &ingressOwner, &gatewayID, &dnsProvider, &dnsRecordID, &revision, &status); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: publication not found")
 	} else if err != nil {
 		return err
@@ -436,12 +491,31 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 		cleanup_attempt = 0, cleanup_retry_at = '', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), id); err != nil {
 		return err
 	}
+	if err := s.retireMigratedTunnelConnector(ctx, tx, id, now); err != nil {
+		return err
+	}
 	if gatewayID.Valid {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE publication_id = ?`, id); err != nil {
 			return err
 		}
-		if err := s.queueGatewayState(ctx, tx, gatewayID.String, now); err != nil {
-			return err
+		switch ingressOwner {
+		case ingressApplicationNode:
+			if kind != publicationShared443 {
+				break
+			}
+			if err := s.queueNodeListenerState(ctx, tx, gatewayID.String, now); err != nil {
+				return err
+			}
+		case ingressSiteGateway:
+			if err := s.queueGatewayState(ctx, tx, gatewayID.String, now); err != nil {
+				return err
+			}
+		case ingressTunnelConnector:
+			if err := s.queueTunnelState(ctx, tx, gatewayID.String, now); err != nil {
+				return err
+			}
+		default:
+			return errors.New("center: stored publication ingress owner is invalid")
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -454,20 +528,28 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	var value PublicationView
 	var gatewayID sql.NullString
 	var tls int
+	var actionRequired int
 	var created, updated string
 	var certificateNotAfter string
-	err := s.db.QueryRowContext(ctx, `SELECT p.id, p.service_id, p.kind, p.gateway_node_id, p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id, p.tls_enabled,
+	var ingressOwner string
+	var entryNodeStatus, entryNodeLastSeen string
+	err := s.db.QueryRowContext(ctx, `SELECT p.id, p.service_id, p.kind, p.ingress_owner, p.entry_node_id, p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id, p.tls_enabled,
 		CASE WHEN p.tls_enabled = 1 AND p.kind IN ('lan_gateway', 'headscale_gateway') THEN COALESCE(c.not_after, '') ELSE '' END,
-		p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at
-		FROM publications p JOIN services s ON s.id = p.service_id LEFT JOIN site_certificates c ON c.site_id = s.site_id WHERE p.id = ?`, id).Scan(
-		&value.ID, &value.ServiceID, &value.Kind, &gatewayID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID, &tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated)
+		p.desired_revision, p.applied_revision, p.status, p.last_error, p.action_required, p.created_at, p.updated_at,
+		n.status, n.last_seen_at
+		FROM publications p JOIN services s ON s.id = p.service_id JOIN agents n ON n.id = p.entry_node_id
+		LEFT JOIN site_certificates c ON c.site_id = s.site_id WHERE p.id = ?`, id).Scan(
+		&value.ID, &value.ServiceID, &value.Kind, &ingressOwner, &gatewayID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID, &tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &actionRequired, &created, &updated, &entryNodeStatus, &entryNodeLastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return PublicationView{}, errors.New("center: publication not found")
 	}
 	if err != nil {
 		return PublicationView{}, err
 	}
-	value.GatewayNodeID = gatewayID.String
+	value.EntryNodeID = gatewayID.String
+	value.Ingress = PublicationIngress{Owner: ingressOwner, EntryNodeID: gatewayID.String}
+	value.ActionRequired = actionRequired == 1
+	degradeOfflineNodeListener(&value, entryNodeStatus, entryNodeLastSeen, s.now().UTC())
 	value.TLSEnabled = tls == 1
 	if certificateNotAfter != "" {
 		expiresAt, parseErr := time.Parse(time.RFC3339Nano, certificateNotAfter)
@@ -528,6 +610,17 @@ func (s *Store) ListPublications(ctx context.Context) ([]PublicationView, error)
 	return s.listPublications(ctx, apps)
 }
 
+func degradeOfflineNodeListener(value *PublicationView, nodeStatus, lastSeen string, now time.Time) {
+	if value.Ingress.Owner != ingressApplicationNode || value.Status != "ready" {
+		return
+	}
+	seen, err := time.Parse(time.RFC3339Nano, lastSeen)
+	if nodeStatus != "active" || err != nil || !seen.After(now.Add(-agentConnectedMaxAge)) {
+		value.Status = "degraded"
+		value.LastError = "application node is offline; node-direct listener health is unavailable"
+	}
+}
+
 func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]PublicationView, error) {
 	homepagePaths := map[string]string{}
 	for _, app := range apps {
@@ -537,17 +630,19 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 	}
 	homepagePaths[threeXUIAppKey+"\x00subscription"] = "/sub/"
 	rows, err := s.db.QueryContext(ctx, `SELECT
-		p.id, p.service_id, p.kind, COALESCE(p.gateway_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,
+		p.id, p.service_id, p.kind, p.ingress_owner, COALESCE(p.entry_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,
 		p.tls_enabled, CASE WHEN p.tls_enabled = 1 AND p.kind IN ('lan_gateway', 'headscale_gateway') THEN COALESCE(c.not_after, '') ELSE '' END,
-		p.desired_revision, p.applied_revision, p.status, p.last_error, p.created_at, p.updated_at,
+		p.desired_revision, p.applied_revision, p.status, p.last_error, p.action_required, p.created_at, p.updated_at,
 		s.protocol, s.name, a.app_key,
-		COALESCE(n.lan_address, ''), COALESCE(n.headscale_address, ''), COALESCE(n.public_address, ''), COALESCE(t.tunnel_id, '')
+		COALESCE(n.lan_address, ''), COALESCE(n.headscale_address, ''), COALESCE(n.public_address, ''), COALESCE(t.tunnel_id, ''),
+		entry_node.status, entry_node.last_seen_at
 		FROM publications p
 		JOIN services s ON s.id = p.service_id
 		JOIN applications a ON a.id = s.application_id
+		JOIN agents entry_node ON entry_node.id = p.entry_node_id
 		LEFT JOIN site_certificates c ON c.site_id = s.site_id
-		LEFT JOIN agent_network_profiles n ON n.agent_id = p.gateway_node_id
-		LEFT JOIN cloudflare_tunnels t ON t.agent_id = p.gateway_node_id
+		LEFT JOIN agent_network_profiles n ON n.agent_id = p.entry_node_id
+		LEFT JOIN cloudflare_tunnels t ON t.agent_id = p.entry_node_id
 		ORDER BY p.updated_at DESC, p.id`)
 	if err != nil {
 		return nil, err
@@ -557,16 +652,20 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 	for rows.Next() {
 		var value PublicationView
 		var tls int
-		var created, updated, certificateNotAfter, protocol, serviceName, appKey string
+		var actionRequired int
+		var created, updated, certificateNotAfter, protocol, serviceName, appKey, ingressOwner, entryNodeStatus, entryNodeLastSeen string
 		var lanAddress, headscaleAddress, publicAddress, tunnelID string
 		if err := rows.Scan(
-			&value.ID, &value.ServiceID, &value.Kind, &value.GatewayNodeID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID,
-			&tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &created, &updated,
-			&protocol, &serviceName, &appKey, &lanAddress, &headscaleAddress, &publicAddress, &tunnelID,
+			&value.ID, &value.ServiceID, &value.Kind, &ingressOwner, &value.EntryNodeID, &value.Hostname, &value.SNIHostname, &value.DNSProvider, &value.DNSRecordID,
+			&tls, &certificateNotAfter, &value.DesiredRevision, &value.AppliedRevision, &value.Status, &value.LastError, &actionRequired, &created, &updated,
+			&protocol, &serviceName, &appKey, &lanAddress, &headscaleAddress, &publicAddress, &tunnelID, &entryNodeStatus, &entryNodeLastSeen,
 		); err != nil {
 			return nil, err
 		}
 		value.TLSEnabled = tls == 1
+		value.Ingress = PublicationIngress{Owner: ingressOwner, EntryNodeID: value.EntryNodeID}
+		value.ActionRequired = actionRequired == 1
+		degradeOfflineNodeListener(&value, entryNodeStatus, entryNodeLastSeen, s.now().UTC())
 		if certificateNotAfter != "" {
 			expiresAt, parseErr := time.Parse(time.RFC3339Nano, certificateNotAfter)
 			if parseErr != nil {

@@ -54,11 +54,15 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 		return ApplicationCommandView{}, err
 	}
 	if found {
-		if publication.Kind != input.Kind || publication.GatewayNodeID != input.GatewayNodeID || publication.DNSProvider != input.DNSProvider || input.Hostname != "" && publication.Hostname != input.Hostname {
+		if publication.Kind != input.Kind || publication.EntryNodeID != input.GatewayNodeID || publication.DNSProvider != input.DNSProvider || input.Hostname != "" && publication.Hostname != input.Hostname {
 			return ApplicationCommandView{}, errors.New("center: stop the existing public subscription before changing its access settings")
 		}
 	} else {
-		publication, err = s.createPublication(ctx, PublicationInput{ServiceID: serviceID, Kind: input.Kind, GatewayNodeID: input.GatewayNodeID, Hostname: input.Hostname, DNSProvider: input.DNSProvider}, true)
+		ingress := PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: input.GatewayNodeID}
+		if input.Kind == publicationCloudflare {
+			ingress.Owner = ingressTunnelConnector
+		}
+		publication, err = s.createPublication(ctx, PublicationInput{ServiceID: serviceID, Kind: input.Kind, Ingress: ingress, Hostname: input.Hostname, DNSProvider: input.DNSProvider}, true)
 		if err != nil {
 			return ApplicationCommandView{}, err
 		}

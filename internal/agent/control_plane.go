@@ -37,6 +37,7 @@ type Client struct {
 	Capabilities       Capabilities
 	GatewayDriver      GatewayDriver
 	GatewayProvisioner GatewayProvisioner
+	NodeListener       NodeListenerProvisioner
 	TunnelProvisioner  TunnelProvisioner
 	Decommissioner     HostDecommissioner
 	Updater            HostUpdater
@@ -166,6 +167,7 @@ type DeploymentTask struct {
 	ApplicationRole           string                         `json:"applicationRole,omitempty"`
 	ServiceAddress            string                         `json:"serviceAddress,omitempty"`
 	GatewayState              *gateway.DesiredState          `json:"gatewayState,omitempty"`
+	NodeListenerState         *gateway.NodeListenerState     `json:"nodeListenerState,omitempty"`
 	GatewayCertificates       []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
 	TunnelState               *TunnelDesiredState            `json:"tunnelState,omitempty"`
 	ApplicationCommand        *RealityCommandTask            `json:"applicationCommand,omitempty"`
@@ -244,32 +246,29 @@ type RealityCommandTask struct {
 }
 
 type RealityCommandResult struct {
-	Action             string `json:"action"`
-	InboundID          int    `json:"inboundId"`
-	DisplayName        string `json:"displayName"`
-	ClientName         string `json:"clientName,omitempty"`
-	Listen             string `json:"listen"`
-	Port               int    `json:"port"`
-	TargetHost         string `json:"targetHost"`
-	TargetIP           string `json:"targetIp"`
-	ServerName         string `json:"serverName"`
-	NodeASN            int64  `json:"nodeAsn"`
-	TargetASN          int64  `json:"targetAsn"`
-	CDNProvider        string `json:"cdnProvider,omitempty"`
-	TLS13              bool   `json:"tls13"`
-	X25519             bool   `json:"x25519"`
-	HTTP2              bool   `json:"http2"`
-	CertificateValid   bool   `json:"certificateValid"`
-	CompanionInboundID int    `json:"companionInboundId,omitempty"`
-	CompanionTag       string `json:"companionTag,omitempty"`
-	CompanionPort      int    `json:"companionPort,omitempty"`
-	GuardStatus        string `json:"guardStatus"`
-	ProxyProtocol      bool   `json:"proxyProtocol"`
-	ConnectHostname    string `json:"connectHostname"`
-	ShareURI           string `json:"shareUri"`
-	InboundTag         string `json:"inboundTag"`
-	ClientCreated      bool   `json:"clientCreated"`
-	InboundTotalBytes  int64  `json:"inboundTotalBytes"`
+	Action            string `json:"action"`
+	InboundID         int    `json:"inboundId"`
+	DisplayName       string `json:"displayName"`
+	ClientName        string `json:"clientName,omitempty"`
+	Listen            string `json:"listen"`
+	Port              int    `json:"port"`
+	TargetHost        string `json:"targetHost"`
+	TargetIP          string `json:"targetIp"`
+	ServerName        string `json:"serverName"`
+	NodeASN           int64  `json:"nodeAsn"`
+	TargetASN         int64  `json:"targetAsn"`
+	CDNProvider       string `json:"cdnProvider,omitempty"`
+	TLS13             bool   `json:"tls13"`
+	X25519            bool   `json:"x25519"`
+	HTTP2             bool   `json:"http2"`
+	CertificateValid  bool   `json:"certificateValid"`
+	GuardStatus       string `json:"guardStatus"`
+	ProxyProtocol     bool   `json:"proxyProtocol"`
+	ConnectHostname   string `json:"connectHostname"`
+	ShareURI          string `json:"shareUri"`
+	InboundTag        string `json:"inboundTag"`
+	ClientCreated     bool   `json:"clientCreated"`
+	InboundTotalBytes int64  `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandTask struct {
@@ -485,6 +484,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		return nil, err
 	}
 	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver)
+	nodeListenerHealthy, nodeListenerRevision, nodeListenerConfigHash := nodeListenerRuntimeStatus(ctx, store, c.NodeListener)
 	now := time.Now()
 	candidates, err := networking.Discover(now)
 	if err != nil {
@@ -514,6 +514,9 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"gatewayRevision":              gatewayRevision,
 		"gatewayConfigHash":            gatewayConfigHash,
+		"nodeListenerHealthy":          nodeListenerHealthy,
+		"nodeListenerRevision":         nodeListenerRevision,
+		"nodeListenerConfigHash":       nodeListenerConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
 		"remoteUpdateSupported":        c.Updater != nil,
 		"tailscaleEnrolled":            c.TailscaleEnrolled,
@@ -730,7 +733,7 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 	}
 	result := make([]ApplicationEndpointObservation, 0, len(payload.Object))
 	for _, inbound := range payload.Object {
-		if inbound.Remark == realityGuardRemark && inbound.Protocol == "tunnel" && inbound.Listen == "127.0.0.1" && inbound.Port == threeXUIRealityGuardPort && strings.HasSuffix(strings.TrimSpace(inbound.Tag), "-guard") {
+		if isLegacyRealityGuardInbound(threeXUIRealityInbound{Remark: inbound.Remark, Protocol: inbound.Protocol, Listen: inbound.Listen, Port: inbound.Port, Tag: inbound.Tag}) {
 			continue
 		}
 		transport := "tcp"
@@ -1101,6 +1104,13 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				err = errors.New("agent: invalid gateway component operation")
 			}
 			store.gatewayMutationMu.Unlock()
+		}
+	case "node.listener.apply":
+		if task.NodeListenerState == nil || !c.Capabilities.Docker {
+			err = errors.New("agent: node listener task received without Docker capability")
+		} else {
+			coordinator, _ := c.GatewayDriver.(NodeListenerCoordinator)
+			err = applyNodeListenerState(ctx, store, c.NodeListener, coordinator, *task.NodeListenerState)
 		}
 	case "tunnel.state.apply":
 		if c.TunnelProvisioner == nil || !c.Capabilities.Tunnel || task.TunnelState == nil {

@@ -18,10 +18,10 @@ import (
 )
 
 const (
-	threeXUIRealityGuardPort = 21000
-	realityGuardRemark       = "Vastora REALITY fallback guard"
-	realityGuardDirectTag    = "vastora-reality-direct"
-	realityGuardBlackholeTag = "vastora-reality-blackhole"
+	legacyRealityGuardPort         = 21000
+	legacyRealityGuardRemark       = "Vastora REALITY fallback guard"
+	legacyRealityGuardDirectTag    = "vastora-reality-direct"
+	legacyRealityGuardBlackholeTag = "vastora-reality-blackhole"
 )
 
 type realityTargetVerification struct {
@@ -48,12 +48,10 @@ type realityTargetNetworkChecker interface {
 }
 
 var (
-	realityTargetVerifier                               = verifyRealityTarget
-	realityCompanionEnsurer                             = ensureRealityGuardCompanion
-	realityRoutingEnsurer                               = ensureRealityGuardRouting
-	realityInboundHardener                              = hardenThreeXUIRealityInbound
-	realityNetworkChecker   realityTargetNetworkChecker = cdncheck.New()
-	realityASNLookup                                    = lookupTeamCymruASN
+	realityTargetVerifier                              = verifyRealityTarget
+	realityInboundHardener                             = hardenThreeXUIRealityInbound
+	realityNetworkChecker  realityTargetNetworkChecker = cdncheck.New()
+	realityASNLookup                                   = lookupTeamCymruASN
 )
 
 func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublicAddress string) (realityTargetVerification, error) {
@@ -222,119 +220,55 @@ func verifyPinnedRealityTLS(ctx context.Context, result *realityTargetVerificati
 	return nil
 }
 
-func realityGuardTag(inboundTag string) string {
+func legacyRealityGuardTag(inboundTag string) string {
 	return strings.TrimSpace(inboundTag) + "-guard"
 }
 
-func realityGuardPort(realityPort int) (int, error) {
-	if realityPort != threeXUIRealityPort {
-		return 0, errors.New("agent: REALITY inbound must use the managed port 443")
-	}
-	return threeXUIRealityGuardPort, nil
-}
-
-func ensureRealityGuardCompanion(ctx context.Context, baseURL, token string, nodeID, realityPort int, inboundTag, targetIP string) (threeXUIRealityInbound, error) {
-	port, err := realityGuardPort(realityPort)
-	if err != nil {
-		return threeXUIRealityInbound{}, err
-	}
-	tag := realityGuardTag(inboundTag)
-	inbounds, err := listRealityInbounds(ctx, baseURL, token)
-	if err != nil {
-		return threeXUIRealityInbound{}, err
-	}
-	for _, existing := range inbounds {
-		if !threeXUIInboundMatchesNode(existing, nodeID) || existing.Port != port {
-			continue
-		}
-		if normalizedThreeXUIInboundTag(existing.Tag, nodeID) == normalizedThreeXUIInboundTag(tag, nodeID) && existing.Protocol == "tunnel" && existing.Listen == "127.0.0.1" && realityGuardTunnelTargets(existing, targetIP) {
-			return existing, nil
-		}
-		if existing.Remark != realityGuardRemark || existing.Protocol != "tunnel" || existing.Listen != "127.0.0.1" {
-			return threeXUIRealityInbound{}, errors.New("agent: deterministic REALITY guard companion conflicts with an existing inbound")
-		}
-		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/del/"+strconv.Itoa(existing.ID), token, "application/json", map[string]any{}); err != nil {
-			return threeXUIRealityInbound{}, fmt.Errorf("agent: replace stale REALITY guard companion: %w", err)
-		}
-		break
-	}
-	payload := map[string]any{
-		"enable": true, "tag": tag, "remark": realityGuardRemark, "listen": "127.0.0.1", "port": port, "protocol": "tunnel",
-		"settings":       map[string]any{"network": "tcp", "address": targetIP, "port": 443},
-		"streamSettings": map[string]any{},
-		"sniffing":       map[string]any{"enabled": true, "destOverride": []string{"tls"}, "metadataOnly": false, "routeOnly": true},
-	}
-	if nodeID > 0 {
-		payload["nodeId"] = nodeID
-	}
-	created, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/add", token, "application/json", payload)
-	if err != nil {
-		return threeXUIRealityInbound{}, fmt.Errorf("agent: create REALITY guard companion: %w", err)
-	}
-	var inbound threeXUIRealityInbound
-	if json.Unmarshal(created, &inbound) != nil || inbound.ID < 1 {
-		return threeXUIRealityInbound{}, errors.New("agent: 3x-ui returned an invalid REALITY guard companion")
-	}
-	if strings.TrimSpace(inbound.Tag) == "" {
-		inbound.Tag = tag
-	}
-	observed, found, err := findRealityInbound(ctx, baseURL, token, tag, nodeID)
-	if err != nil || !found || observed.ID != inbound.ID || observed.Protocol != "tunnel" || observed.Listen != "127.0.0.1" || observed.Port != port || !realityGuardTunnelTargets(observed, targetIP) {
-		return threeXUIRealityInbound{}, errors.New("agent: REALITY guard companion failed read-back")
-	}
-	return observed, nil
-}
-
-func hardenThreeXUIRealityInbound(ctx context.Context, baseURL, token string, inbound threeXUIRealityInbound, nodeID int, inboundTag string, verification realityTargetVerification) (threeXUIRealityInbound, threeXUIRealityInbound, error) {
+func hardenThreeXUIRealityInbound(ctx context.Context, baseURL, token string, inbound threeXUIRealityInbound, nodeID int, inboundTag string, verification realityTargetVerification) (threeXUIRealityInbound, error) {
 	if inbound.ID < 1 || inbound.Protocol != "vless" {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, errors.New("agent: selected REALITY inbound is invalid")
+		return threeXUIRealityInbound{}, errors.New("agent: selected REALITY inbound is invalid")
 	}
-	guardPort, err := realityGuardPort(inbound.Port)
-	if err != nil {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, err
+	if inbound.Port != threeXUIRealityPort {
+		return threeXUIRealityInbound{}, errors.New("agent: REALITY inbound must use the managed port 443")
 	}
 	update, err := readThreeXUIInboundUpdate(ctx, baseURL, token, inbound.ID)
 	if err != nil {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, err
+		return threeXUIRealityInbound{}, err
 	}
 	update["enable"] = false
 	if err := writeThreeXUIInboundUpdate(ctx, baseURL, token, inbound.ID, update); err != nil {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, fmt.Errorf("agent: disable REALITY inbound before hardening: %w", err)
-	}
-	companion, err := ensureRealityGuardCompanion(ctx, baseURL, token, nodeID, inbound.Port, inboundTag, verification.TargetIP)
-	if err != nil {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, err
-	}
-	if err := ensureRealityGuardRouting(ctx, baseURL, token, companion.Tag, verification.ServerName); err != nil {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, err
+		return threeXUIRealityInbound{}, fmt.Errorf("agent: disable REALITY inbound before hardening: %w", err)
 	}
 	streamSettings, ok := update["streamSettings"].(map[string]any)
 	if !ok || streamSettings["security"] != "reality" {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, errors.New("agent: selected inbound is not VLESS REALITY")
+		return threeXUIRealityInbound{}, errors.New("agent: selected inbound is not VLESS REALITY")
 	}
 	realitySettings, ok := streamSettings["realitySettings"].(map[string]any)
 	if !ok {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, errors.New("agent: selected REALITY inbound settings are incomplete")
+		return threeXUIRealityInbound{}, errors.New("agent: selected REALITY inbound settings are incomplete")
 	}
-	realitySettings["target"] = net.JoinHostPort("127.0.0.1", strconv.Itoa(guardPort))
+	realitySettings["target"] = net.JoinHostPort(verification.TargetIP, "443")
 	realitySettings["serverNames"] = []any{verification.ServerName}
 	update["enable"] = false
 	if err := writeThreeXUIInboundUpdate(ctx, baseURL, token, inbound.ID, update); err != nil {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, fmt.Errorf("agent: point REALITY fallback at guard companion: %w", err)
+		return threeXUIRealityInbound{}, fmt.Errorf("agent: pin REALITY fallback to the verified target: %w", err)
 	}
 	observed, err := getThreeXUIInbound(ctx, baseURL, token, inbound.ID)
-	if err != nil || !realityInboundUsesGuard(observed, guardPort, verification.ServerName) || !realityInboundAcceptsProxyProtocol(observed) || observed.Enable {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, errors.New("agent: disabled REALITY guard configuration failed read-back")
+	if err != nil || !realityInboundUsesVerifiedTarget(observed, verification.TargetIP, verification.ServerName) || !realityInboundAcceptsProxyProtocol(observed) || observed.Enable {
+		return threeXUIRealityInbound{}, errors.New("agent: disabled REALITY guard configuration failed read-back")
 	}
 	update["enable"] = true
 	if err := writeThreeXUIInboundUpdate(ctx, baseURL, token, inbound.ID, update); err != nil {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, fmt.Errorf("agent: enable hardened REALITY inbound: %w", err)
+		return threeXUIRealityInbound{}, fmt.Errorf("agent: enable hardened REALITY inbound: %w", err)
 	}
 	observed, err = getThreeXUIInbound(ctx, baseURL, token, inbound.ID)
-	if err != nil || !observed.Enable || !realityInboundUsesGuard(observed, guardPort, verification.ServerName) || !realityInboundAcceptsProxyProtocol(observed) {
-		return threeXUIRealityInbound{}, threeXUIRealityInbound{}, errors.New("agent: hardened REALITY inbound failed final read-back")
+	if err != nil || !observed.Enable || !realityInboundUsesVerifiedTarget(observed, verification.TargetIP, verification.ServerName) || !realityInboundAcceptsProxyProtocol(observed) {
+		return threeXUIRealityInbound{}, errors.New("agent: hardened REALITY inbound failed final read-back")
 	}
-	return observed, companion, nil
+	if err := removeLegacyRealityGuard(ctx, baseURL, token, nodeID, inboundTag); err != nil {
+		return threeXUIRealityInbound{}, err
+	}
+	return observed, nil
 }
 
 func readThreeXUIInboundUpdate(ctx context.Context, baseURL, token string, inboundID int) (map[string]any, error) {
@@ -369,7 +303,7 @@ func getThreeXUIInbound(ctx context.Context, baseURL, token string, inboundID in
 	return inbound, nil
 }
 
-func realityInboundUsesGuard(inbound threeXUIRealityInbound, guardPort int, serverName string) bool {
+func realityInboundUsesVerifiedTarget(inbound threeXUIRealityInbound, targetIP, serverName string) bool {
 	var stream struct {
 		Security string `json:"security"`
 		Reality  struct {
@@ -378,10 +312,10 @@ func realityInboundUsesGuard(inbound threeXUIRealityInbound, guardPort int, serv
 		} `json:"realitySettings"`
 	}
 	return json.Unmarshal(inbound.StreamSettings, &stream) == nil && stream.Security == "reality" &&
-		stream.Reality.Target == net.JoinHostPort("127.0.0.1", strconv.Itoa(guardPort)) && len(stream.Reality.ServerNames) == 1 && stream.Reality.ServerNames[0] == serverName
+		stream.Reality.Target == net.JoinHostPort(targetIP, "443") && len(stream.Reality.ServerNames) == 1 && stream.Reality.ServerNames[0] == serverName
 }
 
-func guardedRealityResult(result RealityCommandResult, verification realityTargetVerification, companion threeXUIRealityInbound) RealityCommandResult {
+func guardedRealityResult(result RealityCommandResult, verification realityTargetVerification) RealityCommandResult {
 	result.TargetHost = verification.TargetHost
 	result.TargetIP = verification.TargetIP
 	result.ServerName = verification.ServerName
@@ -392,9 +326,6 @@ func guardedRealityResult(result RealityCommandResult, verification realityTarge
 	result.X25519 = verification.X25519
 	result.HTTP2 = verification.HTTP2
 	result.CertificateValid = verification.CertificateValid
-	result.CompanionInboundID = companion.ID
-	result.CompanionTag = companion.Tag
-	result.CompanionPort = companion.Port
 	result.GuardStatus = "ready"
 	result.ProxyProtocol = true
 	return result
@@ -409,19 +340,62 @@ func realityVerificationResult(verification realityTargetVerification) RealityCo
 	}
 }
 
-func realityGuardTunnelTargets(inbound threeXUIRealityInbound, targetIP string) bool {
-	var settings struct {
-		Network string `json:"network"`
-		Address string `json:"address"`
-		Port    int    `json:"port"`
+func removeLegacyRealityGuard(ctx context.Context, baseURL, token string, nodeID int, inboundTag string) error {
+	inbounds, err := listRealityInbounds(ctx, baseURL, token)
+	if err != nil {
+		return fmt.Errorf("agent: inspect obsolete REALITY guard: %w", err)
 	}
-	return json.Unmarshal(inbound.Settings, &settings) == nil && settings.Network == "tcp" && settings.Address == targetIP && settings.Port == 443
+	expectedTag := normalizedThreeXUIInboundTag(legacyRealityGuardTag(inboundTag), nodeID)
+	legacy := make([]threeXUIRealityInbound, 0, 1)
+	for _, candidate := range inbounds {
+		if isLegacyRealityGuardInbound(candidate) && threeXUIInboundMatchesNode(candidate, nodeID) && normalizedThreeXUIInboundTag(candidate.Tag, nodeID) == expectedTag {
+			legacy = append(legacy, candidate)
+		}
+	}
+	if len(legacy) == 0 {
+		return nil
+	}
+	legacyTags := make([]string, 0, len(legacy))
+	for _, candidate := range legacy {
+		legacyTags = append(legacyTags, candidate.Tag)
+	}
+	if err := removeLegacyRealityGuardRouting(ctx, baseURL, token, legacyTags, false); err != nil {
+		return err
+	}
+	for _, candidate := range legacy {
+		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/del/"+strconv.Itoa(candidate.ID), token, "application/json", map[string]any{}); err != nil {
+			return fmt.Errorf("agent: remove obsolete REALITY guard inbound: %w", err)
+		}
+	}
+	inbounds, err = listRealityInbounds(ctx, baseURL, token)
+	if err != nil {
+		return fmt.Errorf("agent: verify obsolete REALITY guard cleanup: %w", err)
+	}
+	remainingLegacy := false
+	for _, candidate := range inbounds {
+		if isLegacyRealityGuardInbound(candidate) {
+			remainingLegacy = true
+		}
+		if isLegacyRealityGuardInbound(candidate) && threeXUIInboundMatchesNode(candidate, nodeID) && normalizedThreeXUIInboundTag(candidate.Tag, nodeID) == expectedTag {
+			return errors.New("agent: obsolete REALITY guard inbound survived cleanup")
+		}
+	}
+	if !remainingLegacy {
+		if err := removeLegacyRealityGuardRouting(ctx, baseURL, token, legacyTags, true); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func ensureRealityGuardRouting(ctx context.Context, baseURL, token, guardTag, serverName string) error {
+func isLegacyRealityGuardInbound(inbound threeXUIRealityInbound) bool {
+	return inbound.Remark == legacyRealityGuardRemark && inbound.Protocol == "tunnel" && inbound.Listen == "127.0.0.1" && inbound.Port == legacyRealityGuardPort && strings.HasSuffix(strings.TrimSpace(inbound.Tag), "-guard")
+}
+
+func removeLegacyRealityGuardRouting(ctx context.Context, baseURL, token string, legacyTags []string, removeOutbounds bool) error {
 	payload, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/xray/", token, "application/json", map[string]any{})
 	if err != nil {
-		return fmt.Errorf("agent: read 3x-ui Xray settings: %w", err)
+		return fmt.Errorf("agent: read 3x-ui Xray settings for obsolete guard cleanup: %w", err)
 	}
 	settings, err := decodeThreeXUIXraySettings(payload)
 	if err != nil {
@@ -431,17 +405,47 @@ func ensureRealityGuardRouting(ctx context.Context, baseURL, token, guardTag, se
 	if err != nil {
 		return err
 	}
-	applyRealityGuardRouting(settings.XraySetting, guardTag, serverName)
+	routing, _ := settings.XraySetting["routing"].(map[string]any)
+	if routing != nil {
+		rules, _ := routing["rules"].([]any)
+		preserved := make([]any, 0, len(rules))
+		for _, raw := range rules {
+			rule, _ := raw.(map[string]any)
+			outboundTag, _ := rule["outboundTag"].(string)
+			if routingRuleUsesAnyInbound(raw, legacyTags) || (removeOutbounds && (outboundTag == legacyRealityGuardDirectTag || outboundTag == legacyRealityGuardBlackholeTag)) {
+				continue
+			}
+			preserved = append(preserved, raw)
+		}
+		routing["rules"] = preserved
+	}
+	if removeOutbounds {
+		outbounds, _ := settings.XraySetting["outbounds"].([]any)
+		preserved := make([]any, 0, len(outbounds))
+		for _, raw := range outbounds {
+			outbound, _ := raw.(map[string]any)
+			tag, _ := outbound["tag"].(string)
+			if tag != legacyRealityGuardDirectTag && tag != legacyRealityGuardBlackholeTag {
+				preserved = append(preserved, raw)
+			}
+		}
+		settings.XraySetting["outbounds"] = preserved
+	}
 	encoded, err := json.Marshal(settings.XraySetting)
 	if err != nil {
 		return err
 	}
+	if string(encoded) == string(original) {
+		return nil
+	}
 	form := url.Values{"xraySetting": {string(encoded)}, "outboundTestUrl": {settings.OutboundTestURL}}
 	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/xray/update", token, "application/x-www-form-urlencoded", form); err != nil {
-		rollbackErr := restoreThreeXUIXraySettings(ctx, baseURL, token, original, settings.OutboundTestURL)
-		return errors.Join(fmt.Errorf("agent: apply and test REALITY guard Xray routes: %w", err), rollbackErr)
+		if verifyErr := verifyLegacyRealityGuardRoutingRemoved(ctx, baseURL, token, legacyTags, removeOutbounds); verifyErr == nil {
+			return nil
+		}
+		return fmt.Errorf("agent: remove obsolete REALITY guard Xray routes: %w", err)
 	}
-	if err := verifyRealityGuardRoutingReadBack(ctx, baseURL, token, guardTag, serverName); err != nil {
+	if err := verifyLegacyRealityGuardRoutingRemoved(ctx, baseURL, token, legacyTags, removeOutbounds); err != nil {
 		return errors.Join(err, restoreThreeXUIXraySettings(ctx, baseURL, token, original, settings.OutboundTestURL))
 	}
 	return nil
@@ -467,46 +471,13 @@ func restoreThreeXUIXraySettings(ctx context.Context, baseURL, token string, ori
 	return nil
 }
 
-func applyRealityGuardRouting(config map[string]any, guardTag, serverName string) {
-	outbounds, _ := config["outbounds"].([]any)
-	managedOutbounds := []any{
-		map[string]any{"tag": realityGuardDirectTag, "protocol": "freedom", "settings": map[string]any{}},
-		map[string]any{"tag": realityGuardBlackholeTag, "protocol": "blackhole", "settings": map[string]any{}},
-	}
-	for _, raw := range outbounds {
-		outbound, _ := raw.(map[string]any)
-		tag, _ := outbound["tag"].(string)
-		if tag != realityGuardDirectTag && tag != realityGuardBlackholeTag {
-			managedOutbounds = append(managedOutbounds, raw)
+func routingRuleUsesAnyInbound(raw any, expected []string) bool {
+	for _, tag := range expected {
+		if routingRuleUsesInbound(raw, tag) {
+			return true
 		}
 	}
-	config["outbounds"] = managedOutbounds
-	routing, _ := config["routing"].(map[string]any)
-	if routing == nil {
-		routing = map[string]any{"domainStrategy": "AsIs"}
-		config["routing"] = routing
-	}
-	rules, _ := routing["rules"].([]any)
-	preserved := make([]any, 0, len(rules)+2)
-	preserved = append(preserved,
-		map[string]any{"type": "field", "inboundTag": []any{guardTag}, "domain": []any{"full:" + serverName}, "outboundTag": realityGuardDirectTag},
-		map[string]any{"type": "field", "inboundTag": []any{guardTag}, "outboundTag": realityGuardBlackholeTag},
-	)
-	for _, raw := range rules {
-		if !isManagedRealityGuardRule(raw, guardTag) {
-			preserved = append(preserved, raw)
-		}
-	}
-	routing["rules"] = preserved
-}
-
-func isManagedRealityGuardRule(raw any, guardTag string) bool {
-	rule, _ := raw.(map[string]any)
-	tag, _ := rule["outboundTag"].(string)
-	if routingRuleUsesInbound(raw, guardTag) {
-		return true
-	}
-	return (tag == realityGuardDirectTag || tag == realityGuardBlackholeTag) && !routingRuleHasInboundRestriction(raw)
+	return false
 }
 
 func routingRuleUsesInbound(raw any, expected string) bool {
@@ -528,60 +499,33 @@ func routingRuleUsesInbound(raw any, expected string) bool {
 	return false
 }
 
-func verifyRealityGuardRoutingReadBack(ctx context.Context, baseURL, token, guardTag, serverName string) error {
+func verifyLegacyRealityGuardRoutingRemoved(ctx context.Context, baseURL, token string, legacyTags []string, removeOutbounds bool) error {
 	payload, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/xray/", token, "application/json", map[string]any{})
 	if err != nil {
 		return err
 	}
 	settings, err := decodeThreeXUIXraySettings(payload)
 	if err != nil {
-		return errors.New("agent: REALITY guard Xray read-back is invalid")
+		return errors.New("agent: obsolete REALITY guard Xray read-back is invalid")
 	}
 	routing, _ := settings.XraySetting["routing"].(map[string]any)
 	rules, _ := routing["rules"].([]any)
-	if !realityGuardRulesSurvived(rules, guardTag, serverName) {
-		return errors.New("agent: REALITY guard routes did not survive Xray config test/read-back")
-	}
-	return nil
-}
-
-func realityGuardRulesSurvived(rules []any, guardTag, serverName string) bool {
-	directIndex, blackholeIndex := -1, -1
-	for index, rule := range rules {
-		switch {
-		case routingRuleMatches(rule, guardTag, "full:"+serverName, realityGuardDirectTag):
-			directIndex = index
-		case routingRuleMatches(rule, guardTag, "", realityGuardBlackholeTag):
-			blackholeIndex = index
-		case routingRuleUsesInbound(rule, guardTag):
-			return false
-		case directIndex < 0 && !routingRuleHasInboundRestriction(rule):
-			return false
+	for _, rule := range rules {
+		value, _ := rule.(map[string]any)
+		outboundTag, _ := value["outboundTag"].(string)
+		if routingRuleUsesAnyInbound(rule, legacyTags) || (removeOutbounds && (outboundTag == legacyRealityGuardDirectTag || outboundTag == legacyRealityGuardBlackholeTag)) {
+			return errors.New("agent: obsolete REALITY guard routes survived cleanup")
 		}
 	}
-	return directIndex >= 0 && blackholeIndex == directIndex+1
-}
-
-func routingRuleHasInboundRestriction(raw any) bool {
-	rule, _ := raw.(map[string]any)
-	switch values := rule["inboundTag"].(type) {
-	case []any:
-		return len(values) > 0
-	case []string:
-		return len(values) > 0
-	default:
-		return false
+	if removeOutbounds {
+		outbounds, _ := settings.XraySetting["outbounds"].([]any)
+		for _, raw := range outbounds {
+			outbound, _ := raw.(map[string]any)
+			tag, _ := outbound["tag"].(string)
+			if tag == legacyRealityGuardDirectTag || tag == legacyRealityGuardBlackholeTag {
+				return errors.New("agent: obsolete REALITY guard outbounds survived cleanup")
+			}
+		}
 	}
-}
-
-func routingRuleMatches(raw any, inboundTag, domain, outboundTag string) bool {
-	rule, _ := raw.(map[string]any)
-	if rule["outboundTag"] != outboundTag || !routingRuleUsesInbound(raw, inboundTag) {
-		return false
-	}
-	domains, exists := rule["domain"].([]any)
-	if domain == "" {
-		return !exists || len(domains) == 0
-	}
-	return exists && len(domains) == 1 && domains[0] == domain
+	return nil
 }

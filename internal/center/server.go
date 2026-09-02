@@ -291,6 +291,11 @@ func (s *Server) staticHandler() http.Handler {
 			http.NotFound(writer, request)
 			return
 		}
+		if strings.HasPrefix(request.URL.Path, "/assets/") {
+			writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			writer.Header().Set("Cache-Control", "no-store")
+		}
 		files.ServeHTTP(writer, request)
 	})
 }
