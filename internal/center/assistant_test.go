@@ -211,7 +211,10 @@ func TestAssistantProposalRequiresExactApprovalAndAppliesExactlyOnce(t *testing.
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`, "password=must-not-leak", time.Now().UTC().Format(time.RFC3339Nano), first.ID); err != nil {
+	// No prefix or sensitive field name: diagnostic isolation must not depend
+	// on recognizing this synthetic short credential.
+	runtimeError := "upstream rejected the supplied value: horse42"
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`, runtimeError, time.Now().UTC().Format(time.RFC3339Nano), first.ID); err != nil {
 		t.Fatal(err)
 	}
 	deadline = time.Now().Add(3 * time.Second)
@@ -221,8 +224,8 @@ func TestAssistantProposalRequiresExactApprovalAndAppliesExactlyOnce(t *testing.
 			t.Fatal(err)
 		}
 		if status == "failed" {
-			if strings.Contains(lastError, "must-not-leak") || lastError != "[redacted sensitive input]" {
-				t.Fatalf("Agent failure was not redacted: %q", lastError)
+			if strings.Contains(lastError, "horse42") || lastError != assistantDiagnosticSummary(runtimeError) {
+				t.Fatalf("Agent failure was not isolated: %q", lastError)
 			}
 			break
 		}
@@ -240,13 +243,26 @@ func TestAssistantProposalRequiresExactApprovalAndAppliesExactlyOnce(t *testing.
 		if _, ok := wanted[event.Event]; ok {
 			wanted[event.Event] = true
 		}
-		if bytes.Contains(event.Data, []byte("must-not-leak")) {
+		if bytes.Contains(event.Data, []byte("horse42")) {
 			t.Fatalf("SSE event leaked Agent failure credentials: %s", event.Data)
 		}
 	}
 	for name, found := range wanted {
 		if !found {
 			t.Fatalf("assistant event stream did not include %s", name)
+		}
+	}
+	toolResult, _, err := server.executeAssistantTool(ctx, adminID, run, "explain-tool", "explain_failure", assistantJSON(map[string]string{"deploymentId": first.ID}), assistantPreviewCache{})
+	if err != nil || bytes.Contains(toolResult, []byte("horse42")) || !bytes.Contains(toolResult, []byte("internal_error")) {
+		t.Fatalf("failure explanation did not isolate runtime details: %s err=%v", toolResult, err)
+	}
+	history, err := store.assistantMessages(ctx, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range history {
+		if strings.Contains(message.Content, "horse42") {
+			t.Fatal("raw runtime diagnostic entered assistant history")
 		}
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE assistant_runs SET status = 'approval_required', last_error = '' WHERE id = ?`, run.ID); err != nil {
@@ -517,6 +533,9 @@ func TestAssistantRejectsPotentialCredentialsBeforePersistence(t *testing.T) {
 		"Authorization: Bearer opaque-value-that-must-not-persist",
 	}
 	for _, input := range inputs {
+		if _, err := store.CreateAssistantConversation(ctx, adminID, input); err == nil {
+			t.Fatal("credential-like conversation title was accepted")
+		}
 		if _, err := store.QueueAssistantMessage(ctx, adminID, conversation.ID, input); err == nil || !strings.Contains(err.Error(), "appears to contain a credential") {
 			t.Fatalf("credential-like input was accepted: input=%q err=%v", input, err)
 		}
@@ -540,5 +559,46 @@ func TestAssistantRejectsPotentialCredentialsBeforePersistence(t *testing.T) {
 		if assistantTextContainsPotentialCredential(safe) {
 			t.Fatalf("safe identifier was treated as a credential: %q", safe)
 		}
+	}
+}
+
+func TestAssistantToolArgumentsInspectEveryDecodedString(t *testing.T) {
+	for _, input := range []string{
+		`{"config":{"notes":"sk-abcdefghijklmnopqrstuvwxyz012345"}}`,
+		`{"config":{"notes":["safe",{"value":"V7mQ2fL9sN4xK8cR1pT6wY3hJ5uB0dEza"}]}}`,
+		`{"config":{"api-key":"horse42"}}`,
+		`{"config":{"密钥":"horse42"}}`,
+		`{"config":{"notes":"\u0073\u006b-abcdefghijklmnopqrstuvwxyz012345","notes":"safe"}}`,
+		`{"config":{"notes":"safe","notes":"\u0073\u006b-abcdefghijklmnopqrstuvwxyz012345"}}`,
+		`{"config":{"authori\u007aation":"horse42"}}`,
+		`{"config":`,
+	} {
+		if !assistantArgumentsContainSensitiveData(json.RawMessage(input)) {
+			t.Errorf("sensitive or invalid tool arguments accepted: %s", input)
+		}
+	}
+	for _, input := range []string{
+		`{}`, `{"config":{"enabled":true,"port":443,"optional":null}}`,
+		`{"agentId":"7a0a3214-4076-4ae4-9b77-96acbb143d42","config":{"names":["first","second"]}}`,
+	} {
+		if assistantArgumentsContainSensitiveData(json.RawMessage(input)) {
+			t.Errorf("safe tool arguments rejected: %s", input)
+		}
+	}
+}
+
+func TestAssistantRuntimeDiagnosticsAreStructurallyExcluded(t *testing.T) {
+	for _, value := range []string{"horse42", "0123456789abcdef0123456789abcdef", "7a0a3214-4076-4ae4-9b77-96acbb143d42"} {
+		payload := assistantJSON(map[string]any{
+			"error":        assistantDiagnosticSummary("upstream rejected " + value),
+			"actions":      sanitizeAssistantActions([]ActionView{{ID: "action", Message: value}}),
+			"applications": sanitizeAssistantApplications([]ApplicationView{{ID: "app", NodeSyncError: value}}),
+		})
+		if bytes.Contains(payload, []byte(value)) {
+			t.Fatal("raw diagnostic reached the assistant data projection")
+		}
+	}
+	if assistantDiagnosticSummary("") != "" {
+		t.Fatal("an empty diagnostic became an error")
 	}
 }

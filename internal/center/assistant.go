@@ -116,6 +116,9 @@ func (s *Store) CreateAssistantConversation(ctx context.Context, adminID, title 
 	if len(title) > 160 {
 		return AssistantConversationView{}, errors.New("center: assistant conversation title is too long")
 	}
+	if assistantTextContainsPotentialCredential(title) {
+		return AssistantConversationView{}, errors.New("center: assistant conversation title appears to contain a credential")
+	}
 	id, err := randomToken(18)
 	if err != nil {
 		return AssistantConversationView{}, err
