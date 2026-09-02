@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.97](https://github.com/petauron/vastora/compare/v0.1.0-alpha.96...v0.1.0-alpha.97) (2026-09-02)
+
+
+### Bug Fixes
+
+* **center:** preserve private DNS during Agent restarts ([8a845b3](https://github.com/petauron/vastora/commit/8a845b3adf13933d5eff3dfe5c51e85fd7ee49c3))
+
 ## [0.1.0-alpha.96](https://github.com/petauron/vastora/compare/v0.1.0-alpha.95...v0.1.0-alpha.96) (2026-09-02)
 
 
