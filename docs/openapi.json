@@ -2252,18 +2252,6 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "applicationId",
-                  "regionCode",
-                  "name",
-                  "gatewayNodeId",
-                  "hostname",
-                  "dnsProvider",
-                  "targetHost",
-                  "serverName",
-                  "inboundTotalBytes",
-                  "inboundResetDay"
-                ],
                 "properties": {
                   "applicationId": {
                     "type": "string"
@@ -2307,7 +2295,17 @@
                   "clientExpiryTime": {
                     "type": "integer"
                   }
-                }
+                },
+                "required": [
+                  "applicationId",
+                  "regionCode",
+                  "name",
+                  "gatewayNodeId",
+                  "hostname",
+                  "dnsProvider",
+                  "targetHost",
+                  "serverName"
+                ]
               }
             }
           }
@@ -2372,10 +2370,6 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "targetHost",
-                  "serverName"
-                ],
                 "properties": {
                   "targetHost": {
                     "type": "string"
@@ -2383,7 +2377,11 @@
                   "serverName": {
                     "type": "string"
                   }
-                }
+                },
+                "required": [
+                  "targetHost",
+                  "serverName"
+                ]
               }
             }
           }

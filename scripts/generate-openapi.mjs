@@ -291,7 +291,14 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
-  if (route.handler === "handleRevealApplicationCredentials") {
+  if (route.handler === "handleCreateRealityCommand") {
+    operation.requestBody.content["application/json"].schema.required = [
+      "applicationId", "regionCode", "name", "gatewayNodeId", "hostname",
+      "dnsProvider", "targetHost", "serverName",
+    ];
+  } else if (route.handler === "handleVerifyRealityTarget") {
+    operation.requestBody.content["application/json"].schema.required = ["targetHost", "serverName"];
+  } else if (route.handler === "handleRevealApplicationCredentials") {
     operation.summary = "Reveal Protected Application Credentials";
     operation.description = "Reauthenticates the current administrator, records a security audit event, and returns only the current credentials for the selected managed 3x-ui controller or CPA application. The response is never cacheable.";
     operation.requestBody.content["application/json"].schema.required = ["currentPassword"];
