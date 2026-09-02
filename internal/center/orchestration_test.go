@@ -98,6 +98,34 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	}
 }
 
+func TestStaleGatewayCompletionIsAcknowledgedAfterDesiredStateAdvances(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "gateway-restart", NodeCapabilities{Gateway: true}, []networking.Candidate{{Address: "10.0.0.42", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.42", LANAddress: "10.0.0.42", EnabledKinds: []string{networking.KindLAN}})
+
+	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_states
+		SET desired_revision = 36, applied_revision = 33, status = 'pending', attempt = 1164
+		WHERE gateway_node_id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteGatewayState(ctx, node.ID, node.Credential, 35, 1164, true, ""); err != nil {
+		t.Fatalf("superseded gateway completion was not acknowledged: %v", err)
+	}
+
+	var desired, applied, attempt int64
+	var status string
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, attempt FROM gateway_states WHERE gateway_node_id = ?`, node.ID).Scan(&desired, &applied, &status, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if desired != 36 || applied != 33 || status != "pending" || attempt != 1164 {
+		t.Fatalf("superseded completion changed current gateway state: desired=%d applied=%d status=%q attempt=%d", desired, applied, status, attempt)
+	}
+	if err := store.CompleteGatewayState(ctx, node.ID, node.Credential, 37, 1164, true, ""); err == nil || !strings.Contains(err.Error(), "stale gateway result") {
+		t.Fatalf("future gateway completion was accepted: %v", err)
+	}
+}
+
 func TestCloudflareWebPublicationRequiresConfiguredCenterAccess(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
