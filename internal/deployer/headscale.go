@@ -38,6 +38,7 @@ const (
 	DefaultHeadscaleContainer = "vastora-center-headscale"
 	DefaultGatewayContainer   = gatewayruntime.CaddyContainer
 	gatewayRollbackContainer  = "vastora-gateway-caddy-rollback"
+	localGatewayProbeOrigin   = "https://local-gateway.vastora.invalid"
 )
 
 type DockerHeadscaleInstaller struct {
@@ -852,8 +853,8 @@ func waitForURL(ctx context.Context, httpClient *http.Client, target string, tim
 
 func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, internalPort int, timeout time.Duration) error {
 	parsed, err := url.Parse(endpoint)
-	if err != nil {
-		return err
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return errors.New("deployer: local gateway endpoint is invalid")
 	}
 	transport := &http.Transport{
 		Proxy: nil,
@@ -867,11 +868,10 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, inter
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+healthPath, nil)
+		request, err := localGatewayProbeRequest(ctx, parsed.Host, healthPath)
 		if err != nil {
 			return err
 		}
-		request.Host = parsed.Host
 		response, err := client.Do(request)
 		if err == nil {
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
@@ -893,4 +893,16 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, inter
 		lastErr = errors.New("timeout")
 	}
 	return lastErr
+}
+
+func localGatewayProbeRequest(ctx context.Context, authority, healthPath string) (*http.Request, error) {
+	if strings.TrimSpace(authority) == "" || !strings.HasPrefix(healthPath, "/") || strings.HasPrefix(healthPath, "//") || strings.ContainsAny(healthPath, "?#") {
+		return nil, errors.New("deployer: local gateway health target is invalid")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, localGatewayProbeOrigin+healthPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Host = authority
+	return request, nil
 }

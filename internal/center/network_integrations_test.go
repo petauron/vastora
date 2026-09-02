@@ -94,25 +94,28 @@ func TestHeadscaleRequestKeepsFixedOriginAndRejectsRedirects(t *testing.T) {
 		response.WriteHeader(http.StatusOK)
 	}))
 	defer target.Close()
-	redirect := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	redirect := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Location", target.URL+"/stolen")
 		response.WriteHeader(http.StatusTemporaryRedirect)
 	}))
 	defer redirect.Close()
-	client := headscaleClient{baseURL: redirect.URL, apiKey: "headscale-secret", http: redirect.Client()}
+	client, err := newHeadscaleClient(redirect.URL, "headscale-secret", redirect.Listener.Addr().String(), redirect.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := client.do(context.Background(), http.MethodGet, "/api/v1/user", nil, nil, nil); err == nil || !strings.Contains(err.Error(), "307") {
 		t.Fatalf("Headscale redirect was followed or accepted: %v", err)
 	}
 	if targetRequests != 0 {
 		t.Fatal("Headscale credentials were forwarded to a redirect target")
 	}
-	requestURL, err := headscaleRequestURL("https://headscale.example.test/", "/api/v1/user", url.Values{"name": []string{"vastora"}})
-	if err != nil || requestURL != "https://headscale.example.test/api/v1/user?name=vastora" {
-		t.Fatalf("unexpected validated Headscale URL: %q err=%v", requestURL, err)
+	requestURL, err := headscaleRequestURL("/api/v1/user", url.Values{"name": []string{"vastora"}})
+	if err != nil || requestURL != headscalePinnedRequestOrigin+"/api/v1/user?name=vastora" {
+		t.Fatalf("unexpected pinned Headscale URL: %q err=%v", requestURL, err)
 	}
-	for _, invalid := range []struct{ base, path string }{{"https://headscale.example.test/prefix", "/api/v1/user"}, {"https://headscale.example.test", "//metadata.invalid/"}, {"https://headscale.example.test", "/api/v1/user?next=https://metadata.invalid"}} {
-		if _, err := headscaleRequestURL(invalid.base, invalid.path, nil); err == nil {
-			t.Fatalf("unsafe Headscale request URL was accepted: %#v", invalid)
+	for _, path := range []string{"//metadata.invalid/", "/api/v1/user?next=https://metadata.invalid", "/api/v1/user#metadata"} {
+		if _, err := headscaleRequestURL(path, nil); err == nil {
+			t.Fatalf("unsafe Headscale request path was accepted: %q", path)
 		}
 	}
 }
@@ -123,7 +126,7 @@ func TestHeadscaleEndpointMustBeOperatorAuthorized(t *testing.T) {
 	if err != nil || endpoint != "https://headscale.example.test" {
 		t.Fatalf("allowed Headscale endpoint was rejected: endpoint=%q err=%v", endpoint, err)
 	}
-	for _, value := range []string{"https://metadata.internal", "https://headscale.example.test/path", "http://headscale.example.test"} {
+	for _, value := range []string{"https://metadata.internal", "https://user@headscale.example.test", "https://headscale.example.test/path", "https://headscale.example.test?target=metadata", "https://headscale.example.test#fragment", "http://headscale.example.test"} {
 		if _, err := store.authorizedHeadscaleEndpoint(value); err == nil {
 			t.Fatalf("unauthorized Headscale endpoint was accepted: %q", value)
 		}
@@ -132,7 +135,7 @@ func TestHeadscaleEndpointMustBeOperatorAuthorized(t *testing.T) {
 
 func TestHeadscaleJoinKeyIsOneHourAndSingleUse(t *testing.T) {
 	var body map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/v1/preauthkey" || request.Method != http.MethodPost {
 			t.Fatalf("unexpected Headscale request: %s %s", request.Method, request.URL.Path)
 		}
@@ -143,7 +146,10 @@ func TestHeadscaleJoinKeyIsOneHourAndSingleUse(t *testing.T) {
 		_, _ = response.Write([]byte(`{"preAuthKey":{"key":"one-time-key"}}`))
 	}))
 	defer server.Close()
-	client := headscaleClient{baseURL: server.URL, apiKey: "headscale-secret", http: server.Client()}
+	client, err := newHeadscaleClient(server.URL, "headscale-secret", server.Listener.Addr().String(), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
 	expires := time.Date(2026, 8, 18, 11, 0, 0, 0, time.UTC)
 	key, err := client.createPreAuthKey(context.Background(), "42", []string{"tag:vastora-agent"}, expires)
 	if err != nil {

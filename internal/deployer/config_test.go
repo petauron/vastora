@@ -35,6 +35,21 @@ func TestBundledServiceURLsUseStandardHTTPS(t *testing.T) {
 	}
 }
 
+func TestLocalGatewayProbeUsesPinnedRequestDestination(t *testing.T) {
+	request, err := localGatewayProbeRequest(context.Background(), "headscale.example.com", "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.URL.String() != localGatewayProbeOrigin+"/health" || request.Host != "headscale.example.com" {
+		t.Fatalf("local probe target = %q host = %q", request.URL.String(), request.Host)
+	}
+	for _, path := range []string{"//metadata.invalid", "/health?target=metadata", "/health#metadata", "health"} {
+		if _, err := localGatewayProbeRequest(context.Background(), "headscale.example.com", path); err == nil {
+			t.Fatalf("unsafe local probe path was accepted: %q", path)
+		}
+	}
+}
+
 func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T) {
 	headscalePayload, err := renderHeadscaleConfig("https://headscale.example.com", deployapi.HeadscaleDNSPolicyCustom, []string{"1.1.1.1", "1.0.0.1"})
 	if err != nil {
