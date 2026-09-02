@@ -46,7 +46,7 @@ it("renders the exact proposal and uses only the trusted approval action", async
     conversationId: "conversation-1",
     runId: "run-1",
     kind: "install_application" as const,
-    summary: { action: "install", agentId: "agent-1", agentName: "上海节点", appKey: "vastora-official/3x-ui", appName: { en: "3x-ui", "zh-CN": "3x-ui" }, version: "3.6.0", impact: "Install one app", dataRetention: "Data is retained" },
+    summary: { action: "install", agentId: "agent-1", agentName: "上海节点", appKey: "vastora-official/3x-ui", appName: { en: "3x-ui", "zh-CN": "3x-ui" }, version: "3.7.0", impact: "Install one app", dataRetention: "Data is retained" },
     digest: "a".repeat(64),
     targets: [{ kind: "agent", id: "agent-1" }],
     expectedRevision: "revision-1",
@@ -71,7 +71,7 @@ it("renders the exact proposal and uses only the trusted approval action", async
   const container = await renderAssistant();
   await vi.waitFor(() => expect(container.textContent).toContain("变更审批"));
   expect(container.textContent).toContain("上海节点");
-  expect(container.textContent).toContain("3.6.0");
+  expect(container.textContent).toContain("3.7.0");
   expect(container.textContent).toContain(proposal.digest);
   expect(container.textContent).toContain("聊天中的“确认”不会执行操作");
   const approve = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("批准此提案"));

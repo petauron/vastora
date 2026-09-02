@@ -7,7 +7,7 @@ import (
 )
 
 var officialAppVersions = map[string]string{
-	"3x-ui":        "3.6.0",
+	"3x-ui":        "3.7.0",
 	"cpa":          "7.2.129",
 	"keeper":       "1.14.1",
 	"komari-agent": "1.2.60",
