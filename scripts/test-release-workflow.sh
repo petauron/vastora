@@ -4,6 +4,8 @@ set -eu
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
 project_dir="$(CDPATH='' cd -- "$script_dir/.." && pwd)"
 workflow="$project_dir/.github/workflows/release.yml"
+release_notes_config="$project_dir/.github/release.yml"
+pr_labels_workflow="$project_dir/.github/workflows/pr-release-labels.yml"
 reconcile_workflow="$project_dir/.github/workflows/reconcile-installer-r2.yml"
 prepare_job="$(sed -n '/^  prepare:/,/^  publish:/p' "$workflow")"
 publish_job="$(sed -n '/^  publish:/,/^  release-pr:/p' "$workflow")"
@@ -40,7 +42,13 @@ require_in "$publish_job" '        run: sh .release-tools/scripts/github-install
 require_in "$publish_job" '      - name: Recover verified installer assets for release retry'
 require_in "$publish_job" '        run: sh .release-tools/scripts/publish-installer-r2.sh stage --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT" --source-dir dist'
 require_in "$publish_job" '        run: sh .release-tools/scripts/reconcile-installer-r2.sh --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"'
-require_in "$publish_job" '        run: gh release edit "$RELEASE_TAG" --draft=false'
+require_in "$publish_job" '      - name: Generate and publish GitHub release notes'
+require_in "$publish_job" '          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}'
+require_in "$publish_job" '          gh api --method POST "/repos/$GITHUB_REPOSITORY/releases/generate-notes"'
+require_in "$publish_job" "            -f configuration_file_path='.github/release.yml'"
+require_in "$publish_job" '            --title "Petauron Vastora $RELEASE_TAG"'
+require_in "$publish_job" '            --notes-file "$notes_file"'
+require_in "$publish_job" '            --draft=false'
 require_in "$release_pr_job" '    needs: [prepare, publish]'
 require_in "$release_pr_job" "    if: always() && needs.prepare.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')"
 require_in "$release_pr_job" '          skip-github-release: true'
@@ -89,7 +97,7 @@ public_verify_line="$(line_of 'Verify public installer endpoint')"
 prune_line="$(line_of 'Prune stale Vastora installer objects')"
 immutable_reverify_line="$(line_of 'Verify immutable installer release after pruning')"
 public_reverify_line="$(line_of 'Verify public installer endpoint after pruning')"
-publish_line="$(line_of 'Publish GitHub release metadata')"
+publish_line="$(line_of 'Generate and publish GitHub release notes')"
 previous=0
 for current in "$scan_line" "$manifest_line" "$github_assets_line" "$stage_line" "$activate_line" "$immutable_verify_line" "$public_verify_line" "$prune_line" "$immutable_reverify_line" "$public_reverify_line" "$publish_line"; do
   if [ -z "$current" ] || [ "$current" -le "$previous" ]; then
@@ -98,6 +106,30 @@ for current in "$scan_line" "$manifest_line" "$github_assets_line" "$stage_line"
   fi
   previous="$current"
 done
+
+release_notes_text="$(cat "$release_notes_config")"
+require_in "$release_notes_text" '    - title: 安全更新'
+require_in "$release_notes_text" '        - security'
+require_in "$release_notes_text" '    - title: 新功能'
+require_in "$release_notes_text" '        - enhancement'
+require_in "$release_notes_text" '    - title: 问题修复'
+require_in "$release_notes_text" '        - bug'
+require_in "$release_notes_text" '    - title: 维护与其他'
+require_in "$release_notes_text" '        - "*"'
+require_in "$release_notes_text" '      - "dependabot[bot]"'
+require_in "$release_notes_text" '      - "github-actions[bot]"'
+
+pr_labels_text="$(cat "$pr_labels_workflow")"
+require_in "$pr_labels_text" '  pull_request_target:'
+require_in "$pr_labels_text" '  issues: write'
+require_in "$pr_labels_text" '          PR_TITLE: ${{ github.event.pull_request.title }}'
+require_in "$pr_labels_text" "              release_label='security'"
+require_in "$pr_labels_text" "              release_label='enhancement'"
+require_in "$pr_labels_text" "              release_label='bug'"
+if printf '%s\n' "$pr_labels_text" | grep -Fq 'actions/checkout'; then
+  echo 'The pull_request_target labeler must not check out pull request code.' >&2
+  exit 1
+fi
 
 reconcile_text="$(cat "$reconcile_workflow")"
 require_in "$reconcile_text" '    - cron: "17 3 * * *"'
