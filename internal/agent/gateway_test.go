@@ -255,6 +255,61 @@ func TestGatewayStartupWithoutAppliedStateDoesNotRequireRuntime(t *testing.T) {
 	}
 }
 
+func TestGatewayStartupPreservesHealthyProtectedSystemGatewayWhenPersistedStateIsStale(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.RecordGatewayState(context.Background(), gatewayState(29, 3000), nil); err != nil {
+		t.Fatal(err)
+	}
+	admin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/config/" {
+			t.Fatalf("unexpected Caddy request: %s %s", request.Method, request.URL.Path)
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer admin.Close()
+	driver, err := NewCaddyGatewayDriver(admin.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver.SystemGateway = staticSystemGatewayInspector{"center", "headscale"}
+	if err := restoreGatewayState(context.Background(), store, driver); err != nil {
+		t.Fatalf("healthy protected gateway was not preserved: %v", err)
+	}
+	if err := store.requireGatewayStartup(); err != nil {
+		t.Fatalf("stale persisted state blocked Center reconciliation: %v", err)
+	}
+}
+
+func TestGatewayStartupFailsClosedWhenProtectedSystemGatewayCannotBeVerified(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.RecordGatewayState(context.Background(), gatewayState(29, 3000), nil); err != nil {
+		t.Fatal(err)
+	}
+	admin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer admin.Close()
+	driver, err := NewCaddyGatewayDriver(admin.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driver.SystemGateway = staticSystemGatewayInspector{"center", "headscale"}
+	if err := restoreGatewayState(context.Background(), store, driver); err == nil || !strings.Contains(err.Error(), "verify preserved protected system gateway") {
+		t.Fatalf("unhealthy protected gateway did not fail closed: %v", err)
+	}
+	if err := store.requireGatewayStartup(); err == nil {
+		t.Fatal("failed protected gateway verification did not fence the control plane")
+	}
+}
+
 func TestGatewayStartupRestoreFencesNewerRevisionUntilRestoreFinishes(t *testing.T) {
 	assertGatewayStartupFence(t, gatewayState(7, 3000), nil, gatewayState(8, 3100), nil)
 }
