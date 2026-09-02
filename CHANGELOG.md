@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.98](https://github.com/petauron/vastora/compare/v0.1.0-alpha.97...v0.1.0-alpha.98) (2026-09-02)
+
+
+### Bug Fixes
+
+* **center:** acknowledge superseded gateway results ([3445c16](https://github.com/petauron/vastora/commit/3445c16fc2495d5667e8d0b1c8c48245b281d920))
+
 ## [0.1.0-alpha.97](https://github.com/petauron/vastora/compare/v0.1.0-alpha.96...v0.1.0-alpha.97) (2026-09-02)
 
 
