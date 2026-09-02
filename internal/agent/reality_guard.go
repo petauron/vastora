@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/projectdiscovery/cdncheck"
 )
 
 const (
@@ -40,11 +42,17 @@ type threeXUIXraySettings struct {
 	OutboundTestURL string         `json:"outboundTestUrl"`
 }
 
+type realityTargetNetworkChecker interface {
+	CheckCDN(net.IP) (bool, string, error)
+	CheckWAF(net.IP) (bool, string, error)
+}
+
 var (
-	realityTargetVerifier   = verifyRealityTarget
-	realityCompanionEnsurer = ensureRealityGuardCompanion
-	realityRoutingEnsurer   = ensureRealityGuardRouting
-	realityInboundHardener  = hardenThreeXUIRealityInbound
+	realityTargetVerifier                               = verifyRealityTarget
+	realityCompanionEnsurer                             = ensureRealityGuardCompanion
+	realityRoutingEnsurer                               = ensureRealityGuardRouting
+	realityInboundHardener                              = hardenThreeXUIRealityInbound
+	realityNetworkChecker   realityTargetNetworkChecker = cdncheck.New()
 )
 
 func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublicAddress string) (realityTargetVerification, error) {
@@ -89,6 +97,13 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 			rejections = append(rejections, value+": ASN lookup failed")
 			continue
 		}
+		if provider, policyErr := checkRealityTargetNetworkPolicy(nodeASN, targetASN, ip); policyErr != nil {
+			rejections = append(rejections, value+": "+policyErr.Error())
+			continue
+		} else if provider != "" {
+			rejections = append(rejections, value+": shared CDN/WAF provider "+provider+" is not allowed")
+			continue
+		}
 		verification := realityTargetVerification{
 			TargetHost: targetHost, TargetIP: value, ServerName: serverName,
 			NodeASN: nodeASN, TargetASN: targetASN,
@@ -104,6 +119,36 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 		message += ": " + strings.Join(rejections, "; ")
 	}
 	return realityTargetVerification{}, errors.New(message)
+}
+
+func checkRealityTargetNetworkPolicy(nodeASN, targetASN int64, ip net.IP) (string, error) {
+	if nodeASN <= 0 || targetASN <= 0 || nodeASN != targetASN {
+		return "", errors.New("target ASN does not match the VLESS node ASN")
+	}
+	if realityNetworkChecker == nil {
+		return "", errors.New("CDN/WAF validation is unavailable")
+	}
+	matched, provider, err := realityNetworkChecker.CheckCDN(ip)
+	if err != nil {
+		return "", fmt.Errorf("CDN validation failed: %w", err)
+	}
+	if matched {
+		if provider == "" {
+			provider = "unknown"
+		}
+		return provider, nil
+	}
+	matched, provider, err = realityNetworkChecker.CheckWAF(ip)
+	if err != nil {
+		return "", fmt.Errorf("WAF validation failed: %w", err)
+	}
+	if matched {
+		if provider == "" {
+			provider = "unknown"
+		}
+		return provider, nil
+	}
+	return "", nil
 }
 
 func validRealityTargetHostname(hostname string) bool {

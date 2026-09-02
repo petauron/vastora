@@ -3,10 +3,49 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+type fakeRealityTargetNetworkChecker struct {
+	cdnProvider string
+	wafProvider string
+	err         error
+}
+
+func (f fakeRealityTargetNetworkChecker) CheckCDN(net.IP) (bool, string, error) {
+	return f.cdnProvider != "", f.cdnProvider, f.err
+}
+
+func (f fakeRealityTargetNetworkChecker) CheckWAF(net.IP) (bool, string, error) {
+	return f.wafProvider != "", f.wafProvider, f.err
+}
+
+func TestRealityTargetNetworkPolicyRejectsSharedProvidersAndValidationFailure(t *testing.T) {
+	previous := realityNetworkChecker
+	t.Cleanup(func() { realityNetworkChecker = previous })
+	ip := net.ParseIP("203.0.113.10")
+
+	realityNetworkChecker = fakeRealityTargetNetworkChecker{cdnProvider: "cloudfront"}
+	if provider, err := checkRealityTargetNetworkPolicy(64500, 64500, ip); err != nil || provider != "cloudfront" {
+		t.Fatalf("CDN result = %q, %v", provider, err)
+	}
+	realityNetworkChecker = fakeRealityTargetNetworkChecker{wafProvider: "cloudflare"}
+	if provider, err := checkRealityTargetNetworkPolicy(64500, 64500, ip); err != nil || provider != "cloudflare" {
+		t.Fatalf("WAF result = %q, %v", provider, err)
+	}
+	realityNetworkChecker = fakeRealityTargetNetworkChecker{err: errors.New("dataset unavailable")}
+	if _, err := checkRealityTargetNetworkPolicy(64500, 64500, ip); err == nil {
+		t.Fatal("CDN/WAF validation failure was accepted")
+	}
+	realityNetworkChecker = fakeRealityTargetNetworkChecker{}
+	if _, err := checkRealityTargetNetworkPolicy(64500, 64501, ip); err == nil {
+		t.Fatal("a target in a different ASN was accepted")
+	}
+}
 
 func TestApplyRealityGuardRoutingIsFirstAndPreservesUserConfiguration(t *testing.T) {
 	config := map[string]any{

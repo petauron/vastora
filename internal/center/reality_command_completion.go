@@ -31,15 +31,6 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, ta
 			taskError = err.Error()
 		}
 		if succeeded {
-			for _, excluded := range input.ExcludedSNI {
-				if result.ServerName == excluded {
-					succeeded = false
-					taskError = "center: selected REALITY SNI is already used on this gateway"
-					break
-				}
-			}
-		}
-		if succeeded {
 			result := *envelope.ApplicationCommand
 			serviceName := fmt.Sprintf("inbound-%d", result.InboundID)
 			err := tx.QueryRowContext(ctx, `SELECT id FROM services WHERE application_id = ? AND name = ?`, applicationID, serviceName).Scan(&serviceID)

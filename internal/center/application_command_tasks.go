@@ -44,8 +44,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY operation is invalid"))
 		}
-		hasExplicitRealityTarget := command.TargetHost != "" || command.ServerName != ""
-		if kind == realityCommandKind && (command.Action != "create" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) || (command.CreateInitialClient && !validThreeXUIClientName(command.ClientName)) || command.InboundTag != realityCommandInboundTag(id) || command.ConnectHostname == "" || !networking.IsPrivateServiceAddress(command.TargetAddress) || net.ParseIP(command.TargetPublicAddress) == nil || hasExplicitRealityTarget && (!validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName)) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > maxThreeXUIResetDay || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0) {
+		if kind == realityCommandKind && (command.Action != "create" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) || (command.CreateInitialClient && !validThreeXUIClientName(command.ClientName)) || command.InboundTag != realityCommandInboundTag(id) || command.ConnectHostname == "" || !networking.IsPrivateServiceAddress(command.TargetAddress) || net.ParseIP(command.TargetPublicAddress) == nil || !validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > maxThreeXUIResetDay || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0) {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY creation operation is invalid"))
 		}
 		if kind == realityVerifyCommandKind && (command.Action != "verify" || net.ParseIP(command.TargetPublicAddress) == nil || !validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName)) {
@@ -331,7 +330,7 @@ func (s *Store) completeRealityVerifyCommand(ctx context.Context, tx *sql.Tx, ta
 			taskError = "center: Agent returned an invalid REALITY verification result"
 		} else {
 			result := envelope.ApplicationCommand
-			if result.Action != "verify" || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || !validRealityTargetHostname(result.TargetHost) || !validRealityTargetHostname(result.ServerName) || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid {
+			if result.Action != "verify" || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || !validRealityTargetHostname(result.TargetHost) || !validRealityTargetHostname(result.ServerName) || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid {
 				succeeded = false
 				taskError = "center: Agent returned an unsafe REALITY target verification"
 			}
