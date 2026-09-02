@@ -421,6 +421,10 @@ func newHeadscaleClient(endpoint, apiKey, dialAddress string, base *http.Client)
 		transport = configured.Clone()
 	}
 	transport.Proxy = nil
+	// Custom TLS dial hooks bypass DialContext. Do not inherit a second route
+	// around the fixed destination when cloning the configured transport.
+	transport.DialTLSContext = nil
+	transport.DialTLS = nil
 	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", dialAddress)
 	}

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -130,6 +132,35 @@ func TestHeadscaleEndpointMustBeOperatorAuthorized(t *testing.T) {
 		if _, err := store.authorizedHeadscaleEndpoint(value); err == nil {
 			t.Fatalf("unauthorized Headscale endpoint was accepted: %q", value)
 		}
+	}
+}
+
+func TestHeadscaleClientDiscardsInheritedTLSDialRoutes(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer test-headscale-key" {
+			t.Error("Headscale request lost authentication")
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	base := server.Client()
+	transport := base.Transport.(*http.Transport)
+	transport.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("unexpected inherited TLS route")
+	}
+	transport.DialTLS = func(string, string) (net.Conn, error) {
+		return nil, errors.New("unexpected inherited legacy TLS route")
+	}
+	client, err := newHeadscaleClient(server.URL, "test-headscale-key", server.Listener.Addr().String(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.http.CloseIdleConnections()
+	if err := client.do(context.Background(), http.MethodGet, "/api/v1/user", nil, nil, nil); err != nil {
+		t.Fatalf("fixed TLS destination was bypassed: %v", err)
+	}
+	if transport.DialTLSContext == nil || transport.DialTLS == nil {
+		t.Fatal("constructing a Headscale client modified the shared transport")
 	}
 }
 
