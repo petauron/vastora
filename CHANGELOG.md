@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.93](https://github.com/petauron/vastora/compare/v0.1.0-alpha.92...v0.1.0-alpha.93) (2026-09-02)
+
+
+### Features
+
+* **catalog:** update 3x-ui to 3.7.0 ([21dccd0](https://github.com/petauron/vastora/commit/21dccd0bc96a785195103e497117c03011f8697d))
+
+
+### Bug Fixes
+
+* **catalog:** version the updated CPA package ([2c9127a](https://github.com/petauron/vastora/commit/2c9127a3647b2170699c6d9484d985e695a14a9a))
+
 ## [0.1.0-alpha.92](https://github.com/petauron/vastora/compare/v0.1.0-alpha.91...v0.1.0-alpha.92) (2026-09-02)
 
 
