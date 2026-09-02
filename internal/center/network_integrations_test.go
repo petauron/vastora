@@ -148,8 +148,8 @@ func TestHeadscaleClientDiscardsInheritedTLSDialRoutes(t *testing.T) {
 	transport.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
 		return nil, errors.New("unexpected inherited TLS route")
 	}
-	transport.DialTLS = func(string, string) (net.Conn, error) {
-		return nil, errors.New("unexpected inherited legacy TLS route")
+	transport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("unexpected inherited TCP route")
 	}
 	client, err := newHeadscaleClient(server.URL, "test-headscale-key", server.Listener.Addr().String(), base)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestHeadscaleClientDiscardsInheritedTLSDialRoutes(t *testing.T) {
 	if err := client.do(context.Background(), http.MethodGet, "/api/v1/user", nil, nil, nil); err != nil {
 		t.Fatalf("fixed TLS destination was bypassed: %v", err)
 	}
-	if transport.DialTLSContext == nil || transport.DialTLS == nil {
+	if transport.DialTLSContext == nil || transport.DialContext == nil {
 		t.Fatal("constructing a Headscale client modified the shared transport")
 	}
 }
