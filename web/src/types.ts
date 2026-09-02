@@ -89,12 +89,22 @@ export type CenterUpdateStatus = {
   automatic: boolean;
   state: "idle" | "queued" | "applying" | "succeeded" | "failed";
   targetVersion?: string;
-  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "completed";
+  phase?: "queued" | "downloading" | "verifying" | "installing" | "validating" | "pulling" | "agent" | "restarting" | "health" | "reconciling" | "finalizing" | "agents" | "completed";
   progress?: number;
   message?: string;
   checkedAt?: string;
   updatedAt?: string;
   error?: string;
+  agentRollout?: {
+    targetVersion: string;
+    total: number;
+    updated: number;
+    updating: number;
+    pending: number;
+    failed: number;
+    offline: number;
+    manual: number;
+  };
 };
 
 export type AssistantProvider = {

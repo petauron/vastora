@@ -18,19 +18,20 @@ type CenterReleaseChecker interface {
 }
 
 type CenterUpdateStatus struct {
-	CurrentVersion        string `json:"currentVersion"`
-	LatestVersion         string `json:"latestVersion,omitempty"`
-	UpdateAvailable       bool   `json:"updateAvailable"`
-	ReleaseCheckAvailable bool   `json:"releaseCheckAvailable"`
-	Automatic             bool   `json:"automatic"`
-	State                 string `json:"state"`
-	TargetVersion         string `json:"targetVersion,omitempty"`
-	Phase                 string `json:"phase,omitempty"`
-	Progress              int    `json:"progress,omitempty"`
-	Message               string `json:"message,omitempty"`
-	CheckedAt             string `json:"checkedAt,omitempty"`
-	UpdatedAt             string `json:"updatedAt,omitempty"`
-	Error                 string `json:"error,omitempty"`
+	CurrentVersion        string                    `json:"currentVersion"`
+	LatestVersion         string                    `json:"latestVersion,omitempty"`
+	UpdateAvailable       bool                      `json:"updateAvailable"`
+	ReleaseCheckAvailable bool                      `json:"releaseCheckAvailable"`
+	Automatic             bool                      `json:"automatic"`
+	State                 string                    `json:"state"`
+	TargetVersion         string                    `json:"targetVersion,omitempty"`
+	Phase                 string                    `json:"phase,omitempty"`
+	Progress              int                       `json:"progress,omitempty"`
+	Message               string                    `json:"message,omitempty"`
+	CheckedAt             string                    `json:"checkedAt,omitempty"`
+	UpdatedAt             string                    `json:"updatedAt,omitempty"`
+	Error                 string                    `json:"error,omitempty"`
+	AgentRollout          *AgentUpdateRolloutStatus `json:"agentRollout,omitempty"`
 }
 
 type ReleaseChecker struct {
@@ -174,7 +175,47 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 		result.Message = execution.Message
 		result.UpdatedAt = execution.UpdatedAt
 	}
+	if execution.State == "succeeded" && execution.TargetVersion == strings.TrimPrefix(Version, "v") {
+		rollout, rolloutErr := s.store.AgentUpdateRolloutStatus(ctx, Version)
+		if rolloutErr != nil {
+			result.Error = rolloutErr.Error()
+			return result
+		}
+		result.AgentRollout = &rollout
+		if rollout.Pending != 0 || rollout.Updating != 0 {
+			result.State = "applying"
+			result.Phase = "agents"
+			result.Progress = 98
+			result.Message = fmt.Sprintf("Updating Agents (%d of %d current).", rollout.Updated, rollout.Total)
+		}
+	}
 	return result
+}
+
+func (s *Server) RunAgentUpdateRollout(ctx context.Context, interval time.Duration, report func(error)) {
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	reconcile := func() {
+		if !s.startupReady.Load() || strings.TrimSpace(s.agentBinariesDir) == "" {
+			return
+		}
+		_, _, err := s.store.QueueNextAgentUpdate(ctx, Version)
+		if err != nil && ctx.Err() == nil && report != nil {
+			report(err)
+		}
+	}
+	reconcile()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reconcile()
+		}
+	}
 }
 
 func centerUpdateProgress(execution deployapi.CenterUpdateExecution) (string, int) {

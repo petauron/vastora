@@ -1912,6 +1912,25 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("50%");
   });
 
+  it("keeps the Center update open while remote Agents roll forward", () => {
+    const status = {
+      ...dashboard().centerUpdate,
+      currentVersion: "0.1.0-alpha.99",
+      latestVersion: "0.1.0-alpha.99",
+      updateAvailable: false,
+      state: "applying" as const,
+      targetVersion: "0.1.0-alpha.99",
+      phase: "agents" as const,
+      progress: 98,
+      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 4, updated: 2, updating: 1, pending: 1, failed: 0, offline: 0, manual: 0 },
+    };
+    vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    expect(container.textContent).toContain("正在逐台更新远端 Agent");
+    expect(container.textContent).toContain("2/4 个 Agent 已是当前版本");
+    expect(container.textContent).toContain("远端 Agent 会逐台短暂离线");
+  });
+
   it("bypasses the official release cache when update checking is requested", async () => {
     const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.59", updateAvailable: true };
     const refreshed = { ...status, latestVersion: "0.1.0-alpha.60" };
