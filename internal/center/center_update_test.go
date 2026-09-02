@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/deployapi"
+	"github.com/petauron/vastora/internal/networking"
 )
 
 type fixedReleaseChecker struct {
@@ -112,6 +113,27 @@ func TestCenterUpdateStatusReportsVerifiedHostProgress(t *testing.T) {
 	status := server.centerUpdateStatus(context.Background(), false)
 	if status.State != "applying" || status.Phase != "pulling" || status.Progress != 50 {
 		t.Fatalf("unexpected update progress: %#v", status)
+	}
+}
+
+func TestCenterUpdateWaitsForTheRemoteAgentRollout(t *testing.T) {
+	previousVersion := Version
+	Version = "0.1.0-alpha.99"
+	defer func() { Version = previousVersion }()
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	node := enrollOrchestrationNode(t, store, "remote-update-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.99", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.99", LANAddress: "10.0.0.99", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.98", true)
+	updater := &fakeCenterUpdater{status: deployapi.CenterUpdateExecution{
+		Available:     true,
+		State:         "succeeded",
+		TargetVersion: Version,
+		Message:       "Center was updated successfully.",
+	}}
+	server := &Server{store: store, updates: updater, releaseChecker: fixedReleaseChecker{version: Version}}
+	status := server.centerUpdateStatus(context.Background(), false)
+	if status.State != "applying" || status.Phase != "agents" || status.Progress != 98 || status.AgentRollout == nil || status.AgentRollout.Pending != 1 {
+		t.Fatalf("unexpected remote Agent rollout status: %#v", status)
 	}
 }
 

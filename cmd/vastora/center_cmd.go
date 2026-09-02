@@ -251,6 +251,9 @@ func runCenter(arguments []string) error {
 				}
 			}()
 		}
+		go centerServer.RunAgentUpdateRollout(maintenanceContext, 5*time.Second, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center Agent update rollout: %v\n", err)
+		})
 		handler := centerServer.Handler()
 		server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 		fmt.Printf("Center listening on %s\n", *listen)
