@@ -88,4 +88,10 @@ it("keeps assistant input disabled until a provider is configured", async () => 
   const container = await renderAssistant();
   await vi.waitFor(() => expect(container.textContent).toContain("尚未配置模型服务"));
   expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="发送给集群助手的消息"]')?.disabled).toBe(true);
+  expect(container.textContent).toContain("系统保管的凭据不会作为聊天内容或工具数据提供给模型");
+  const input = container.querySelector("textarea");
+  const help = container.querySelector("#assistant-message-security");
+  expect(input?.getAttribute("aria-describedby")).toBe(help?.id);
+  expect(help?.textContent).toContain("无法识别全部秘密");
+  expect(help?.textContent).toContain("通过检查的消息会保存并发送给已配置的模型服务");
 });
