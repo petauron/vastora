@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/petauron/vastora/internal/catalog"
 )
@@ -24,7 +26,10 @@ var assistantCredentialPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\b(?:sk|ghp|github_pat|glpat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b`),
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`),
 	regexp.MustCompile(`(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----`),
+	regexp.MustCompile(`(?i)https?://[^/\s:@]+:[^@\s/]+@`),
 }
+
+var assistantSensitiveAssignmentPattern = regexp.MustCompile(`(?i)(?:api[ _-]?key|access[ _-]?token|refresh[ _-]?token|password|passwd|secret|authorization|bearer|密钥|密码|令牌)\s*(?::|=|：|是|为)\s*[^\s,;，；]{4,}`)
 
 type AssistantConversationView struct {
 	ID        string                  `json:"id"`
@@ -160,10 +165,14 @@ func (s *Store) AssistantConversation(ctx context.Context, adminID, conversation
 }
 
 func (s *Store) QueueAssistantMessage(ctx context.Context, adminID, conversationID, content string) (AssistantRunView, error) {
-	content = redactAssistantText(strings.TrimSpace(content))
+	content = strings.TrimSpace(content)
 	if content == "" || len(content) > 8000 {
 		return AssistantRunView{}, errors.New("center: assistant message must be 1 to 8000 characters")
 	}
+	if assistantTextContainsPotentialCredential(content) {
+		return AssistantRunView{}, errors.New("center: assistant message appears to contain a credential; remove passwords, keys, tokens, and other secrets before sending")
+	}
+	content = redactAssistantText(content)
 	var owner string
 	if err := s.db.QueryRowContext(ctx, `SELECT admin_id FROM assistant_conversations WHERE id = ?`, conversationID).Scan(&owner); errors.Is(err, sql.ErrNoRows) || owner != adminID {
 		return AssistantRunView{}, errors.New("center: assistant conversation not found")
@@ -562,6 +571,7 @@ func redactAssistantText(value string) string {
 	for _, pattern := range assistantCredentialPatterns {
 		value = pattern.ReplaceAllString(value, "[redacted credential]")
 	}
+	value = assistantSensitiveAssignmentPattern.ReplaceAllString(value, "[redacted sensitive input]")
 	lines := strings.Split(value, "\n")
 	for index, line := range lines {
 		lower := strings.ToLower(line)
@@ -572,5 +582,121 @@ func redactAssistantText(value string) string {
 			}
 		}
 	}
-	return strings.Join(lines, "\n")
+	return redactAssistantOpaqueCredentials(strings.Join(lines, "\n"))
+}
+
+func assistantTextContainsPotentialCredential(value string) bool {
+	for _, pattern := range assistantCredentialPatterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	if assistantSensitiveAssignmentPattern.MatchString(value) {
+		return true
+	}
+	found := false
+	forEachAssistantOpaqueCandidate(value, func(string, int, int) bool {
+		found = true
+		return false
+	})
+	return found
+}
+
+func redactAssistantOpaqueCredentials(value string) string {
+	var replacements [][2]int
+	forEachAssistantOpaqueCandidate(value, func(_ string, start, end int) bool {
+		replacements = append(replacements, [2]int{start, end})
+		return true
+	})
+	for index := len(replacements) - 1; index >= 0; index-- {
+		replacement := replacements[index]
+		value = value[:replacement[0]] + "[redacted credential]" + value[replacement[1]:]
+	}
+	return value
+}
+
+func forEachAssistantOpaqueCandidate(value string, visit func(string, int, int) bool) {
+	for start := 0; start < len(value); {
+		if !assistantOpaqueCharacter(value[start]) {
+			start++
+			continue
+		}
+		end := start + 1
+		for end < len(value) && assistantOpaqueCharacter(value[end]) {
+			end++
+		}
+		candidate := value[start:end]
+		adjacentToDomain := start > 0 && value[start-1] == '.' || end < len(value) && value[end] == '.'
+		if !adjacentToDomain && assistantOpaqueCredential(candidate) && !visit(candidate, start, end) {
+			return
+		}
+		start = end
+	}
+}
+
+func assistantOpaqueCharacter(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || strings.ContainsRune("_+/=-", rune(value))
+}
+
+func assistantOpaqueCredential(value string) bool {
+	if len(value) < 32 || assistantHexValue(value) || assistantUUIDValue(value) {
+		return false
+	}
+	var categories [4]bool
+	counts := map[rune]int{}
+	for _, character := range value {
+		switch {
+		case unicode.IsLower(character):
+			categories[0] = true
+		case unicode.IsUpper(character):
+			categories[1] = true
+		case unicode.IsDigit(character):
+			categories[2] = true
+		default:
+			categories[3] = true
+		}
+		counts[character]++
+	}
+	categoryCount := 0
+	for _, present := range categories {
+		if present {
+			categoryCount++
+		}
+	}
+	if categoryCount < 2 {
+		return false
+	}
+	entropy := 0.0
+	for _, count := range counts {
+		probability := float64(count) / float64(len(value))
+		entropy -= probability * math.Log2(probability)
+	}
+	return entropy >= 4.3
+}
+
+func assistantHexValue(value string) bool {
+	for _, character := range value {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", character) {
+			return false
+		}
+	}
+	return true
+}
+
+func assistantUUIDValue(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, character := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if character != '-' {
+				return false
+			}
+			continue
+		}
+		if !strings.ContainsRune("0123456789abcdefABCDEF", character) {
+			return false
+		}
+	}
+	return true
 }

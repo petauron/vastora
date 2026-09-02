@@ -490,3 +490,55 @@ func TestAssistantRejectionStaleRevisionAndToolBoundaryFailClosed(t *testing.T) 
 		t.Fatalf("expired proposal was approved: %v", err)
 	}
 }
+
+func TestAssistantRejectsPotentialCredentialsBeforePersistence(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	session, _, err := store.CreateFirstAdmin(ctx, "assistant-admin", "correct-horse-battery-staple")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminID, err := store.SessionAdminID(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := store.CreateAssistantConversation(ctx, adminID, "Credential boundary")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inputs := []string{
+		"请检查这个未知格式值 V7mQ2fL9sN4xK8cR1pT6wY3hJ5uB0dEza",
+		"客户端密钥是 aZ7mQ2fL9sN4xK8cR1pT6wY3hJ5uB0dEz",
+		"Authorization: Bearer opaque-value-that-must-not-persist",
+	}
+	for _, input := range inputs {
+		if _, err := store.QueueAssistantMessage(ctx, adminID, conversation.ID, input); err == nil || !strings.Contains(err.Error(), "appears to contain a credential") {
+			t.Fatalf("credential-like input was accepted: input=%q err=%v", input, err)
+		}
+	}
+	var messages, runs int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_messages WHERE conversation_id = ?`, conversation.ID).Scan(&messages); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_runs WHERE conversation_id = ?`, conversation.ID).Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if messages != 0 || runs != 0 {
+		t.Fatalf("rejected credential input was persisted: messages=%d runs=%d", messages, runs)
+	}
+
+	for _, safe := range []string{
+		"检查提交 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"检查节点 7a0a3214-4076-4ae4-9b77-96acbb143d42",
+		"检查域名 c7wcnfto2bz6zhucdqdxz7zkly.775811.xyz",
+	} {
+		if assistantTextContainsPotentialCredential(safe) {
+			t.Fatalf("safe identifier was treated as a credential: %q", safe)
+		}
+	}
+}

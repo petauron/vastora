@@ -99,7 +99,11 @@
   impact, and resource revision. It cannot execute the rotation until the exact
   proposal is approved through the trusted approval control, and neither model
   tools, proposal records, events, nor audit payloads receive the old or new
-  credential value.
+  credential value. Free-form chat input is inspected before a message or run is
+  persisted; known credential formats, sensitive assignments, and suspicious
+  opaque values are rejected before model delivery. This input gate is defense
+  in depth for accidental pastes and does not replace the structural exclusion
+  of Center-managed secrets.
 - Headscale API requests can target only exact HTTPS origins authorized when
   Center starts. Browser administrators select from that operator-controlled
   boundary and cannot send the stored Bearer token to arbitrary network hosts.
