@@ -19,6 +19,8 @@ import (
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
 
+var errProtectedSystemGatewayStateIncomplete = errors.New("agent: protected system gateway state is incomplete")
+
 type CaddyGatewayDriver struct {
 	AdminURL        string
 	AdminListen     string
@@ -134,7 +136,7 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 		for _, expected := range required {
 			route, exists := routes[expected.id]
 			if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != expected.listener || route.Path != expected.path {
-				return fmt.Errorf("agent: refusing to replace protected system gateway without %s route %q", expected.listener, expected.id)
+				return fmt.Errorf("%w: refusing to replace protected system gateway without %s route %q", errProtectedSystemGatewayStateIncomplete, expected.listener, expected.id)
 			}
 		}
 	}
@@ -147,7 +149,7 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 		for _, expected := range required {
 			route, exists := routes[expected.id]
 			if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != "public" || route.Path != expected.path {
-				return errors.New("agent: refusing to replace protected system gateway without public Agent bootstrap routes")
+				return fmt.Errorf("%w: refusing to replace protected system gateway without public Agent bootstrap routes", errProtectedSystemGatewayStateIncomplete)
 			}
 		}
 	}

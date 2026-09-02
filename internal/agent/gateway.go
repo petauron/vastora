@@ -80,6 +80,22 @@ func restoreGatewayState(ctx context.Context, store *Store, driver GatewayDriver
 		return restoreErr
 	}
 	if err := driver.ApplyConfiguration(ctx, state.Desired, state.Certificates); err != nil {
+		if errors.Is(err, errProtectedSystemGatewayStateIncomplete) {
+			// A protected system gateway is recreated by the Center deployment
+			// before the Agent starts. Keep that healthy live configuration when
+			// the Agent's persisted state predates a required system route, then
+			// let the authoritative Center revision reconcile it over the control
+			// plane. The rejected stale state is never applied.
+			healthErr := driver.Health(ctx)
+			if healthErr == nil {
+				return nil
+			}
+			restoreErr = errors.Join(
+				fmt.Errorf("agent: restore last known good gateway configuration: %w", err),
+				fmt.Errorf("agent: verify preserved protected system gateway: %w", healthErr),
+			)
+			return restoreErr
+		}
 		restoreErr = fmt.Errorf("agent: restore last known good gateway configuration: %w", err)
 		return restoreErr
 	}
