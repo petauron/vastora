@@ -388,6 +388,12 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 	if revision <= applied {
 		return nil
 	}
+	if revision < desired {
+		// The Agent durably retries task completions until Center acknowledges
+		// them. A newer complete desired state supersedes this result, so accept
+		// the obsolete receipt without projecting it onto the newer revision.
+		return nil
+	}
 	if revision != desired {
 		return errors.New("center: stale gateway result")
 	}
