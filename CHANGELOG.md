@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.1.0-alpha.91](https://github.com/petauron/vastora/compare/v0.1.0-alpha.90...v0.1.0-alpha.91) (2026-09-02)
+
+
+### Features
+
+* automate CPA credential lifecycle ([f4b353a](https://github.com/petauron/vastora/commit/f4b353af85ed0c1656f8a9c0f1ebcd37ea19d68f))
+* keep only the active installer in R2 ([9476af8](https://github.com/petauron/vastora/commit/9476af8360ff4d28badf6b22ce66d1130ff787e6))
+* make bundled Headscale DNS explicit ([34d0d50](https://github.com/petauron/vastora/commit/34d0d50c11510fbf9fa69a3cdb445d21cf158425))
+* make external helpers explicit ([067e218](https://github.com/petauron/vastora/commit/067e218b6cda4b500447fb976370d1e9d44070d2))
+
+
+### Bug Fixes
+
+* align catalog contract boundary validation ([2d6d859](https://github.com/petauron/vastora/commit/2d6d85906e7f402be633d86fb6940dd5ac4f66ca))
+* cancel pending Agent updates before uninstall ([324128c](https://github.com/petauron/vastora/commit/324128c7e369ed4e70d95076597773d4b91f9be2))
+* cancel pending host cleanup during local uninstall ([6475e05](https://github.com/petauron/vastora/commit/6475e0536eb1481175b5890c23a63b60130abe58))
+* complete secure task recovery ([d1a1ec4](https://github.com/petauron/vastora/commit/d1a1ec4f832d3d8cd427de4a297bd42943f0c679))
+* fence redirected catalog revalidation ([0cc7c1d](https://github.com/petauron/vastora/commit/0cc7c1d6214e0832126422a5bde634283810e8b3))
+* generate subscription IDs for initial VLESS clients ([54d264d](https://github.com/petauron/vastora/commit/54d264dfcc810c8d8d6cfac8a926cbdfd14dc6d7))
+* harden Center backup recovery ([d7dab95](https://github.com/petauron/vastora/commit/d7dab955ce3d19e0cca85d3f46b02e26f2e9fe69))
+* keep shared subscriptions on the public URL ([42933ae](https://github.com/petauron/vastora/commit/42933aea16aa863eef47f4fcb37ebcd9aa886f6f))
+* load Center Access state in apps ([45347c5](https://github.com/petauron/vastora/commit/45347c571cddc3ea37ed7048bf824fcd71f788ff))
+* make host cleanup finalization independently resumable ([7dc6eef](https://github.com/petauron/vastora/commit/7dc6eef4840d35f622694b5facfec01af5d8bcd7))
+* normalize Headscale DNS inputs ([c60c4d2](https://github.com/petauron/vastora/commit/c60c4d2083bec9fc814fc1c919e6bf5419f87fb9))
+* persist completed host cleanup before acknowledgement ([e65548d](https://github.com/petauron/vastora/commit/e65548dc909120dd1325245c8e4d5a3f32292843))
+* preserve Keeper login during CPA rotation ([e171aa7](https://github.com/petauron/vastora/commit/e171aa76205f93ede5a15ffac75ef7d270c8110f))
+* preserve uninstall ownership across interrupted cleanup ([161bf87](https://github.com/petauron/vastora/commit/161bf87e72c4d40534760dbf75387c5b00863616))
+* reconcile uncertain application deployments ([b274d79](https://github.com/petauron/vastora/commit/b274d79575217e964a67945a0726e5f5356a125f))
+* remove deployment-specific routing defaults ([8cd45b3](https://github.com/petauron/vastora/commit/8cd45b39de45c12990ecba4c18fc4ef7a41d0773))
+* report Agent cleanup through bootstrap endpoint ([c2449ae](https://github.com/petauron/vastora/commit/c2449aee85fcee134a584b5f85f52bb8c7d9fee5))
+* resolve CPA lifecycle CI regressions ([5684cf5](https://github.com/petauron/vastora/commit/5684cf5279f7dd40b8ab5e9a1cfad2f1d824b034))
+* resolve lifecycle CI regressions ([ed07b70](https://github.com/petauron/vastora/commit/ed07b70aa598881921e48c85b361c4a448cef233))
+* restore CI contract consistency ([a29bb5f](https://github.com/petauron/vastora/commit/a29bb5f23ec59d2832436d0046df9d3132af04d4))
+* satisfy CPA lifecycle checks ([8571649](https://github.com/petauron/vastora/commit/8571649f7335c5a861a5b42ce2ed575950f49bda))
+* satisfy decommission integration static checks ([3248337](https://github.com/petauron/vastora/commit/3248337916016af0b6309f2f423c6d33866767cd))
+* validate host dependency ownership before uninstall ([f5b5af0](https://github.com/petauron/vastora/commit/f5b5af07e8e9e9b4533a5f9e50bdb3c33fe9bc47))
+
 ## [0.1.0-alpha.90](https://github.com/petauron/vastora/compare/v0.1.0-alpha.89...v0.1.0-alpha.90) (2026-09-01)
 
 
