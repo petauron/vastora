@@ -416,21 +416,19 @@ func newHeadscaleClient(endpoint, apiKey, dialAddress string, base *http.Client)
 	if port, err := strconv.Atoi(dialPort); err != nil || port < 1 || port > 65535 {
 		return headscaleClient{}, errors.New("center: Headscale dial address is invalid")
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if configured, ok := base.Transport.(*http.Transport); ok {
-		transport = configured.Clone()
-	}
-	transport.Proxy = nil
-	// Custom TLS dial hooks bypass DialContext. Do not inherit a second route
-	// around the fixed destination when cloning the configured transport.
-	transport.DialTLSContext = nil
-	transport.DialTLS = nil
-	transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "tcp", dialAddress)
+	// Build the transport with one dialing path. Copy only TLS configuration,
+	// not proxy functions or custom TLS dial hooks from the configured client.
+	transport := &http.Transport{
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 10 * time.Second,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", dialAddress)
+		},
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-	if transport.TLSClientConfig != nil {
-		tlsConfig = transport.TLSClientConfig.Clone()
+	if configured, ok := base.Transport.(*http.Transport); ok && configured.TLSClientConfig != nil {
+		tlsConfig = configured.TLSClientConfig.Clone()
 		if tlsConfig.MinVersion < tls.VersionTLS12 {
 			tlsConfig.MinVersion = tls.VersionTLS12
 		}
