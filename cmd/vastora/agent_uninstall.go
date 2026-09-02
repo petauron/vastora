@@ -308,6 +308,10 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 	if stateFileErr != nil && !errors.Is(stateFileErr, os.ErrNotExist) {
 		return fmt.Errorf("inspect Agent host ownership state: %w", stateFileErr)
 	}
+	unitOwned, err := stopAgentUnit(ctx, environment)
+	if err != nil {
+		return err
+	}
 	if !runtimeCleaned {
 		if err := environment.purgeRuntime(ctx, deleteData); err != nil {
 			return fmt.Errorf("remove managed Agent runtime: %w", err)
@@ -336,33 +340,20 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 		}
 	}
 	if environment.tailscalePrivacyPath != "" {
-		privacyStateRemoved := false
 		for _, path := range []string{environment.tailscalePrivacyPath, tailscalePrivacyAppliedPath(environment.tailscalePrivacyPath)} {
-			if err := os.Remove(path); err == nil {
-				privacyStateRemoved = true
-			} else if !errors.Is(err, os.ErrNotExist) {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove Vastora Tailscale privacy state %s: %w", path, err)
 			}
 		}
 		_ = os.Remove(filepath.Dir(environment.tailscalePrivacyPath))
-		if privacyStateRemoved {
-			if output, err := environment.run(ctx, "systemctl", "daemon-reload"); err != nil {
-				return fmt.Errorf("reload systemd after removing the Tailscale privacy override: %s: %w", strings.TrimSpace(string(output)), err)
-			}
-		}
 	}
 	if environment.tailscaleHostsPath != "" {
 		if _, err := removeTailscaleControlHosts(environment.tailscaleHostsPath); err != nil {
 			return fmt.Errorf("remove Vastora Headscale resolver pin: %w", err)
 		}
 	}
-	unitOwned, err := stopAndRemoveAgentUnit(ctx, environment)
-	if err != nil {
-		return err
-	}
-	if err := os.RemoveAll(environment.dataDir); err != nil {
-		return fmt.Errorf("remove Agent state: %w", err)
-	}
+	// Retain both ownership records until every owned binary is removed.
+	// A failed deletion must not make the next attempt skip the remaining files.
 	if !keepBinary && (unitOwned || stateRecorded) {
 		for _, path := range environment.binaryPaths {
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -370,10 +361,23 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 			}
 		}
 	}
+	if err := os.RemoveAll(environment.dataDir); err != nil {
+		return fmt.Errorf("remove Agent state: %w", err)
+	}
+	if unitOwned {
+		if err := os.Remove(environment.unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove Agent service: %w", err)
+		}
+	}
+	// Retry this even when a previous attempt already removed the unit or
+	// privacy drop-in but failed before systemd reloaded their disappearance.
+	if output, err := environment.run(ctx, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("reload systemd after Agent removal: %s: %w", strings.TrimSpace(string(output)), err)
+	}
 	return nil
 }
 
-func stopAndRemoveAgentUnit(ctx context.Context, environment agentUninstallEnvironment) (bool, error) {
+func stopAgentUnit(ctx context.Context, environment agentUninstallEnvironment) (bool, error) {
 	raw, err := os.ReadFile(environment.unitPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
@@ -386,12 +390,6 @@ func stopAndRemoveAgentUnit(ctx context.Context, environment agentUninstallEnvir
 	}
 	if output, err := environment.run(ctx, "systemctl", "disable", "--now", "vastora-agent.service"); err != nil {
 		return false, fmt.Errorf("stop Agent service: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	if err := os.Remove(environment.unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("remove Agent service: %w", err)
-	}
-	if output, err := environment.run(ctx, "systemctl", "daemon-reload"); err != nil {
-		return false, fmt.Errorf("reload systemd after Agent removal: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return true, nil
 }

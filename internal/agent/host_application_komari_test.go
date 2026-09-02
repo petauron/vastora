@@ -72,29 +72,151 @@ func TestSystemdKomariApplyAndRemove(t *testing.T) {
 
 func TestSystemdKomariRemoveResumesFromOwnershipJournal(t *testing.T) {
 	t.Parallel()
-	manager := SystemdHostApplicationManager{RootDir: t.TempDir(), RunCommand: func(context.Context, string, ...string) error { return nil }}
-	for path, content := range map[string][]byte{
-		komariUnitPath:   []byte(komariUnitMarker + "[Service]\n"),
-		komariConfigPath: []byte(`{"token":"secret"}`),
-		komariBinaryPath: []byte("managed-binary"),
+	binary := []byte("managed-binary")
+	digest := sha256.Sum256(binary)
+	server := httptest.NewServer(httpHandler(binary))
+	defer server.Close()
+	paths := []string{komariUnitPath, komariConfigPath, komariBinaryPath}
+	for _, interruption := range []struct {
+		name    string
+		removed int
+		reload  bool
+	}{
+		{name: "journal persisted"},
+		{name: "unit removed", removed: 1},
+		{name: "configuration removed", removed: 2},
+		{name: "binary removed", removed: 3},
+		{name: "systemd reloaded", removed: 3, reload: true},
 	} {
-		if err := writeHostFileAtomic(manager.path(path), content, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		t.Run(interruption.name, func(t *testing.T) {
+			manager := SystemdHostApplicationManager{
+				RootDir: t.TempDir(), HTTPClient: server.Client(), HostTarget: platform.Target{OS: platform.Linux, Architecture: platform.AMD64},
+				RunCommand: func(context.Context, string, ...string) error { return nil },
+			}
+			task := komariTestTask(server.URL, hex.EncodeToString(digest[:]))
+			if err := manager.ApplyKomari(context.Background(), task); err != nil {
+				t.Fatal(err)
+			}
+			originals := make(map[string]hostFileSnapshot, len(paths))
+			for _, path := range paths {
+				snapshot, err := captureHostFile(manager.path(path))
+				if err != nil || !snapshot.Exists {
+					t.Fatalf("missing installed file %s: %v", path, err)
+				}
+				originals[path] = snapshot
+			}
+			journal, err := manager.prepareKomariRemoval()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, path := range paths[:interruption.removed] {
+				if err := removeJournaledKomariFile(manager.path(path), journal); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if interruption.reload {
+				if err := manager.run(context.Background(), "systemctl", "daemon-reload"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for range 2 {
+				if err := manager.RemoveKomari(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				for _, path := range append(append([]string{}, paths...), komariRemovalJournalPath) {
+					if _, err := os.Lstat(manager.path(path)); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("managed file remains after resumed uninstall: %s (%v)", path, err)
+					}
+				}
+			}
+			if err := manager.ApplyKomari(context.Background(), task); err != nil {
+				t.Fatalf("reinstall after interrupted removal: %v", err)
+			}
+			for path, want := range originals {
+				got, err := captureHostFile(manager.path(path))
+				if err != nil || !reflect.DeepEqual(got, want) {
+					t.Fatalf("reinstall did not restore %s: %v", path, err)
+				}
+			}
+		})
 	}
-	if _, err := manager.prepareKomariRemoval(); err != nil {
-		t.Fatal(err)
+}
+
+func TestSystemdKomariRemoveRejectsChangedFilesBeforeStoppingService(t *testing.T) {
+	t.Parallel()
+	for _, changedPath := range []string{komariUnitPath, komariConfigPath, komariBinaryPath} {
+		t.Run(filepath.Base(changedPath), func(t *testing.T) {
+			commands := 0
+			manager := SystemdHostApplicationManager{
+				RootDir:    t.TempDir(),
+				RunCommand: func(context.Context, string, ...string) error { commands++; return nil },
+			}
+			files := map[string][]byte{
+				komariUnitPath: komariUnit(), komariConfigPath: []byte("configuration"), komariBinaryPath: []byte("binary"),
+			}
+			for path, data := range files {
+				if err := writeHostFileAtomic(manager.path(path), data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := manager.prepareKomariRemoval(); err != nil {
+				t.Fatal(err)
+			}
+			files[changedPath] = []byte("operator replacement")
+			if err := writeHostFileAtomic(manager.path(changedPath), files[changedPath], 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.RemoveKomari(context.Background()); err == nil || !strings.Contains(err.Error(), "changed Komari Agent file") {
+				t.Fatalf("replacement was not rejected: %v", err)
+			}
+			if commands != 0 {
+				t.Fatalf("ran %d service commands before rejecting replacement", commands)
+			}
+			for path, want := range files {
+				got, err := os.ReadFile(manager.path(path))
+				if err != nil || !reflect.DeepEqual(got, want) {
+					t.Fatalf("changed file before rejecting replacement: %s (%v)", path, err)
+				}
+			}
+			if _, err := os.Lstat(manager.path(komariRemovalJournalPath)); err != nil {
+				t.Fatalf("lost recovery journal: %v", err)
+			}
+		})
 	}
-	if err := os.Remove(manager.path(komariUnitPath)); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.RemoveKomari(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{komariUnitPath, komariConfigPath, komariBinaryPath, komariRemovalJournalPath} {
-		if _, err := os.Stat(manager.path(path)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("managed file remains after resumed uninstall: %s (%v)", path, err)
-		}
+}
+
+func TestSystemdKomariRemoveRejectsUnprotectedJournal(t *testing.T) {
+	t.Parallel()
+	for _, symlink := range []bool{false, true} {
+		t.Run(map[bool]string{false: "public permissions", true: "symlink"}[symlink], func(t *testing.T) {
+			manager := SystemdHostApplicationManager{
+				RootDir:    t.TempDir(),
+				RunCommand: func(context.Context, string, ...string) error { t.Fatal("untrusted journal ran a command"); return nil },
+			}
+			if err := writeHostFileAtomic(manager.path(komariUnitPath), komariUnit(), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.prepareKomariRemoval(); err != nil {
+				t.Fatal(err)
+			}
+			journalPath := manager.path(komariRemovalJournalPath)
+			if symlink {
+				if err := os.Rename(journalPath, journalPath+".original"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(journalPath+".original", journalPath); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Chmod(journalPath, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := manager.RemoveKomari(context.Background()); err == nil {
+				t.Fatal("accepted unprotected uninstall journal")
+			}
+			if got, err := os.ReadFile(manager.path(komariUnitPath)); err != nil || !reflect.DeepEqual(got, komariUnit()) {
+				t.Fatalf("changed service with unprotected journal: %v", err)
+			}
+		})
 	}
 }
 
