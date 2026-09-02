@@ -152,7 +152,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 	}
 	defer store.Close()
 	config, _ := json.Marshal(map[string]any{"timezone": "UTC", "panel_port": port, "enable_fail2ban": true, "vmess_aead_forced": false})
-	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.6.0", Config: config, Secrets: json.RawMessage(`{"api_token":"local-token"}`), ServiceAddress: host}); err != nil {
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.7.0", Config: config, Secrets: json.RawMessage(`{"api_token":"local-token"}`), ServiceAddress: host}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -371,7 +371,7 @@ func TestHeartbeatKeepsCenterConnectedWhenThreeXUIObservationFails(t *testing.T)
 		t.Fatal(err)
 	}
 	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
-	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.6.0", Config: config, Secrets: json.RawMessage(`{}`), ServiceAddress: "127.0.0.1"}); err != nil {
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.7.0", Config: config, Secrets: json.RawMessage(`{}`), ServiceAddress: "127.0.0.1"}); err != nil {
 		t.Fatal(err)
 	}
 	observationErr, heartbeatErr := (Client{}).heartbeat(context.Background(), store)

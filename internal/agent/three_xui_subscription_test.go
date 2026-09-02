@@ -92,7 +92,7 @@ func TestApplySubscriptionCommandUpdatesOnlyPublicAddressSettings(t *testing.T) 
 	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{
 		InstanceID:     "three-x-ui",
 		AppKey:         threeXUIKey,
-		Version:        "3.6.0",
+		Version:        "3.7.0",
 		Config:         json.RawMessage(`{"timezone":"UTC","panel_port":` + strconv.Itoa(port) + `}`),
 		Secrets:        json.RawMessage(`{"api_token":"local-api-token"}`),
 		ServiceAddress: host,

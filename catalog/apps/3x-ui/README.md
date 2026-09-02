@@ -1,6 +1,6 @@
 # 3x-ui app package
 
-This package pins the official `ghcr.io/mhsanaei/3x-ui` v3.6.0 image by
+This package pins the official `ghcr.io/mhsanaei/3x-ui` v3.7.0 image by
 content digest. Its typed Agent executor follows the upstream storage layout:
 
 - `db` persists the default SQLite state at `/etc/x-ui`.
@@ -15,3 +15,8 @@ by default to enforce per-client IP limits.
 
 The Vastora Agent installs this package through an explicit typed handler. It
 does not expose arbitrary Docker, Compose, or shell execution.
+
+Upgrades preserve a durable database snapshot before the new container starts.
+The Agent records the API token returned after an upstream token rotation, so
+later panel, subscription, node-sync, and REALITY operations use the active
+credential.

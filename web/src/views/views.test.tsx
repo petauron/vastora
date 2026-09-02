@@ -54,8 +54,8 @@ const realityDashboard = () => {
   const data = dashboard();
   data.agents[0].networkProfile = { serviceAddress: "10.0.0.10", publicAddress: "203.0.113.10", publicBindAddress: "203.0.113.10", publicMode: "direct", enabledKinds: ["lan", "public"], directPublic: true };
   data.sites[0].domainSuffix = "vastora.example.com";
-  data.apps = [{ key: "vastora-official/3x-ui", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "3x-ui", version: "3.6.0", name: { en: "3x-ui", "zh-CN": "3x-ui" }, description: { en: "Proxy management", "zh-CN": "代理管理" }, hostAccess: true, config: [] } }];
-  data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", role: "master", installedVersion: "3.6.0", availableVersion: "3.6.0" }];
+  data.apps = [{ key: "vastora-official/3x-ui", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "3x-ui", version: "3.7.0", name: { en: "3x-ui", "zh-CN": "3x-ui" }, description: { en: "Proxy management", "zh-CN": "代理管理" }, hostAccess: true, config: [] } }];
+  data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", role: "master", installedVersion: "3.7.0", availableVersion: "3.7.0" }];
   return data;
 };
 
@@ -658,7 +658,7 @@ describe("network and app views", () => {
   it("automatically installs later 3x-ui instances as VLESS-only nodes", async () => {
     const data = realityDashboard();
     data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker", networkProfile: { serviceAddress: "100.64.0.20", headscaleAddress: "100.64.0.20", enabledKinds: ["headscale"], directPublic: false } });
-    const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "worker-deployment", agentId: "worker", appKey: "vastora-official/3x-ui", appVersion: "3.6.0", state: "pending", operation: "install", deleteData: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
+    const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "worker-deployment", agentId: "worker", appKey: "vastora-official/3x-ui", appVersion: "3.7.0", state: "pending", operation: "install", deleteData: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
     const mutate = async (operation: () => Promise<unknown>) => { await operation(); };
     const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"))?.click());

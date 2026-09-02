@@ -363,7 +363,7 @@ func threeXUIClientTestStore(t *testing.T, server *httptest.Server, token string
 	}
 	config, _ := json.Marshal(map[string]any{"timezone": "UTC", "panel_port": port, "enable_fail2ban": true, "vmess_aead_forced": false})
 	secrets, _ := json.Marshal(map[string]string{"api_token": token})
-	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.6.0", Config: config, Secrets: secrets, ServiceAddress: host}); err != nil {
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.7.0", Config: config, Secrets: secrets, ServiceAddress: host}); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}

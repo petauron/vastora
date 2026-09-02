@@ -74,7 +74,7 @@
     },
     {
       "id": "3x-ui",
-      "version": "3.6.0",
+      "version": "3.7.0",
       "name": {
         "en": "3x-ui",
         "zh-CN": "3x-ui"
@@ -87,7 +87,7 @@
       "images": [
         {
           "name": "3x-ui",
-          "reference": "ghcr.io/mhsanaei/3x-ui:v3.6.0@sha256:652ef431a2d351cfcc7b5dc91798de5c1dd50da8c1b44f9e3afee1c60817035e"
+          "reference": "ghcr.io/mhsanaei/3x-ui:v3.7.0@sha256:3b3131f1876e6bf35063a9ec4dd1c594e4525180bfc2e1c477dcc8a3c9550ca1"
         }
       ],
       "services": [
