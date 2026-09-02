@@ -23,6 +23,7 @@ const (
 	hostUpdateCompleted     = hostUpdateDir + "/completed"
 	hostUpdateUnit          = "/etc/systemd/system/vastora-agent-update.service"
 	hostUpdateUnitName      = "vastora-agent-update.service"
+	hostUpdateEnabledLink   = "/etc/systemd/system/multi-user.target.wants/" + hostUpdateUnitName
 )
 
 type systemHostUpdater struct {
@@ -51,6 +52,11 @@ type hostUpdateResult struct {
 }
 
 func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.HostUpdateRequest) error {
+	if cancelled, err := hostUpdateCancelled(hostUpdateOperationPath); err != nil {
+		return err
+	} else if cancelled {
+		return errors.New("agent: uninstall cancelled the pending Agent update")
+	}
 	executable, err := filepath.Abs(u.executable)
 	if err != nil {
 		return fmt.Errorf("agent: resolve update executable: %w", err)
@@ -94,6 +100,11 @@ func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.Hos
 }
 
 func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
+	if cancelled, err := hostUpdateCancelled(hostUpdateOperationPath); err != nil {
+		return err
+	} else if cancelled {
+		return errors.New("agent: refusing to replace an Agent update cancelled by uninstall")
+	}
 	if err := validateHostUpdateOperation(operation); err != nil {
 		return err
 	}
@@ -116,7 +127,7 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 			return fmt.Errorf("agent: clear previous update state: %w", err)
 		}
 	}
-	unit := "[Unit]\nDescription=Vastora Agent update\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n[Service]\nType=oneshot\nExecStart=" + hostUpdateBinary + " agent finish-update --operation-file " + hostUpdateOperationPath + "\nExecStopPost=" + hostUpdateBinary + " agent cleanup-update --operation-file " + hostUpdateOperationPath + "\nRestart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=multi-user.target\n"
+	unit := hostUpdateServiceUnit()
 	if strings.Contains(unit, operation.Credential) {
 		return errors.New("agent: refusing to expose update credentials in systemd")
 	}
@@ -127,6 +138,9 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 }
 
 func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
+	if cancelled, err := hostUpdateCancelled(operationPath); err != nil || cancelled {
+		return err
+	}
 	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostUpdateCompleted))
 	if completed, err := protectedCleanupMarkerExists(completionPath, "completed\n"); err != nil {
 		return err
@@ -379,6 +393,9 @@ func writeHostUpdateResult(path string, result hostUpdateResult) error {
 }
 
 func cleanPersistentHostUpdate(operationPath string) error {
+	if cancelled, err := hostUpdateCancelled(operationPath); err != nil || cancelled {
+		return err
+	}
 	if _, err := readHostUpdateOperation(operationPath); err != nil {
 		return err
 	}
@@ -406,4 +423,17 @@ func cleanPersistentHostUpdate(operationPath string) error {
 		result = errors.Join(result, err)
 	}
 	return result
+}
+
+func hostUpdateServiceUnit() string {
+	return "[Unit]\nDescription=Vastora Agent update\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n[Service]\nType=oneshot\nExecStart=" + hostUpdateBinary + " agent finish-update --operation-file " + hostUpdateOperationPath + "\nExecStopPost=" + hostUpdateBinary + " agent cleanup-update --operation-file " + hostUpdateOperationPath + "\nRestart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=multi-user.target\n"
+}
+
+func hostUpdateCancelled(operationPath string) (bool, error) {
+	return protectedCleanupMarkerExists(filepath.Join(filepath.Dir(operationPath), "cancelled"), "cancelled\n")
+}
+
+func hostUpdateDataDir(path string) (string, error) {
+	operation, err := readHostUpdateOperation(path)
+	return operation.DataDir, err
 }

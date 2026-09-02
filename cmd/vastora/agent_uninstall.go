@@ -298,8 +298,12 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 		return err
 	}
 	return uninstallAgentHostWithEnvironment(ctx, deleteData, runtimeCleaned, keepBinary, agentUninstallEnvironment{
-		dataDir:              dataDir,
-		unitPath:             vastoraAgentUnitPath,
+		dataDir:  dataDir,
+		unitPath: vastoraAgentUnitPath,
+		pendingUpdate: &hostHelperCancellationEnvironment{
+			directory: hostUpdateDir, unitName: hostUpdateUnitName, unitPath: hostUpdateUnit, unitContents: hostUpdateServiceUnit(),
+			enabledLink: hostUpdateEnabledLink, operationDataDir: hostUpdateDataDir, run: runHostCommand,
+		},
 		binaryPaths:          []string{"/usr/local/bin/vastora", "/usr/local/bin/vastora.previous"},
 		tailscalePaths:       []string{"/etc/apt/sources.list.d/tailscale.list", "/usr/share/keyrings/tailscale-archive-keyring.gpg", "/var/lib/tailscale"},
 		tailscalePrivacyPath: "/etc/systemd/system/tailscaled.service.d/90-vastora-privacy.conf",
@@ -335,6 +339,7 @@ func safeAgentDataDir(value string) (string, error) {
 type agentUninstallEnvironment struct {
 	dataDir                string
 	unitPath               string
+	pendingUpdate          *hostHelperCancellationEnvironment
 	binaryPaths            []string
 	tailscalePaths         []string
 	tailscalePrivacyPath   string
@@ -362,6 +367,16 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 	unitOwned, err := stopAgentUnit(ctx, environment)
 	if err != nil {
 		return err
+	}
+	if environment.pendingUpdate != nil {
+		if err := cancelHostHelper(ctx, environment.dataDir, *environment.pendingUpdate); err != nil {
+			return fmt.Errorf("cancel Agent update before uninstall: %w", err)
+		}
+		// The updater may have restarted the Agent after our first stop.
+		// Stop it again once the updater can no longer install or roll back.
+		if _, err := stopAgentUnit(ctx, environment); err != nil {
+			return err
+		}
 	}
 	if !runtimeCleaned {
 		if err := environment.purgeRuntime(ctx, deleteData); err != nil {
