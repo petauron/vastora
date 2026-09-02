@@ -152,7 +152,7 @@ func (s *Server) executeAssistantRun(ctx context.Context, run AssistantRunView, 
 			toolResult, proposal, toolErr := s.executeAssistantTool(ctx, adminID, run, toolID, call.Function.Name, arguments, previews)
 			status := "completed"
 			if toolErr != nil {
-				status, toolResult = "failed", assistantJSON(map[string]string{"error": redactedAssistantError(toolErr)})
+				status, toolResult = "failed", assistantJSON(map[string]string{"error": assistantDiagnosticSummary(toolErr.Error())})
 			}
 			if len(toolResult) > 256<<10 {
 				toolResult = assistantJSON(map[string]string{"error": "tool result exceeded the safe limit"})
@@ -271,7 +271,7 @@ func (s *Server) executeAssistantTool(ctx context.Context, adminID string, run A
 		}
 		for _, value := range values {
 			if value.ID == input.DeploymentID {
-				return assistantJSON(map[string]any{"deploymentId": value.ID, "state": value.State, "error": redactAssistantText(value.Error), "reconciliationRequired": value.ReconciliationRequired}), nil, nil
+				return assistantJSON(map[string]any{"deploymentId": value.ID, "state": value.State, "error": assistantDiagnosticSummary(value.Error), "reconciliationRequired": value.ReconciliationRequired}), nil, nil
 			}
 		}
 		return nil, nil, errors.New("center: deployment not found")
@@ -388,7 +388,7 @@ func sanitizeAssistantApplications(values []ApplicationView) []map[string]any {
 		result = append(result, map[string]any{
 			"id": value.ID, "name": value.Name, "nodeId": value.NodeID, "siteId": value.SiteID, "appKey": value.AppKey,
 			"status": value.Status, "runtime": value.Runtime, "role": value.Role, "nodeSyncStatus": value.NodeSyncStatus,
-			"nodeSyncError": redactAssistantText(value.NodeSyncError), "installedVersion": value.InstalledVersion,
+			"nodeSyncError": assistantDiagnosticSummary(value.NodeSyncError), "installedVersion": value.InstalledVersion,
 			"availableVersion": value.AvailableVersion, "updateAvailable": value.UpdateAvailable,
 		})
 	}
@@ -400,7 +400,7 @@ func sanitizeAssistantActions(values []ActionView) []map[string]any {
 	for _, value := range values {
 		result = append(result, map[string]any{
 			"id": value.ID, "taskId": value.TaskID, "agentId": value.AgentID, "kind": value.Kind,
-			"revision": value.Revision, "event": value.Event, "message": redactAssistantText(value.Message), "createdAt": value.CreatedAt,
+			"revision": value.Revision, "event": value.Event, "detailsAvailable": strings.TrimSpace(value.Message) != "", "createdAt": value.CreatedAt,
 		})
 	}
 	return result
@@ -417,33 +417,63 @@ func countConnectedAgents(values []AgentView) int {
 }
 
 func assistantArgumentsContainSensitiveData(arguments json.RawMessage) bool {
-	var value any
-	if json.Unmarshal(arguments, &value) != nil {
+	if !json.Valid(arguments) {
 		return true
 	}
-	var inspect func(any) bool
-	inspect = func(current any) bool {
-		switch typed := current.(type) {
-		case map[string]any:
-			for key, child := range typed {
-				normalized := strings.ToLower(strings.ReplaceAll(key, "_", ""))
-				if strings.Contains(normalized, "password") || strings.Contains(normalized, "secret") || strings.Contains(normalized, "token") || strings.Contains(normalized, "apikey") || strings.Contains(normalized, "authorization") {
-					return true
+	// Inspect tokens rather than a decoded map so duplicate keys and escaped
+	// strings cannot hide material that would still be persisted in the raw JSON.
+	decoder := json.NewDecoder(bytes.NewReader(arguments))
+	var inspect func() bool
+	inspect = func() bool {
+		token, err := decoder.Token()
+		if err != nil {
+			return true
+		}
+		switch typed := token.(type) {
+		case string:
+			return assistantTextContainsPotentialCredential(typed)
+		case json.Delim:
+			if typed != '{' && typed != '[' {
+				return true
+			}
+			for decoder.More() {
+				if typed == '{' {
+					keyToken, err := decoder.Token()
+					key, ok := keyToken.(string)
+					if err != nil || !ok || assistantSensitiveArgumentKey(key) || assistantTextContainsPotentialCredential(key) {
+						return true
+					}
 				}
-				if inspect(child) {
+				if inspect() {
 					return true
 				}
 			}
-		case []any:
-			for _, child := range typed {
-				if inspect(child) {
-					return true
-				}
-			}
+			_, err = decoder.Token()
+			return err != nil
 		}
 		return false
 	}
-	return inspect(value)
+	return inspect()
+}
+
+func assistantSensitiveArgumentKey(key string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "", ".", "").Replace(key))
+	for _, marker := range []string{"password", "passwd", "secret", "token", "apikey", "authorization", "密码", "密钥", "令牌"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// Runtime diagnostics can contain credentials of any shape. Keep their raw
+// text out of model context, chat history, events and assistant audit records;
+// reuse the server's finite error categories instead of guessing at redaction.
+func assistantDiagnosticSummary(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return ""
+	}
+	return "Operation requires attention (" + errorCode(http.StatusInternalServerError, message) + "). Inspect technical details in the trusted application or node page."
 }
 
 func (s *Server) storeAssistantMessage(ctx context.Context, run AssistantRunView, content string) error {
@@ -495,7 +525,7 @@ func (s *Server) completeAssistantRun(ctx context.Context, run AssistantRunView,
 }
 
 func (s *Server) failAssistantRun(run AssistantRunView, cause error) {
-	message := redactedAssistantError(cause)
+	message := assistantDiagnosticSummary(cause.Error())
 	var adminID, status string
 	err := s.store.db.QueryRowContext(context.Background(), `SELECT admin_id, status FROM assistant_runs WHERE id = ?`, run.ID).Scan(&adminID, &status)
 	if err != nil || status == "cancelled" {
@@ -570,14 +600,14 @@ func (s *Server) watchAssistantDeployment(proposal AssistantProposalView, execut
 				} else if state == "failed" {
 					event = "execution.failed"
 				}
-				_ = s.store.appendAssistantEvent(s.store.backgroundCtx, proposal.ConversationID, proposal.RunID, event, map[string]string{"deploymentId": execution.ID, "error": redactAssistantText(taskError)})
-				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, execution.ID, event, map[string]string{"error": redactAssistantText(taskError)})
+				_ = s.store.appendAssistantEvent(s.store.backgroundCtx, proposal.ConversationID, proposal.RunID, event, map[string]string{"deploymentId": execution.ID, "error": assistantDiagnosticSummary(taskError)})
+				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, execution.ID, event, map[string]string{"error": assistantDiagnosticSummary(taskError)})
 				lastState = state
 			}
 			if state == "succeeded" || state == "failed" {
 				runState, finalEvent, message := "completed", "run.completed", "The approved application installation completed successfully."
 				if state == "failed" {
-					runState, finalEvent, message = "failed", "run.failed", "The approved application installation failed: "+redactAssistantText(taskError)
+					runState, finalEvent, message = "failed", "run.failed", "The approved application installation failed: "+assistantDiagnosticSummary(taskError)
 				}
 				completed, err := s.finishAssistantExecution(s.store.backgroundCtx, proposal, execution.ID, "deploymentId", runState, finalEvent, message, taskError)
 				if err != nil || !completed {
@@ -625,7 +655,7 @@ func (s *Server) watchAssistantCredentialRotation(proposal AssistantProposalView
 				} else if rotation.State == "failed" || rotation.State == "action_required" {
 					event = "execution.failed"
 				}
-				payload := map[string]string{"rotationId": execution.ID, "state": rotation.State, "error": redactAssistantText(rotation.LastError)}
+				payload := map[string]string{"rotationId": execution.ID, "state": rotation.State, "error": assistantDiagnosticSummary(rotation.LastError)}
 				_ = s.store.appendAssistantEvent(s.store.backgroundCtx, proposal.ConversationID, proposal.RunID, event, payload)
 				_ = s.store.recordAssistantAudit(s.store.backgroundCtx, adminID, proposal.ConversationID, proposal.RunID, "", proposal.ID, "", event, payload)
 				lastState = rotation.State
@@ -635,7 +665,7 @@ func (s *Server) watchAssistantCredentialRotation(proposal AssistantProposalView
 				message := "The approved CPA credential rotation completed successfully. The secret value was not disclosed to the assistant."
 				if rotation.State != "succeeded" {
 					runState, finalEvent = "failed", "run.failed"
-					message = "The approved CPA credential rotation requires attention: " + redactAssistantText(rotation.LastError)
+					message = "The approved CPA credential rotation requires attention: " + assistantDiagnosticSummary(rotation.LastError)
 				}
 				completed, finishErr := s.finishAssistantExecution(s.store.backgroundCtx, proposal, execution.ID, "rotationId", runState, finalEvent, message, rotation.LastError)
 				if finishErr != nil || !completed {
@@ -659,7 +689,7 @@ func (s *Server) finishAssistantExecution(ctx context.Context, proposal Assistan
 		return false, err
 	}
 	now := s.store.now().UTC()
-	message, taskError = redactAssistantText(message), redactAssistantText(taskError)
+	message, taskError = redactAssistantText(message), assistantDiagnosticSummary(taskError)
 	tx, err := s.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err

@@ -111,6 +111,13 @@
   opaque values are rejected before model delivery. This input gate is defense
   in depth for accidental pastes and does not replace the structural exclusion
   of Center-managed secrets.
+  Raw deployment, credential-rotation and node-sync diagnostics are excluded
+  from assistant tools, conversation history, execution events and audit
+  payloads; only finite error categories and execution state are exposed.
+  Detailed diagnostics remain on the trusted application/node surfaces.
+  Tool arguments are checked before persistence, including decoded string
+  values, nested arrays, escaped strings and duplicate JSON keys. Conversation
+  titles use the same accidental-paste gate as chat messages.
 - Headscale API requests can target only exact HTTPS origins authorized when
   Center starts. Browser administrators select from that operator-controlled
   boundary and cannot send the stored Bearer token to arbitrary network hosts.
