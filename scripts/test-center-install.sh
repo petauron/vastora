@@ -260,7 +260,7 @@ test -x "$agent_executable"
 test -f "$existing/.host-cli-installed"
 test -f "$temporary_dir/systemd/vastora-center-update.service"
 test -f "$temporary_dir/systemd/vastora-center-update.path"
-grep -Fqx "configure-center --data-dir $agent_data_dir --center-url http://127.0.0.1:19090" "$temporary_dir/agent-configure.log"
+grep -Fqx "configure-center --data-dir $agent_data_dir --center-url http://127.0.0.1:19090 --defer-loopback-health-verification" "$temporary_dir/agent-configure.log"
 grep -Fq "PathExists=$existing/.update-request" "$temporary_dir/systemd/vastora-center-update.path"
 grep -Fq "$existing/update-center.sh --install-dir $existing" "$temporary_dir/systemd/vastora-center-update.service"
 

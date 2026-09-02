@@ -616,6 +616,21 @@ type VerifiedCenter struct {
 	CACertificatePEM string
 }
 
+// NormalizeDeferredLoopbackCenterURL validates the only Center address that
+// may be saved before it is reachable. The co-located upgrade script uses this
+// while the old Center is stopped and verifies the replacement before starting
+// the Agent. Remote addresses must always use VerifyCenterURL instead.
+func NormalizeDeferredLoopbackCenterURL(desired string) (string, error) {
+	normalized, err := normalizeCenterURL(desired)
+	if err != nil {
+		return "", err
+	}
+	if !loopbackCenterURL(normalized) {
+		return "", errors.New("agent: deferred Center health verification requires loopback HTTP")
+	}
+	return normalized, nil
+}
+
 func (c Client) VerifyCenterURL(ctx context.Context, desired, expectedCAFingerprint, caCertificatePEM string) (VerifiedCenter, error) {
 	normalized, err := normalizeCenterURL(desired)
 	if err != nil {
