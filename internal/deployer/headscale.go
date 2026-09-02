@@ -853,7 +853,7 @@ func waitForURL(ctx context.Context, httpClient *http.Client, target string, tim
 
 func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, internalPort int, timeout time.Duration) error {
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
 		return errors.New("deployer: local gateway endpoint is invalid")
 	}
 	transport := &http.Transport{
@@ -864,7 +864,13 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, inter
 		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, ServerName: parsed.Hostname()},
 	}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 8 * time.Second}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {

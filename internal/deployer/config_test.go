@@ -50,6 +50,20 @@ func TestLocalGatewayProbeUsesPinnedRequestDestination(t *testing.T) {
 	}
 }
 
+func TestLocalGatewayProbeRejectsNonOriginEndpoints(t *testing.T) {
+	for _, endpoint := range []string{
+		"http://headscale.example.com",
+		"https://user:credential@headscale.example.com",
+		"https://headscale.example.com/another-target",
+		"https://headscale.example.com?target=another",
+		"https://headscale.example.com#another",
+	} {
+		if err := waitForLocalGateway(context.Background(), endpoint, "/health", 8443, 0); err == nil || !strings.Contains(err.Error(), "endpoint is invalid") {
+			t.Fatalf("non-origin probe endpoint was accepted: %q err=%v", endpoint, err)
+		}
+	}
+}
+
 func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T) {
 	headscalePayload, err := renderHeadscaleConfig("https://headscale.example.com", deployapi.HeadscaleDNSPolicyCustom, []string{"1.1.1.1", "1.0.0.1"})
 	if err != nil {
