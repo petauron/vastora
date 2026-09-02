@@ -174,8 +174,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		result.ShareURI = ""
 		return guardedRealityResult(result, verification, companion), nil
 	}
-	manualTarget := strings.TrimSpace(command.TargetHost) != "" || strings.TrimSpace(command.ServerName) != ""
-	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || manualTarget && (!validThreeXUIShareHostname(command.TargetHost) || !validThreeXUIShareHostname(command.ServerName)) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > 31 || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 {
+	if command.Action != "create" || !validRealityDisplayName(command.DisplayName) || (command.CreateInitialClient && !validRealityDisplayName(command.ClientName)) || command.InboundTag != threeXUIRealityTag(commandID) || !validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > 31 || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0 {
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
 	}
 	listen := strings.TrimSpace(command.TargetAddress)
@@ -187,16 +186,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			return RealityCommandResult{}, errors.New("agent: target VLESS node API connection is unavailable")
 		}
 	}
-	var verification realityTargetVerification
-	if manualTarget {
-		verification, err = realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
-	} else {
-		verification, err = discoverRealityTarget(ctx, baseURL, masterToken, command.TargetPublicAddress, command.ExcludedSNI)
-		if err == nil {
-			command.TargetHost = verification.TargetHost
-			command.ServerName = verification.ServerName
-		}
-	}
+	verification, err := realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
 	if err != nil {
 		return RealityCommandResult{}, err
 	}
@@ -402,31 +392,6 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	result.InboundTag = hardened.Tag
 	result = guardedRealityResult(result, verification, hardenedCompanion)
 	return result, nil
-}
-
-var preferredRealityTargets = []string{
-	"www.intel.com",
-	"www.amd.com",
-	"www.microsoft.com",
-	"www.apple.com",
-	"www.oracle.com",
-}
-
-func discoverRealityTarget(ctx context.Context, _, _, nodePublicAddress string, excludedSNI []string) (realityTargetVerification, error) {
-	excluded := make(map[string]bool, len(excludedSNI))
-	for _, hostname := range excludedSNI {
-		excluded[strings.ToLower(strings.TrimSpace(hostname))] = true
-	}
-	for _, hostname := range preferredRealityTargets {
-		if excluded[hostname] {
-			continue
-		}
-		verification, err := realityTargetVerifier(ctx, hostname, hostname, nodePublicAddress)
-		if err == nil {
-			return verification, nil
-		}
-	}
-	return realityTargetVerification{}, errors.New("agent: no preferred .com REALITY target passed TLS validation; open Advanced settings and enter another .com hostname manually")
 }
 
 func completeThreeXUIRealityCreation(ctx context.Context, baseURL, token string, result RealityCommandResult, clientEmail string) error {

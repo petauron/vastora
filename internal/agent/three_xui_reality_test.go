@@ -43,27 +43,6 @@ func installRealityGuardTestSeams(t *testing.T) {
 	})
 }
 
-func TestDiscoverRealityTargetUsesPreferredDotComOrder(t *testing.T) {
-	previousVerifier := realityTargetVerifier
-	var checked []string
-	realityTargetVerifier = func(_ context.Context, targetHost, serverName, _ string) (realityTargetVerification, error) {
-		checked = append(checked, targetHost)
-		if targetHost != serverName || targetHost != "www.amd.com" {
-			return realityTargetVerification{}, errors.New("unavailable")
-		}
-		return realityTargetVerification{TargetHost: targetHost, ServerName: serverName}, nil
-	}
-	t.Cleanup(func() { realityTargetVerifier = previousVerifier })
-
-	result, err := discoverRealityTarget(context.Background(), "", "", "203.0.113.10", []string{"www.intel.com"})
-	if err != nil || result.TargetHost != "www.amd.com" {
-		t.Fatalf("preferred target = %#v, err = %v", result, err)
-	}
-	if len(checked) != 1 || checked[0] != "www.amd.com" {
-		t.Fatalf("checked targets = %#v", checked)
-	}
-}
-
 func TestEnsureRealityPortAvailableIsScopedToPhysicalNode(t *testing.T) {
 	localNodeID := 0
 	workerNodeID := 7

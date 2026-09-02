@@ -217,31 +217,30 @@ type ApplicationTaskResult struct {
 }
 
 type RealityCommandTask struct {
-	Action              string   `json:"action"`
-	RegionCode          string   `json:"regionCode"`
-	DisplayName         string   `json:"displayName"`
-	ClientName          string   `json:"clientName,omitempty"`
-	InboundID           int      `json:"inboundId,omitempty"`
-	ConnectHostname     string   `json:"connectHostname"`
-	DNSProvider         string   `json:"dnsProvider"`
-	TargetHost          string   `json:"targetHost,omitempty"`
-	ServerName          string   `json:"serverName,omitempty"`
-	ExcludedSNI         []string `json:"excludedSni,omitempty"`
-	TargetApplicationID string   `json:"targetApplicationId"`
-	TargetAddress       string   `json:"targetAddress"`
-	TargetPublicAddress string   `json:"targetPublicAddress"`
-	TargetPanelPort     int      `json:"targetPanelPort"`
-	TargetNodeID        int      `json:"targetNodeId,omitempty"`
-	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
-	CreateInitialClient bool     `json:"createInitialClient"`
-	InboundTag          string   `json:"inboundTag"`
-	InboundTotalBytes   int64    `json:"inboundTotalBytes"`
-	InboundResetDay     int      `json:"inboundResetDay"`
-	ClientTotalBytes    int64    `json:"clientTotalBytes"`
-	ClientResetDays     int      `json:"clientResetDays"`
-	ClientExpiryTime    int64    `json:"clientExpiryTime"`
-	ServiceID           string   `json:"serviceId,omitempty"`
-	GuardRevision       int64    `json:"guardRevision,omitempty"`
+	Action              string `json:"action"`
+	RegionCode          string `json:"regionCode"`
+	DisplayName         string `json:"displayName"`
+	ClientName          string `json:"clientName,omitempty"`
+	InboundID           int    `json:"inboundId,omitempty"`
+	ConnectHostname     string `json:"connectHostname"`
+	DNSProvider         string `json:"dnsProvider"`
+	TargetHost          string `json:"targetHost,omitempty"`
+	ServerName          string `json:"serverName,omitempty"`
+	TargetApplicationID string `json:"targetApplicationId"`
+	TargetAddress       string `json:"targetAddress"`
+	TargetPublicAddress string `json:"targetPublicAddress"`
+	TargetPanelPort     int    `json:"targetPanelPort"`
+	TargetNodeID        int    `json:"targetNodeId,omitempty"`
+	TargetAPIToken      string `json:"targetApiToken,omitempty"`
+	CreateInitialClient bool   `json:"createInitialClient"`
+	InboundTag          string `json:"inboundTag"`
+	InboundTotalBytes   int64  `json:"inboundTotalBytes"`
+	InboundResetDay     int    `json:"inboundResetDay"`
+	ClientTotalBytes    int64  `json:"clientTotalBytes"`
+	ClientResetDays     int    `json:"clientResetDays"`
+	ClientExpiryTime    int64  `json:"clientExpiryTime"`
+	ServiceID           string `json:"serviceId,omitempty"`
+	GuardRevision       int64  `json:"guardRevision,omitempty"`
 }
 
 type RealityCommandResult struct {

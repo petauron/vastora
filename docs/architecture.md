@@ -336,11 +336,11 @@ ISO 3166-1 region plus the administrator-provided name (for example,
 public address and remains manually searchable and editable. This keeps client
 grouping prefixes stable even when a 3x-ui controller manages nodes on other
 hosts.
-Agent automatically selects from a curated list of reputable `.com` targets,
-checking Intel and AMD first, unless the administrator provides a `.com`
-`targetHost` and exact `.com` `serverName`; target port is fixed to 443. It
-resolves candidates, pins one IP, records both ASNs for diagnostics, and
-verifies TLS 1.3, X25519, H2, SNI, and the certificate against that pinned IP.
+The administrator must provide a `.com` `targetHost` and exact `.com`
+`serverName`; target port is fixed to 443. Agent resolves the target, pins one
+IP, requires the target and VLESS node to have the same ASN, rejects addresses
+identified by cdncheck as shared CDN or WAF infrastructure, and verifies TLS
+1.3, X25519, H2, SNI, and the certificate against that pinned IP.
 It then generates the keys and optional
 first client locally and creates the node's sole REALITY inbound on container
 port `443`. Later subscribers are clients of that inbound rather than new

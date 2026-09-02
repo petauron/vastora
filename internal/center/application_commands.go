@@ -59,31 +59,30 @@ type RealityTargetVerifyInput struct {
 }
 
 type RealityCommandTask struct {
-	Action              string   `json:"action"`
-	RegionCode          string   `json:"regionCode"`
-	DisplayName         string   `json:"displayName"`
-	ClientName          string   `json:"clientName,omitempty"`
-	InboundID           int      `json:"inboundId,omitempty"`
-	ConnectHostname     string   `json:"connectHostname"`
-	DNSProvider         string   `json:"dnsProvider"`
-	TargetHost          string   `json:"targetHost,omitempty"`
-	ServerName          string   `json:"serverName,omitempty"`
-	ExcludedSNI         []string `json:"excludedSni,omitempty"`
-	TargetApplicationID string   `json:"targetApplicationId"`
-	TargetAddress       string   `json:"targetAddress"`
-	TargetPublicAddress string   `json:"targetPublicAddress"`
-	TargetPanelPort     int      `json:"targetPanelPort"`
-	TargetNodeID        int      `json:"targetNodeId,omitempty"`
-	TargetAPIToken      string   `json:"targetApiToken,omitempty"`
-	CreateInitialClient bool     `json:"createInitialClient"`
-	InboundTag          string   `json:"inboundTag"`
-	InboundTotalBytes   int64    `json:"inboundTotalBytes"`
-	InboundResetDay     int      `json:"inboundResetDay"`
-	ClientTotalBytes    int64    `json:"clientTotalBytes"`
-	ClientResetDays     int      `json:"clientResetDays"`
-	ClientExpiryTime    int64    `json:"clientExpiryTime"`
-	ServiceID           string   `json:"serviceId,omitempty"`
-	GuardRevision       int64    `json:"guardRevision,omitempty"`
+	Action              string `json:"action"`
+	RegionCode          string `json:"regionCode"`
+	DisplayName         string `json:"displayName"`
+	ClientName          string `json:"clientName,omitempty"`
+	InboundID           int    `json:"inboundId,omitempty"`
+	ConnectHostname     string `json:"connectHostname"`
+	DNSProvider         string `json:"dnsProvider"`
+	TargetHost          string `json:"targetHost,omitempty"`
+	ServerName          string `json:"serverName,omitempty"`
+	TargetApplicationID string `json:"targetApplicationId"`
+	TargetAddress       string `json:"targetAddress"`
+	TargetPublicAddress string `json:"targetPublicAddress"`
+	TargetPanelPort     int    `json:"targetPanelPort"`
+	TargetNodeID        int    `json:"targetNodeId,omitempty"`
+	TargetAPIToken      string `json:"targetApiToken,omitempty"`
+	CreateInitialClient bool   `json:"createInitialClient"`
+	InboundTag          string `json:"inboundTag"`
+	InboundTotalBytes   int64  `json:"inboundTotalBytes"`
+	InboundResetDay     int    `json:"inboundResetDay"`
+	ClientTotalBytes    int64  `json:"clientTotalBytes"`
+	ClientResetDays     int    `json:"clientResetDays"`
+	ClientExpiryTime    int64  `json:"clientExpiryTime"`
+	ServiceID           string `json:"serviceId,omitempty"`
+	GuardRevision       int64  `json:"guardRevision,omitempty"`
 }
 
 type RealityCommandResult struct {
@@ -320,9 +319,8 @@ func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInpu
 	if input.DNSProvider != "manual" && input.DNSProvider != "cloudflare" {
 		return input, "", errors.New("center: REALITY DNS must be manual or Cloudflare")
 	}
-	manualTarget := input.TargetHost != "" || input.ServerName != ""
-	if manualTarget && (!validRealityTargetHostname(input.TargetHost) || !validRealityTargetHostname(input.ServerName)) {
-		return input, "", errors.New("center: REALITY targetHost and serverName must both be valid .com hostnames; leave both empty for automatic selection")
+	if !validRealityTargetHostname(input.TargetHost) || !validRealityTargetHostname(input.ServerName) {
+		return input, "", errors.New("center: REALITY targetHost and serverName must both be valid .com hostnames")
 	}
 	return input, displayName, nil
 }
@@ -344,8 +342,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if input.TargetNodeID > 0 {
 		expectedCompanionTag = "n" + strconv.Itoa(input.TargetNodeID) + "-" + expectedCompanionTag
 	}
-	manualTargetMismatch := input.TargetHost != "" && (result.TargetHost != input.TargetHost || result.ServerName != input.ServerName)
-	if !validRealityTargetHostname(result.TargetHost) || !validRealityTargetHostname(result.ServerName) || manualTargetMismatch || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
+	if !validRealityTargetHostname(result.TargetHost) || !validRealityTargetHostname(result.ServerName) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || net.ParseIP(result.TargetIP) == nil || result.NodeASN <= 0 || result.TargetASN <= 0 || result.NodeASN != result.TargetASN || result.CDNProvider != "" || !result.TLS13 || !result.X25519 || !result.HTTP2 || !result.CertificateValid || result.CompanionInboundID < 1 || (result.CompanionTag != input.InboundTag+"-guard" && result.CompanionTag != expectedCompanionTag) || result.CompanionPort != threeXUIRealityGuardPort || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
@@ -536,22 +533,6 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if active != 0 {
 		return ApplicationCommandView{}, errors.New("center: this 3x-ui controller already has an operation in progress")
 	}
-	excluded := []string{}
-	rows, err := tx.QueryContext(ctx, `SELECT sni_hostname FROM publications WHERE gateway_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped' ORDER BY sni_hostname`, input.GatewayNodeID)
-	if err != nil {
-		return ApplicationCommandView{}, err
-	}
-	for rows.Next() {
-		var hostname string
-		if err := rows.Scan(&hostname); err != nil {
-			rows.Close()
-			return ApplicationCommandView{}, err
-		}
-		excluded = append(excluded, hostname)
-	}
-	if err := rows.Close(); err != nil {
-		return ApplicationCommandView{}, err
-	}
 	if createInitialClient && input.ClientResetDays > 0 && input.ClientExpiryTime <= s.now().UTC().UnixMilli() {
 		return ApplicationCommandView{}, errors.New("center: a renewable subscription traffic plan requires a future expiry time")
 	}
@@ -560,7 +541,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, err
 	}
 	id := "application-command-" + token
-	task := RealityCommandTask{Action: "create", RegionCode: input.RegionCode, DisplayName: displayName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, TargetHost: input.TargetHost, ServerName: input.ServerName, ExcludedSNI: excluded,
+	task := RealityCommandTask{Action: "create", RegionCode: input.RegionCode, DisplayName: displayName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, TargetHost: input.TargetHost, ServerName: input.ServerName,
 		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPublicAddress: targetPublicAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID,
 		CreateInitialClient: createInitialClient,
 		InboundTag:          realityCommandInboundTag(id),
