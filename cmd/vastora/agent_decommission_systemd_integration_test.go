@@ -202,10 +202,6 @@ func TestHostDecommissionRealSystemdHelperProcess(t *testing.T) {
 	if os.Getenv("VASTORA_SYSTEMD_DECOMMISSION_HELPER") != "1" {
 		t.Skip("helper process is started only by the real systemd integration")
 	}
-	operation, err := readHostDecommissionOperation(hostDecommissionOperationPath)
-	if err != nil {
-		t.Fatal(err)
-	}
 	cleanup := func(ctx context.Context, operation hostDecommissionOperation) error {
 		return uninstallAgentHostWithEnvironment(ctx, operation.DeleteData, false, false, agentUninstallEnvironment{
 			dataDir:     operation.DataDir,
