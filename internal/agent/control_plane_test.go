@@ -1120,3 +1120,15 @@ func TestPendingTaskCompletionReplaysAfterRestartAndAcknowledgesOnce(t *testing.
 		t.Fatalf("outbox deliveries = %d, want 1", deliveries)
 	}
 }
+
+func TestNormalizeDeferredLoopbackCenterURLRejectsRemoteAddresses(t *testing.T) {
+	normalized, err := NormalizeDeferredLoopbackCenterURL("http://127.0.0.1:8080/")
+	if err != nil || normalized != "http://127.0.0.1:8080" {
+		t.Fatalf("normalized loopback URL = %q, err=%v", normalized, err)
+	}
+	for _, candidate := range []string{"https://center.example.com", "http://192.0.2.10:8080", "http://127.0.0.1:8080/path?token=value"} {
+		if _, err := NormalizeDeferredLoopbackCenterURL(candidate); err == nil {
+			t.Fatalf("deferred verification accepted %q", candidate)
+		}
+	}
+}

@@ -79,7 +79,7 @@ Usage:
   vastora agent install --center-url URL --token-file FILE [--ca-certificate FILE] [--replace-existing]
   vastora agent status [--data-dir /var/lib/vastora/agent]
   vastora agent configure --roles worker[,gateway] --capabilities docker[,gateway,tunnel]
-  vastora agent configure-center --center-url URL [--ca-certificate FILE]
+  vastora agent configure-center --center-url URL [--ca-certificate FILE] [--defer-loopback-health-verification]
   vastora agent resolve-legacy-task --task-id ID --confirm-external-state-reviewed
   vastora agent adopt-tailscale --confirm-vastora-ownership
   vastora agent update [--data-dir /var/lib/vastora/agent] [--center-url URL]

@@ -185,6 +185,7 @@ func runAgent(arguments []string) error {
 		centerURL := flags.String("center-url", "", "Center HTTPS URL or loopback HTTP URL")
 		caFingerprint := flags.String("ca-fingerprint", "", "expected Center CA SHA-256 public-key fingerprint")
 		caCertificate := flags.String("ca-certificate", "", "PEM certificate for a private Center CA")
+		deferLoopbackHealthVerification := flags.Bool("defer-loopback-health-verification", false, "save a loopback Center URL before the co-located Center restarts")
 		if err := flags.Parse(arguments[1:]); err != nil {
 			return err
 		}
@@ -198,7 +199,7 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
-		if err := configureAgentCenter(context.Background(), *dataDir, *centerURL, *caFingerprint, caCertificatePEM); err != nil {
+		if err := configureAgentCenter(context.Background(), *dataDir, *centerURL, *caFingerprint, caCertificatePEM, *deferLoopbackHealthVerification); err != nil {
 			return err
 		}
 		fmt.Println("Agent Center connection updated")
@@ -603,7 +604,7 @@ func runAgent(arguments []string) error {
 	}
 }
 
-func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint, caCertificatePEM string) error {
+func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint, caCertificatePEM string, deferLoopbackHealthVerification bool) error {
 	store, err := agent.Open(dataDir)
 	if err != nil {
 		return err
@@ -613,9 +614,20 @@ func configureAgentCenter(ctx context.Context, dataDir, centerURL, caFingerprint
 	if err != nil {
 		return errors.New("agent must be enrolled before its Center can be changed")
 	}
-	verified, err := (agent.Client{}).VerifyCenterURL(ctx, centerURL, caFingerprint, caCertificatePEM)
-	if err != nil {
-		return fmt.Errorf("verify requested Center URL: %w", err)
+	var verified agent.VerifiedCenter
+	if deferLoopbackHealthVerification {
+		if strings.TrimSpace(caFingerprint) != "" || strings.TrimSpace(caCertificatePEM) != "" {
+			return errors.New("deferred Center health verification does not accept CA options")
+		}
+		verified.URL, err = agent.NormalizeDeferredLoopbackCenterURL(centerURL)
+		if err != nil {
+			return err
+		}
+	} else {
+		verified, err = (agent.Client{}).VerifyCenterURL(ctx, centerURL, caFingerprint, caCertificatePEM)
+		if err != nil {
+			return fmt.Errorf("verify requested Center URL: %w", err)
+		}
 	}
 	if verified.URL == connection.CenterURL && verified.CAFingerprint == connection.CAFingerprint && verified.CACertificatePEM == connection.CACertificatePEM {
 		if agentLoopbackCenterURL(verified.URL) {

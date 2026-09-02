@@ -231,7 +231,7 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
   mv "$agent_staged" "$agent_executable"
 	agent_changed=yes
 	agent_database_opened=yes
-	"$agent_executable" agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url"
+	"$agent_executable" agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url" --defer-loopback-health-verification
 	echo "Co-located Agent $new_version is staged until the updated Center becomes healthy."
 fi
 
