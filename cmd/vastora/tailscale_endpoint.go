@@ -65,7 +65,12 @@ func reconcileTailscaleEndpoint(ctx context.Context, staticEndpoints []string, e
 		return fmt.Errorf("inspect Tailscale static endpoint override: %w", err)
 	}
 	if hostFileMatches(configSnapshot, expectedConfig) && hostFileMatches(overrideSnapshot, expectedOverride) {
-		return nil
+		healthContext, healthCancel := context.WithTimeout(ctx, 15*time.Second)
+		healthErr := verifyTailscaleEndpointHealth(healthContext, len(expectedConfig) > 0, environment.configPath, environment.run)
+		healthCancel()
+		if healthErr == nil {
+			return nil
+		}
 	}
 	commandContext, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -74,9 +79,6 @@ func reconcileTailscaleEndpoint(ctx context.Context, staticEndpoints []string, e
 	} else if fields := strings.Fields(string(output)); len(fields) == 0 || fields[0] != tailscalehost.SupportedVersion {
 		found := strings.TrimSpace(string(output))
 		return fmt.Errorf("verify Vastora-managed Tailscale version: requires %s, found %s", tailscalehost.SupportedVersion, found)
-	}
-	if output, activeErr := environment.run(commandContext, "systemctl", "is-active", "--quiet", "tailscaled.service"); activeErr != nil {
-		return fmt.Errorf("configure Tailscale static endpoint: tailscaled.service is not active: %s: %w", strings.TrimSpace(string(output)), activeErr)
 	}
 	rollback := func(cause error) error {
 		rollbackContext, rollbackCancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -111,13 +113,13 @@ func reconcileTailscaleEndpoint(ctx context.Context, staticEndpoints []string, e
 	if output, restartErr := environment.run(commandContext, "systemctl", "restart", "tailscaled.service"); restartErr != nil {
 		return rollback(fmt.Errorf("restart Tailscale with static endpoint: %s: %w", strings.TrimSpace(string(output)), restartErr))
 	}
-	if healthErr := verifyTailscaleEndpointHealth(commandContext, len(expectedConfig) > 0, environment.run); healthErr != nil {
+	if healthErr := verifyTailscaleEndpointHealth(commandContext, len(expectedConfig) > 0, environment.configPath, environment.run); healthErr != nil {
 		return rollback(healthErr)
 	}
 	return nil
 }
 
-func verifyTailscaleEndpointHealth(ctx context.Context, requireFixedPort bool, run func(context.Context, string, ...string) ([]byte, error)) error {
+func verifyTailscaleEndpointHealth(ctx context.Context, requireFixedPort bool, configPath string, run func(context.Context, string, ...string) ([]byte, error)) error {
 	if output, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service"); err != nil {
 		return fmt.Errorf("verify Tailscale static endpoint service: %s: %w", strings.TrimSpace(string(output)), err)
 	}
@@ -132,6 +134,14 @@ func verifyTailscaleEndpointHealth(ctx context.Context, requireFixedPort bool, r
 		return fmt.Errorf("verify Tailscale static endpoint session: backend state is not Running")
 	}
 	if requireFixedPort {
+		output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+		if err != nil {
+			return fmt.Errorf("verify Tailscale static endpoint environment: %s: %w", strings.TrimSpace(string(output)), err)
+		}
+		environment := strings.Fields(string(output))
+		if !slicesContain(environment, "PORT=41641") || !slicesContain(environment, "FLAGS=--config="+configPath) {
+			return errors.New("verify Tailscale static endpoint environment: managed fixed-port settings are not loaded")
+		}
 		output, err = run(ctx, "ss", "-H", "-lun", "sport = :41641")
 		if err != nil {
 			return fmt.Errorf("verify Tailscale static endpoint listener: %s: %w", strings.TrimSpace(string(output)), err)
@@ -141,6 +151,15 @@ func verifyTailscaleEndpointHealth(ctx context.Context, requireFixedPort bool, r
 		}
 	}
 	return nil
+}
+
+func slicesContain(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func renderTailscaleEndpointOverride(configPath string) ([]byte, error) {
