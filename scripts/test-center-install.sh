@@ -111,6 +111,8 @@ test -f "$temporary_dir/runtime-network.sh"
 test -f "$temporary_dir/compose.yaml"
 grep -Fq 'docker cp "$agent_container:/usr/local/bin/vastora"' "$temporary_dir/upgrade.sh"
 grep -Fq 'agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url"' "$temporary_dir/upgrade.sh"
+grep -Fq 'Co-located Agent $new_version is staged until the updated Center becomes healthy.' "$temporary_dir/upgrade.sh"
+grep -Fq 'write_host_update_stage "Starting the co-located Agent."' "$temporary_dir/upgrade.sh"
 grep -Fq 'Co-located Agent updated to $new_version on the host-only Center channel.' "$temporary_dir/upgrade.sh"
 grep -Fq 'http://127.0.0.1:$bootstrap_port/readyz' "$temporary_dir/upgrade.sh"
 grep -Fq 'Co-located Agent remained connected through Center reconciliation.' "$temporary_dir/upgrade.sh"
@@ -168,6 +170,12 @@ if [ "${1:-}:${2:-}" = "network:inspect" ] && [ "${3:-}" = "--format" ]; then
   esac
   exit 0
 fi
+if [ "${1:-}" = "compose" ]; then
+  case " $* " in
+    *" up "*) : > "$FAKE_CENTER_STARTED" ;;
+  esac
+  exit 0
+fi
 case "${1:-}" in
   create) printf '%s\n' 'vastora-test-container'; exit 0 ;;
   cp) cp "$FAKE_VASTORA_BINARY" "$3"; exit 0 ;;
@@ -176,7 +184,7 @@ exit 0
 EOF
 cat > "$fake_bin/curl" <<'EOF'
 #!/bin/sh
-exit 0
+test -f "$FAKE_CENTER_STARTED"
 EOF
 cat > "$fake_bin/systemctl" <<'EOF'
 #!/bin/sh
@@ -235,6 +243,7 @@ VASTORA_AGENT_UNIT="$agent_unit" \
 VASTORA_AGENT_DATA_DIR="$agent_data_dir" \
 FAKE_AGENT_CONFIGURE_LOG="$temporary_dir/agent-configure.log" \
 FAKE_VASTORA_BINARY="$temporary_dir/fake-vastora" \
+FAKE_CENTER_STARTED="$temporary_dir/center-started" \
 PATH="$fake_bin:$PATH" \
   "$temporary_dir/upgrade.sh" --install-dir "$existing" >/dev/null
 grep -Fqx "VASTORA_CENTER_IMAGE=$image" "$existing/.env"

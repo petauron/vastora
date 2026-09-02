@@ -217,11 +217,7 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
     echo "The Center image contains an unexpected Agent version; the upgrade was not started." >&2
     exit 1
   fi
-	if ! curl -fsS "$local_center_url/healthz" >/dev/null 2>&1; then
-	  echo "The host-only Center channel is not healthy; the co-located Agent was not changed." >&2
-	  exit 1
-	fi
-	echo "Moving the co-located Agent to the host-only Center channel..."
+	echo "Staging the co-located Agent for the host-only Center channel..."
 	if [ -f "$agent_data_dir/agent.db" ]; then
 	  agent_database_backup="$(mktemp "$agent_data_dir/.agent.db.pre-upgrade.$new_version.XXXXXX")"
 	  install -m 0600 "$agent_data_dir/agent.db" "$agent_database_backup"
@@ -236,12 +232,7 @@ if [ -f "$agent_executable" ] && [ -f "$agent_unit" ] && grep -Fq 'Description=V
 	agent_changed=yes
 	agent_database_opened=yes
 	"$agent_executable" agent configure-center --data-dir "$agent_data_dir" --center-url "$local_center_url"
-	if ! systemctl start vastora-agent.service || ! systemctl is-active --quiet vastora-agent.service; then
-	  echo "The updated Agent did not start; keeping its schema-compatible executable for recovery." >&2
-	  exit 1
-	fi
-	agent_stopped=no
-	echo "Co-located Agent updated to $new_version on the host-only Center channel."
+	echo "Co-located Agent $new_version is staged until the updated Center becomes healthy."
 fi
 
 for relative in install.sh setup.sh upgrade.sh uninstall.sh install-host-cli.sh install-update-service.sh update-center.sh compare-semver.awk runtime-network.sh compose.yaml release.env .env; do
@@ -284,6 +275,17 @@ until curl -fsS "http://127.0.0.1:$bootstrap_port/healthz" >/dev/null 2>&1; do
   fi
   sleep 2
 done
+
+if [ "$agent_changed" = yes ]; then
+	write_host_update_stage "Starting the co-located Agent."
+	echo "Starting the co-located Agent on the updated host-only Center channel..."
+	if ! systemctl start vastora-agent.service; then
+	  echo "The updated Agent did not start; keeping its schema-compatible executable for recovery." >&2
+	  exit 1
+	fi
+	agent_stopped=no
+	echo "Co-located Agent updated to $new_version on the host-only Center channel."
+fi
 
 write_host_update_stage "Finishing Center startup reconciliation."
 attempt=0
