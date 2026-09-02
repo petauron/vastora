@@ -175,9 +175,9 @@ func (s *Server) MaintainHeadscaleAPIKey(ctx context.Context) error {
 			s.store.recordHeadscaleAPIKeyRotationError(context.WithoutCancel(ctx), err)
 			return err
 		}
-		httpClient, err := builtinHeadscaleHTTPClient(endpoint, s.store.builtinHeadscaleDialAddress, s.store.headscaleHTTPClient)
+		client, err := newHeadscaleClient(endpoint, rotation.APIKey, s.store.builtinHeadscaleDialAddress, s.store.headscaleHTTPClient)
 		if err == nil {
-			err = (headscaleClient{baseURL: endpoint, apiKey: rotation.APIKey, http: httpClient}).verify(ctx)
+			err = client.verify(ctx)
 		}
 		if err != nil {
 			s.store.recordHeadscaleAPIKeyRotationError(context.WithoutCancel(ctx), fmt.Errorf("center: verify replacement Headscale API key: %w", err))

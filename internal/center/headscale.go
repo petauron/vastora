@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ const (
 	builtinHeadscaleRuntimeVersion = "dns-policy-v3"
 	headscaleDNSPolicySetting      = "headscale_dns_policy"
 	headscaleDNSResolversSetting   = "headscale_dns_resolvers"
+	headscalePinnedRequestOrigin   = "https://headscale-api.vastora.invalid"
 )
 
 type HeadscaleInput struct {
@@ -54,9 +56,10 @@ type TailscaleIsolationDesiredState struct {
 }
 
 type headscaleClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL   string
+	authority string
+	apiKey    string
+	http      *http.Client
 }
 
 func (s *Store) ConfigureHeadscale(ctx context.Context, input HeadscaleInput) (IntegrationView, error) {
@@ -152,14 +155,14 @@ func (s *Store) configureHeadscale(ctx context.Context, input HeadscaleInput, tr
 	if len(input.APIKey) < 20 {
 		return IntegrationView{}, errors.New("center: Headscale API key is required")
 	}
-	httpClient := s.headscaleHTTPClient
+	dialAddress := ""
 	if trustedBuiltin {
-		httpClient, err = builtinHeadscaleHTTPClient(endpoint, s.builtinHeadscaleDialAddress, httpClient)
-		if err != nil {
-			return IntegrationView{}, err
-		}
+		dialAddress = s.builtinHeadscaleDialAddress
 	}
-	client := headscaleClient{baseURL: endpoint, apiKey: input.APIKey, http: httpClient}
+	client, err := newHeadscaleClient(endpoint, input.APIKey, dialAddress, s.headscaleHTTPClient)
+	if err != nil {
+		return IntegrationView{}, err
+	}
 	if err := client.verify(ctx); err != nil {
 		return IntegrationView{}, fmt.Errorf("center: verify Headscale: %w", err)
 	}
@@ -284,14 +287,11 @@ func (s *Store) headscale(ctx context.Context) (headscaleClient, error) {
 	if err != nil {
 		return headscaleClient{}, err
 	}
-	httpClient := s.headscaleHTTPClient
+	dialAddress := ""
 	if mode == "builtin" {
-		httpClient, err = builtinHeadscaleHTTPClient(allowedEndpoint, s.builtinHeadscaleDialAddress, httpClient)
-		if err != nil {
-			return headscaleClient{}, err
-		}
+		dialAddress = s.builtinHeadscaleDialAddress
 	}
-	return headscaleClient{baseURL: allowedEndpoint, apiKey: string(key), http: httpClient}, nil
+	return newHeadscaleClient(allowedEndpoint, string(key), dialAddress, s.headscaleHTTPClient)
 }
 
 func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID string) (*TailscaleIsolationDesiredState, error) {
@@ -397,10 +397,24 @@ func (s *Store) coLocatedTailscaleEndpointOwner(ctx context.Context, bindAddress
 	return &owners[0], nil
 }
 
-func builtinHeadscaleHTTPClient(endpoint, dialAddress string, base *http.Client) (*http.Client, error) {
+func newHeadscaleClient(endpoint, apiKey, dialAddress string, base *http.Client) (headscaleClient, error) {
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Hostname() == "" {
-		return nil, errors.New("center: built-in Headscale URL is invalid")
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" {
+		return headscaleClient{}, errors.New("center: Headscale URL is invalid")
+	}
+	if dialAddress == "" {
+		port := parsed.Port()
+		if port == "" {
+			port = "443"
+		}
+		dialAddress = net.JoinHostPort(parsed.Hostname(), port)
+	}
+	dialHost, dialPort, err := net.SplitHostPort(dialAddress)
+	if err != nil || strings.TrimSpace(dialHost) == "" {
+		return headscaleClient{}, errors.New("center: Headscale dial address is invalid")
+	}
+	if port, err := strconv.Atoi(dialPort); err != nil || port < 1 || port > 65535 {
+		return headscaleClient{}, errors.New("center: Headscale dial address is invalid")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if configured, ok := base.Transport.(*http.Transport); ok {
@@ -421,7 +435,10 @@ func builtinHeadscaleHTTPClient(endpoint, dialAddress string, base *http.Client)
 	transport.TLSClientConfig = tlsConfig
 	client := *base
 	client.Transport = transport
-	return &client, nil
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return headscaleClient{baseURL: endpoint, authority: parsed.Host, apiKey: apiKey, http: &client}, nil
 }
 
 func normalizeHeadscaleEndpoint(value string) (string, error) {
@@ -694,7 +711,7 @@ func (client headscaleClient) do(ctx context.Context, method, path string, query
 		}
 		payload = bytes.NewReader(encoded)
 	}
-	requestURL, err := headscaleRequestURL(client.baseURL, path, query)
+	requestURL, err := headscaleRequestURL(path, query)
 	if err != nil {
 		return err
 	}
@@ -702,13 +719,10 @@ func (client headscaleClient) do(ctx context.Context, method, path string, query
 	if err != nil {
 		return err
 	}
+	request.Host = client.authority
 	request.Header.Set("Authorization", "Bearer "+client.apiKey)
 	request.Header.Set("Content-Type", "application/json")
-	httpClient := *client.http
-	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
-	}
-	response, err := httpClient.Do(request)
+	response, err := client.http.Do(request)
 	if err != nil {
 		return err
 	}
@@ -749,15 +763,14 @@ func (client headscaleClient) do(ctx context.Context, method, path string, query
 	return nil
 }
 
-func headscaleRequestURL(baseURL, path string, query url.Values) (string, error) {
-	base, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || (base.Scheme != "https" && base.Scheme != "http") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" || (base.Path != "" && base.Path != "/") {
-		return "", errors.New("center: stored Headscale URL is invalid")
-	}
+func headscaleRequestURL(path string, query url.Values) (string, error) {
 	if !strings.HasPrefix(path, "/api/v1/") || strings.Contains(path, "?") || strings.Contains(path, "#") {
 		return "", errors.New("center: Headscale API path is invalid")
 	}
-	target := *base
+	target, err := url.Parse(headscalePinnedRequestOrigin)
+	if err != nil {
+		return "", errors.New("center: pinned Headscale request origin is invalid")
+	}
 	target.Path = path
 	target.RawPath = ""
 	target.RawQuery = query.Encode()
