@@ -39,10 +39,8 @@ func testConnection(t *testing.T, agentID, name, centerURL, credential string) C
 }
 
 type fakeHostDecommissioner struct {
-	prepared      bool
 	scheduled     bool
 	request       HostDecommissionRequest
-	prepareCalls  int
 	scheduleCalls int
 }
 
@@ -55,19 +53,9 @@ func (u *fakeHostUpdater) ScheduleUpdate(_ context.Context, request HostUpdateRe
 	return nil
 }
 
-func (d *fakeHostDecommissioner) Prepare(_ context.Context, deleteData bool) error {
-	d.prepared = true
-	d.prepareCalls++
-	d.request.DeleteData = deleteData
-	return nil
-}
-
 func (d *fakeHostDecommissioner) ScheduleFinalRemoval(_ context.Context, request HostDecommissionRequest) error {
 	d.scheduled = true
 	d.scheduleCalls++
-	if request.DeleteData != d.request.DeleteData {
-		return errors.New("delete-data changed between cleanup phases")
-	}
 	d.request = request
 	return nil
 }
@@ -652,13 +640,13 @@ func TestAgentDecommissionHandsOffWithoutPrematureAcknowledgement(t *testing.T) 
 	(Client{HTTPClient: server.Client(), Decommissioner: decommissioner}).processTask(context.Background(), store, DeploymentTask{
 		Kind: "agent.decommission", ID: "agent-decommission-agent-1", Attempt: 1, DeleteData: true,
 	}, func(err error) { t.Errorf("duplicate task error: %v", err) })
-	if !decommissioner.prepared || !decommissioner.scheduled || acknowledged {
+	if !decommissioner.scheduled || acknowledged {
 		t.Fatalf("decommission lifecycle incomplete: %#v acknowledged=%v", decommissioner, acknowledged)
 	}
-	if decommissioner.prepareCalls != 2 || decommissioner.scheduleCalls != 2 {
-		t.Fatalf("duplicate delivery repeated the external effect: %#v", decommissioner)
+	if decommissioner.scheduleCalls != 2 {
+		t.Fatalf("duplicate delivery did not retry the durable handoff: %#v", decommissioner)
 	}
-	if decommissioner.request.TaskID != "agent-decommission-agent-1" || decommissioner.request.Attempt != 1 || decommissioner.request.Connection.Credential != "credential" {
+	if decommissioner.request.TaskID != "agent-decommission-agent-1" || decommissioner.request.Attempt != 1 || decommissioner.request.Connection.Credential != "credential" || !decommissioner.request.DeleteData {
 		t.Fatalf("decommission handoff is incomplete: %#v", decommissioner.request)
 	}
 }
@@ -744,7 +732,7 @@ func TestHostDecommissionHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T)
 			t.Fatalf("unexpected host cleanup callback: %s", request.URL.Path)
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"ok":true}`))
+		_ = json.NewEncoder(response).Encode(map[string]bool{"started": started, "completed": completed})
 	}))
 	defer server.Close()
 	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
@@ -757,6 +745,25 @@ func TestHostDecommissionHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T)
 	}
 	if !started || !completed {
 		t.Fatalf("host cleanup lifecycle callbacks: started=%v completed=%v", started, completed)
+	}
+}
+
+func TestHostDecommissionRejectsSuccessWithoutAcknowledgement(t *testing.T) {
+	for _, body := range []string{`{}`, `{"ok":true}`, `{"started":false,"completed":false}`, `<html>Sign in</html>`, ""} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				_, _ = response.Write([]byte(body))
+			}))
+			defer server.Close()
+			connection := testConnection(t, "agent-1", "node", server.URL, "credential")
+			client := Client{HTTPClient: server.Client()}
+			if err := client.BeginHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2); err == nil {
+				t.Fatal("unacknowledged handoff was accepted")
+			}
+			if err := client.CompleteHostDecommission(context.Background(), connection, "agent-decommission-agent-1", 2, nil); err == nil {
+				t.Fatal("unacknowledged completion was accepted")
+			}
+		})
 	}
 }
 
