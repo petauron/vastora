@@ -291,7 +291,7 @@ describe("network and app views", () => {
   it("keeps CPA installation one-click and protects reveal and rotation", async () => {
     const data = dashboard();
     const reauthentication = ["test", "reauth"].join("-");
-    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.128", name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [{ key: "debug", label: { en: "Debug logging", "zh-CN": "调试日志" }, description: { en: "Extra logs", "zh-CN": "额外日志" }, type: "boolean", required: false, secret: false, default: false }] } }];
+    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.129", name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [{ key: "debug", label: { en: "Debug logging", "zh-CN": "调试日志" }, description: { en: "Extra logs", "zh-CN": "额外日志" }, type: "boolean", required: false, secret: false, default: false }] } }];
     data.applications = [];
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装")?.click());
@@ -301,7 +301,7 @@ describe("network and app views", () => {
     expect(document.body.textContent).not.toContain("时区");
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "取消")?.click());
 
-    data.applications = [{ id: "cpa-application", name: "CPA", nodeId: "agent", siteId: "site", appKey: "vastora-official/cpa", image: "cpa", status: "running", runtime: "docker", installedVersion: "7.2.128", availableVersion: "7.2.128", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.applications = [{ id: "cpa-application", name: "CPA", nodeId: "agent", siteId: "site", appKey: "vastora-official/cpa", image: "cpa", status: "running", runtime: "docker", installedVersion: "7.2.129", availableVersion: "7.2.129", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const reveal = vi.spyOn(api, "revealApplicationCredentials").mockResolvedValue({ kind: "cpa", managementKey: "management-value", clientApiKey: "client-value" });
     const rotate = vi.spyOn(api, "rotateApplicationCredentials").mockResolvedValue({ id: "rotation-1", applicationId: "cpa-application", target: "management", state: "pending", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" });
     act(() => root?.render(<ThemeProvider><AppsView data={data} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));

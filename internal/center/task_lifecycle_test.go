@@ -567,7 +567,7 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configured.AppVersion != "7.2.128" {
+	if configured.AppVersion != "7.2.129" {
 		t.Fatalf("configure changed installed version: %#v", configured)
 	}
 	task := claimTask(t, store, node)
@@ -599,11 +599,11 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"})
-	if err != nil || upgrade.AppVersion != "7.2.128" {
+	if err != nil || upgrade.AppVersion != "7.2.129" {
 		t.Fatalf("newer version was not accepted: %#v err=%v", upgrade, err)
 	}
 	completeNextTask(t, store, node, "application.apply", result)
-	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.129' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.130' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "downgrade is not allowed") {
@@ -630,7 +630,7 @@ func TestFailedChangeRemainsAnInstalledApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	applications, err := store.ListApplications(ctx)
-	if err != nil || len(applications) != 1 || applications[0].InstalledVersion != "7.2.128" || applications[0].Status != "failed" {
+	if err != nil || len(applications) != 1 || applications[0].InstalledVersion != "7.2.129" || applications[0].Status != "failed" {
 		t.Fatalf("failed change lost installed state: %#v err=%v", applications, err)
 	}
 }
@@ -649,7 +649,7 @@ func TestInstalledAppCanBeUninstalledAfterCatalogRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall"})
-	if err != nil || uninstall.AppVersion != "7.2.128" {
+	if err != nil || uninstall.AppVersion != "7.2.129" {
 		t.Fatalf("installed app became unmanageable after catalog removal: %#v err=%v", uninstall, err)
 	}
 }
