@@ -324,20 +324,6 @@ func runAgent(arguments []string) error {
 			return err
 		}
 		return runPersistentHostDecommission(context.Background(), *operationFile)
-	case "cleanup-decommission":
-		flags := flag.NewFlagSet("agent cleanup-decommission", flag.ContinueOnError)
-		flags.SetOutput(os.Stderr)
-		operationFile := flags.String("operation-file", hostDecommissionOperationPath, "internal: protected host cleanup operation")
-		if err := flags.Parse(arguments[1:]); err != nil {
-			return err
-		}
-		if flags.NArg() != 0 {
-			return errors.New("invalid persistent host cleanup finalizer")
-		}
-		if err := requireLinuxRoot("agent cleanup-decommission"); err != nil {
-			return err
-		}
-		return cleanPersistentHostDecommission(*operationFile)
 	case "finish-update":
 		flags := flag.NewFlagSet("agent finish-update", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)

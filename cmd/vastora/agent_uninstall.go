@@ -23,6 +23,8 @@ const (
 	hostDecommissionCompleted     = hostDecommissionDir + "/completed"
 	hostDecommissionUnit          = "/etc/systemd/system/vastora-agent-decommission.service"
 	hostDecommissionUnitName      = "vastora-agent-decommission.service"
+	hostDecommissionEnabledLink   = "/etc/systemd/system/multi-user.target.wants/" + hostDecommissionUnitName
+	hostDecommissionGenerator     = "/etc/systemd/system-generators/vastora-agent-decommission"
 )
 
 type systemHostDecommissioner struct {
@@ -71,6 +73,9 @@ func persistHostDecommission(executable string, operation hostDecommissionOperat
 	if _, err := safeAgentDataDir(operation.DataDir); err != nil {
 		return err
 	}
+	if err := checkHostDecommissionOwnership(hostDecommissionUnit, hostDecommissionOperationPath, hostDecommissionGenerator, operation); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(hostDecommissionDir, 0o700); err != nil {
 		return fmt.Errorf("agent: create persistent host cleanup directory: %w", err)
 	}
@@ -91,7 +96,7 @@ func persistHostDecommission(executable string, operation hostDecommissionOperat
 	if err := writeRootFileAtomic(hostDecommissionOperationPath, append(raw, '\n'), 0o600); err != nil {
 		return fmt.Errorf("agent: persist host cleanup operation: %w", err)
 	}
-	unit := "[Unit]\nDescription=Vastora Agent host decommission\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n[Service]\nType=simple\nExecStart=" + hostDecommissionBinary + " agent finish-decommission --operation-file " + hostDecommissionOperationPath + "\nExecStopPost=" + hostDecommissionBinary + " agent cleanup-decommission --operation-file " + hostDecommissionOperationPath + "\nRestart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=multi-user.target\n"
+	unit := hostDecommissionServiceUnit()
 	if strings.Contains(unit, operation.Credential) {
 		return errors.New("agent: refusing to expose host cleanup credentials in systemd")
 	}
@@ -102,9 +107,16 @@ func persistHostDecommission(executable string, operation hostDecommissionOperat
 }
 
 func runPersistentHostDecommission(ctx context.Context, operationPath string) error {
-	return runHostDecommission(ctx, operationPath, agent.Client{}, func(ctx context.Context, operation hostDecommissionOperation) error {
+	if operationPath != hostDecommissionOperationPath {
+		return errors.New("agent: host cleanup must use its managed operation path")
+	}
+	if err := runHostDecommission(ctx, operationPath, agent.Client{}, func(ctx context.Context, operation hostDecommissionOperation) error {
 		return uninstallAgentHost(ctx, operation.DataDir, operation.DeleteData, false, false)
-	})
+	}); err != nil {
+		return err
+	}
+	finalizer := hostDecommissionFinalizerUnit(hostDecommissionDir, hostDecommissionUnit, hostDecommissionEnabledLink, hostDecommissionGenerator)
+	return activateHostDecommissionFinalizer(ctx, hostDecommissionUnit, hostDecommissionGenerator, hostDecommissionGeneratorScript(finalizer), runHostCommand)
 }
 
 // hostDecommissionResult is written only after host cleanup succeeds. Keep it
@@ -209,46 +221,6 @@ func readHostDecommissionOperation(path string) (hostDecommissionOperation, erro
 		return hostDecommissionOperation{}, err
 	}
 	return operation, nil
-}
-
-func cleanPersistentHostDecommission(operationPath string) error {
-	operation, err := readHostDecommissionOperation(operationPath)
-	if err != nil {
-		return err
-	}
-	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionCompleted))
-	completed, err := protectedCompletionMarkerExists(completionPath)
-	if err != nil {
-		return err
-	}
-	if !completed {
-		return nil
-	}
-	resultPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostDecommissionResultPath))
-	if cleaned, err := readHostDecommissionResult(resultPath, operation); err != nil {
-		return err
-	} else if !cleaned {
-		return errors.New("agent: refusing to discard a host cleanup acknowledgement without its result")
-	}
-	if output, err := exec.Command("systemctl", "disable", hostDecommissionUnitName).CombinedOutput(); err != nil {
-		return fmt.Errorf("disable persistent host cleanup: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	if err := os.Remove(hostDecommissionUnit); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove persistent host cleanup service: %w", err)
-	}
-	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
-		return fmt.Errorf("reload systemd after persistent host cleanup: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	var result error
-	for _, path := range []string{resultPath, operationPath, completionPath, hostDecommissionBinary} {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			result = errors.Join(result, fmt.Errorf("remove persistent host cleanup state %s: %w", path, err))
-		}
-	}
-	if err := os.Remove(hostDecommissionDir); err != nil && !errors.Is(err, os.ErrNotExist) {
-		result = errors.Join(result, fmt.Errorf("remove persistent host cleanup directory: %w", err))
-	}
-	return result
 }
 
 func protectedCompletionMarkerExists(path string) (bool, error) {
