@@ -248,7 +248,9 @@ data path; nodes fall back only to the bundled relay. Headscale update checks,
 remote DERP-map updates, Logtail, and client auto-update instructions are
 disabled. Vastora-managed Linux Tailscale services also opt out of Tailscale
 log upload through a systemd override that Agent install and upgrade reconcile
-idempotently. Operators should allow UDP 3478 for effective NAT discovery.
+idempotently. Agent also checks the live local DERP map before committing the
+applied isolation marker and retries unexpected topology on the next heartbeat.
+Operators should allow UDP 3478 for effective NAT discovery.
 Cloudflare may observe the STUN probe's source IP, source port, and timing.
 
 An optional fixed public endpoint can improve direct connectivity on a Center

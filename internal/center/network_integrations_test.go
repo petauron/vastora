@@ -318,7 +318,7 @@ func TestBuiltinHeadscaleIsolationUsesVerifiedPublicBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state == nil || state.ControlURL != "https://headscale.example.com" || len(state.ControlAddresses) != 1 || state.ControlAddresses[0] != "203.0.113.10" {
+	if state == nil || state.ControlURL != "https://headscale.example.com" || len(state.ControlAddresses) != 1 || state.ControlAddresses[0] != "203.0.113.10" || state.RelayRegionID != 999 || len(state.STUNOnlyRegionIDs) != 1 || state.STUNOnlyRegionIDs[0] != 998 {
 		t.Fatalf("built-in Tailscale isolation state = %#v", state)
 	}
 }

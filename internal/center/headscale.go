@@ -45,10 +45,12 @@ type HeadscaleJoin struct {
 }
 
 type TailscaleIsolationDesiredState struct {
-	ControlURL       string   `json:"controlUrl"`
-	ControlAddresses []string `json:"controlAddresses"`
-	ControlAliases   []string `json:"controlAliases,omitempty"`
-	StaticEndpoints  []string `json:"staticEndpoints"`
+	ControlURL        string   `json:"controlUrl"`
+	ControlAddresses  []string `json:"controlAddresses"`
+	ControlAliases    []string `json:"controlAliases,omitempty"`
+	StaticEndpoints   []string `json:"staticEndpoints"`
+	RelayRegionID     int      `json:"relayRegionId,omitempty"`
+	STUNOnlyRegionIDs []int    `json:"stunOnlyRegionIds,omitempty"`
 }
 
 type headscaleClient struct {
@@ -307,6 +309,8 @@ func (s *Store) tailscaleIsolationDesiredState(ctx context.Context, agentID stri
 	if mode != "builtin" {
 		return state, nil
 	}
+	state.RelayRegionID = 999
+	state.STUNOnlyRegionIDs = []int{998}
 	aliases, err := readActiveSystemEndpointAliases(ctx, s.db, "headscale")
 	if err != nil {
 		return nil, fmt.Errorf("center: read Headscale endpoint aliases: %w", err)
