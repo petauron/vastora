@@ -446,6 +446,8 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
   const availableKinds = service ? publicationKindsForIntent(service, intent) : [];
   const advancedOptions = options.filter((option) => availableKinds.includes(option.kind));
   const selectedOption = options.find((option) => option.kind === kind);
+  const application = service ? data.applications.find((value) => value.id === service.applicationId) : undefined;
+  const managedRealityOnOwnGateway = Boolean(service?.appProtocol === "vless/tcp/reality" && application?.appKey === "vastora-official/3x-ui" && application.nodeId === gatewayID);
   const defaultDNS = (next: PublicationKind) => {
     if (next === "headscale_gateway" && headscaleReady) return "headscale" as const;
     if (next === "cloudflare_tunnel" || (["public_direct", "public_shared_443"] as PublicationKind[]).includes(next) && cloudflareReady) return "cloudflare" as const;
@@ -538,7 +540,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
                     <FieldLabel htmlFor="publication-dns">DNS</FieldLabel>
                     <SelectControl disabled={kind === "cloudflare_tunnel"} id="publication-dns" onValueChange={(value) => setDNSProvider(value as "manual" | "cloudflare" | "headscale")} options={[{ value: "manual", label: copy(language, "手动配置", "Manual") }, ...(kind === "headscale_gateway" && headscaleReady ? [{ value: "headscale", label: "Headscale DNS" }] : []), ...((kind === "public_direct" || kind === "public_shared_443") && cloudflareReady ? [{ value: "cloudflare", label: "Cloudflare DNS-only" }] : []), ...(kind === "cloudflare_tunnel" ? [{ value: "cloudflare", label: "Cloudflare Tunnel" }] : [])]} value={dnsProvider} />
                   </Field>
-                  {kind === "public_shared_443" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "共享公网 443", "Shared public 443")}</AlertTitle><AlertDescription>{copy(language, "连接域名只负责解析到节点；HAProxy 会按协议 SNI 分流。应用内部端口不能是 443。", "The connection hostname only resolves to the node. HAProxy routes by protocol SNI, and the app's internal port cannot be 443.")}</AlertDescription></Alert> : null}
+                  {kind === "public_shared_443" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "共享公网 443", "Shared public 443")}</AlertTitle><AlertDescription>{managedRealityOnOwnGateway ? copy(language, "这是 Vastora 管理的 3x-ui REALITY：容器内部 443 合法且不会映射到宿主机；宿主机公网 443 由 HAProxy 独占并按精确 SNI 转发。", "This is Vastora-managed 3x-ui REALITY: container port 443 is valid and is not published on the host; HAProxy exclusively owns the host's public port 443 and routes by exact SNI.") : copy(language, "连接域名只负责解析到节点，HAProxy 会按协议 SNI 分流。普通应用与入口位于同一节点时，应用监听端口必须避开宿主机 443。", "The connection hostname only resolves to the node, and HAProxy routes by protocol SNI. When a regular app and its entry are on the same node, the app listener must not occupy host port 443.")}</AlertDescription></Alert> : null}
                 </div>
               </details>
               {error ? <FieldError role="alert">{error}</FieldError> : null}

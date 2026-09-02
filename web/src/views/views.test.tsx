@@ -389,6 +389,20 @@ describe("network and app views", () => {
 	act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
 	expect(document.body.textContent).toContain("共享 443");
 	expect(document.body.textContent).toContain("自动启用 HAProxy");
+	act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("共享 443"))?.click());
+	expect(document.body.textContent).toContain("普通应用与入口位于同一节点时");
+  });
+
+  it("explains the managed REALITY container-port 443 exception", () => {
+    const data = realityDashboard();
+    data.services = [{ id: "reality", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", protocol: "tcp", containerPort: 443, hostPort: 443, endpoint: "10.0.0.10:443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", guardStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
+    act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
+    act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("共享 443"))?.click());
+    expect(document.body.textContent).toContain("容器内部 443 合法");
+    expect(document.body.textContent).toContain("宿主机公网 443 由 HAProxy 独占");
+    expect(document.body.textContent).not.toContain("应用内部端口不能是 443");
   });
 
   it("keeps public access submission errors inside the open sheet", async () => {
