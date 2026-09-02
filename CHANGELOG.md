@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.94](https://github.com/petauron/vastora/compare/v0.1.0-alpha.93...v0.1.0-alpha.94) (2026-09-02)
+
+
+### Bug Fixes
+
+* **upgrade:** recover an unhealthy Center ([ca92b99](https://github.com/petauron/vastora/commit/ca92b991579f02f561db4a6cd487192b5935864b))
+
 ## [0.1.0-alpha.93](https://github.com/petauron/vastora/compare/v0.1.0-alpha.92...v0.1.0-alpha.93) (2026-09-02)
 
 
