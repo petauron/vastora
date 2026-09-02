@@ -1,0 +1,51 @@
+name: PR release labels
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: pr-release-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Add a release-note category label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if gh api "/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" --jq '.[].name' |
+            grep -Eq '^(security|enhancement|bug)$'; then
+            exit 0
+          fi
+
+          normalized_title="$(printf '%s' "$PR_TITLE" | tr '[:upper:]' '[:lower:]')"
+          release_label=''
+          case "$normalized_title" in
+            security:*|security!:*|feat\(security\):*|feat\(security\)!:*|fix\(security\):*|fix\(security\)!:*)
+              release_label='security'
+              ;;
+            feat:*|feat!:*|feat\(*\):*|feat\(*\)!:*)
+              release_label='enhancement'
+              ;;
+            fix:*|fix!:*|fix\(*\):*|fix\(*\)!:*)
+              release_label='bug'
+              ;;
+          esac
+
+          if [ -z "$release_label" ]; then
+            exit 0
+          fi
+
+          gh api --method POST "/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels" \
+            -f "labels[]=$release_label" >/dev/null
