@@ -119,6 +119,8 @@ func securityRequirementNames(route registeredAPIRoute) []string {
 		return []string{"", "AdminSession"}
 	case route.path == "/api/v1/agent-binaries/{os}/{arch}":
 		return []string{"EnrollmentBearer"}
+	case route.path == "/api/v1/agent-decommission-results/{taskID}":
+		return []string{"DecommissionCallbackBearer"}
 	case strings.HasPrefix(route.path, "/api/v1/agents/{id}/") && route.path != "/api/v1/agents/{id}/region-suggestion" && route.path != "/api/v1/agents/{id}/headscale-join" && route.path != "/api/v1/agents/{id}/revoke":
 		return []string{"AgentBearer"}
 	default:

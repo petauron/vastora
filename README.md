@@ -126,8 +126,8 @@ never attempted automatically.
 - The Center deployment stack can run a fixed-version Headscale service with a
   separate data volume; an existing Headscale control plane is also supported.
   Bundled Headscale is the public Caddy HTTPS entry. Center stays private, while
-  only its token-protected Agent bootstrap script is reachable through the
-  Headscale hostname.
+  only its token-protected Agent bootstrap, binary download, and task-bound
+  uninstall completion paths are reachable through the Headscale hostname.
 - Management pages remain private by default. Public publication requires an
   explicit high-risk confirmation and application-level authentication.
 

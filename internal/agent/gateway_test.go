@@ -675,6 +675,7 @@ func TestSystemGatewayProtectionIsRecoveredFromCompleteDesiredState(t *testing.T
 			{ID: "system-headscale-local", Hostname: "headscale.example.test", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center-headscale", Port: 8081}}, TLSEnabled: true, ListenerKind: "system", System: true},
 			{ID: "system-agent-bootstrap", Hostname: "headscale.example.test", Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 			{ID: "system-agent-binary-bootstrap", Hostname: "headscale.example.test", Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			{ID: "system-agent-decommission-callback", Hostname: "headscale.example.test", Path: "/api/v1/agent-decommission-results/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "vastora-center", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 		},
 	}
 	label, err := systemServicesForGatewayTransition("", &desired)
@@ -726,6 +727,7 @@ func TestProtectedSystemGatewayAcceptsCompleteSystemRoutes(t *testing.T) {
 	}
 	desired.Routes = append(desired.Routes, gateway.Route{ID: "system-agent-bootstrap", Hostname: "headscale.example.test", Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true})
 	desired.Routes = append(desired.Routes, gateway.Route{ID: "system-agent-binary-bootstrap", Hostname: "headscale.example.test", Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true})
+	desired.Routes = append(desired.Routes, gateway.Route{ID: "system-agent-decommission-callback", Hostname: "headscale.example.test", Path: "/api/v1/agent-decommission-results/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true})
 	if err := validateProtectedSystemRoutes(desired, []string{"center", "headscale"}); err != nil {
 		t.Fatalf("complete protected system state was rejected: %v", err)
 	}

@@ -179,7 +179,7 @@ func newHostCancellationFixture(t *testing.T) (hostHelperCancellationEnvironment
 		t.Fatal(err)
 	}
 	dataDir := filepath.Join(t.TempDir(), "agent")
-	operation := hostDecommissionOperation{Version: 1, TaskID: "agent-decommission-fixture", AgentID: "fixture", Attempt: 1, DataDir: dataDir, CenterURL: "http://127.0.0.1:1", Credential: "synthetic-offline-credential"}
+	operation := hostDecommissionOperation{Version: 2, TaskID: "agent-decommission-fixture", AgentID: "fixture", Attempt: 1, DataDir: dataDir, CenterURL: "http://127.0.0.1:1", Credential: "synthetic-offline-credential", CallbackURL: "http://127.0.0.1:1/api/v1/agent-decommission-results/agent-decommission-fixture", CallbackToken: "synthetic-callback-token"}
 	raw, err := json.Marshal(operation)
 	if err != nil {
 		t.Fatal(err)

@@ -58,10 +58,12 @@ type HostDecommissioner interface {
 }
 
 type HostDecommissionRequest struct {
-	TaskID     string
-	Attempt    int64
-	DeleteData bool
-	Connection Connection
+	TaskID        string
+	Attempt       int64
+	DeleteData    bool
+	CallbackURL   string
+	CallbackToken string
+	Connection    Connection
 }
 
 type HostUpdater interface {
@@ -155,6 +157,8 @@ type DeploymentTask struct {
 	Secrets                   json.RawMessage                `json:"secrets"`
 	Operation                 string                         `json:"operation"`
 	DeleteData                bool                           `json:"deleteData"`
+	DecommissionCallbackURL   string                         `json:"decommissionCallbackUrl,omitempty"`
+	DecommissionCallbackToken string                         `json:"decommissionCallbackToken,omitempty"`
 	Revision                  int64                          `json:"revision,omitempty"`
 	ApplicationID             string                         `json:"applicationId,omitempty"`
 	ApplicationRole           string                         `json:"applicationRole,omitempty"`
@@ -1092,10 +1096,17 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		if c.Decommissioner == nil {
 			err = errors.New("agent: host decommission capability is not configured")
 		} else {
+			var callbackURL string
+			callbackURL, err = normalizeHostDecommissionCallbackURL(task.DecommissionCallbackURL, task.ID)
+			if err == nil && strings.TrimSpace(task.DecommissionCallbackToken) == "" {
+				err = errors.New("agent: host decommission callback token is missing")
+			}
 			var connection Connection
-			connection, err = store.Connection(ctx)
 			if err == nil {
-				err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, Connection: connection})
+				connection, err = store.Connection(ctx)
+			}
+			if err == nil {
+				err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, CallbackURL: callbackURL, CallbackToken: task.DecommissionCallbackToken, Connection: connection})
 				decommissionHandedOff = err == nil
 			}
 		}
@@ -1307,23 +1318,37 @@ func (c Client) BeginHostDecommission(ctx context.Context, connection Connection
 	return nil
 }
 
-// CompleteHostDecommission reports the actual helper outcome without relying
-// on Agent state that the helper has already removed.
-func (c Client) CompleteHostDecommission(ctx context.Context, connection Connection, taskID string, attempt int64, cleanupErr error) error {
-	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+// CompleteHostDecommission reports successful local cleanup through the
+// task-bound public callback after the Agent's private network is gone.
+func (c Client) CompleteHostDecommission(ctx context.Context, callbackURL, callbackToken, taskID string, attempt int64) error {
+	callbackURL, err := normalizeHostDecommissionCallbackURL(callbackURL, taskID)
+	if err != nil || attempt <= 0 || strings.TrimSpace(callbackToken) == "" {
 		return errors.New("agent: invalid host decommission completion")
 	}
-	payload := map[string]any{"attempt": attempt, "succeeded": cleanupErr == nil, "error": safeTaskError(cleanupErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
+	payload := map[string]any{"attempt": attempt}
 	var response struct {
 		Completed bool `json:"completed"`
 	}
-	if err := c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
+	if err := c.post(ctx, callbackURL, payload, callbackToken, "", "", &response); err != nil {
 		return err
 	}
 	if !response.Completed {
 		return errors.New("agent: Center did not acknowledge host cleanup completion")
 	}
 	return nil
+}
+
+func normalizeHostDecommissionCallbackURL(raw, taskID string) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	callbackURL, err := normalizeCenterURL(raw)
+	if err != nil || taskID == "" {
+		return "", errors.New("agent: invalid host decommission callback URL")
+	}
+	parsed, err := url.Parse(callbackURL)
+	if err != nil || parsed.Path != "/api/v1/agent-decommission-results/"+taskID {
+		return "", errors.New("agent: invalid host decommission callback URL")
+	}
+	return callbackURL, nil
 }
 
 // BeginHostUpdate transfers a claimed update from the Agent lease to the

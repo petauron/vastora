@@ -227,6 +227,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.activateAgentDecommissionCallbackRoute(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.discardEmptyRetiredSharedPublicationMarker(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()

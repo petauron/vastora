@@ -734,7 +734,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil {
 		t.Fatalf("co-located gateway did not receive system desired state: %#v", task)
 	}
-	if len(task.GatewayState.Routes) != 6 || len(task.GatewayState.Listeners) != 3 {
+	if len(task.GatewayState.Routes) != 7 || len(task.GatewayState.Listeners) != 3 {
 		t.Fatalf("unexpected system gateway state: %#v", task.GatewayState)
 	}
 	for _, route := range task.GatewayState.Routes {
@@ -744,6 +744,29 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	}
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, 'pending')`, agentDecommissionCallbackRouteMigrationSetting); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.activateAgentDecommissionCallbackRoute(ctx); err != nil {
+		t.Fatal(err)
+	}
+	migrationTask := claimTask(t, store, node)
+	callbackRoute := false
+	if migrationTask.Kind == "gateway.routes.apply" && migrationTask.GatewayState != nil {
+		for _, route := range migrationTask.GatewayState.Routes {
+			callbackRoute = callbackRoute || route.ID == "system-agent-decommission-callback"
+		}
+	}
+	if !callbackRoute {
+		t.Fatal("gateway migration did not add the Agent cleanup callback route")
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, migrationTask.ID, migrationTask.Attempt, true, "", nil, migrationTask.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	var migrationMarkers int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = ?`, agentDecommissionCallbackRouteMigrationSetting).Scan(&migrationMarkers); err != nil || migrationMarkers != 0 {
+		t.Fatalf("gateway migration marker count=%d err=%v", migrationMarkers, err)
 	}
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC"}); err != nil {
 		t.Fatal(err)

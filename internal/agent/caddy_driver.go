@@ -142,6 +142,7 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 		required := []struct{ id, path string }{
 			{"system-agent-bootstrap", "/install/agent.sh"},
 			{"system-agent-binary-bootstrap", "/api/v1/agent-binaries/*"},
+			{"system-agent-decommission-callback", "/api/v1/agent-decommission-results/*"},
 		}
 		for _, expected := range required {
 			route, exists := routes[expected.id]

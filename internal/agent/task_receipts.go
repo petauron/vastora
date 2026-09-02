@@ -136,6 +136,20 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		if json.Unmarshal(plaintext, &completion) != nil || completion.TaskID != task.ID {
 			return nil, errors.New("agent: stored task completion is invalid")
 		}
+		if (task.Kind == "agent.decommission" || task.Kind == "agent.update") && task.Attempt > attempt {
+			if strings.TrimSpace(completion.Error) == "" {
+				return nil, errors.New("agent: completed host lifecycle task was unexpectedly retried")
+			}
+			result, err := s.db.ExecContext(ctx, `UPDATE task_receipts SET attempt = ?, task_hash = ?, state = 'processing', sealed_completion = NULL, updated_at = ?
+				WHERE task_id = ? AND attempt = ? AND state IN ('completed', 'acknowledged')`, task.Attempt, hash, s.now().UTC().Format(time.RFC3339Nano), task.ID, attempt)
+			if err != nil {
+				return nil, fmt.Errorf("agent: retry host lifecycle task: %w", err)
+			}
+			if changed, _ := result.RowsAffected(); changed != 1 {
+				return nil, errors.New("agent: host lifecycle task changed before retry")
+			}
+			return nil, nil
+		}
 		if task.Kind == "application.apply" && completion.ApplicationRuntimeGeneration != executorRuntimeGeneration {
 			return nil, errors.New("agent: stored task completion has invalid runtime generation evidence")
 		}
@@ -260,6 +274,12 @@ func (s *Store) AcknowledgeTaskCompletion(ctx context.Context, taskID string) er
 func deploymentTaskHash(task DeploymentTask) ([]byte, error) {
 	task.Attempt = 0
 	task.Reconcile = false
+	if task.Kind == "agent.decommission" {
+		// These delivery credentials are rotated with each lease attempt. The
+		// destructive intent remains identified by the other task fields.
+		task.DecommissionCallbackURL = ""
+		task.DecommissionCallbackToken = ""
+	}
 	encoded, err := json.Marshal(task)
 	if err != nil {
 		return nil, fmt.Errorf("agent: hash task: %w", err)

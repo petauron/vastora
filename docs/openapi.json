@@ -4,7 +4,7 @@
     "title": "Vastora Center API",
     "version": "v1",
     "summary": "Administrator and Agent control-plane contract",
-    "description": "The current prerelease /api/v1 contract. Browser administrator reads require the SameSite session cookie; mutations additionally require the X-CSRF-Token header. Agent endpoints use a per-Agent bearer credential, while initial binary download uses a one-time enrollment bearer token. JSON requests must use application/json, contain one value, be at most 1 MiB, and contain no unknown fields. Error responses use the Error envelope and never include secrets. Binary downloads and event streams declare their actual media types."
+    "description": "The current prerelease /api/v1 contract. Browser administrator reads require the SameSite session cookie; mutations additionally require the X-CSRF-Token header. Agent endpoints use a per-Agent bearer credential, initial binary download uses a one-time enrollment bearer token, and host-removal completion uses a token bound to one decommission task. JSON requests must use application/json, contain one value, be at most 1 MiB, and contain no unknown fields. Error responses use the Error envelope and never include secrets. Binary downloads and event streams declare their actual media types."
   },
   "servers": [
     {
@@ -109,6 +109,74 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/agent-decommission-results/{taskID}": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Complete Agent Decommission Callback",
+        "operationId": "completeAgentDecommissionCallback_post",
+        "x-vastora-audience": "agent-decommission-callback",
+        "security": [
+          {
+            "DecommissionCallbackBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "taskID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "attempt": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/agents/{id}/binary/{os}/{arch}": {
@@ -6613,6 +6681,12 @@
         "scheme": "bearer",
         "bearerFormat": "one-time enrollment token",
         "description": "Short-lived token used only to download the initial Agent binary."
+      },
+      "DecommissionCallbackBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "task-bound callback token",
+        "description": "Single-task token used only to acknowledge completed local Agent removal."
       }
     },
     "schemas": {

@@ -35,7 +35,7 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 			_, err = tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'pending', updated_at = ? WHERE worker_application_id = ? AND status = 'applying'`, now, task.NodeCommand.WorkerApplicationID)
 		}
 	case "agent.decommission":
-		result, err = tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'pending', lease_expires_at = '', updated_at = ? WHERE agent_id = ? AND state = 'running' AND attempt = ?`, now, agentID, task.Attempt)
+		result, err = tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'pending', callback_token_hash = X'', lease_expires_at = '', updated_at = ? WHERE agent_id = ? AND state = 'running' AND attempt = ?`, now, agentID, task.Attempt)
 	case "agent.update":
 		result, err = tx.ExecContext(ctx, `UPDATE agent_updates SET state = 'pending', lease_expires_at = '', updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, now, task.ID, agentID, task.Attempt)
 	case "gateway.routes.apply":
@@ -233,7 +233,7 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 	if _, err := tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'pending', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'pending', callback_token_hash = X'', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_updates SET state = 'pending', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {

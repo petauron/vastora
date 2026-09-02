@@ -105,8 +105,11 @@
   boundary and cannot send the stored Bearer token to arbitrary network hosts.
 - Bundled Headscale is public through Caddy HTTPS because new nodes need a
   reachable coordination server. Center has no public DNS record or public
-  Caddy route. The Headscale hostname forwards only the exact Agent installer
-  path to Center; enrollment tokens remain ten-minute, single-use credentials.
+  Caddy route. The Headscale hostname forwards only the Agent installer, binary
+  download, and host-cleanup result paths to Center. Enrollment tokens remain
+  ten-minute, single-use credentials. Cleanup result tokens are separately
+  generated for one task and attempt, are delivered inside the encrypted Agent
+  task, and can only acknowledge that task after its private-network handoff.
 - Bundled Headscale advertises its authenticated embedded DERP relay plus a
   static `STUNOnly` entry for `stun.cloudflare.com:3478/udp`. It never downloads
   Tailscale's public DERP map and never uses Cloudflare TURN or DERP. Cloudflare

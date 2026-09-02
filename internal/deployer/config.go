@@ -372,9 +372,12 @@ https://%s:%d {
 	handle /api/v1/agent-binaries/* {
 		reverse_proxy %s
 	}
+	handle /api/v1/agent-decommission-results/* {
+		reverse_proxy %s
+	}
 	handle {
 		reverse_proxy %s:8081
 	}
 }
-`, hostname, httpPort, hostname, httpsPort, centerOrigin, centerOrigin, dockerruntime.HeadscaleAlias))
+`, hostname, httpPort, hostname, httpsPort, centerOrigin, centerOrigin, centerOrigin, dockerruntime.HeadscaleAlias))
 }

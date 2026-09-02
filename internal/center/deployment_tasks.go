@@ -29,6 +29,8 @@ type AgentTask struct {
 	Secrets                   json.RawMessage                `json:"secrets"`
 	Operation                 string                         `json:"operation"`
 	DeleteData                bool                           `json:"deleteData"`
+	DecommissionCallbackURL   string                         `json:"decommissionCallbackUrl,omitempty"`
+	DecommissionCallbackToken string                         `json:"decommissionCallbackToken,omitempty"`
 	Revision                  int64                          `json:"revision,omitempty"`
 	ApplicationID             string                         `json:"applicationId,omitempty"`
 	ApplicationRole           string                         `json:"applicationRole,omitempty"`
@@ -338,10 +340,10 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		return s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
-		if reconciliationRequired {
-			return errInvalidReconciliationDisposition
+		if succeeded || reconciliationRequired {
+			return errors.New("center: Agent host cleanup success must use its task-bound completion callback")
 		}
-		return s.completeAgentDecommission(ctx, agentID, expectedAttempt, succeeded, taskError)
+		return s.failAgentDecommissionClaim(ctx, agentID, expectedAttempt, taskError)
 	}
 	if isAgentUpdateTaskID(taskID) {
 		if reconciliationRequired {
