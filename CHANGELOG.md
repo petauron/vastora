@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.96](https://github.com/petauron/vastora/compare/v0.1.0-alpha.95...v0.1.0-alpha.96) (2026-09-02)
+
+
+### Bug Fixes
+
+* **agent:** reconcile stale protected gateway state ([33f5dd8](https://github.com/petauron/vastora/commit/33f5dd834b6e8ae6881c61c09ae1a2f94d59595f))
+
 ## [0.1.0-alpha.95](https://github.com/petauron/vastora/compare/v0.1.0-alpha.94...v0.1.0-alpha.95) (2026-09-02)
 
 
