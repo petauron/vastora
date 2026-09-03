@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.103](https://github.com/petauron/vastora/compare/v0.1.0-alpha.102...v0.1.0-alpha.103) (2026-09-03)
+
+
+### Bug Fixes
+
+* **center:** update agents concurrently ([#334](https://github.com/petauron/vastora/issues/334)) ([3565a1b](https://github.com/petauron/vastora/commit/3565a1b94c32443d48ded1503fcc9891d1559c66))
+
 ## [0.1.0-alpha.102](https://github.com/petauron/vastora/compare/v0.1.0-alpha.101...v0.1.0-alpha.102) (2026-09-03)
 
 
