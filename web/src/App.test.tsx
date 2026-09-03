@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { api } from "./api";
+import { APIError, api } from "./api";
 import { ThemeProvider } from "./components/theme";
 import type { CenterUpdateStatus, Site } from "./types";
 
@@ -35,11 +35,12 @@ afterEach(() => {
   window.localStorage.clear();
   document.documentElement.classList.remove("dark");
   document.documentElement.style.removeProperty("color-scheme");
+  delete window.turnstile;
   vi.restoreAllMocks();
 });
 
 function mockReadyCenter() {
-  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: false, cloudflareAccessConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: false, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: false, loginProtection: { captchaRequired: false, maxFailures: 5, lockoutSeconds: 900 }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
   const status = vi.spyOn(api, "status").mockResolvedValue({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" });
   vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
   vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
@@ -87,7 +88,7 @@ describe("application shell", () => {
   });
 
   it("requires ten characters when creating the administrator", async () => {
-    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, publicNetworkHelperAvailable: false, regionLookupAvailable: false, cloudflareConfigured: false, cloudflareAccessConfigured: false, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, publicNetworkHelperAvailable: false, regionLookupAvailable: false, cloudflareConfigured: false, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: false, loginProtection: { captchaRequired: false, maxFailures: 5, lockoutSeconds: 900 }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -95,6 +96,37 @@ describe("application shell", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("Create administrator"));
     expect(container.querySelector<HTMLInputElement>("#password")?.minLength).toBe(10);
     expect(container.textContent).toContain("At least 10 characters.");
+  });
+
+  it("requires a Turnstile token on the direct Cloudflare Tunnel login", async () => {
+    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: true, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: true, loginProtection: { captchaRequired: true, turnstileSiteKey: "site-key", maxFailures: 5, lockoutSeconds: 900 }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+    vi.spyOn(api, "status").mockRejectedValue(new APIError("center: authentication required", 401, "authentication_required"));
+    const renderTurnstile = vi.fn((_container: HTMLElement, options: Record<string, unknown>) => {
+      (options.callback as (token: string) => void)("verified-token");
+      return "widget-id";
+    });
+    window.turnstile = { render: renderTurnstile, remove: vi.fn() };
+    const login = vi.spyOn(api, "login").mockRejectedValue(new APIError("center: sign-in failed", 401, "invalid_credentials", 2, true));
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(<ThemeProvider><App /></ThemeProvider>));
+    await vi.waitFor(() => expect(container.textContent).toContain("protected by Turnstile"));
+    await vi.waitFor(() => expect(renderTurnstile).toHaveBeenCalled());
+    const username = container.querySelector<HTMLInputElement>("#username")!;
+    const password = container.querySelector<HTMLInputElement>("#password")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(username, "admin");
+      username.dispatchEvent(new Event("input", { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(password, "wrong-password");
+      password.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Sign in")?.click();
+      await Promise.resolve();
+    });
+    expect(login).toHaveBeenCalledWith("admin", "wrong-password", "verified-token");
+    expect(container.textContent).toContain("Wait 2 more seconds");
   });
 
   it("moves keyboard focus to the main content after navigation", async () => {

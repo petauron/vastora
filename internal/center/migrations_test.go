@@ -1465,6 +1465,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE cloudflare_tunnel_operations`,
 		`DROP TABLE agent_enrollment_operations`,
 		`DROP TABLE system_endpoint_aliases`,
+		`DROP TABLE login_failures`,
 		`DROP TABLE center_remote_access`,
 		`DROP TABLE catalog_manifest_history`,
 		`DROP TABLE agent_updates`,

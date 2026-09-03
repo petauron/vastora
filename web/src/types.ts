@@ -191,12 +191,19 @@ export type SetupStatus = {
   regionLookupAvailable: boolean;
   cloudflareConfigured: boolean;
   cloudflareAccessConfigured: boolean;
+  cloudflareTurnstileConfigured: boolean;
   cloudflareZone?: string;
   publicAddressCandidates: NetworkCandidate[];
   gatewayAddressCandidates: NetworkCandidate[];
   observedPublicAddress?: string;
   suggestedGatewayAddress?: string;
   publicAddressDetection?: "direct" | "cloud_mapping_candidate" | "unavailable";
+  loginProtection: {
+    captchaRequired: boolean;
+    turnstileSiteKey?: string;
+    maxFailures: number;
+    lockoutSeconds: number;
+  };
 };
 export type SiteInput = { name: string; code: string; description: string; timezone: string; domainSuffix: string; gatewayNodes: string[] };
 export type InitialSetupInput = {
@@ -209,6 +216,7 @@ export type InitialSetupInput = {
 
 export type CenterRemoteAccessInput = {
   enabled: boolean;
+  protectionMode?: "access" | "native";
   audienceKind?: "email" | "email_domain";
   audienceValue?: string;
 };
@@ -217,6 +225,8 @@ export type CenterRemoteAccess = {
   available: boolean;
   enabled: boolean;
   hostname?: string;
+  protectionMode?: "access" | "native";
+  turnstileSiteKey?: string;
   audienceKind?: "email" | "email_domain";
   audienceValue?: string;
   status: "disabled" | "pending" | "configured" | "failed";
@@ -354,7 +364,7 @@ export type CreatePublicationInput = { serviceId: string; kind: PublicationKind;
 export type DNSRecordInstruction = { type: "A" | "CNAME"; name: string; value: string; proxy: boolean };
 export type Publication = { id: string; serviceId: string; kind: PublicationKind; ingress: PublicationIngress; hostname: string; sniHostname?: string; dnsProvider: "manual" | "cloudflare" | "headscale"; dnsRecordId?: string; dnsRecord?: DNSRecordInstruction; tlsEnabled: boolean; certificateExpiresAt?: string; desiredRevision: number; appliedRevision: number; status: "pending" | "applying" | "ready" | "degraded" | "failed" | "stopped"; lastError?: string; actionRequired?: boolean; accessUrl?: string; createdAt: string; updatedAt: string };
 export type Route = { id: string; publicationId: string; siteId: string; serviceId: string; gatewayNodeId: string; hostname: string; protocol: string; upstreams: string[]; tlsEnabled: boolean; status: string; desiredRevision: number; appliedRevision: number; lastError?: string; createdAt: string; updatedAt: string };
-export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; accessManagement?: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string; credentialStatus?: "ready" | "preparing" | "committing"; credentialExpiresAt?: string; dnsPolicy?: "system" | "custom"; dnsResolvers?: string[] };
+export type Integration = { kind: "headscale" | "cloudflare"; mode?: "builtin" | "external" | "oauth"; endpoint?: string; accountId?: string; zoneId?: string; secretSet: boolean; accessManagement?: boolean; turnstileManagement?: boolean; status: "configured" | "failed" | "disabled"; lastError?: string; updatedAt?: string; credentialStatus?: "ready" | "preparing" | "committing"; credentialExpiresAt?: string; dnsPolicy?: "system" | "custom"; dnsResolvers?: string[] };
 export type CloudflareZone = { id: string; name: string; accountId: string; accountName: string };
 export type CloudflareOAuthStart = { sessionId: string; authorizationUrl: string; expiresAt: string };
 export type CloudflareOAuthPoll = { status: "pending" | "authorized"; zones?: CloudflareZone[] };

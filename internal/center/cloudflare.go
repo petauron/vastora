@@ -25,6 +25,7 @@ type IntegrationView struct {
 	ZoneID              string     `json:"zoneId,omitempty"`
 	SecretSet           bool       `json:"secretSet"`
 	AccessManagement    bool       `json:"accessManagement,omitempty"`
+	TurnstileManagement bool       `json:"turnstileManagement,omitempty"`
 	Status              string     `json:"status"`
 	LastError           string     `json:"lastError,omitempty"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
@@ -98,6 +99,7 @@ func (s *Store) Integration(ctx context.Context, kind string) (IntegrationView, 
 			var token cloudflareOAuthToken
 			if json.Unmarshal(encoded, &token) == nil {
 				value.AccessManagement = oauthScopesGranted(token.Scope, cloudflareAccessScopes...)
+				value.TurnstileManagement = oauthScopesGranted(token.Scope, cloudflareTurnstileScopes...)
 			}
 		}
 	}
@@ -369,8 +371,8 @@ func (s *Store) ensureCloudflareServiceAccess(ctx context.Context, publicationID
 	if err != nil {
 		return err
 	}
-	if !exists || record.Status != "configured" || record.IdentityProviderID == "" {
-		return errors.New("center: enable the Center Cloudflare Access entry before publishing protected Web services")
+	if !exists || record.Status != "configured" || record.ProtectionMode != "access" || record.IdentityProviderID == "" {
+		return errors.New("center: select the Center Cloudflare Access protection mode before publishing protected Web services")
 	}
 	client, err := s.cloudflareWithScopes(ctx, cloudflareAccessScopes...)
 	if err != nil {
@@ -574,6 +576,32 @@ type cloudflareAccessIdentityProvider struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Type string `json:"type"`
+}
+
+type cloudflareTurnstileWidget struct {
+	SiteKey string `json:"sitekey"`
+	Secret  string `json:"secret"`
+}
+
+func (client cloudflareClient) createTurnstileWidget(ctx context.Context, hostname string) (cloudflareTurnstileWidget, error) {
+	var result cloudflareTurnstileWidget
+	body := map[string]any{
+		"domains": []string{hostname},
+		"mode":    "managed",
+		"name":    "Vastora Center login",
+	}
+	if err := client.do(ctx, http.MethodPost, "/accounts/"+url.PathEscape(client.accountID)+"/challenges/widgets", body, &result); err != nil {
+		return cloudflareTurnstileWidget{}, fmt.Errorf("center: create Cloudflare Turnstile widget: %w", err)
+	}
+	if strings.TrimSpace(result.SiteKey) == "" || strings.TrimSpace(result.Secret) == "" {
+		return cloudflareTurnstileWidget{}, errors.New("center: Cloudflare did not return Turnstile credentials")
+	}
+	return result, nil
+}
+
+func (client cloudflareClient) deleteTurnstileWidget(ctx context.Context, siteKey string) error {
+	var ignored json.RawMessage
+	return client.do(ctx, http.MethodDelete, "/accounts/"+url.PathEscape(client.accountID)+"/challenges/widgets/"+url.PathEscape(siteKey), nil, &ignored)
 }
 
 func (client cloudflareClient) ensureAccessOrganization(ctx context.Context) error {

@@ -248,31 +248,27 @@ describe("network and app views", () => {
 
   it("manages the Center remote fallback independently from application tunnels", async () => {
     const data = dashboard();
-    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, turnstileManagement: true, status: "configured" }];
     data.centerRemoteAccess = { available: true, enabled: false, status: "disabled" };
-    const configure = vi.spyOn(api, "configureCenterRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center-vastora.example.com", audienceKind: "email", audienceValue: "admin@example.org", status: "configured" });
+    const configure = vi.spyOn(api, "configureCenterRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center-vastora.example.com", protectionMode: "native", turnstileSiteKey: "site-key", status: "configured" });
     const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
     expect(container.textContent).toContain("Center 远程备用入口");
     const remoteAccessCard = [...container.querySelectorAll<HTMLElement>('[data-slot="card"]')].find((card) => card.textContent?.includes("Center 远程备用入口"));
     act(() => remoteAccessCard?.querySelector<HTMLButtonElement>("button")?.click());
     act(() => document.querySelector<HTMLButtonElement>("#center-remote-access-enabled")?.click());
     expect(document.body.textContent).toContain("center-vastora.example.com");
-    const email = document.querySelector<HTMLInputElement>("#center-remote-access-audience")!;
-    expect(email).toBeInstanceOf(HTMLInputElement);
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(email, "admin@example.org");
-      email.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    expect(document.body.textContent).toContain("直达 Center 登录（推荐）");
+    expect(document.querySelector("#center-remote-access-audience")).toBeNull();
     const save = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存并启用"))!;
     expect(save.disabled).toBe(false);
     await act(async () => {
       save.click();
       await Promise.resolve();
     });
-    expect(configure).toHaveBeenCalledWith({ enabled: true, audienceKind: "email", audienceValue: "admin@example.org" });
+    expect(configure).toHaveBeenCalledWith({ enabled: true, protectionMode: "native" });
   });
 
-  it("asks an existing Cloudflare connection to grant Access management before enabling the fallback", () => {
+  it("asks an existing Cloudflare connection to grant Turnstile management before enabling the direct fallback", () => {
     const data = dashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: false, status: "configured" }];
     data.centerRemoteAccess = { available: true, enabled: false, status: "disabled" };
@@ -281,7 +277,8 @@ describe("network and app views", () => {
     act(() => remoteAccessCard?.querySelector<HTMLButtonElement>("button")?.click());
     act(() => document.querySelector<HTMLButtonElement>("#center-remote-access-enabled")?.click());
     expect(document.body.textContent).toContain("重新连接");
-    expect(document.body.textContent).toContain("请先在上方完成 Cloudflare 授权并确认域名，随后即可保存");
+    expect(document.body.textContent).toContain("需要补充 Cloudflare 授权");
+    expect(document.body.textContent).toContain("创建专用 Turnstile 组件");
     expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存并启用"))?.disabled).toBe(true);
   });
 
@@ -428,7 +425,7 @@ describe("network and app views", () => {
   ])("explains invalid publication hostname %s without creating an entry", async (hostname, message) => {
     const data = dashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
-    data.centerRemoteAccess = { available: true, enabled: true, status: "configured" };
+    data.centerRemoteAccess = { available: true, enabled: true, protectionMode: "access", status: "configured" };
     data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const create = vi.spyOn(api, "createPublication").mockRejectedValue(new Error("unexpected publication"));
     const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
@@ -465,7 +462,7 @@ describe("network and app views", () => {
   it("keeps public access submission errors inside the open sheet", async () => {
     const data = dashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
-    data.centerRemoteAccess = { available: true, enabled: true, hostname: "center-vastora.example.com", audienceKind: "email", audienceValue: "admin@example.com", status: "configured" };
+    data.centerRemoteAccess = { available: true, enabled: true, hostname: "center-vastora.example.com", protectionMode: "access", audienceKind: "email", audienceValue: "admin@example.com", status: "configured" };
     data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const create = vi.spyOn(api, "createPublication").mockRejectedValue(new APIError("center: publication failed", 400, "invalid_request"));
     const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
@@ -489,6 +486,7 @@ describe("network and app views", () => {
     [{ available: true, enabled: false, status: "disabled" as const }, undefined, "请先启用 Center 远程入口"],
     [{ available: true, enabled: true, status: "pending" as const }, undefined, "Center 远程入口正在配置"],
     [{ available: true, enabled: true, status: "failed" as const, lastError: "Access application is missing" }, undefined, "Center 远程入口配置失败"],
+    [{ available: true, enabled: true, protectionMode: "native" as const, status: "configured" as const }, undefined, "应用入口需要 Cloudflare Access 模式"],
     [null, "status unavailable", "无法读取 Center 远程入口状态"]
   ])("blocks Cloudflare publication with an accurate remote entry status", (remoteAccess, loadError, expected) => {
     const data = dashboard();
@@ -510,7 +508,7 @@ describe("network and app views", () => {
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
     data.centerRemoteAccess = null;
     data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    const status = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center-vastora.example.com", audienceKind: "email", audienceValue: "admin@example.com", status: "configured" });
+    const status = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center-vastora.example.com", protectionMode: "access", audienceKind: "email", audienceValue: "admin@example.com", status: "configured" });
     const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     await act(async () => {
@@ -1489,7 +1487,7 @@ describe("network and app views", () => {
     expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ tailscaleFixedEndpoint: { enabled: true, endpoint: "203.0.113.10:41641", localAddress: "10.0.0.157", confirmMapping: true } }));
   });
 
-  it("offers a Cloudflare Access fallback during private-network setup", async () => {
+  it("offers a hardened direct Tunnel fallback during private-network setup", async () => {
     window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
       step: 2,
       name: "Oracle ARM",
@@ -1501,27 +1499,25 @@ describe("network and app views", () => {
       headscaleUrl: "https://headscale.vastora.example.com",
       publicAddress: "203.0.113.10",
       gatewayAddress: "203.0.113.10",
-      remoteAccessEnabled: true,
-      remoteAccessAudienceKind: "email",
-      remoteAccessAudienceValue: "admin@example.org"
+      remoteAccessEnabled: true
     }));
     vi.spyOn(api, "verifySetupPublicEntry").mockResolvedValue({ status: "ready", publicAddress: "203.0.113.10", gatewayAddress: "203.0.113.10", ports: [80, 443] });
     vi.spyOn(api, "configureSetupDNS").mockResolvedValue({ records: [] });
     const onComplete = vi.fn().mockResolvedValue(undefined);
     const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-29T00:00:00Z" }];
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareAccessConfigured cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={onComplete} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareTurnstileConfigured cloudflareZone="example.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={onComplete} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
     expect(container.textContent).toContain("Center 远程备用入口");
-    expect(container.textContent).toContain("两层登录保护");
+    expect(container.textContent).toContain("直连登录保护");
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click();
       await Promise.resolve();
     });
-    expect(container.textContent).toContain("邮箱 · admin@example.org");
+    expect(container.textContent).toContain("Tunnel 直达登录 · Turnstile + 失败锁定");
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("完成并添加节点"))?.click();
       await Promise.resolve();
     });
-    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ centerRemoteAccess: { enabled: true, audienceKind: "email", audienceValue: "admin@example.org" } }));
+    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ centerRemoteAccess: { enabled: true, protectionMode: "native" } }));
   });
 
   it("keeps setup on the network step when the public probe fails", async () => {

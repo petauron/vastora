@@ -39,6 +39,8 @@ type Store struct {
 	cloudflareOAuthSessions        map[string]*cloudflareOAuthSession
 	cloudflareTokenMu              sync.Mutex
 	cloudflareTunnelMu             sync.Mutex
+	turnstileVerifyURL             string
+	turnstileHTTPClient            *http.Client
 	assistantProposalMu            sync.Mutex
 	assistantResolve               func(context.Context, string) ([]net.IPAddr, error)
 	certificateMu                  sync.Mutex
@@ -177,7 +179,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
-	cloudflareHTTPClient, err := externalHelperHTTPClient([]string{cloudflareTokenURL, cloudflareAPIURL}, false, 20*time.Second)
+	cloudflareHTTPClient, err := externalHelperHTTPClient([]string{cloudflareTokenURL, cloudflareAPIURL, cloudflareTurnstileVerifyURL}, false, 20*time.Second)
 	if err != nil {
 		backgroundCancel()
 		_ = db.Close()
@@ -197,6 +199,8 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 			HTTPClient:       cloudflareHTTPClient,
 		},
 		cloudflareOAuthSessions:        make(map[string]*cloudflareOAuthSession),
+		turnstileVerifyURL:             cloudflareTurnstileVerifyURL,
+		turnstileHTTPClient:            cloudflareHTTPClient,
 		assistantResolve:               net.DefaultResolver.LookupIPAddr,
 		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),
 		publicationVerificationBackoff: defaultPublicationVerificationBackoff,

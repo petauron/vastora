@@ -15,30 +15,35 @@ import (
 )
 
 var cloudflareAccessScopes = []string{"access.write", "access-acct.write"}
+var cloudflareTurnstileScopes = []string{"turnstile.write"}
 
 const centerRemoteAccessLabel = "center-vastora"
 
 type CenterRemoteAccessInput struct {
-	Enabled       bool   `json:"enabled"`
-	AudienceKind  string `json:"audienceKind,omitempty"`
-	AudienceValue string `json:"audienceValue,omitempty"`
+	Enabled        bool   `json:"enabled"`
+	ProtectionMode string `json:"protectionMode,omitempty"`
+	AudienceKind   string `json:"audienceKind,omitempty"`
+	AudienceValue  string `json:"audienceValue,omitempty"`
 }
 
 type CenterRemoteAccessView struct {
-	Available     bool      `json:"available"`
-	Enabled       bool      `json:"enabled"`
-	Hostname      string    `json:"hostname,omitempty"`
-	AudienceKind  string    `json:"audienceKind,omitempty"`
-	AudienceValue string    `json:"audienceValue,omitempty"`
-	Status        string    `json:"status"`
-	LastError     string    `json:"lastError,omitempty"`
-	UpdatedAt     time.Time `json:"updatedAt,omitempty"`
+	Available        bool      `json:"available"`
+	Enabled          bool      `json:"enabled"`
+	Hostname         string    `json:"hostname,omitempty"`
+	ProtectionMode   string    `json:"protectionMode,omitempty"`
+	TurnstileSiteKey string    `json:"turnstileSiteKey,omitempty"`
+	AudienceKind     string    `json:"audienceKind,omitempty"`
+	AudienceValue    string    `json:"audienceValue,omitempty"`
+	Status           string    `json:"status"`
+	LastError        string    `json:"lastError,omitempty"`
+	UpdatedAt        time.Time `json:"updatedAt,omitempty"`
 }
 
 type centerRemoteAccessRecord struct {
 	CenterRemoteAccessView
 	IdentityProviderID string
 	ApplicationID      string
+	TurnstileSecretID  string
 	TunnelID           string
 	TunnelSecretID     string
 	DNSRecordID        string
@@ -54,6 +59,10 @@ func (s *Store) CenterRemoteAccess(ctx context.Context, available bool) (CenterR
 	}
 	record.Available = available
 	record.Enabled = record.Status == "configured"
+	if record.ProtectionMode == "native" {
+		record.AudienceKind = ""
+		record.AudienceValue = ""
+	}
 	return record.CenterRemoteAccessView, nil
 }
 
@@ -61,10 +70,10 @@ func (s *Store) centerRemoteAccessRecord(ctx context.Context) (centerRemoteAcces
 	var record centerRemoteAccessRecord
 	var updated string
 	err := s.db.QueryRowContext(ctx, `SELECT hostname, audience_kind, audience_value, otp_identity_provider_id,
-		access_application_id, tunnel_id, COALESCE(tunnel_token_secret_id, ''), dns_record_id, status, last_error, updated_at
+		access_application_id, protection_mode, turnstile_site_key, COALESCE(turnstile_secret_id, ''), tunnel_id, COALESCE(tunnel_token_secret_id, ''), dns_record_id, status, last_error, updated_at
 		FROM center_remote_access WHERE id = 1`).Scan(
 		&record.Hostname, &record.AudienceKind, &record.AudienceValue, &record.IdentityProviderID,
-		&record.ApplicationID, &record.TunnelID, &record.TunnelSecretID, &record.DNSRecordID,
+		&record.ApplicationID, &record.ProtectionMode, &record.TurnstileSiteKey, &record.TurnstileSecretID, &record.TunnelID, &record.TunnelSecretID, &record.DNSRecordID,
 		&record.Status, &record.LastError, &updated,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -96,6 +105,18 @@ func normalizeCenterRemoteAccess(input CenterRemoteAccessInput, centerURL, zoneN
 	hostname := centerRemoteAccessLabel + "." + zoneName
 	input.AudienceKind = strings.TrimSpace(input.AudienceKind)
 	input.AudienceValue = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(input.AudienceValue, "@")))
+	input.ProtectionMode = strings.TrimSpace(input.ProtectionMode)
+	if input.ProtectionMode == "" {
+		input.ProtectionMode = "access"
+	}
+	if input.ProtectionMode == "native" {
+		input.AudienceKind = ""
+		input.AudienceValue = ""
+		return input, hostname, nil
+	}
+	if input.ProtectionMode != "access" {
+		return CenterRemoteAccessInput{}, "", errors.New("center: remote access protection must be access or native")
+	}
 	switch input.AudienceKind {
 	case "email":
 		address, parseErr := mail.ParseAddress(input.AudienceValue)
@@ -137,7 +158,15 @@ func (s *Server) ConfigureCenterRemoteAccess(ctx context.Context, input CenterRe
 	if s.infrastructure == nil {
 		return CenterRemoteAccessView{}, errors.New("center: this installation does not include the remote access deployment helper")
 	}
-	client, err := s.store.cloudflareWithScopes(ctx, cloudflareAccessScopes...)
+	mode := strings.TrimSpace(input.ProtectionMode)
+	if mode == "" {
+		mode = "access"
+	}
+	requiredScopes := cloudflareAccessScopes
+	if mode == "native" {
+		requiredScopes = cloudflareTurnstileScopes
+	}
+	client, err := s.store.cloudflareWithScopes(ctx, requiredScopes...)
 	if err != nil {
 		return CenterRemoteAccessView{}, err
 	}
@@ -153,7 +182,8 @@ func (s *Server) ConfigureCenterRemoteAccess(ctx context.Context, input CenterRe
 	if err != nil {
 		return CenterRemoteAccessView{}, err
 	}
-	if exists && current.Status == "configured" && current.Hostname == hostname && current.AudienceKind == normalized.AudienceKind && current.AudienceValue == normalized.AudienceValue {
+	audienceMatches := normalized.ProtectionMode == "native" || current.AudienceKind == normalized.AudienceKind && current.AudienceValue == normalized.AudienceValue
+	if exists && current.Status == "configured" && current.Hostname == hostname && current.ProtectionMode == normalized.ProtectionMode && audienceMatches && (normalized.ProtectionMode != "native" || (current.TurnstileSiteKey != "" && current.TurnstileSecretID != "")) {
 		return s.store.CenterRemoteAccess(ctx, s.infrastructure != nil)
 	}
 	if exists {
@@ -162,8 +192,12 @@ func (s *Server) ConfigureCenterRemoteAccess(ctx context.Context, input CenterRe
 		}
 	}
 	now := s.store.now().UTC().Format(time.RFC3339Nano)
-	if _, err := s.store.db.ExecContext(ctx, `INSERT INTO center_remote_access(id, hostname, audience_kind, audience_value, status, created_at, updated_at)
-		VALUES(1, ?, ?, ?, 'pending', ?, ?)`, hostname, normalized.AudienceKind, normalized.AudienceValue, now, now); err != nil {
+	storedAudienceKind := normalized.AudienceKind
+	if storedAudienceKind == "" {
+		storedAudienceKind = "email"
+	}
+	if _, err := s.store.db.ExecContext(ctx, `INSERT INTO center_remote_access(id, hostname, audience_kind, audience_value, protection_mode, status, created_at, updated_at)
+		VALUES(1, ?, ?, ?, ?, 'pending', ?, ?)`, hostname, storedAudienceKind, normalized.AudienceValue, normalized.ProtectionMode, now, now); err != nil {
 		return CenterRemoteAccessView{}, fmt.Errorf("center: start remote access configuration: %w", err)
 	}
 	if err := s.applyCenterRemoteAccess(ctx, client); err != nil {
@@ -181,22 +215,32 @@ func (s *Server) applyCenterRemoteAccess(ctx context.Context, client cloudflareC
 	if err != nil || !exists {
 		return errors.Join(errors.New("center: remote access configuration is missing"), err)
 	}
-	if err := client.ensureAccessOrganization(ctx); err != nil {
-		return err
-	}
-	identityProviderID, err := client.ensureOneTimePINIdentityProvider(ctx)
-	if err != nil {
-		return err
-	}
-	if err := s.store.updateCenterRemoteAccessResource(ctx, "otp_identity_provider_id", identityProviderID); err != nil {
-		return err
-	}
-	applicationID, err := client.createAccessApplication(ctx, "Vastora Center", record.Hostname, record.AudienceKind, record.AudienceValue, identityProviderID)
-	if err != nil {
-		return err
-	}
-	if err := s.store.updateCenterRemoteAccessResource(ctx, "access_application_id", applicationID); err != nil {
-		return errors.Join(err, client.deleteAccessApplication(context.WithoutCancel(ctx), applicationID))
+	if record.ProtectionMode == "native" {
+		widget, err := client.createTurnstileWidget(ctx, record.Hostname)
+		if err != nil {
+			return err
+		}
+		if err := s.store.saveCenterRemoteAccessTurnstile(ctx, widget); err != nil {
+			return errors.Join(err, client.deleteTurnstileWidget(context.WithoutCancel(ctx), widget.SiteKey))
+		}
+	} else {
+		if err := client.ensureAccessOrganization(ctx); err != nil {
+			return err
+		}
+		identityProviderID, err := client.ensureOneTimePINIdentityProvider(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.store.updateCenterRemoteAccessResource(ctx, "otp_identity_provider_id", identityProviderID); err != nil {
+			return err
+		}
+		applicationID, err := client.createAccessApplication(ctx, "Vastora Center", record.Hostname, record.AudienceKind, record.AudienceValue, identityProviderID)
+		if err != nil {
+			return err
+		}
+		if err := s.store.updateCenterRemoteAccessResource(ctx, "access_application_id", applicationID); err != nil {
+			return errors.Join(err, client.deleteAccessApplication(context.WithoutCancel(ctx), applicationID))
+		}
 	}
 	createdTunnel, err := client.createTunnel(ctx, "vastora-center", "")
 	if err != nil {
@@ -238,7 +282,7 @@ func (s *Server) applyCenterRemoteAccess(ctx context.Context, client cloudflareC
 }
 
 func (s *Store) updateCenterRemoteAccessResource(ctx context.Context, column, value string) error {
-	allowed := map[string]bool{"otp_identity_provider_id": true, "access_application_id": true, "tunnel_id": true, "dns_record_id": true}
+	allowed := map[string]bool{"otp_identity_provider_id": true, "access_application_id": true, "turnstile_site_key": true, "tunnel_id": true, "dns_record_id": true}
 	if !allowed[column] {
 		return errors.New("center: invalid remote access resource field")
 	}
@@ -250,6 +294,26 @@ func (s *Store) updateCenterRemoteAccessResource(ctx context.Context, column, va
 		return errors.New("center: remote access configuration changed while applying")
 	}
 	return nil
+}
+
+func (s *Store) saveCenterRemoteAccessTurnstile(ctx context.Context, widget cloudflareTurnstileWidget) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	secretID, err := s.putSecret(ctx, tx, []byte(widget.Secret), "center-remote-access-turnstile")
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE center_remote_access SET turnstile_site_key = ?, turnstile_secret_id = ?, updated_at = ? WHERE id = 1`, widget.SiteKey, secretID, s.now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("center: remote access configuration changed while storing Turnstile credentials")
+	}
+	return tx.Commit()
 }
 
 func (s *Store) saveCenterRemoteAccessTunnelToken(ctx context.Context, token string) error {
@@ -277,7 +341,11 @@ func (s *Server) disableCenterRemoteAccess(ctx context.Context) error {
 	if err != nil || !exists {
 		return err
 	}
-	client, clientErr := s.store.cloudflareWithScopes(ctx, cloudflareAccessScopes...)
+	requiredScopes := cloudflareAccessScopes
+	if record.ProtectionMode == "native" {
+		requiredScopes = cloudflareTurnstileScopes
+	}
+	client, clientErr := s.store.cloudflareWithScopes(ctx, requiredScopes...)
 	if clientErr != nil {
 		stopErr := s.infrastructure.ApplyCenterRemoteAccess(context.WithoutCancel(ctx), deployapi.CenterRemoteAccessRequest{Enabled: false})
 		failure := errors.Join(clientErr, stopErr)
@@ -298,6 +366,11 @@ func (s *Server) disableCenterRemoteAccess(ctx context.Context) error {
 	}
 	if record.TunnelSecretID != "" {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, record.TunnelSecretID); err != nil {
+			return err
+		}
+	}
+	if record.TurnstileSecretID != "" {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, record.TurnstileSecretID); err != nil {
 			return err
 		}
 	}
@@ -325,6 +398,13 @@ func (s *Server) cleanupCenterRemoteAccess(ctx context.Context, client cloudflar
 			cleanup = append(cleanup, fmt.Errorf("remove Center Access application: %w", err))
 		} else if err := s.store.updateCenterRemoteAccessResource(ctx, "access_application_id", ""); err != nil {
 			cleanup = append(cleanup, fmt.Errorf("record removed Center Access application: %w", err))
+		}
+	}
+	if record.TurnstileSiteKey != "" {
+		if err := client.deleteTurnstileWidget(ctx, record.TurnstileSiteKey); err != nil && !cloudflareResourceNotFound(err) {
+			cleanup = append(cleanup, fmt.Errorf("remove Center Turnstile widget: %w", err))
+		} else if err := s.store.updateCenterRemoteAccessResource(ctx, "turnstile_site_key", ""); err != nil {
+			cleanup = append(cleanup, fmt.Errorf("record removed Center Turnstile widget: %w", err))
 		}
 	}
 	if record.TunnelID != "" {

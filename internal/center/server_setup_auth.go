@@ -20,6 +20,11 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 	suggestedGatewayAddress := ""
 	publicAddressDetection := "unavailable"
 	authenticated := false
+	loginContext, err := s.loginContext(request.Context(), request)
+	if err != nil {
+		writeError(writer, http.StatusForbidden, err)
+		return
+	}
 	if cookie, cookieErr := request.Cookie("vastora_session"); cookieErr == nil && s.store.ValidateSession(request.Context(), cookie.Value, "", false) == nil {
 		authenticated = true
 		cloudflare, err = s.store.Integration(request.Context(), "cloudflare")
@@ -76,23 +81,25 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 		setupLastError = status.LastError
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
-		"administratorConfigured":      status.AdministratorConfigured,
-		"onboardingComplete":           status.OnboardingComplete,
-		"suggestedAgentConnectUrl":     s.setupAgentConnectURL,
-		"builtinHeadscaleAvailable":    s.infrastructure != nil,
-		"cloudflareOAuthAvailable":     s.store.CloudflareOAuthAvailable(),
-		"publicNetworkHelperAvailable": s.store.lookupPublicAddress != nil && s.store.verifyPublicEntry != nil,
-		"regionLookupAvailable":        s.store.lookupPublicRegion != nil,
-		"cloudflareConfigured":         cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
-		"cloudflareAccessConfigured":   cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.AccessManagement,
-		"cloudflareZone":               cloudflare.Endpoint,
-		"publicAddressCandidates":      publicAddresses,
-		"gatewayAddressCandidates":     gatewayAddresses,
-		"observedPublicAddress":        observedPublicAddress,
-		"suggestedGatewayAddress":      suggestedGatewayAddress,
-		"publicAddressDetection":       publicAddressDetection,
-		"setupOperationPhase":          setupOperationPhase,
-		"setupLastError":               setupLastError,
+		"administratorConfigured":       status.AdministratorConfigured,
+		"onboardingComplete":            status.OnboardingComplete,
+		"suggestedAgentConnectUrl":      s.setupAgentConnectURL,
+		"builtinHeadscaleAvailable":     s.infrastructure != nil,
+		"cloudflareOAuthAvailable":      s.store.CloudflareOAuthAvailable(),
+		"publicNetworkHelperAvailable":  s.store.lookupPublicAddress != nil && s.store.verifyPublicEntry != nil,
+		"regionLookupAvailable":         s.store.lookupPublicRegion != nil,
+		"cloudflareConfigured":          cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
+		"cloudflareAccessConfigured":    cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.AccessManagement,
+		"cloudflareTurnstileConfigured": cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.TurnstileManagement,
+		"cloudflareZone":                cloudflare.Endpoint,
+		"publicAddressCandidates":       publicAddresses,
+		"gatewayAddressCandidates":      gatewayAddresses,
+		"observedPublicAddress":         observedPublicAddress,
+		"suggestedGatewayAddress":       suggestedGatewayAddress,
+		"publicAddressDetection":        publicAddressDetection,
+		"setupOperationPhase":           setupOperationPhase,
+		"setupLastError":                setupLastError,
+		"loginProtection":               loginContext.Protection,
 	})
 }
 
@@ -130,16 +137,53 @@ func (s *Server) handleSetupComplete(writer http.ResponseWriter, request *http.R
 
 func (s *Server) handleLogin(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
+		Username       string `json:"username"`
+		Password       string `json:"password"`
+		TurnstileToken string `json:"turnstileToken,omitempty"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	loginContext, err := s.loginContext(request.Context(), request)
+	if err != nil {
+		writeLoginError(writer, http.StatusForbidden, "login_protection_unavailable", "center: login protection is unavailable", 0, true)
+		return
+	}
+	throttle, err := s.store.LoginThrottle(request.Context(), input.Username, loginContext.ClientAddress)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	if throttle.RetryAfter > 0 {
+		writeLoginError(writer, http.StatusTooManyRequests, "login_throttled", "center: too many sign-in attempts; wait before retrying", throttle.RetryAfter, loginContext.Protection.CaptchaRequired)
+		return
+	}
+	if loginContext.Protection.CaptchaRequired {
+		if err := s.store.verifyCenterLoginTurnstile(request.Context(), input.TurnstileToken, loginContext.ClientAddress, loginContext.Hostname); err != nil {
+			throttle, recordErr := s.store.RecordLoginFailure(request.Context(), input.Username, loginContext.ClientAddress, false)
+			if recordErr != nil {
+				writeError(writer, http.StatusInternalServerError, recordErr)
+				return
+			}
+			writeLoginError(writer, http.StatusForbidden, "captcha_failed", "center: security check failed; complete a new challenge", throttle.RetryAfter, true)
+			return
+		}
+	}
 	session, csrf, err := s.store.Authenticate(request.Context(), input.Username, input.Password)
 	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
+		throttle, recordErr := s.store.RecordLoginFailure(request.Context(), input.Username, loginContext.ClientAddress, true)
+		if recordErr != nil {
+			writeError(writer, http.StatusInternalServerError, recordErr)
+			return
+		}
+		writeLoginError(writer, http.StatusUnauthorized, "invalid_credentials", "center: sign-in failed", throttle.RetryAfter, loginContext.Protection.CaptchaRequired)
+		return
+	}
+	if err := s.store.ClearLoginFailures(request.Context(), input.Username, loginContext.ClientAddress); err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
 	s.setSessionCookies(writer, request, session, csrf)

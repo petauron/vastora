@@ -2,7 +2,9 @@ package center
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
@@ -19,7 +21,15 @@ import (
 const (
 	adminPasswordMinLength = 10
 	sessionLifetime        = 24 * time.Hour
+	loginFailureWindow     = 15 * time.Minute
+	loginLockoutDuration   = 15 * time.Minute
+	loginFailureRetention  = 24 * time.Hour
+	loginMaxFailures       = 5
 )
+
+type LoginThrottle struct {
+	RetryAfter time.Duration
+}
 
 func (s *Store) CreateFirstAdmin(ctx context.Context, username, password string) (string, string, error) {
 	username = strings.TrimSpace(username)
@@ -68,13 +78,16 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (st
 	var adminID, passwordHash string
 	err := s.db.QueryRowContext(ctx, `SELECT id, password_hash FROM admins WHERE username = ?`, username).Scan(&adminID, &passwordHash)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", errors.New("center: invalid credentials")
+		// Spend the same Argon2 work for an unknown username so the response does
+		// not reveal whether an administrator exists.
+		verifyPassword(password, dummyAdminPasswordHash)
+		return "", "", errors.New("center: sign-in failed")
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("center: read administrator: %w", err)
 	}
 	if !verifyPassword(password, passwordHash) {
-		return "", "", errors.New("center: invalid credentials")
+		return "", "", errors.New("center: sign-in failed")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -89,6 +102,127 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) (st
 		return "", "", fmt.Errorf("center: commit session: %w", err)
 	}
 	return token, csrf, nil
+}
+
+func (s *Store) LoginThrottle(ctx context.Context, username, clientAddress string) (LoginThrottle, error) {
+	now := s.now().UTC()
+	keys := s.loginFailureKeys(username, clientAddress)
+	var blockedUntil time.Time
+	for scope, key := range keys {
+		var raw string
+		err := s.db.QueryRowContext(ctx, `SELECT blocked_until FROM login_failures WHERE scope = ? AND key_hash = ?`, scope, key).Scan(&raw)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return LoginThrottle{}, fmt.Errorf("center: read login throttle: %w", err)
+		}
+		value, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return LoginThrottle{}, errors.New("center: stored login throttle is invalid")
+		}
+		if value.After(blockedUntil) {
+			blockedUntil = value
+		}
+	}
+	if blockedUntil.After(now) {
+		return LoginThrottle{RetryAfter: blockedUntil.Sub(now)}, nil
+	}
+	return LoginThrottle{}, nil
+}
+
+func (s *Store) RecordLoginFailure(ctx context.Context, username, clientAddress string, includeAccount bool) (LoginThrottle, error) {
+	now := s.now().UTC()
+	keys := s.loginFailureKeys(username, clientAddress)
+	if !includeAccount {
+		delete(keys, "account")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return LoginThrottle{}, fmt.Errorf("center: begin login throttle update: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM login_failures WHERE updated_at < ?`, now.Add(-loginFailureRetention).Format(time.RFC3339Nano)); err != nil {
+		return LoginThrottle{}, fmt.Errorf("center: expire login throttle: %w", err)
+	}
+	var longest time.Duration
+	for scope, key := range keys {
+		count := 0
+		windowStarted := now
+		var rawWindow string
+		err := tx.QueryRowContext(ctx, `SELECT failed_count, window_started_at FROM login_failures WHERE scope = ? AND key_hash = ?`, scope, key).Scan(&count, &rawWindow)
+		if err == nil {
+			parsed, parseErr := time.Parse(time.RFC3339Nano, rawWindow)
+			if parseErr != nil {
+				return LoginThrottle{}, errors.New("center: stored login throttle is invalid")
+			}
+			windowStarted = parsed
+			if !now.Before(windowStarted.Add(loginFailureWindow)) {
+				count = 0
+				windowStarted = now
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return LoginThrottle{}, fmt.Errorf("center: read login failure count: %w", err)
+		}
+		count++
+		delay := loginBackoff(count)
+		if count >= loginMaxFailures {
+			delay = loginLockoutDuration
+			windowStarted = now
+		}
+		if delay > longest {
+			longest = delay
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO login_failures(scope, key_hash, failed_count, window_started_at, blocked_until, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?)
+			ON CONFLICT(scope, key_hash) DO UPDATE SET failed_count = excluded.failed_count, window_started_at = excluded.window_started_at,
+			blocked_until = excluded.blocked_until, updated_at = excluded.updated_at`, scope, key, count, windowStarted.Format(time.RFC3339Nano), now.Add(delay).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+		if err != nil {
+			return LoginThrottle{}, fmt.Errorf("center: record login failure: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return LoginThrottle{}, fmt.Errorf("center: commit login throttle update: %w", err)
+	}
+	return LoginThrottle{RetryAfter: longest}, nil
+}
+
+func (s *Store) ClearLoginFailures(ctx context.Context, username, clientAddress string) error {
+	keys := s.loginFailureKeys(username, clientAddress)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("center: begin login throttle reset: %w", err)
+	}
+	defer tx.Rollback()
+	for scope, key := range keys {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM login_failures WHERE scope = ? AND key_hash = ?`, scope, key); err != nil {
+			return fmt.Errorf("center: clear login throttle: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) loginFailureKeys(username, clientAddress string) map[string]string {
+	return map[string]string{
+		"account": s.loginFailureKey("account", strings.ToLower(strings.TrimSpace(username))),
+		"client":  s.loginFailureKey("client", strings.TrimSpace(clientAddress)),
+	}
+}
+
+func (s *Store) loginFailureKey(scope, value string) string {
+	digest := hmac.New(sha256.New, s.key)
+	_, _ = digest.Write([]byte("vastora-login-" + scope + "\x00" + value))
+	return fmt.Sprintf("%x", digest.Sum(nil))
+}
+
+func loginBackoff(failures int) time.Duration {
+	if failures < 1 {
+		failures = 1
+	}
+	if failures > 5 {
+		failures = 5
+	}
+	return time.Duration(1<<failures) * time.Second
 }
 
 func (s *Store) ValidateSession(ctx context.Context, sessionToken, csrfToken string, mutation bool) error {
@@ -260,3 +394,7 @@ func verifyPassword(password, encoded string) bool {
 }
 
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$`)
+
+// A valid Argon2id encoding with a zero digest. It deliberately never matches,
+// but still forces the complete password derivation for unknown usernames.
+const dummyAdminPasswordHash = "argon2id$v=19$m=65536,t=3,p=2$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
