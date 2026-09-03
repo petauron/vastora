@@ -89,7 +89,7 @@ func prepareHostUpdateRecovery(ctx context.Context, operation hostUpdateOperatio
 		Candidate: candidate, Database: database, Key: key,
 	}
 	if manifest.SchemaVersion > manifest.TargetSchemaVersion {
-		return fmt.Errorf("Agent schema %d is newer than candidate capability %d", manifest.SchemaVersion, manifest.TargetSchemaVersion)
+		return fmt.Errorf("agent schema %d is newer than candidate capability %d", manifest.SchemaVersion, manifest.TargetSchemaVersion)
 	}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
