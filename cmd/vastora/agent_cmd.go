@@ -612,15 +612,22 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return fmt.Errorf("restore ingress state before starting the Agent control plane: %w", err)
 		}
-		if err := client.Heartbeat(context.Background(), store); err != nil {
-			controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
-		}
-		go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
-			controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
-		})
-		go client.RunTasks(context.Background(), store, func(err error) {
-			controlLogger.Error("Agent task channel failed", "event", "control_plane.task", "error", controlplane.SafeError(err.Error()))
-		})
+		go func() {
+			for {
+				if err := client.StartupHeartbeat(context.Background(), store); err != nil {
+					controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
+					time.Sleep(time.Second)
+					continue
+				}
+				break
+			}
+			go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
+				controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
+			})
+			client.RunTasks(context.Background(), store, func(err error) {
+				controlLogger.Error("Agent task channel failed", "event", "control_plane.task", "error", controlplane.SafeError(err.Error()))
+			})
+		}()
 		fmt.Printf("Agent health listener on %s\n", *listen)
 		return http.ListenAndServe(*listen, store.Handler())
 	default:

@@ -619,6 +619,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	if err := s.queueScheduledThreeXUIBackup(ctx, tx, id, now); err != nil {
 		return err
 	}
+	if heartbeat.Startup {
+		if err := expireAgentProcessTaskLeases(ctx, tx, id, now); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -632,6 +637,30 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
+	return nil
+}
+
+// expireAgentProcessTaskLeases marks work owned by the previous Agent process
+// for immediate recovery. Host update and decommission tasks are deliberately
+// excluded because their durable system helpers survive an Agent restart.
+func expireAgentProcessTaskLeases(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
+	nowText := now.UTC().Format(time.RFC3339Nano)
+	statements := []struct {
+		query string
+		kind  string
+	}{
+		{`UPDATE deployments SET lease_expires_at = ? WHERE agent_id = ? AND state = 'running'`, "application task"},
+		{`UPDATE application_commands SET lease_expires_at = ? WHERE agent_id = ? AND state = 'running'`, "application command"},
+		{`UPDATE gateway_components SET lease_expires_at = ? WHERE gateway_node_id = ? AND status = 'applying'`, "gateway component task"},
+		{`UPDATE gateway_states SET lease_expires_at = ? WHERE gateway_node_id = ? AND status = 'applying'`, "gateway route task"},
+		{`UPDATE node_listener_states SET lease_expires_at = ? WHERE node_id = ? AND status = 'applying'`, "node listener task"},
+		{`UPDATE cloudflare_tunnels SET lease_expires_at = ? WHERE agent_id = ? AND status = 'applying'`, "Tunnel task"},
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement.query, nowText, agentID); err != nil {
+			return fmt.Errorf("center: expire interrupted %s lease: %w", statement.kind, err)
+		}
 	}
 	return nil
 }

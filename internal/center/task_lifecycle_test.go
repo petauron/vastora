@@ -377,6 +377,32 @@ func TestTaskLeaseRenewalKeepsAttemptActiveAndNeverResurrectsExpiredLease(t *tes
 	}
 }
 
+func TestAgentStartupImmediatelyRecoversProcessOwnedTaskLease(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	clock := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return clock }
+	node := enrollOrchestrationNode(t, store, "startup-lease-recovery", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.12", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}); err != nil {
+		t.Fatal(err)
+	}
+	first := claimTask(t, store, node)
+	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
+		Version:                      "restarted",
+		Roles:                        []string{"worker"},
+		Capabilities:                 NodeCapabilities{Docker: true},
+		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration,
+		Startup:                      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	second := claimTask(t, store, node)
+	if second.ID != first.ID || second.Attempt != first.Attempt+1 {
+		t.Fatalf("startup task recovery = %#v, first=%#v", second, first)
+	}
+}
+
 func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
