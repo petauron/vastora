@@ -2068,9 +2068,9 @@ describe("network and app views", () => {
     };
     vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
-    expect(container.textContent).toContain("正在逐台更新远端 Agent");
+    expect(container.textContent).toContain("正在并发更新远端 Agent");
     expect(container.textContent).toContain("2/4 个 Agent 已是当前版本");
-    expect(container.textContent).toContain("远端 Agent 会逐台短暂离线");
+    expect(container.textContent).toContain("在线的远端 Agent 会同时更新");
   });
 
   it("bypasses the official release cache when update checking is requested", async () => {

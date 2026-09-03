@@ -21,7 +21,10 @@ import (
 func reportedServices(ctx context.Context, task DeploymentTask, bindAddress string) (ApplicationTaskResult, error) {
 	result := ApplicationTaskResult{Services: make([]ApplicationServiceResult, 0, len(task.Manifest.Services))}
 	for _, service := range task.Manifest.Services {
-		if task.AppKey == threeXUIKey && task.ApplicationRole == "worker" && service.Name == "subscription" {
+		// Center verifies the published subscription independently. During
+		// startup recovery, a disabled or unhealthy subscription must not block
+		// the Agent from receiving the role-reconciliation task that repairs it.
+		if task.AppKey == threeXUIKey && service.Name == "subscription" && (task.ApplicationRole == "worker" || task.OfflineRestore) {
 			continue
 		}
 		hostPort, err := serviceHostPort(task.Config, service)

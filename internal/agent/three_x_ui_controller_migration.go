@@ -579,5 +579,12 @@ func demoteThreeXUIController(ctx context.Context, store *Store, baseURL, token 
 	if err != nil {
 		return err
 	}
-	return configureThreeXUISubscriptionRole(ctx, installation.ServiceAddress, config.PanelPort, token, "worker")
+	if err := configureThreeXUISubscriptionRole(ctx, installation.ServiceAddress, config.PanelPort, token, "worker"); err != nil {
+		return err
+	}
+	installation.ApplicationRole = "worker"
+	if _, err := store.RecordApplied(ctx, installation); err != nil {
+		return fmt.Errorf("agent: persist demoted 3x-ui controller role: %w", err)
+	}
+	return nil
 }
