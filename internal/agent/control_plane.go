@@ -352,6 +352,7 @@ type ThreeXUIClientCommandResult struct {
 
 type ThreeXUINodeCommandTask struct {
 	Action              string `json:"action"`
+	MigrationID         string `json:"migrationId,omitempty"`
 	WorkerApplicationID string `json:"workerApplicationId"`
 	Name                string `json:"name"`
 	Address             string `json:"address"`
@@ -463,6 +464,18 @@ func (c Client) Heartbeat(ctx context.Context, store *Store) error {
 		}
 	}
 	_, err := c.heartbeat(ctx, store)
+	return err
+}
+
+// StartupHeartbeat reports a new Agent process before its task loop begins.
+// Center uses this boundary to release work leased to the previous process.
+func (c Client) StartupHeartbeat(ctx context.Context, store *Store) error {
+	if c.GatewayDriver != nil {
+		if err := store.requireGatewayStartup(); err != nil {
+			return err
+		}
+	}
+	_, err := c.heartbeatWithStartup(ctx, store, true)
 	return err
 }
 
@@ -774,19 +787,15 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 			return
 		}
 	}
-	startup := true
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
-		observeErr, err := c.heartbeatWithStartup(requestContext, store, startup)
+		observeErr, err := c.heartbeat(requestContext, store)
 		if observeErr != nil && report != nil {
 			report(observeErr)
 		}
 		if err != nil && report != nil {
 			report(err)
-		}
-		if err == nil {
-			startup = false
 		}
 	}
 	send()

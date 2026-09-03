@@ -208,9 +208,19 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	heartbeats := 0
+	startupHeartbeats := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/v1/agents/agent-1/heartbeat":
+			var payload struct {
+				Startup bool `json:"startup"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Startup {
+				startupHeartbeats++
+			}
 			heartbeats++
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = response.Write([]byte(`{}`))
@@ -250,6 +260,9 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 	})
 	if heartbeats != 2 {
 		t.Fatalf("expected two heartbeat cycles, got %d", heartbeats)
+	}
+	if startupHeartbeats != 0 {
+		t.Fatalf("steady heartbeat loop repeated startup %d times", startupHeartbeats)
 	}
 	if len(driver.applied) != 1 || driver.applied[0].Revision != 3 {
 		t.Fatalf("persisted gateway state was restored %d times: %#v", len(driver.applied), driver.applied)
@@ -449,7 +462,7 @@ func TestInitialHeartbeatRequestsRealityGuardRevalidation(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Client{}).heartbeatWithStartup(context.Background(), store, true); err != nil {
+	if err := (Client{}).StartupHeartbeat(context.Background(), store); err != nil {
 		t.Fatal(err)
 	}
 	if !startup {

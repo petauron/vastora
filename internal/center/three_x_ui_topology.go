@@ -519,7 +519,18 @@ func (s *Store) completeThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, tas
 		_ = s.cleanupStoppedPublications(context.WithoutCancel(ctx), cleanups)
 	}
 	if input.MigrationID != "" {
-		s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
+		s.startBackground(func() {
+			_ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx)
+			var migrationState string
+			if err := s.db.QueryRowContext(s.backgroundCtx, `SELECT state FROM three_x_ui_migrations WHERE id = ?`, input.MigrationID).Scan(&migrationState); err != nil || migrationState != "ready" {
+				return
+			}
+			var activeMigrations int
+			if err := s.db.QueryRowContext(s.backgroundCtx, `SELECT COUNT(*) FROM three_x_ui_migrations WHERE state IN ('backing_up', 'restoring', 'switching')`).Scan(&activeMigrations); err != nil || activeMigrations != 0 {
+				return
+			}
+			_ = s.startRealityGuardHardening(s.backgroundCtx)
+		})
 	}
 	return nil
 }
