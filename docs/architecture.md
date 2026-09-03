@@ -450,6 +450,23 @@ states and restores them before contacting Center. Existing containers, Caddy
 routes, and connectors continue while Center is unavailable; only desired-state
 changes pause.
 
+Remote Agent updates stop the Agent and publish a protected, integrity-checked
+copy of `agent.db` and `agent.key` before installing the candidate executable.
+Installing that executable is the durable update commit point: the candidate may
+open and migrate the production database before startup health is known, so the
+persistent update helper retains and retries the candidate after every later
+failure. It never automatically restores the previous executable across that
+commit point. The pre-migration copy remains under
+`/var/lib/vastora-agent-update/pre-migration-recovery` while activation is
+pending and is removed only after the candidate is stable and Center has
+acknowledged completion. It is explicit operator recovery material, not an
+automatic database downgrade path. A failed activation is reported to Center
+as recovery-required while the systemd helper keeps the exact candidate and
+retries it. The same task can become successful only after Center observes a
+fresh heartbeat from that target version. After that acknowledgement, cleanup
+removes both the temporary recovery material and the incompatible previous
+executable.
+
 Center backup contains a consistent Center SQLite snapshot and its encryption
 key. ACME account keys and certificates are encrypted records in that snapshot,
 so no separate control-plane CA file exists. Restore requires an equivalent

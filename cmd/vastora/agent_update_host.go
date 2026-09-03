@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,19 @@ type hostUpdateOperation struct {
 type hostUpdateResult struct {
 	Succeeded bool   `json:"succeeded"`
 	Error     string `json:"error"`
+}
+
+var errHostUpdateCandidatePending = errors.New("agent: schema-compatible update candidate is installed and must be retried")
+var errHostUpdateExecutableInstalled = errors.New("agent: update executable was installed but its directory sync failed")
+
+type hostUpdateActivationEnvironment struct {
+	candidatePath     string
+	recoveryDirectory string
+	run               func(context.Context, string, ...string) ([]byte, error)
+	version           func(context.Context, string) (string, error)
+	serviceActive     func(context.Context) bool
+	wait              func(context.Context) error
+	prepareRecovery   func(context.Context, hostUpdateOperation, string) error
 }
 
 func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.HostUpdateRequest) error {
@@ -164,25 +178,41 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 	if err != nil {
 		return err
 	}
+	environment := defaultHostUpdateActivationEnvironment(filepath.Dir(operationPath))
+	reportRecoveryRequired := func(updateErr error) error {
+		recoveryRequired := fmt.Errorf("agent: recovery required; schema-compatible candidate remains installed and will be retried; expected protected pre-migration recovery at %s: %v", environment.recoveryDirectory, updateErr)
+		requestContext, cancel = context.WithTimeout(ctx, 30*time.Second)
+		reportErr := client.CompleteHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt, recoveryRequired)
+		cancel()
+		if reportErr != nil {
+			return errors.Join(updateErr, fmt.Errorf("agent: report recovery-required host update: %w", reportErr))
+		}
+		return updateErr
+	}
 	if !exists {
-		updateErr := activateHostUpdate(ctx, operation)
-		result = hostUpdateResult{Succeeded: updateErr == nil}
-		if updateErr != nil {
-			result.Error = updateErr.Error()
+		updateErr := activateHostUpdate(ctx, operation, environment)
+		var terminal bool
+		result, terminal = hostUpdateActivationResult(updateErr)
+		if !terminal {
+			// The candidate may already have migrated agent.db. Keep the helper
+			// retrying it and do not publish a local terminal result that would
+			// trigger cleanup or restore the source executable. Center still gets
+			// an actionable failed state; the same attempt can later converge after
+			// an exact-version heartbeat proves that the candidate recovered.
+			return reportRecoveryRequired(updateErr)
 		}
 		if err := writeHostUpdateResult(resultPath, result); err != nil {
 			return err
 		}
 	} else if result.Succeeded {
-		if version, versionErr := executableVersion(ctx, operation.Executable); versionErr != nil || version != operation.TargetVersion || !agentServiceActive(ctx) {
-			rollbackErr := rollbackHostUpdate(ctx, operation)
-			result = hostUpdateResult{Error: "updated Agent did not remain active"}
-			if rollbackErr != nil {
-				result.Error += "; rollback failed: " + rollbackErr.Error()
+		// A successful activation can be persisted before Center acknowledges
+		// it. Re-establish the target Agent on every replay; never roll back a
+		// binary after it may have committed a forward schema migration.
+		if err := activateHostUpdate(ctx, operation, environment); err != nil {
+			if errors.Is(err, errHostUpdateCandidatePending) {
+				return reportRecoveryRequired(err)
 			}
-			if err := writeHostUpdateResult(resultPath, result); err != nil {
-				return err
-			}
+			return err
 		}
 	}
 	var updateErr error
@@ -198,63 +228,146 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 	return writeRootFileAtomic(completionPath, []byte("completed\n"), 0o600)
 }
 
-func activateHostUpdate(ctx context.Context, operation hostUpdateOperation) error {
-	currentVersion, currentErr := executableVersion(ctx, operation.Executable)
+func hostUpdateActivationResult(updateErr error) (hostUpdateResult, bool) {
+	if errors.Is(updateErr, errHostUpdateCandidatePending) {
+		return hostUpdateResult{}, false
+	}
+	result := hostUpdateResult{Succeeded: updateErr == nil}
+	if updateErr != nil {
+		result.Error = updateErr.Error()
+	}
+	return result, true
+}
+
+func defaultHostUpdateActivationEnvironment(directory string) hostUpdateActivationEnvironment {
+	return hostUpdateActivationEnvironment{
+		candidatePath:     filepath.Join(directory, filepath.Base(hostUpdateBinary)),
+		recoveryDirectory: filepath.Join(directory, hostUpdateRecoveryDirectoryName),
+		run:               runHostCommand,
+		version:           executableVersion,
+		serviceActive:     agentServiceActive,
+		wait: func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+				return nil
+			}
+		},
+		prepareRecovery: func(ctx context.Context, operation hostUpdateOperation, recoveryDirectory string) error {
+			return prepareHostUpdateRecovery(ctx, operation, recoveryDirectory, filepath.Join(directory, filepath.Base(hostUpdateBinary)))
+		},
+	}
+}
+
+func activateHostUpdate(ctx context.Context, operation hostUpdateOperation, environment hostUpdateActivationEnvironment) error {
+	if _, err := os.Lstat(environment.recoveryDirectory); err == nil {
+		return resumeHostUpdateCandidate(ctx, operation, environment)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: inspect pre-migration recovery point: %v", errHostUpdateCandidatePending, err)
+	}
+	currentVersion, currentErr := environment.version(ctx, operation.Executable)
 	if currentErr != nil {
 		return fmt.Errorf("agent: inspect installed Agent before update: %w", currentErr)
 	}
 	if currentVersion == operation.TargetVersion {
-		return ensureAgentServiceActive(ctx)
+		return fmt.Errorf("%w: target executable is installed without its pre-migration recovery point", errHostUpdateCandidatePending)
 	}
 	if currentVersion != operation.SourceVersion {
 		return fmt.Errorf("agent: installed version changed from %s to %s before update", operation.SourceVersion, currentVersion)
 	}
-	if candidateVersion, err := executableVersion(ctx, hostUpdateBinary); err != nil || candidateVersion != operation.TargetVersion {
+	if candidateVersion, err := environment.version(ctx, environment.candidatePath); err != nil || candidateVersion != operation.TargetVersion {
 		return errors.New("agent: persistent update executable does not match the target version")
 	}
-	if output, err := exec.CommandContext(ctx, "systemctl", "stop", "vastora-agent.service").CombinedOutput(); err != nil {
+	if output, err := environment.run(ctx, "systemctl", "stop", "vastora-agent.service"); err != nil {
 		return fmt.Errorf("agent: stop Agent for update: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	restartSource := func(cause error) error {
+		if err := ensureAgentServiceActive(ctx, environment); err != nil {
+			return errors.Join(cause, fmt.Errorf("agent: restart source Agent before update commit: %w", err))
+		}
+		return cause
+	}
+	if err := environment.prepareRecovery(ctx, operation, environment.recoveryDirectory); err != nil {
+		return restartSource(fmt.Errorf("agent: prepare pre-migration recovery point: %w", err))
 	}
 	previous := operation.Executable + ".previous"
 	if err := copyExecutableAtomic(operation.Executable, previous); err != nil {
-		_ = ensureAgentServiceActive(ctx)
-		return fmt.Errorf("agent: preserve previous Agent executable: %w", err)
+		return restartSource(fmt.Errorf("agent: preserve previous Agent executable: %w", err))
 	}
-	if err := copyExecutableAtomic(hostUpdateBinary, operation.Executable); err != nil {
-		_ = rollbackHostUpdate(ctx, operation)
-		return fmt.Errorf("agent: install Agent update: %w", err)
-	}
-	if err := ensureAgentServiceActive(ctx); err != nil {
-		rollbackErr := rollbackHostUpdate(ctx, operation)
-		if rollbackErr != nil {
-			return errors.Join(err, fmt.Errorf("agent: rollback failed: %w", rollbackErr))
+	if err := copyExecutableAtomic(environment.candidatePath, operation.Executable); err != nil {
+		if errors.Is(err, errHostUpdateExecutableInstalled) {
+			return fmt.Errorf("%w: %v", errHostUpdateCandidatePending, err)
 		}
-		return err
+		return restartSource(fmt.Errorf("agent: install Agent update: %w", err))
+	}
+	// Installing the candidate is the durable update commit point. Starting it
+	// may open and migrate agent.db before health verification completes, so
+	// every later failure must retain and retry this schema-compatible binary.
+	if err := ensureAgentServiceActive(ctx, environment); err != nil {
+		return fmt.Errorf("%w: %v", errHostUpdateCandidatePending, err)
 	}
 	return nil
 }
 
-func rollbackHostUpdate(ctx context.Context, operation hostUpdateOperation) error {
-	previous := operation.Executable + ".previous"
-	if version, err := executableVersion(ctx, previous); err != nil || version != operation.SourceVersion {
-		return errors.New("agent: previous Agent executable is unavailable")
+// A published recovery manifest is the durable phase boundary. Once it
+// exists, an interrupted helper always converges toward the exact candidate
+// bound into that manifest. This also covers termination between executable
+// replacement and service health verification, when running a source binary
+// can no longer be proven safe.
+func resumeHostUpdateCandidate(ctx context.Context, operation hostUpdateOperation, environment hostUpdateActivationEnvironment) error {
+	if err := verifyHostUpdateRecovery(ctx, operation, environment.recoveryDirectory, environment.candidatePath); err != nil {
+		return fmt.Errorf("%w: verify pre-migration recovery point: %v", errHostUpdateCandidatePending, err)
 	}
-	if output, err := exec.CommandContext(ctx, "systemctl", "stop", "vastora-agent.service").CombinedOutput(); err != nil {
-		return fmt.Errorf("agent: stop Agent for rollback: %s: %w", strings.TrimSpace(string(output)), err)
+	candidate, err := hashHostUpdateRecoveryFile(environment.candidatePath)
+	if err != nil {
+		return fmt.Errorf("%w: inspect persisted update candidate: %v", errHostUpdateCandidatePending, err)
 	}
-	if err := copyExecutableAtomic(previous, operation.Executable); err != nil {
-		return err
+	installed, installedErr := hashHostUpdateExecutable(operation.Executable)
+	if installedErr == nil && installed == candidate {
+		if err := syncHostUpdateDirectory(filepath.Dir(operation.Executable)); err != nil {
+			return fmt.Errorf("%w: persist installed candidate before restart: %v", errHostUpdateCandidatePending, err)
+		}
+		if err := ensureAgentServiceActive(ctx, environment); err != nil {
+			return fmt.Errorf("%w: %v", errHostUpdateCandidatePending, err)
+		}
+		return nil
 	}
-	return ensureAgentServiceActive(ctx)
+	if output, err := environment.run(ctx, "systemctl", "stop", "vastora-agent.service"); err != nil {
+		return fmt.Errorf("%w: stop Agent before restoring compatible candidate: %s: %v", errHostUpdateCandidatePending, strings.TrimSpace(string(output)), err)
+	}
+	currentVersion, currentErr := environment.version(ctx, operation.Executable)
+	if currentErr == nil && currentVersion == operation.SourceVersion {
+		previous := operation.Executable + ".previous"
+		if previousVersion, previousErr := environment.version(ctx, previous); previousErr != nil || previousVersion != operation.SourceVersion {
+			if err := copyExecutableAtomic(operation.Executable, previous); err != nil {
+				return fmt.Errorf("%w: preserve source executable during interrupted update recovery: %v", errHostUpdateCandidatePending, err)
+			}
+		}
+	}
+	if err := copyExecutableAtomic(environment.candidatePath, operation.Executable); err != nil && !errors.Is(err, errHostUpdateExecutableInstalled) {
+		return fmt.Errorf("%w: reinstall schema-compatible candidate: %v", errHostUpdateCandidatePending, err)
+	}
+	installed, err = hashHostUpdateExecutable(operation.Executable)
+	if err != nil || installed != candidate {
+		return fmt.Errorf("%w: installed executable does not match the persisted candidate", errHostUpdateCandidatePending)
+	}
+	if err := syncHostUpdateDirectory(filepath.Dir(operation.Executable)); err != nil {
+		return fmt.Errorf("%w: persist reinstalled candidate before restart: %v", errHostUpdateCandidatePending, err)
+	}
+	if err := ensureAgentServiceActive(ctx, environment); err != nil {
+		return fmt.Errorf("%w: %v", errHostUpdateCandidatePending, err)
+	}
+	return nil
 }
 
-func ensureAgentServiceActive(ctx context.Context) error {
-	if output, err := exec.CommandContext(ctx, "systemctl", "start", "vastora-agent.service").CombinedOutput(); err != nil {
+func ensureAgentServiceActive(ctx context.Context, environment hostUpdateActivationEnvironment) error {
+	if output, err := environment.run(ctx, "systemctl", "start", "vastora-agent.service"); err != nil {
 		return fmt.Errorf("agent: start updated Agent: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	stable := 0
 	for range 10 {
-		if agentServiceActive(ctx) {
+		if environment.serviceActive(ctx) {
 			stable++
 			if stable == 3 {
 				return nil
@@ -262,10 +375,8 @@ func ensureAgentServiceActive(ctx context.Context) error {
 		} else {
 			stable = 0
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Second):
+		if err := environment.wait(ctx); err != nil {
+			return err
 		}
 	}
 	return errors.New("agent: updated Agent did not become stable")
@@ -281,6 +392,30 @@ func executableVersion(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+func hashHostUpdateExecutable(path string) (hostUpdateRecoveryFile, error) {
+	if err := requireHostUpdateRegularFile(path); err != nil {
+		return hostUpdateRecoveryFile{}, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return hostUpdateRecoveryFile{}, err
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return hostUpdateRecoveryFile{}, errors.New("agent: installed update executable is writable by another user")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return hostUpdateRecoveryFile{}, err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	size, err := io.Copy(digest, file)
+	if err != nil {
+		return hostUpdateRecoveryFile{}, err
+	}
+	return hostUpdateRecoveryFile{Size: size, SHA256: fmt.Sprintf("%x", digest.Sum(nil))}, nil
 }
 
 func copyExecutableAtomic(source, destination string) error {
@@ -317,7 +452,13 @@ func copyExecutableAtomic(source, destination string) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporaryPath, destination)
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return err
+	}
+	if err := syncHostUpdateDirectory(filepath.Dir(destination)); err != nil {
+		return fmt.Errorf("%w: %v", errHostUpdateExecutableInstalled, err)
+	}
+	return nil
 }
 
 func readHostUpdateOperation(path string) (hostUpdateOperation, error) {
@@ -396,13 +537,22 @@ func cleanPersistentHostUpdate(operationPath string) error {
 	if cancelled, err := hostUpdateCancelled(operationPath); err != nil || cancelled {
 		return err
 	}
-	if _, err := readHostUpdateOperation(operationPath); err != nil {
+	operation, err := readHostUpdateOperation(operationPath)
+	if err != nil {
 		return err
 	}
 	completionPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostUpdateCompleted))
 	completed, err := protectedCleanupMarkerExists(completionPath, "completed\n")
 	if err != nil || !completed {
 		return err
+	}
+	for _, directory := range []string{
+		filepath.Join(filepath.Dir(operationPath), hostUpdateRecoveryDirectoryName),
+		filepath.Join(filepath.Dir(operationPath), hostUpdateRecoveryPartialDirectoryName),
+	} {
+		if err := removeHostUpdateRecovery(directory); err != nil {
+			return err
+		}
 	}
 	if output, err := exec.Command("systemctl", "disable", hostUpdateUnitName).CombinedOutput(); err != nil {
 		return fmt.Errorf("disable persistent Agent update: %s: %w", strings.TrimSpace(string(output)), err)
@@ -414,7 +564,7 @@ func cleanPersistentHostUpdate(operationPath string) error {
 		return fmt.Errorf("reload systemd after Agent update: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	var result error
-	for _, path := range []string{operationPath, hostUpdateResultPath, completionPath, hostUpdateBinary} {
+	for _, path := range []string{operationPath, hostUpdateResultPath, completionPath, hostUpdateBinary, operation.Executable + ".previous"} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			result = errors.Join(result, err)
 		}
