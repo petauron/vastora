@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.99](https://github.com/petauron/vastora/compare/v0.1.0-alpha.98...v0.1.0-alpha.99) (2026-09-03)
+
+
+### Features
+
+* **center:** cascade updates to remote agents ([4a283d9](https://github.com/petauron/vastora/commit/4a283d9a202bbcd91ba242a1ed12d38074193ac6))
+* **network:** separate node-local protocol ingress ([ef1bfaa](https://github.com/petauron/vastora/commit/ef1bfaa993676362709f3cbc496da9327f5eb329))
+
 ## [0.1.0-alpha.98](https://github.com/petauron/vastora/compare/v0.1.0-alpha.97...v0.1.0-alpha.98) (2026-09-02)
 
 
