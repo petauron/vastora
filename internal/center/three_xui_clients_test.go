@@ -21,6 +21,7 @@ func TestThreeXUIClientCommandsKeepLinksOneTimeAndMetadataSafe(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES('three-x-ui-clients', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
+	selectTestThreeXUIController(t, store, "three-x-ui-clients")
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)
 		VALUES('reality-service', 'three-x-ui-clients', ?, 'inbound-9', 'tcp', 35443, 35443, '10.0.0.80:35443', 'observed', 'vless/tcp/reality', 0, '10.0.0.80', 'ready', ?, ?),
 		('subscription-service', 'three-x-ui-clients', ?, 'subscription', 'http', 2096, 2096, '10.0.0.80:2096', 'catalog', '', 0, '', 'ready', ?, ?)`, siteID, now, now, siteID, now, now); err != nil {
@@ -154,14 +155,31 @@ func TestThreeXUIClientCommandSelectsMultipleSiteNodes(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
+	workerNode := enrollOrchestrationNode(t, store, "remote-worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.1.81", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.1.81", LANAddress: "10.0.1.81", EnabledKinds: []string{networking.KindLAN}})
+	remoteSite, err := store.CreateSite(ctx, SiteInput{Name: "Remote", Code: "remote-clients", Timezone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET site_id = ? WHERE id = ?`, remoteSite.ID, workerNode.ID); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	siteID := testSiteID(t, store)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES('three-x-ui-controller', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
+	selectTestThreeXUIController(t, store, "three-x-ui-controller")
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
+		VALUES('three-x-ui-remote-worker', '3x-ui Remote', ?, ?, ?, '', 'running', 'docker', 'worker', ?, ?)`, workerNode.ID, remoteSite.ID, threeXUIAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id, master_application_id, remote_node_id, status, created_at, updated_at)
+		VALUES('three-x-ui-remote-worker', 'three-x-ui-controller', 10, 'ready', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)
 		VALUES('reality-9', 'three-x-ui-controller', ?, 'inbound-9', 'tcp', 30009, 30009, '10.0.0.80:30009', 'observed', 'vless/tcp/reality', 0, '10.0.0.80', 'ready', ?, ?),
-		('reality-10', 'three-x-ui-controller', ?, 'inbound-10', 'tcp', 30010, 30010, '10.0.0.80:30010', 'observed', 'vless/tcp/reality', 0, '10.0.0.80', 'ready', ?, ?)`, siteID, now, now, siteID, now, now); err != nil {
+		('reality-10', 'three-x-ui-remote-worker', ?, 'inbound-10', 'tcp', 30010, 30010, '10.0.1.81:30010', 'observed', 'vless/tcp/reality', 0, '10.0.1.81', 'ready', ?, ?)`, siteID, now, now, remoteSite.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_inbound_plans(service_id, inbound_tag, total_bytes, reset_day, next_reset_at, revision, status, updated_at)
@@ -175,7 +193,7 @@ func TestThreeXUIClientCommandSelectsMultipleSiteNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if task.ClientCommand == nil || len(task.ClientCommand.InboundIDs) != 2 || task.ClientCommand.InboundIDs[0] != 9 || task.ClientCommand.InboundIDs[1] != 10 {
+	if task.ClientCommand == nil || len(task.ClientCommand.InboundIDs) != 2 || task.ClientCommand.InboundIDs[0] != 9 || task.ClientCommand.InboundIDs[1] != 10 || len(task.ClientCommand.Inbounds) != 2 || task.ClientCommand.Inbounds[1].ApplicationID != "three-x-ui-remote-worker" {
 		t.Fatalf("multi-node client task = %#v", task.ClientCommand)
 	}
 	metadata := []ThreeXUIClientView{{Email: "Router", Enabled: true, InboundIDs: []int{9, 10}, HasSubscription: true}}

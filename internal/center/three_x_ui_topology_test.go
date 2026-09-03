@@ -9,12 +9,19 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
+func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	master := enrollOrchestrationNode(t, store, "subscription-controller", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.90", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", PublicAddress: "203.0.113.90", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	worker := enrollOrchestrationNode(t, store, "vless-worker", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.91", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", PublicAddress: "203.0.113.91", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	remoteSite, err := store.CreateSite(ctx, SiteInput{Name: "Remote", Code: "remote", Timezone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET site_id = ? WHERE id = ?`, remoteSite.ID, worker.ID); err != nil {
+		t.Fatal(err)
+	}
 	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
 
 	masterDeployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
@@ -22,7 +29,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if masterDeployment.OneTimeCredentials == nil {
-		t.Fatal("Site controller did not return its one-time administrator credentials")
+		t.Fatal("global controller did not return its one-time administrator credentials")
 	}
 	masterTask := claimTask(t, store, master)
 	if masterTask.ApplicationRole != threeXUIRoleMaster {
@@ -31,7 +38,7 @@ func TestThreeXUISiteControllerAndVLESSNodeLifecycle(t *testing.T) {
 	completeThreeXUIDeployment(t, store, master, masterTask, "10.0.0.90", "master-api-token")
 
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: worker.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config}); err == nil || !strings.Contains(err.Error(), "already has") {
-		t.Fatalf("second Site controller error = %v", err)
+		t.Fatalf("second global controller error = %v", err)
 	}
 	workerDeployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: worker.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleWorker, Config: config})
 	if err != nil {

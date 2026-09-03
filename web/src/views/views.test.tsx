@@ -7,7 +7,6 @@ import type { AppData } from "../App";
 import type { ApplicationCommand } from "../types";
 import { APIError, api } from "../api";
 import { vastoraDomainDefaults } from "../lib/network";
-import { dockerInstallCommand } from "../lib/docker-install";
 import { AppsView } from "./AppsView";
 import { HomeView } from "./HomeView";
 import { NetworkView } from "./NetworkView";
@@ -56,7 +55,7 @@ const realityDashboard = () => {
   data.agents[0].networkProfile = { serviceAddress: "10.0.0.10", publicAddress: "203.0.113.10", publicBindAddress: "203.0.113.10", publicMode: "direct", enabledKinds: ["lan", "public"], directPublic: true };
   data.sites[0].domainSuffix = "vastora.example.com";
   data.apps = [{ key: "vastora-official/3x-ui", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "3x-ui", version: "3.7.0", name: { en: "3x-ui", "zh-CN": "3x-ui" }, description: { en: "Proxy management", "zh-CN": "代理管理" }, hostAccess: true, config: [] } }];
-  data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", role: "master", installedVersion: "3.7.0", availableVersion: "3.7.0" }];
+  data.applications = [{ ...data.applications[0], id: "three-x-ui", name: "3x-ui", appKey: "vastora-official/3x-ui", role: "master", controllerApplicationId: "three-x-ui", installedVersion: "3.7.0", availableVersion: "3.7.0" }];
   return data;
 };
 
@@ -66,6 +65,20 @@ function render(element: ReactNode) {
   root = createRoot(container);
   act(() => root?.render(<ThemeProvider>{element}</ThemeProvider>));
   return container;
+}
+
+function openAppDetails(container: HTMLElement, applicationID?: string) {
+  const row = applicationID
+    ? [...container.querySelectorAll<HTMLElement>("[data-application-id]")].find((element) => element.dataset.applicationId === applicationID)
+    : container.querySelector<HTMLElement>("[data-application-id]");
+  const manage = [...(row?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.trim() === "管理");
+  if (!manage) throw new Error("Application management action was not rendered");
+  act(() => manage.click());
+  return document.body;
+}
+
+function renderAppDetails(element: ReactNode) {
+  return openAppDetails(render(element));
 }
 
 function mockCommandEvent(command: ApplicationCommand) {
@@ -277,7 +290,7 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("Komari 探针");
     expect(container.textContent).toContain("高权限");
     expect(container.textContent).not.toContain("Failed");
-    expect(container.textContent).toContain("先把应用安装为私有服务");
+    expect(container.textContent).toContain("管理应用、订阅与各节点的访问入口");
     const installed = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("已安装"));
     const store = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"));
     expect(installed?.querySelector('[data-slot="app-section-count"]')?.getAttribute("data-active")).toBe("true");
@@ -308,7 +321,8 @@ describe("network and app views", () => {
     const installedTab = [...container.querySelectorAll("button")].find((button) => button.textContent?.startsWith("已安装"));
     expect(installedTab).toBeDefined();
     act(() => installedTab?.click());
-    const credentialsButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "凭据");
+    openAppDetails(container, "cpa-application");
+    const credentialsButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "凭据");
     expect(credentialsButton).toBeDefined();
     act(() => credentialsButton?.click());
     const revealPassword = document.querySelector<HTMLInputElement>("#application-credential-reauthentication");
@@ -344,7 +358,7 @@ describe("network and app views", () => {
     const data = dashboard();
     data.apps[0].app.config = [{ key: "endpoint", label: { en: "Endpoint", "zh-CN": "地址" }, description: { en: "Service endpoint", "zh-CN": "服务地址" }, type: "string", required: true, secret: false }];
     data.applications = [{ ...data.applications[1], appKey: "vastora-official/komari-agent", name: "Komari Agent", installedVersion: "1.2.60", availableVersion: "1.2.60", updateAvailable: false }];
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("最近一次操作失败，应用仍保留");
     expect(container.textContent).toContain("修改配置");
     expect(container.textContent).toContain("卸载");
@@ -354,7 +368,7 @@ describe("network and app views", () => {
   it("offers upgrade only when the catalog contains a newer version", () => {
     const data = dashboard();
     data.applications[0] = { ...data.applications[0], installedVersion: "1.2.59", availableVersion: "1.2.60", updateAvailable: true };
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("升级到 v1.2.60");
     expect(container.textContent).not.toContain("版本已是最新");
   });
@@ -363,7 +377,7 @@ describe("network and app views", () => {
     const data = dashboard();
     data.apps = [];
     data.applications = [data.applications[0]];
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("Komari Agent");
     expect(container.textContent).toContain("卸载");
     expect(container.textContent).not.toContain("升级到");
@@ -383,7 +397,7 @@ describe("network and app views", () => {
 	data.agents[0].networkCandidates = [{ address: "203.0.113.10", interface: "eth0", kind: "public", observedAt: "2026-08-18T00:00:00Z" }];
 	data.agents[0].networkProfile = { serviceAddress: "203.0.113.10", publicAddress: "203.0.113.10", publicBindAddress: "203.0.113.10", publicMode: "direct", enabledKinds: ["public"], directPublic: true };
 	data.services = [{ id: "vless", applicationId: "running", siteId: "site", name: "VLESS", protocol: "tcp", containerPort: 2443, hostPort: 2443, endpoint: "203.0.113.10:2443", source: "observed", appProtocol: "vless/tcp", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-	const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+	const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 	const add = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"));
 	act(() => add?.click());
 	act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
@@ -396,13 +410,56 @@ describe("network and app views", () => {
   it("explains the managed REALITY container-port 443 exception", () => {
     const data = realityDashboard();
     data.services = [{ id: "reality", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", protocol: "tcp", containerPort: 443, hostPort: 443, endpoint: "10.0.0.10:443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", guardStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
     act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("节点直连 443"))?.click());
     expect(document.body.textContent).toContain("容器内部 443 合法");
     expect(document.body.textContent).toContain("宿主机公网 443 由 HAProxy 独占");
     expect(document.body.textContent).not.toContain("应用内部端口不能是 443");
+  });
+
+  it.each([
+    ["random-code", "请输入完整域名"],
+    ["https://panel.example.com/", "不要包含 https://、端口或路径"],
+    ["panel.example.com:8080", "不要包含 https://、端口或路径"],
+    ["panel.other.net", "域名必须属于当前 Cloudflare 域名 example.com"],
+    ["notexample.com", "域名必须属于当前 Cloudflare 域名 example.com"],
+  ])("explains invalid publication hostname %s without creating an entry", async (hostname, message) => {
+    const data = dashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
+    data.centerRemoteAccess = { available: true, enabled: true, status: "configured" };
+    data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const create = vi.spyOn(api, "createPublication").mockRejectedValue(new Error("unexpected publication"));
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
+    act(() => document.querySelector<HTMLInputElement>('input[value="public_web"]')?.click());
+    const input = document.querySelector<HTMLInputElement>("#publication-hostname")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, hostname);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.getAttribute("aria-describedby")).toContain("publication-hostname-error");
+    expect(document.querySelector("#publication-hostname-error")?.textContent).toContain(message);
+    expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("创建访问方式"))?.disabled).toBe(true);
+    await act(async () => {
+      input.closest("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(create).not.toHaveBeenCalled();
+
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "  PANEL.EXAMPLE.COM.  ");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(input.value).toBe("panel.example.com");
+    expect(input.getAttribute("aria-invalid")).toBe("false");
+    expect(document.querySelector("#publication-hostname-error")).toBeNull();
+    await act(async () => { input.closest("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ hostname: "panel.example.com" }));
   });
 
   it("keeps public access submission errors inside the open sheet", async () => {
@@ -412,7 +469,7 @@ describe("network and app views", () => {
     data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const create = vi.spyOn(api, "createPublication").mockRejectedValue(new APIError("center: publication failed", 400, "invalid_request"));
     const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={mutate} />);
 
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     act(() => document.querySelector<HTMLInputElement>('input[value="public_web"]')?.click());
@@ -439,7 +496,7 @@ describe("network and app views", () => {
     data.centerRemoteAccess = remoteAccess;
     data.centerRemoteAccessError = loadError;
     data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     act(() => document.querySelector<HTMLInputElement>('input[value="public_web"]')?.click());
@@ -454,7 +511,7 @@ describe("network and app views", () => {
     data.centerRemoteAccess = null;
     data.services = [{ id: "panel", applicationId: "running", siteId: "site", name: "panel", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const status = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, hostname: "center-vastora.example.com", audienceKind: "email", audienceValue: "admin@example.com", status: "configured" });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click();
@@ -503,7 +560,7 @@ describe("network and app views", () => {
 		const stop = vi.spyOn(api, "stopPublication").mockResolvedValue({ stopped: true });
 		const verify = vi.spyOn(api, "verifyPublication");
 		const updateTLS = vi.spyOn(api, "updatePublicationTLS");
-		const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+		const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
 
 		expect(container.textContent).toContain("已有入口仍可停止");
 		expect([...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.disabled).toBe(true);
@@ -598,7 +655,7 @@ describe("network and app views", () => {
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
     data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect([...container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "添加入口")).toBe(false);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("开启订阅"))?.click();
@@ -618,7 +675,7 @@ describe("network and app views", () => {
     data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "ready", accessUrl: "https://subscription.example.test/sub/", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     const create = vi.spyOn(api, "createSubscriptionCommand").mockResolvedValue({ id: "subscription-resync", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: "subscription.example.test", dnsProvider: "cloudflare", publicationId: "subscription-publication", resultAvailable: false, createdAt: "2026-08-24T00:00:02Z", updatedAt: "2026-08-24T00:00:03Z" });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("公网订阅"))?.click();
       await Promise.resolve();
@@ -638,7 +695,7 @@ describe("network and app views", () => {
     data.publications = [publication];
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "subscription-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: publication.hostname, dnsProvider: "cloudflare", publicationId: publication.id, resultAvailable: false, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" });
     const verify = vi.spyOn(api, "verifyPublication").mockResolvedValue({ ...publication, status: "ready", accessUrl: `https://${publication.hostname}/` });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
 
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("公网订阅"))?.click();
@@ -662,7 +719,7 @@ describe("network and app views", () => {
     data.services = [{ id: "subscription", applicationId: "three-x-ui", siteId: "site", name: "subscription", protocol: "http", containerPort: 2096, hostPort: 2096, endpoint: "10.0.0.10:2096", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     data.publications = [{ id: "subscription-publication", serviceId: "subscription", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: "subscription.example.test", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "degraded", lastError: "TLS health check failed", createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" }];
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "subscription-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.subscription.configure", state: "succeeded", hostname: "subscription.example.test", dnsProvider: "cloudflare", publicationId: "subscription-publication", resultAvailable: false, createdAt: "2026-08-24T00:00:00Z", updatedAt: "2026-08-24T00:00:01Z" });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("公网订阅"))?.click();
@@ -691,7 +748,7 @@ describe("network and app views", () => {
     expect(create).toHaveBeenCalledWith("worker", "vastora-official/3x-ui", {}, "install", false, "worker", "", undefined);
   });
 
-	it("shows one Site controller and keeps worker controls focused on VLESS", () => {
+		it("groups the global controller and cross-Site workers into compact rows without duplicate installations", () => {
     const data = realityDashboard();
     data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker" });
     data.applications.push({ ...data.applications[0], id: "three-x-ui-worker", nodeId: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
@@ -702,12 +759,78 @@ describe("network and app views", () => {
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("订阅主机");
     expect(container.textContent).toContain("VLESS 节点");
-    expect(container.textContent).toContain("当前订阅包含 2 个 VLESS 节点");
-    expect(container.textContent).not.toContain("统一管理 1 个 VLESS 节点");
-    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("管理客户端"))).toHaveLength(1);
-    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("VLESS 节点已配置"))).toHaveLength(2);
-		expect(container.textContent).toContain("客户端和订阅由当前位置的订阅主机统一管理");
+    expect(container.textContent).toContain("1 个订阅主机 · 2 个节点");
+    expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
+    expect(container.querySelectorAll("[data-application-id]")).toHaveLength(2);
+    expect(container.querySelector("[data-application-id]")?.getAttribute("data-application-id")).toBe("three-x-ui");
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("客户端与订阅"))).toHaveLength(1);
+    expect(container.textContent).not.toContain("VLESS 节点已配置");
+    expect(container.textContent).not.toContain("修改配置");
+    expect(container.textContent).not.toContain("卸载");
+    expect(container.textContent).not.toContain("10.0.0.20:31443");
+    expect(container.textContent).toContain("客户端与订阅统一在这里管理");
+
+    openAppDetails(container, "three-x-ui-worker");
+    const details = document.querySelector('[data-slot="sheet-content"]');
+    expect(details?.textContent).toContain("edge-worker");
+	    expect(details?.textContent).toContain("客户端和订阅由全局订阅主机统一管理");
+    expect(details?.textContent).not.toContain("管理客户端");
+		expect(details?.textContent).not.toContain("管理账号");
 	});
+
+  it("keeps ingress failures visible independently from the running app and checks the correct entry", async () => {
+    const data = realityDashboard();
+    data.services = [{ id: "reality", applicationId: "three-x-ui", siteId: "site", name: "inbound-1", protocol: "tcp", containerPort: 443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const publication = { id: "failed-entry", serviceId: "reality", kind: "public_shared_443" as const, ingress: { owner: "application_node" as const, entryNodeId: "agent" }, hostname: "node.example.com", dnsProvider: "cloudflare" as const, tlsEnabled: false, desiredRevision: 2, appliedRevision: 1, status: "pending" as const, lastError: "Listener unavailable", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
+    data.publications = [publication];
+    const check = vi.spyOn(api, "verifyPublication").mockResolvedValue({ ...publication, status: "ready", lastError: undefined });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const row = container.querySelector('[data-application-id="three-x-ui"]')!;
+    expect(row.textContent).toContain("运行中");
+    expect(row.textContent).toContain("入口待处理");
+    expect(container.textContent).toContain("1 个入口待处理");
+    expect(container.textContent).not.toContain("node.example.com");
+    await act(async () => {
+      [...row.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "检查")?.click();
+      await Promise.resolve();
+    });
+    expect(check).toHaveBeenCalledWith("failed-entry");
+
+    openAppDetails(container);
+    expect(document.body.textContent).toContain("Listener unavailable");
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+  });
+
+  it("uses the ready panel entry for the controller shortcut and hides unavailable links", () => {
+    const data = realityDashboard();
+    data.services = [{ id: "panel", applicationId: "three-x-ui", siteId: "site", name: "panel", protocol: "http", containerPort: 2053, hostPort: 2053, endpoint: "10.0.0.10:2053", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const publication = { id: "panel-entry", serviceId: "panel", kind: "cloudflare_tunnel" as const, ingress: { owner: "tunnel_connector" as const, entryNodeId: "agent" }, hostname: "panel.example.com", dnsProvider: "cloudflare" as const, tlsEnabled: true, desiredRevision: 2, appliedRevision: 2, status: "ready" as const, accessUrl: "https://panel.example.com/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
+    data.publications = [publication];
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const panelLink = container.querySelector<HTMLAnchorElement>('[data-slot="subscription-controller"] a');
+    expect(panelLink?.textContent).toContain("打开面板");
+    expect(panelLink?.getAttribute("href")).toBe("https://panel.example.com/");
+    expect(panelLink?.getAttribute("role")).not.toBe("button");
+
+    const nextData = { ...data, publications: [{ ...publication, status: "failed" as const, lastError: "Origin unavailable" }] };
+    act(() => root?.render(<ThemeProvider><AppsView data={nextData} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
+    expect(container.querySelector('[data-slot="subscription-controller"] a')).toBeNull();
+    expect(container.textContent).toContain("面板或订阅入口需要处理");
+  });
+
+  it("refreshes an open management sheet by application ID and closes it after uninstall", () => {
+    const data = dashboard();
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    openAppDetails(container, "running");
+    const nextData = { ...data, applications: [{ ...data.applications[0], installedVersion: "1.2.61", availableVersion: "1.2.61" }] };
+    act(() => root?.render(<ThemeProvider><AppsView data={nextData} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
+    expect(document.querySelector('[data-slot="sheet-content"]')?.textContent).toContain("v1.2.61");
+    expect(document.querySelector('[data-slot="sheet-content"]')?.textContent).not.toContain("v1.2.60");
+
+    act(() => root?.render(<ThemeProvider><AppsView data={{ ...nextData, applications: [] }} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
+    expect(document.querySelector('[data-slot="sheet-content"]')).toBeNull();
+    expect(container.textContent).toContain("还没有安装应用");
+  });
 
 	it("renames an existing REALITY node from Center", async () => {
 		vi.useFakeTimers();
@@ -718,7 +841,7 @@ describe("network and app views", () => {
 		const rename = vi.spyOn(api, "renameRealityCommand").mockResolvedValue(pending);
 		mockCommandEvent({ ...pending, state: "succeeded", updatedAt: "2026-08-23T00:00:01Z" });
 		const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
-		const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+		const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={mutate} />);
 		expect(container.textContent).toContain("🇺🇸 美国Old name");
 		act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("重命名"))?.click());
 		const input = document.querySelector<HTMLInputElement>("#reality-rename-name")!;
@@ -744,8 +867,8 @@ describe("network and app views", () => {
     const data = realityDashboard();
     data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker", connected: true });
     data.applications.push({ ...data.applications[0], id: "three-x-ui-worker", nodeId: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
-    data.threeXUIControllerMigrations.push({ id: "migration", siteId: "site", sourceApplicationId: "three-x-ui", targetApplicationId: "three-x-ui-worker", backupRevision: 2, state: "backing_up", step: "backup", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    data.threeXUIControllerMigrations.push({ id: "migration", kind: "replace", siteId: "site", sourceApplicationId: "three-x-ui", targetApplicationId: "three-x-ui-worker", backupRevision: 2, state: "backing_up", step: "backup", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("迁移订阅主机"))?.click());
     expect(document.body.textContent).toContain("正在安全迁移");
     expect(document.body.textContent).toContain("保存最新配置");
@@ -763,7 +886,7 @@ describe("network and app views", () => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理客户端"))?.click();
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("客户端与订阅"))?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -838,7 +961,7 @@ describe("network and app views", () => {
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理客户端"))?.click();
+      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("客户端与订阅"))?.click();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -861,7 +984,7 @@ describe("network and app views", () => {
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
 		await act(async () => {
-			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理客户端"))?.click();
+			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("客户端与订阅"))?.click();
 			await Promise.resolve();
 			await Promise.resolve();
 			await Promise.resolve();
@@ -875,7 +998,7 @@ describe("network and app views", () => {
     const data = dashboard();
     data.sites[0].domainSuffix = "vastora.example.com";
     data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
-    let container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    let container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     expect(document.body.textContent).toContain("连接 Cloudflare 后可以开启");
     expect(document.querySelector<HTMLElement>('[role="switch"][aria-label="使用 HTTPS"]')?.getAttribute("aria-disabled")).toBe("true");
@@ -884,7 +1007,7 @@ describe("network and app views", () => {
     root = undefined;
     document.body.replaceChildren();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, status: "configured" }];
-    container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     expect(document.body.textContent).toContain("使用 Cloudflare DNS 验证申请可信证书");
     const tlsSwitch = document.querySelector<HTMLElement>('[role="switch"][aria-label="使用 HTTPS"]');
@@ -898,7 +1021,7 @@ describe("network and app views", () => {
     const accessUrl = "https://komari-agent-home-server.example.com/";
     data.publications = [{ id: "public-panel", serviceId: "manager", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: "komari-agent-home-server.example.com", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
 
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     const address = container.querySelector<HTMLElement>(`[title="${accessUrl}"]`);
     expect(address?.textContent).toBe(accessUrl);
@@ -910,7 +1033,7 @@ describe("network and app views", () => {
     data.services = [{ id: "manager", applicationId: "running", siteId: "site", name: "manager", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     data.publications = [{ id: "private-panel", serviceId: "manager", kind: "headscale_gateway", ingress: { owner: "site_gateway", entryNodeId: "agent" }, hostname: "panel.home.example", dnsProvider: "headscale", tlsEnabled: false, desiredRevision: 1, appliedRevision: 1, status: "ready", accessUrl: "http://panel.home.example/", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const update = vi.spyOn(api, "updatePublicationTLS").mockResolvedValue({ ...data.publications[0], tlsEnabled: true });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
 
     expect(container.textContent).toContain("安全私网 · Site Gateway · HTTP");
     const tlsSwitch = container.querySelector<HTMLElement>('[role="switch"][aria-label="开启 HTTPS"]');
@@ -1139,7 +1262,7 @@ describe("network and app views", () => {
     const updated = { ...current, id: "traffic-update", action: "update_inbound" as const, inbounds: [{ ...current.inbounds![0], totalBytes: 300 * 1024 ** 3, resetDay: 31 }] };
     const command = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action === "update_inbound" ? updated : current);
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("节点套餐"))?.click();
       await Promise.resolve();
@@ -1189,7 +1312,7 @@ describe("network and app views", () => {
     const cached: ApplicationCommand = { id: "cached-traffic", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(cached);
     vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ ...cached, id: "refresh-traffic", state: "pending", inbounds: undefined, inboundsObserved: false });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("节点套餐"))?.click();
@@ -1205,7 +1328,7 @@ describe("network and app views", () => {
   it("keeps service origin details collapsed by default", () => {
     const data = realityDashboard();
     data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     const details = [...container.querySelectorAll("details")].find((value) => value.querySelector("summary")?.textContent?.includes("技术信息"));
     expect(details?.open).toBe(false);
     expect(details?.textContent).toContain("tcp · 10.0.0.10:30443");
@@ -1215,7 +1338,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
     vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", totalBytes: 200 * 1024 ** 3, usedBytes: 200 * 1024 ** 3, resetDay: 23, nextResetAt: "2026-08-23T00:00:00Z", planStatus: "failed", planError: "Agent did not confirm the inbound reset" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
-    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     await act(async () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("节点套餐"))?.click();
       await Promise.resolve();
@@ -1577,32 +1700,6 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("Agent 将连接");
     const advanced = [...document.querySelectorAll("details")].find((details) => details.textContent?.includes("Center 地址"));
     expect(advanced?.open).toBe(false);
-  });
-
-  it("copies the OS-aware Docker install commands before generating an enrollment", async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-    const createEnrollment = vi.spyOn(api, "createAgentEnrollment");
-    render(<NodesView data={dashboard()} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} startAdding />);
-    const instructions = [...document.querySelectorAll("details")].find((details) => details.querySelector("summary")?.textContent === "安装 Docker（自动识别系统）")!;
-    expect(instructions.open).toBe(false);
-    act(() => instructions.querySelector("summary")?.click());
-    expect(instructions.textContent).toContain("Debian 12/13");
-    expect(instructions.textContent).toContain("Ubuntu 22.04/24.04/26.04");
-    expect(instructions.textContent).toContain("已有 Docker 会自动跳过");
-    expect(instructions.querySelector('a[href="https://docs.docker.com/engine/install/debian/"]')).not.toBeNull();
-    expect(instructions.querySelector('a[href="https://docs.docker.com/engine/install/ubuntu/"]')).not.toBeNull();
-    expect(instructions.querySelector("pre code")?.textContent).toBe(dockerInstallCommand);
-    expect(dockerInstallCommand).toContain('arch="$(dpkg --print-architecture)"');
-    expect(dockerInstallCommand).toContain("Suites: $codename");
-    expect(dockerInstallCommand).toContain("Architectures: $arch");
-    expect(dockerInstallCommand).toContain("\nEOF\n");
-    expect(dockerInstallCommand).toContain("docker-compose-plugin");
-    expect(dockerInstallCommand).toContain("docker_install_as_root systemctl enable --now docker");
-    await act(async () => { instructions.querySelector<HTMLButtonElement>('button[aria-label="复制 Docker 安装命令"]')?.click(); });
-    expect(writeText).toHaveBeenCalledWith(dockerInstallCommand);
-    expect(instructions.textContent).toContain("已复制");
-    expect(createEnrollment).not.toHaveBeenCalled();
   });
 
   it("downloads and directly runs the executable Agent installer", () => {

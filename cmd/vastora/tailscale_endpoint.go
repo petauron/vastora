@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -74,11 +73,8 @@ func reconcileTailscaleEndpoint(ctx context.Context, staticEndpoints []string, e
 	}
 	commandContext, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-	if output, versionErr := environment.run(commandContext, "tailscale", "version"); versionErr != nil {
-		return fmt.Errorf("verify Vastora-managed Tailscale version: %s: %w", strings.TrimSpace(string(output)), versionErr)
-	} else if fields := strings.Fields(string(output)); len(fields) == 0 || fields[0] != tailscalehost.SupportedVersion {
-		found := strings.TrimSpace(string(output))
-		return fmt.Errorf("verify Vastora-managed Tailscale version: requires %s, found %s", tailscalehost.SupportedVersion, found)
+	if err := tailscalehost.CheckCompatibility(commandContext, environment.run, false); err != nil {
+		return fmt.Errorf("verify Vastora-managed Tailscale compatibility: %w", err)
 	}
 	rollback := func(cause error) error {
 		rollbackContext, rollbackCancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -120,21 +116,11 @@ func reconcileTailscaleEndpoint(ctx context.Context, staticEndpoints []string, e
 }
 
 func verifyTailscaleEndpointHealth(ctx context.Context, requireFixedPort bool, configPath string, run func(context.Context, string, ...string) ([]byte, error)) error {
-	if output, err := run(ctx, "systemctl", "is-active", "--quiet", "tailscaled.service"); err != nil {
-		return fmt.Errorf("verify Tailscale static endpoint service: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	output, err := run(ctx, "tailscale", "status", "--json")
-	if err != nil {
-		return fmt.Errorf("verify Tailscale static endpoint session: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	var status struct {
-		BackendState string `json:"BackendState"`
-	}
-	if json.Unmarshal(output, &status) != nil || status.BackendState != "Running" {
-		return fmt.Errorf("verify Tailscale static endpoint session: backend state is not Running")
+	if err := tailscalehost.CheckCompatibility(ctx, run, true); err != nil {
+		return fmt.Errorf("verify Tailscale static endpoint compatibility: %w", err)
 	}
 	if requireFixedPort {
-		output, err = run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
+		output, err := run(ctx, "systemctl", "show", "--property=Environment", "--value", "tailscaled.service")
 		if err != nil {
 			return fmt.Errorf("verify Tailscale static endpoint environment: %s: %w", strings.TrimSpace(string(output)), err)
 		}

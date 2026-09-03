@@ -1,3 +1,13 @@
+const hostnamePattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+
+export function normalizeHostname(value: string) {
+  return value.trim().toLowerCase().replace(/\.$/, "");
+}
+
+export function validHostname(value: string) {
+  return hostnamePattern.test(normalizeHostname(value));
+}
+
 export function validCenterURL(value: string) {
   try {
     const parsed = new URL(value);

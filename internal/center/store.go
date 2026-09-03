@@ -232,6 +232,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.activateDockerInstallRoute(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if err := store.activateMigratedNodeListeners(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()
@@ -266,6 +271,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		backgroundCancel()
 		_ = db.Close()
 		return nil, err
+	}
+	if err := store.resumeThreeXUIControllerConvergence(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, fmt.Errorf("center: resume global 3x-ui controller convergence: %w", err)
 	}
 	freshComplete = true
 	return store, nil

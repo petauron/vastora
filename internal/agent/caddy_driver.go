@@ -142,6 +142,7 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 	}
 	if protected["center"] && protected["headscale"] {
 		required := []struct{ id, path string }{
+			{"system-docker-bootstrap", "/install/docker.sh"},
 			{"system-agent-bootstrap", "/install/agent.sh"},
 			{"system-agent-binary-bootstrap", "/api/v1/agent-binaries/*"},
 			{"system-agent-decommission-callback", "/api/v1/agent-decommission-results/*"},
@@ -149,7 +150,7 @@ func validateProtectedSystemRoutes(desired gateway.DesiredState, services []stri
 		for _, expected := range required {
 			route, exists := routes[expected.id]
 			if !exists || !route.System || !route.TLSEnabled || route.ListenerKind != "public" || route.Path != expected.path {
-				return fmt.Errorf("%w: refusing to replace protected system gateway without public Agent bootstrap routes", errProtectedSystemGatewayStateIncomplete)
+				return fmt.Errorf("%w: refusing to replace protected system gateway without public bootstrap routes", errProtectedSystemGatewayStateIncomplete)
 			}
 		}
 	}

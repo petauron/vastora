@@ -142,7 +142,7 @@ func TestHeadscaleRequestKeepsFixedOriginAndRejectsRedirects(t *testing.T) {
 	if err != nil || requestURL != headscalePinnedRequestOrigin+"/api/v1/user?name=vastora" {
 		t.Fatalf("unexpected pinned Headscale URL: %q err=%v", requestURL, err)
 	}
-	for _, path := range []string{"//metadata.invalid/", "/api/v1/user?next=https://metadata.invalid", "/api/v1/user#metadata"} {
+	for _, path := range []string{"//metadata.invalid/", "/api/v1/user?next=https://metadata.invalid", "/api/v1/user#metadata", "/api/v1/../../admin", "/api/v1/%2e%2e/admin", "/api/v1/user/extra", "/api/v1/unknown"} {
 		if _, err := headscaleRequestURL(path, nil); err == nil {
 			t.Fatalf("unsafe Headscale request path was accepted: %q", path)
 		}
@@ -155,10 +155,22 @@ func TestHeadscaleEndpointMustBeOperatorAuthorized(t *testing.T) {
 	if err != nil || endpoint != "https://headscale.example.test" {
 		t.Fatalf("allowed Headscale endpoint was rejected: endpoint=%q err=%v", endpoint, err)
 	}
-	for _, value := range []string{"https://metadata.internal", "https://user@headscale.example.test", "https://headscale.example.test/path", "https://headscale.example.test?target=metadata", "https://headscale.example.test#fragment", "http://headscale.example.test"} {
+	for _, value := range []string{"https://metadata.internal", "https://user@headscale.example.test", "https://headscale.example.test/path", "https://headscale.example.test?target=metadata", "https://headscale.example.test?", "https://headscale.example.test#fragment", "https://headscale.example.test#", "http://headscale.example.test"} {
 		if _, err := store.authorizedHeadscaleEndpoint(value); err == nil {
 			t.Fatalf("unauthorized Headscale endpoint was accepted: %q", value)
 		}
+	}
+}
+
+func TestHeadscaleQueryCannotReplaceFixedOrigin(t *testing.T) {
+	query := url.Values{"name": []string{"https://user:password@metadata.invalid/../?next=value#fragment"}}
+	requestURL, err := headscaleRequestURL("/api/v1/user", query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(requestURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != "headscale-api.vastora.invalid" || parsed.Path != "/api/v1/user" || parsed.User != nil || parsed.Fragment != "" || parsed.Query().Get("name") != query.Get("name") {
+		t.Fatalf("query changed the fixed destination: %q err=%v", requestURL, err)
 	}
 }
 

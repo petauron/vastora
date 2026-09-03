@@ -212,6 +212,7 @@ func TestApplicationResultSurvivesFailedResponseAndRestartUntilAcknowledged(t *t
 		store.Close()
 		t.Fatal(err)
 	}
+	selectTestThreeXUIController(t, store, applicationID)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		store.Close()

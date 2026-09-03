@@ -380,11 +380,11 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 		return ApplicationCommandView{}, err
 	}
 	defer tx.Rollback()
-	var targetAgentID, siteID, appKey, status, role, targetAddress, targetPublicAddress string
-	if err := tx.QueryRowContext(ctx, `SELECT application.node_id, application.site_id, application.app_key, application.status, application.role,
+	var siteID, appKey, status, role, targetAddress, targetPublicAddress string
+	if err := tx.QueryRowContext(ctx, `SELECT application.site_id, application.app_key, application.status, application.role,
 		COALESCE(profile.service_address, ''), COALESCE(profile.public_address, '')
 		FROM applications application LEFT JOIN agent_network_profiles profile ON profile.agent_id = application.node_id
-		WHERE application.id = ?`, applicationID).Scan(&targetAgentID, &siteID, &appKey, &status, &role, &targetAddress, &targetPublicAddress); errors.Is(err, sql.ErrNoRows) {
+		WHERE application.id = ?`, applicationID).Scan(&siteID, &appKey, &status, &role, &targetAddress, &targetPublicAddress); errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: application not found")
 	} else if err != nil {
 		return ApplicationCommandView{}, err
@@ -395,14 +395,9 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 	if !networking.IsPrivateServiceAddress(targetAddress) || net.ParseIP(targetPublicAddress) == nil {
 		return ApplicationCommandView{}, errors.New("center: target VLESS node needs confirmed private service and public addresses")
 	}
-	agentID := targetAgentID
-	targetNodeID := 0
-	if role == threeXUIRoleWorker {
-		if err := tx.QueryRowContext(ctx, `SELECT master.node_id, node.remote_node_id
-			FROM three_x_ui_nodes node JOIN applications master ON master.id = node.master_application_id
-			WHERE node.worker_application_id = ? AND node.status = 'ready' AND master.status = 'running'`, applicationID).Scan(&agentID, &targetNodeID); err != nil {
-			return ApplicationCommandView{}, errors.New("center: this VLESS node is not connected to the Site 3x-ui controller")
-		}
+	agentID, targetNodeID, err := threeXUIDataPlaneController(ctx, tx, applicationID, role)
+	if err != nil {
+		return ApplicationCommandView{}, err
 	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
@@ -468,18 +463,9 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	if _, _, err := validateNodeDirectPublicIngress(ctx, tx, targetAgentID); err != nil {
 		return ApplicationCommandView{}, err
 	}
-	var agentID string
-	var targetNodeID int
-	if role == threeXUIRoleMaster {
-		agentID = targetAgentID
-	} else {
-		if err := tx.QueryRowContext(ctx, `SELECT master.node_id, n.remote_node_id
-			FROM three_x_ui_nodes n JOIN applications master ON master.id = n.master_application_id
-			WHERE n.worker_application_id = ? AND n.status = 'ready' AND master.status = 'running'`, input.ApplicationID).Scan(&agentID, &targetNodeID); errors.Is(err, sql.ErrNoRows) {
-			return ApplicationCommandView{}, errors.New("center: this VLESS node is not connected to the Site 3x-ui controller")
-		} else if err != nil {
-			return ApplicationCommandView{}, err
-		}
+	agentID, targetNodeID, err := threeXUIDataPlaneController(ctx, tx, input.ApplicationID, role)
+	if err != nil {
+		return ApplicationCommandView{}, err
 	}
 	var targetConfig []byte
 	if err := tx.QueryRowContext(ctx, `SELECT config_json FROM deployments WHERE application_id = ? AND operation IN ('install', 'upgrade', 'configure') AND state = 'succeeded' ORDER BY created_at DESC, rowid DESC LIMIT 1`, input.ApplicationID).Scan(&targetConfig); err != nil {
@@ -600,9 +586,9 @@ func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRen
 		return ApplicationCommandView{}, err
 	}
 	defer tx.Rollback()
-	var applicationID, siteID, serviceName, serviceStatus, appProtocol, targetAgentID, appKey, applicationStatus, role string
-	if err := tx.QueryRowContext(ctx, `SELECT s.application_id, s.site_id, s.name, s.status, s.app_protocol, a.node_id, a.app_key, a.status, a.role
-		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, input.ServiceID).Scan(&applicationID, &siteID, &serviceName, &serviceStatus, &appProtocol, &targetAgentID, &appKey, &applicationStatus, &role); errors.Is(err, sql.ErrNoRows) {
+	var applicationID, siteID, serviceName, serviceStatus, appProtocol, appKey, applicationStatus, role string
+	if err := tx.QueryRowContext(ctx, `SELECT s.application_id, s.site_id, s.name, s.status, s.app_protocol, a.app_key, a.status, a.role
+		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, input.ServiceID).Scan(&applicationID, &siteID, &serviceName, &serviceStatus, &appProtocol, &appKey, &applicationStatus, &role); errors.Is(err, sql.ErrNoRows) {
 		return ApplicationCommandView{}, errors.New("center: REALITY service not found")
 	} else if err != nil {
 		return ApplicationCommandView{}, err
@@ -614,18 +600,9 @@ func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRen
 	if err != nil || inboundID < 1 {
 		return ApplicationCommandView{}, errors.New("center: REALITY service has an invalid inbound identifier")
 	}
-	agentID := targetAgentID
-	targetNodeID := 0
-	if role == threeXUIRoleWorker {
-		if err := tx.QueryRowContext(ctx, `SELECT master.node_id, n.remote_node_id
-			FROM three_x_ui_nodes n JOIN applications master ON master.id = n.master_application_id
-			WHERE n.worker_application_id = ? AND n.status = 'ready' AND master.status = 'running'`, applicationID).Scan(&agentID, &targetNodeID); errors.Is(err, sql.ErrNoRows) {
-			return ApplicationCommandView{}, errors.New("center: this VLESS node is not connected to the Site 3x-ui controller")
-		} else if err != nil {
-			return ApplicationCommandView{}, err
-		}
-	} else if role != threeXUIRoleMaster {
-		return ApplicationCommandView{}, errors.New("center: 3x-ui topology role is not configured")
+	agentID, targetNodeID, err := threeXUIDataPlaneController(ctx, tx, applicationID, role)
+	if err != nil {
+		return ApplicationCommandView{}, err
 	}
 	var duplicateDisplayName int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE site_id = ? AND id <> ? AND app_protocol = 'vless/tcp/reality' AND status <> 'stopped' AND display_name = ? COLLATE NOCASE`, siteID, input.ServiceID, displayName).Scan(&duplicateDisplayName); err != nil {

@@ -206,7 +206,7 @@ func (s *Store) failUnclaimableApplicationCommand(ctx context.Context, tx *sql.T
 			return err
 		}
 		if strings.TrimSpace(node.MigrationID) != "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET state = 'failed', last_error = ?, updated_at = ? WHERE id = ? AND state NOT IN ('ready', 'failed')`, message, formattedNow, node.MigrationID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'switch', last_error = ?, failed_worker_application_id = ?, updated_at = ? WHERE id = ? AND state = 'switching'`, message, node.WorkerApplicationID, formattedNow, node.MigrationID); err != nil {
 				return err
 			}
 		}
@@ -229,11 +229,6 @@ func (s *Store) failUnclaimableApplicationCommand(ctx context.Context, tx *sql.T
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return errors.New("center: application command changed while failing an unsafe claim")
-	}
-	if node != nil && strings.TrimSpace(node.MigrationID) != "" {
-		if err := s.queueNextThreeXUINodeAfterMigration(ctx, tx, node.MigrationID, now); err != nil {
-			return err
-		}
 	}
 	if revision < 1 {
 		revision = 1
