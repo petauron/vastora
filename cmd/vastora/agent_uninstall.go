@@ -305,6 +305,12 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 		pendingUpdate: &hostHelperCancellationEnvironment{
 			directory: hostUpdateDir, unitName: hostUpdateUnitName, unitPath: hostUpdateUnit, unitContents: hostUpdateServiceUnit(),
 			enabledLink: hostUpdateEnabledLink, operationDataDir: hostUpdateDataDir, run: runHostCommand,
+			cleanupAdditionalState: func() error {
+				return errors.Join(
+					removeHostUpdateRecovery(filepath.Join(hostUpdateDir, hostUpdateRecoveryDirectoryName)),
+					removeHostUpdateRecovery(filepath.Join(hostUpdateDir, hostUpdateRecoveryPartialDirectoryName)),
+				)
+			},
 		},
 		binaryPaths:          []string{"/usr/local/bin/vastora", "/usr/local/bin/vastora.previous"},
 		tailscalePaths:       []string{"/etc/apt/sources.list.d/tailscale.list", "/usr/share/keyrings/tailscale-archive-keyring.gpg", "/var/lib/tailscale"},

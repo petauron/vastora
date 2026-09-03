@@ -53,6 +53,45 @@ func TestAgentUpdateRequiresHandoffAndTargetVersionReconnect(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateRecoveryCanConvergeAfterSchemaCommittedFailure(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "update-recovery-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.99", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.99", LANAddress: "10.0.0.99", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+
+	queued, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || task == nil {
+		t.Fatalf("claim update: %#v, %v", task, err)
+	}
+	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+		t.Fatal(err)
+	}
+	const recoveryRequired = "recovery required; schema-compatible candidate remains installed"
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+		t.Fatalf("failed update could not resume the same durable attempt: %v", err)
+	}
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.89", true)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
+		t.Fatalf("recovered target heartbeat could not complete update: %v", err)
+	}
+
+	agents, err := store.ListAgents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0].Update == nil || agents[0].Update.ID != queued.ID || agents[0].Update.State != "succeeded" || agents[0].Update.LastError != "" {
+		t.Fatalf("recovered update state = %#v", agents)
+	}
+}
+
 func TestAgentUpdateRequiresAFeatureCapableOnlineAgent(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

@@ -315,7 +315,11 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 		if parseErr != nil || liveVersion != targetVersion || !supported || !seen.After(s.now().Add(-agentConnectedMaxAge)) {
 			return errors.New("center: updated Agent has not reconnected with the target version")
 		}
-		if currentState != "installing" {
+		// A persistent helper reports a schema-committed activation failure as
+		// failed while it retains and retries the compatible candidate. Permit
+		// that same task attempt to converge only after Center observes a fresh
+		// heartbeat from the exact target version.
+		if currentState != "installing" && currentState != "failed" {
 			return errors.New("center: Agent update is not installing")
 		}
 	} else if currentState != "running" && currentState != "installing" {
