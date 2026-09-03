@@ -184,6 +184,8 @@ func TestVersion56MigrationSeparatesNodeDirectIngressAndFailsClosedOnCrossNodeRo
 		DROP TABLE publications;
 		ALTER TABLE publications_v55 RENAME TO publications;
 		DROP TABLE node_listener_states;
+		DROP INDEX agent_enrollment_one_reconnect_idx;
+		ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id;
 		DELETE FROM goose_db_version WHERE version_id >= 56;
 		PRAGMA user_version = 55;
 		PRAGMA foreign_keys = ON;`)
@@ -688,6 +690,8 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 	}
 	for _, statement := range []string{
 		`DROP TABLE agent_updates`,
+		`DROP INDEX agent_enrollment_one_reconnect_idx`,
+		`ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id`,
 		`ALTER TABLE publications DROP COLUMN access_application_id`,
 		`ALTER TABLE application_commands DROP COLUMN reconciliation_requested`,
 		`ALTER TABLE agent_enrollment_tokens DROP COLUMN ca_certificate_pem`,
@@ -744,6 +748,8 @@ func TestVersion52MigrationPreservesBuiltinHeadscaleCloudflareDNS(t *testing.T) 
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', NULL, 'failed', ?, ?);
 		DELETE FROM settings WHERE key IN ('headscale_dns_policy', 'headscale_dns_resolvers');
 		ALTER TABLE agent_decommissions DROP COLUMN callback_token_hash;
+		DROP INDEX agent_enrollment_one_reconnect_idx;
+		ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id;
 		DELETE FROM goose_db_version WHERE version_id >= 52;
 		PRAGMA user_version = 51`, now, now); err != nil {
 		t.Fatal(err)
@@ -1485,6 +1491,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE deployments DROP COLUMN runtime_generation`,
 		`ALTER TABLE deployments DROP COLUMN reconciliation_requested`,
 		`ALTER TABLE application_commands DROP COLUMN reconciliation_requested`,
+		`DROP INDEX agent_enrollment_one_reconnect_idx`,
+		`ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id`,
 		`ALTER TABLE agent_enrollment_tokens DROP COLUMN ca_certificate_pem`,
 		`ALTER TABLE deployments DROP COLUMN registry_credential_id`,
 		`ALTER TABLE deployments DROP COLUMN change_proposal_id`,

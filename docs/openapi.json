@@ -4236,6 +4236,15 @@
               "application/json": {
                 "schema": {}
               }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the one-time enrollment token.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
             }
           },
           "400": {
@@ -4292,6 +4301,67 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/agents/{id}/reconnect": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Create Agent Reconnect Enrollment",
+        "operationId": "createAgentReconnectEnrollment_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "A one-time enrollment that replaces the offline Agent identity while preserving its Center node ID and relationships.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the one-time enrollment token.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
       }
     },
     "/api/v1/agents/{id}": {

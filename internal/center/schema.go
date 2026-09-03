@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 58
+const centerSchemaVersion = 59
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -144,9 +144,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			bootstrap_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
 			ca_fingerprint TEXT NOT NULL DEFAULT '',
 			ca_certificate_pem TEXT NOT NULL DEFAULT '',
+			target_agent_id TEXT REFERENCES agents(id) ON DELETE CASCADE,
 			expires_at TEXT NOT NULL,
 			used_at TEXT
 		)`,
+		`CREATE UNIQUE INDEX agent_enrollment_one_reconnect_idx ON agent_enrollment_tokens(target_agent_id) WHERE target_agent_id IS NOT NULL`,
 		`CREATE TABLE agents (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
