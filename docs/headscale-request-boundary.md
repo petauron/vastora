@@ -27,21 +27,25 @@ target chosen by an unauthenticated request or a browser-supplied URL.
 
 ## Alert disposition
 
-At the 2026-09-03 read-only review, GitHub alerts **#2** and **#9** were still open,
-but their latest instances referenced older commits (`8b472233` and `e16e8671`).
-The current source already contained fixed request origins, constrained dialing,
-and redirect rejection. This follow-up restricts the health/API path selection
-to finite constant URLs and adds empty-query/fragment and path-escape coverage.
+The original GitHub alerts **#2** and **#9** referenced older default-branch
+commits (`8b472233` and `e16e8671`). PR #330 introduced the fixed request
+origins, constrained dialing, redirect rejection, finite health/API path
+selection, and empty-query/fragment and path-escape coverage described above.
 
-The old deployer code did not reject redirects, so an old alert must not be
-blanket-dismissed as a false positive just because the current code is hardened.
-After merge, run CodeQL against the new default-branch commit and inspect both
-alert instances, including their analysis categories. A green workflow alone
-does not establish that an old category's alerts have been resolved. Do not
-dismiss or close them without that evidence.
+A complete default-branch CodeQL run
+[`33775535074`](https://github.com/petauron/vastora/actions/runs/33775535074)
+then analyzed commit `49825cf`. GitHub automatically marked alert #9 fixed.
+Alert #2 belonged only to the retired `analyze/language:go` configuration, so it
+was recorded as mitigated with the current scan evidence. It was not classified
+as a false positive because the historical implementation lacked the current
+destination and redirect controls.
+
+CodeQL runs on every push to `main` in addition to pull requests, the weekly
+schedule, and manual dispatch. This ensures a merged fix advances the
+default-branch analysis that owns security-alert state instead of leaving that
+state behind the pull-request checks.
 
 Regression cases live in `internal/center/network_integrations_test.go` and
 `internal/deployer/config_test.go`. They cover fixed origins, rejected redirects,
 unauthorized origins, user information, path escapes, query encoding, and empty
-query/fragment delimiters. No local tests or CodeQL runs were executed for this
-review; GitHub alert closure remains a post-merge verification step.
+query/fragment delimiters.
