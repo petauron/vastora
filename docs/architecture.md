@@ -85,6 +85,16 @@ Center serves the same Agent installer plus both `linux/amd64` and
 `linux/arm64` Agent binaries. A Center on either architecture can therefore
 manage a mixed x64 and ARM64 Site; the installer and self-updater select the
 node's native binary and reject unsupported platforms.
+The Agent installer and node-page Docker command detect `/etc/os-release` on
+the target server, not the administrator's browser or the Center host. They
+accept Debian 12/13 and Ubuntu 22.04/24.04/26.04 with `amd64` or `arm64` userland
+architecture reported by `dpkg`. Debian 11, older Ubuntu releases, derivatives,
+and unlisted releases stop before package or Agent changes. Docker and
+Tailscale repositories use the selected distribution's official release
+codename; no cross-distribution repository fallback is allowed. The Docker
+command leaves existing Docker installations in place and reports conflicting
+packages rather than removing them. Existing Tailscale installations retain
+their ownership and are not automatically replaced or downgraded.
 Official Catalog and infrastructure images must publish both Linux platforms.
 CI resolves every pinned runtime image and fails before merge if either
 `linux/amd64` or `linux/arm64` is missing; production never relies on emulation.

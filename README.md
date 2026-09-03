@@ -27,8 +27,10 @@ when the Center is unavailable.
   raw TCP must share `443`.
 - Signed 3x-ui, CPA, and Keeper images pinned by digest, plus a native Komari
   Agent binary pinned by platform and SHA-256.
-- One Ubuntu 24.04 installation path for x86_64 and ARM64 Centers and Agents,
-  including mixed-architecture Sites and architecture-aware Agent updates.
+- An Ubuntu 24.04 Center installation path and an OS-aware Agent installer for
+  Debian 12/13 and Ubuntu 22.04/24.04/26.04 on x86_64 and ARM64, including
+  mixed-architecture Sites and architecture-aware Agent updates. The node page
+  also provides one copyable Docker installation command for these systems.
 
 ## Development
 

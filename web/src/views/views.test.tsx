@@ -7,6 +7,7 @@ import type { AppData } from "../App";
 import type { ApplicationCommand } from "../types";
 import { APIError, api } from "../api";
 import { vastoraDomainDefaults } from "../lib/network";
+import { dockerInstallCommand } from "../lib/docker-install";
 import { AppsView } from "./AppsView";
 import { HomeView } from "./HomeView";
 import { NetworkView } from "./NetworkView";
@@ -1576,6 +1577,32 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("Agent 将连接");
     const advanced = [...document.querySelectorAll("details")].find((details) => details.textContent?.includes("Center 地址"));
     expect(advanced?.open).toBe(false);
+  });
+
+  it("copies the OS-aware Docker install commands before generating an enrollment", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const createEnrollment = vi.spyOn(api, "createAgentEnrollment");
+    render(<NodesView data={dashboard()} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} startAdding />);
+    const instructions = [...document.querySelectorAll("details")].find((details) => details.querySelector("summary")?.textContent === "安装 Docker（自动识别系统）")!;
+    expect(instructions.open).toBe(false);
+    act(() => instructions.querySelector("summary")?.click());
+    expect(instructions.textContent).toContain("Debian 12/13");
+    expect(instructions.textContent).toContain("Ubuntu 22.04/24.04/26.04");
+    expect(instructions.textContent).toContain("已有 Docker 会自动跳过");
+    expect(instructions.querySelector('a[href="https://docs.docker.com/engine/install/debian/"]')).not.toBeNull();
+    expect(instructions.querySelector('a[href="https://docs.docker.com/engine/install/ubuntu/"]')).not.toBeNull();
+    expect(instructions.querySelector("pre code")?.textContent).toBe(dockerInstallCommand);
+    expect(dockerInstallCommand).toContain('arch="$(dpkg --print-architecture)"');
+    expect(dockerInstallCommand).toContain("Suites: $codename");
+    expect(dockerInstallCommand).toContain("Architectures: $arch");
+    expect(dockerInstallCommand).toContain("\nEOF\n");
+    expect(dockerInstallCommand).toContain("docker-compose-plugin");
+    expect(dockerInstallCommand).toContain("docker_install_as_root systemctl enable --now docker");
+    await act(async () => { instructions.querySelector<HTMLButtonElement>('button[aria-label="复制 Docker 安装命令"]')?.click(); });
+    expect(writeText).toHaveBeenCalledWith(dockerInstallCommand);
+    expect(instructions.textContent).toContain("已复制");
+    expect(createEnrollment).not.toHaveBeenCalled();
   });
 
   it("downloads and directly runs the executable Agent installer", () => {
