@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.102](https://github.com/petauron/vastora/compare/v0.1.0-alpha.101...v0.1.0-alpha.102) (2026-09-03)
+
+
+### Bug Fixes
+
+* **agent:** recover interrupted migration tasks ([#332](https://github.com/petauron/vastora/issues/332)) ([63468d0](https://github.com/petauron/vastora/commit/63468d0a259234556f5f9441c574b777029e20dd))
+
 ## [0.1.0-alpha.101](https://github.com/petauron/vastora/compare/v0.1.0-alpha.100...v0.1.0-alpha.101) (2026-09-03)
 
 
