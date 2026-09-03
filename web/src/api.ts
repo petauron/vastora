@@ -96,6 +96,7 @@ export const api = {
 	deleteRegistryCredential: (id: string) => request<{ deleted: boolean }>(`/api/v1/registry-credentials/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
 	agents: (signal?: AbortSignal) => request<{ agents: AgentView[] }>("/api/v1/agents", { signal }),
 	createAgentEnrollment: (siteId: string, name: string, centerUrl: string, useHeadscale: boolean, gateway: boolean, tunnel: boolean, caCertificatePem = "") => request<AgentEnrollment>("/api/v1/agent-enrollments", { method: "POST", body: JSON.stringify({ siteId, name, centerUrl, useHeadscale, gateway, tunnel, caCertificatePem }) }),
+	createAgentReconnectEnrollment: (agentId: string) => request<AgentEnrollment>(`/api/v1/agents/${encodeURIComponent(agentId)}/reconnect`, { method: "POST", body: "{}" }),
   deployments: (signal?: AbortSignal) => request<{ deployments: Deployment[] }>("/api/v1/deployments", { signal }),
 	sites: (signal?: AbortSignal) => request<{ sites: Site[] }>("/api/v1/sites", { signal }),
 	organizations: () => request<{ organizations: Organization[] }>("/api/v1/organizations"),

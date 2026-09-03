@@ -96,6 +96,17 @@ func (s *Server) handleCreateAgentEnrollment(writer http.ResponseWriter, request
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusCreated, enrollment)
+}
+
+func (s *Server) handleCreateAgentReconnectEnrollment(writer http.ResponseWriter, request *http.Request) {
+	enrollment, err := s.store.CreateAgentReconnectEnrollment(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusCreated, enrollment)
 }
 

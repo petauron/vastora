@@ -1768,6 +1768,29 @@ describe("network and app views", () => {
     expect(document.body.textContent).not.toContain("通过 Center 更新");
   });
 
+  it("generates a one-time reconnect command for an offline Agent", async () => {
+    const data = dashboard();
+    data.agents[0].connected = false;
+    const reconnect = vi.spyOn(api, "createAgentReconnectEnrollment").mockResolvedValue({
+      token: "replacement-token",
+      siteId: "site",
+      centerUrl: "https://center.example.com",
+      installerUrl: "https://center.example.com",
+      expiresAt: "2026-09-03T12:10:00Z"
+    });
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    const reconnectButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("重新接入"));
+    await act(async () => {
+      reconnectButton?.click();
+      await Promise.resolve();
+    });
+    expect(reconnect).toHaveBeenCalledWith("agent");
+    expect(document.body.textContent).toContain("保留原节点，替换身份");
+    expect(document.body.textContent).toContain("节点 ID、名称、位置、用途、应用关系和已确认网络保持不变");
+    expect(document.body.textContent).toContain("replacement-token");
+    expect(document.body.textContent).toContain("正在等待原节点重新上线");
+  });
+
   it("does not ask for integration secrets again when editing", () => {
     const data = dashboard();
     data.integrations = [
