@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.101](https://github.com/petauron/vastora/compare/v0.1.0-alpha.100...v0.1.0-alpha.101) (2026-09-03)
+
+
+### Features
+
+* streamline alpha application and node management ([#330](https://github.com/petauron/vastora/issues/330)) ([d78a3aa](https://github.com/petauron/vastora/commit/d78a3aad7d3725cab28d638dcefac7f0b6670bb3)), closes [#329](https://github.com/petauron/vastora/issues/329)
+
 ## [0.1.0-alpha.100](https://github.com/petauron/vastora/compare/v0.1.0-alpha.99...v0.1.0-alpha.100) (2026-09-03)
 
 
