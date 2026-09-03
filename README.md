@@ -27,10 +27,13 @@ when the Center is unavailable.
   raw TCP must share `443`.
 - Signed 3x-ui, CPA, and Keeper images pinned by digest, plus a native Komari
   Agent binary pinned by platform and SHA-256.
+- One global 3x-ui subscription controller with cross-Site VLESS workers,
+  encrypted controller restore points, and sequential Alpha convergence from
+  legacy per-Site controllers.
 - An Ubuntu 24.04 Center installation path and an OS-aware Agent installer for
   Debian 12/13 and Ubuntu 22.04/24.04/26.04 on x86_64 and ARM64, including
-  mixed-architecture Sites and architecture-aware Agent updates. The node page
-  also provides one copyable Docker installation command for these systems.
+  mixed-architecture Sites and architecture-aware Agent updates. The one-line
+  Agent installer installs Docker from its official repository when missing.
 
 ## Development
 
@@ -128,8 +131,9 @@ never attempted automatically.
 - The Center deployment stack can run a fixed-version Headscale service with a
   separate data volume; an existing Headscale control plane is also supported.
   Bundled Headscale is the public Caddy HTTPS entry. Center stays private, while
-  only its token-protected Agent bootstrap, binary download, and task-bound
-  uninstall completion paths are reachable through the Headscale hostname.
+  only its public Docker installer, token-protected Agent bootstrap and binary
+  download, and task-bound uninstall completion paths are reachable through the
+  Headscale hostname.
 - Management pages remain private by default. Public publication requires an
   explicit high-risk confirmation and application-level authentication.
 

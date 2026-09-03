@@ -683,6 +683,19 @@ func openOrchestrationStore(t *testing.T) *Store {
 	return store
 }
 
+func selectTestThreeXUIController(t *testing.T, store *Store, applicationID string) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`INSERT INTO three_x_ui_control_plane(id, controller_application_id, selection_reason, selected_at)
+		VALUES(1, ?, 'test-fixture', ?)
+		ON CONFLICT(id) DO UPDATE SET
+			controller_application_id = excluded.controller_application_id,
+			selection_reason = excluded.selection_reason,
+			selected_at = excluded.selected_at`, applicationID, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func configureBuiltinHeadscaleForTest(t *testing.T, store *Store) {
 	t.Helper()
 	ctx := context.Background()
@@ -783,7 +796,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	if task.Kind != "gateway.routes.apply" || task.GatewayState == nil {
 		t.Fatalf("co-located gateway did not receive system desired state: %#v", task)
 	}
-	if len(task.GatewayState.Routes) != 7 || len(task.GatewayState.Listeners) != 3 {
+	if len(task.GatewayState.Routes) != 8 || len(task.GatewayState.Listeners) != 3 {
 		t.Fatalf("unexpected system gateway state: %#v", task.GatewayState)
 	}
 	for _, route := range task.GatewayState.Routes {
@@ -816,6 +829,28 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 	var migrationMarkers int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = ?`, agentDecommissionCallbackRouteMigrationSetting).Scan(&migrationMarkers); err != nil || migrationMarkers != 0 {
 		t.Fatalf("gateway migration marker count=%d err=%v", migrationMarkers, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, 'pending')`, dockerInstallRouteMigrationSetting); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.activateDockerInstallRoute(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dockerMigrationTask := claimTask(t, store, node)
+	dockerRoute := false
+	if dockerMigrationTask.Kind == "gateway.routes.apply" && dockerMigrationTask.GatewayState != nil {
+		for _, route := range dockerMigrationTask.GatewayState.Routes {
+			dockerRoute = dockerRoute || route.ID == "system-docker-bootstrap"
+		}
+	}
+	if !dockerRoute {
+		t.Fatal("gateway migration did not add the Docker installer route")
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, dockerMigrationTask.ID, dockerMigrationTask.Attempt, true, "", nil, dockerMigrationTask.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM settings WHERE key = ?`, dockerInstallRouteMigrationSetting).Scan(&migrationMarkers); err != nil || migrationMarkers != 0 {
+		t.Fatalf("Docker installer route migration marker count=%d err=%v", migrationMarkers, err)
 	}
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC"}); err != nil {
 		t.Fatal(err)
@@ -924,6 +959,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES('three-x-ui-subscription', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
+	selectTestThreeXUIController(t, store, "three-x-ui-subscription")
 	for _, service := range []struct {
 		id, name string
 		port     int

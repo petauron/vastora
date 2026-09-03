@@ -58,6 +58,14 @@
   3x-ui alias; cross-node VLESS relaying is rejected. A VLESS-only node rejects
   unknown SNI and does not install Caddy. Only a node separately selected as a
   Site Gateway sends unmatched SNI to that node's local Caddy.
+- One global 3x-ui controller owns browser management, clients, subscriptions,
+  and encrypted restore points for every Site. Cross-Site control requests use
+  only the confirmed private Agent service addresses; public REALITY traffic
+  still terminates on the owning VLESS node. During the Alpha forward migration,
+  each legacy controller is backed up and converted separately. A failed backup,
+  demotion, or node attachment pauses the sequence for an explicit retry, and
+  its obsolete public panel and subscription entries are retired only after the
+  host and its running former workers have joined the global controller.
 - Managed VLESS+REALITY fallback traffic requires an administrator-approved
   `.com` target. Agent pins one resolved IP, rejects cdncheck CDN/WAF matches,
   verifies TLS 1.3, X25519, H2, SNI, and the certificate, and pins REALITY
@@ -168,8 +176,11 @@
   IPv4 plus UDP mapping. Stale local addresses stop desired-state publication.
   Only the single active, co-located Agent that reports Vastora-managed
   Tailscale can receive it; user-managed clients are excluded. Agent writes only
-  dedicated Vastora-owned files, verifies the pinned daemon version and health,
-  and restores the previous files if the restart fails.
+  dedicated Vastora-owned files, verifies the minimum stable client/daemon
+  versions, required configuration capability, loaded privacy settings and
+  health, and restores the previous files if applying the configuration or
+  verifying the restarted service fails. A compatible version does not grant
+  ownership of a user-managed installation.
 - An external Headscale deployment is operator-controlled and must enforce an
   equivalent DERP and logging policy before it can satisfy the bundled
   deployment's private-network security boundary.

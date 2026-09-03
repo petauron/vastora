@@ -398,8 +398,12 @@ func (s *Store) coLocatedTailscaleEndpointOwner(ctx context.Context, bindAddress
 }
 
 func newHeadscaleClient(endpoint, apiKey, dialAddress string, base *http.Client) (headscaleClient, error) {
+	endpoint, err := normalizeHeadscaleEndpoint(endpoint)
+	if err != nil {
+		return headscaleClient{}, fmt.Errorf("center: %w", err)
+	}
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" {
+	if err != nil || parsed.Hostname() == "" {
 		return headscaleClient{}, errors.New("center: Headscale URL is invalid")
 	}
 	if dialAddress == "" {
@@ -446,7 +450,7 @@ func newHeadscaleClient(endpoint, apiKey, dialAddress string, base *http.Client)
 func normalizeHeadscaleEndpoint(value string) (string, error) {
 	value = strings.TrimRight(strings.TrimSpace(value), "/")
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || strings.ContainsAny(value, "?#") || parsed.Opaque != "" || parsed.Path != "" || parsed.RawPath != "" {
 		return "", errors.New("headscale requires an HTTPS control-plane URL without a path")
 	}
 	return value, nil
@@ -770,15 +774,21 @@ func (client headscaleClient) do(ctx context.Context, method, path string, query
 }
 
 func headscaleRequestURL(path string, query url.Values) (string, error) {
-	if !strings.HasPrefix(path, "/api/v1/") || strings.Contains(path, "?") || strings.Contains(path, "#") {
+	// Select a complete, fixed URL instead of constructing an authority from
+	// a caller-provided endpoint. Query values cannot change the destination.
+	var fixedURL string
+	switch path {
+	case "/api/v1/user":
+		fixedURL = headscalePinnedRequestOrigin + "/api/v1/user"
+	case "/api/v1/preauthkey":
+		fixedURL = headscalePinnedRequestOrigin + "/api/v1/preauthkey"
+	default:
 		return "", errors.New("center: Headscale API path is invalid")
 	}
-	target, err := url.Parse(headscalePinnedRequestOrigin)
+	target, err := url.Parse(fixedURL)
 	if err != nil {
 		return "", errors.New("center: pinned Headscale request origin is invalid")
 	}
-	target.Path = path
-	target.RawPath = ""
 	target.RawQuery = query.Encode()
 	target.ForceQuery = false
 	target.Fragment = ""

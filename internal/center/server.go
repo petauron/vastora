@@ -107,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
+	mux.HandleFunc("GET /install/docker.sh", s.handleDockerInstallScript)
 	mux.HandleFunc("GET /install/agent.sh", s.handleAgentInstallScript)
 	mux.HandleFunc("GET /api/v1/agent-binaries/{os}/{arch}", s.handleAgentBinary)
 	mux.HandleFunc("POST /api/v1/agent-decommission-results/{taskID}", s.handleCompleteAgentDecommissionCallback)

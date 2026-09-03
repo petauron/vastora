@@ -348,7 +348,11 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		return errInvalidReconciliationDisposition
 	}
 	if strings.HasPrefix(taskID, "application-command-") {
-		return s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
+		err := s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
+		if err == nil {
+			s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
+		}
+		return err
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {
@@ -521,6 +525,9 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		return err
 	}
 	s.resumeCredentialRotationForDeployment(ctx, taskID)
+	if appKey == threeXUIAppKey {
+		s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
+	}
 	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
 		return fmt.Errorf("center: record publication cleanup state: %w", err)
 	}

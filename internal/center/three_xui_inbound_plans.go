@@ -206,9 +206,9 @@ func (s *Store) queueThreeXUIInboundPlanReset(ctx context.Context, serviceID str
 	}
 	var migrationActive int
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM three_x_ui_migrations migration JOIN services service ON service.site_id = migration.site_id
-		WHERE service.id = ? AND migration.state IN ('backing_up', 'restoring', 'switching')
-	)`, serviceID).Scan(&migrationActive); err != nil {
+		SELECT 1 FROM three_x_ui_migrations
+		WHERE state IN ('backing_up', 'restoring', 'switching')
+	)`).Scan(&migrationActive); err != nil {
 		return err
 	}
 	if migrationActive != 0 {
@@ -288,10 +288,10 @@ func readThreeXUIInboundPlan(ctx context.Context, tx *sql.Tx, serviceID string) 
 }
 
 func threeXUIInboundPlanController(ctx context.Context, tx *sql.Tx, serviceID string) (string, string, int, []ThreeXUIClientInbound, error) {
-	var targetApplicationID, siteID, serviceName string
-	err := tx.QueryRowContext(ctx, `SELECT service.application_id, service.site_id, service.name FROM services service
+	var targetApplicationID, serviceName string
+	err := tx.QueryRowContext(ctx, `SELECT service.application_id, service.name FROM services service
 		JOIN applications target ON target.id = service.application_id
-		WHERE service.id = ? AND service.app_protocol = 'vless/tcp/reality' AND service.status IN ('running', 'ready') AND target.status = 'running'`, serviceID).Scan(&targetApplicationID, &siteID, &serviceName)
+		WHERE service.id = ? AND service.app_protocol = 'vless/tcp/reality' AND service.status IN ('running', 'ready') AND target.status = 'running'`, serviceID).Scan(&targetApplicationID, &serviceName)
 	if err != nil {
 		return "", "", 0, nil, errors.New("center: active REALITY service is unavailable")
 	}
@@ -299,17 +299,16 @@ func threeXUIInboundPlanController(ctx context.Context, tx *sql.Tx, serviceID st
 	if err != nil || inboundID < 1 {
 		return "", "", 0, nil, errors.New("center: REALITY service has an invalid inbound identifier")
 	}
-	var controllerApplicationID, agentID string
-	err = tx.QueryRowContext(ctx, `SELECT id, node_id FROM applications WHERE site_id = ? AND app_key = ? AND role = 'master' AND status = 'running'`, siteID, threeXUIAppKey).Scan(&controllerApplicationID, &agentID)
+	controllerApplicationID, agentID, err := runningGlobalThreeXUIController(ctx, tx)
 	if err != nil {
-		return "", "", 0, nil, errors.New("center: Site 3x-ui controller is unavailable")
+		return "", "", 0, nil, errors.New("center: global 3x-ui subscription controller is unavailable")
 	}
 	inbounds, err := threeXUIClientInbounds(ctx, tx, controllerApplicationID)
 	if err != nil {
 		return "", "", 0, nil, err
 	}
 	if !threeXUIClientInboundMatches(inbounds, serviceID, inboundID) {
-		return "", "", 0, nil, errors.New("center: REALITY inbound is unavailable from the Site controller")
+		return "", "", 0, nil, errors.New("center: REALITY inbound is unavailable from the global subscription controller")
 	}
 	return controllerApplicationID, agentID, inboundID, inbounds, nil
 }
@@ -394,12 +393,16 @@ func (s *Store) hydrateThreeXUIInboundPlanTask(ctx context.Context, tx *sql.Tx, 
 	if role != threeXUIRoleWorker {
 		return fmt.Errorf("%w: center: target REALITY application topology is invalid", errApplicationCommandUnavailable)
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT remote_node_id FROM three_x_ui_nodes WHERE worker_application_id = ? AND status = 'ready'`, command.TargetApplicationID).Scan(&command.TargetNodeID); errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: center: target REALITY worker is not connected to its Site controller", errApplicationCommandUnavailable)
+	controllerApplicationID, _, err := runningGlobalThreeXUIController(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("%w: center: global 3x-ui subscription controller is unavailable", errApplicationCommandUnavailable)
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT remote_node_id FROM three_x_ui_nodes WHERE worker_application_id = ? AND master_application_id = ? AND status = 'ready'`, command.TargetApplicationID, controllerApplicationID).Scan(&command.TargetNodeID); errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: center: target REALITY worker is not connected to the global subscription controller", errApplicationCommandUnavailable)
 	} else if err != nil {
 		return err
 	} else if command.TargetNodeID < 1 {
-		return fmt.Errorf("%w: center: target REALITY worker is not connected to its Site controller", errApplicationCommandUnavailable)
+		return fmt.Errorf("%w: center: target REALITY worker is not connected to the global subscription controller", errApplicationCommandUnavailable)
 	}
 	command.TargetAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.TargetApplicationID)
 	if err != nil {

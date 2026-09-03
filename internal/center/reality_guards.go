@@ -224,23 +224,19 @@ func (s *Store) queueRealityGuardHardening(ctx context.Context, serviceID string
 	if err != nil || inboundID < 1 {
 		return ApplicationCommandView{}, errors.New("center: existing REALITY service has an invalid inbound identifier")
 	}
-	var targetAgentID, role, targetAddress, targetPublicAddress, applicationStatus string
-	if err := tx.QueryRowContext(ctx, `SELECT application.node_id, application.role, application.status,
+	var role, targetAddress, targetPublicAddress, applicationStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT application.role, application.status,
 		COALESCE(profile.service_address, ''), COALESCE(profile.public_address, '')
 		FROM applications application LEFT JOIN agent_network_profiles profile ON profile.agent_id = application.node_id
-		WHERE application.id = ?`, applicationID).Scan(&targetAgentID, &role, &applicationStatus, &targetAddress, &targetPublicAddress); err != nil {
+		WHERE application.id = ?`, applicationID).Scan(&role, &applicationStatus, &targetAddress, &targetPublicAddress); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if applicationStatus != "running" || net.ParseIP(targetAddress) == nil {
 		return ApplicationCommandView{}, errors.New("center: REALITY hardening requires a reachable 3x-ui node")
 	}
-	agentID, targetNodeID := targetAgentID, 0
-	if role == threeXUIRoleWorker {
-		if err := tx.QueryRowContext(ctx, `SELECT master.node_id, node.remote_node_id
-			FROM three_x_ui_nodes node JOIN applications master ON master.id = node.master_application_id
-			WHERE node.worker_application_id = ? AND node.status = 'ready' AND master.status = 'running'`, applicationID).Scan(&agentID, &targetNodeID); err != nil {
-			return ApplicationCommandView{}, errors.New("center: this VLESS node is not connected to the Site 3x-ui controller")
-		}
+	agentID, targetNodeID, err := threeXUIDataPlaneController(ctx, tx, applicationID, role)
+	if err != nil {
+		return ApplicationCommandView{}, err
 	}
 	var panelConfig []byte
 	if err := tx.QueryRowContext(ctx, `SELECT config_json FROM deployments WHERE application_id = ? AND operation IN ('install', 'upgrade', 'configure') AND state = 'succeeded' ORDER BY created_at DESC, rowid DESC LIMIT 1`, applicationID).Scan(&panelConfig); err != nil {

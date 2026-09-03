@@ -85,16 +85,17 @@ Center serves the same Agent installer plus both `linux/amd64` and
 `linux/arm64` Agent binaries. A Center on either architecture can therefore
 manage a mixed x64 and ARM64 Site; the installer and self-updater select the
 node's native binary and reject unsupported platforms.
-The Agent installer and node-page Docker command detect `/etc/os-release` on
+The Agent installer and Center-hosted Docker installer detect `/etc/os-release` on
 the target server, not the administrator's browser or the Center host. They
 accept Debian 12/13 and Ubuntu 22.04/24.04/26.04 with `amd64` or `arm64` userland
 architecture reported by `dpkg`. Debian 11, older Ubuntu releases, derivatives,
 and unlisted releases stop before package or Agent changes. Docker and
 Tailscale repositories use the selected distribution's official release
 codename; no cross-distribution repository fallback is allowed. The Docker
-command leaves existing Docker installations in place and reports conflicting
+installer leaves existing Docker installations in place and reports conflicting
 packages rather than removing them. Existing Tailscale installations retain
-their ownership and are not automatically replaced or downgraded.
+their ownership and go through the shared compatibility check; they are not
+automatically replaced or downgraded.
 Official Catalog and infrastructure images must publish both Linux platforms.
 CI resolves every pinned runtime image and fails before merge if either
 `linux/amd64` or `linux/arm64` is missing; production never relies on emulation.
@@ -203,11 +204,12 @@ Caddy receives explicit listeners for LAN, Headscale, public, and control-plane
 loopback addresses. For bundled infrastructure, Headscale is the only public
 HTTPS service. Center binds its Web route to the co-located node's Headscale
 address and uses a Cloudflare DNS-01 certificate. The public Headscale hostname
-also exposes only `/install/agent.sh`, `/api/v1/agent-binaries/*`, and
-`/api/v1/agent-decommission-results/*` to Center. Enrollment downloads require
-a short-lived one-time token. A decommission result requires the separate token
-bound to that exact cleanup task and attempt; it cannot call any other Center
-API.
+also exposes only `/install/docker.sh`, `/install/agent.sh`,
+`/api/v1/agent-binaries/*`, and `/api/v1/agent-decommission-results/*` to
+Center. The Docker path serves a static installer with no credentials; Agent
+profile and binary downloads require a short-lived one-time token. A
+decommission result requires the separate token bound to that exact cleanup
+task and attempt; it cannot call any other Center API.
 Routes reference exactly one listener kind, so the same hostname can be scoped
 to separate private entry networks without a wildcard bind. Caddy has no Docker
 socket; its Admin API is a permissioned Unix socket shared only with Agent.
@@ -288,14 +290,22 @@ host with a reserved public IPv4 and a stable UDP `41641` mapping. It is off by
 default and can be enabled only through the first-run advanced settings or the
 Network page with an explicit mapping confirmation. Center stores the choice
 and sends it only to the single active, co-located Vastora-managed Agent. Agent
-uses the pinned Tailscale version, writes a dedicated configuration and systemd
-drop-in atomically, restarts and checks the daemon and UDP listener, and rolls
+uses the shared minimum-version and capability policy, writes a dedicated
+configuration and systemd drop-in atomically, restarts and checks the daemon and UDP listener, and rolls
 back both files on failure. Every heartbeat also checks the live session,
 loaded systemd environment, and UDP listener even when the managed files are
 unchanged; runtime drift triggers a managed restart. Disabling the option
 removes only Vastora-owned files. External Headscale and user-managed Tailscale
 installations never receive or display this setting. Public HTTP/HTTPS
 reachability is not treated as proof that UDP `41641` works.
+
+The default Tailscale installation pin is separate from the compatibility floor.
+An existing supported stable client is reused without package replacement or an
+implicit ownership change. Installer preflight, fixed-endpoint reconciliation,
+and explicit legacy adoption share the same policy; runtime checks also inspect
+the daemon rather than trusting the CLI version. See
+[Tailscale compatibility](tailscale-compatibility.md) for version formats,
+capability checks, ownership proof, and the remaining real-release CI gate.
 
 The strict no-external-telemetry boundary applies to Vastora-managed Linux
 `tailscaled`. Tailscale's macOS GUI clients do not support the equivalent opt-out;
@@ -328,8 +338,29 @@ forwarded normally.
 
 ## 3x-ui
 
+Center owns exactly one global 3x-ui subscription control plane across all
+Sites. The selected controller owns the client database, administrator panel,
+subscription service, credentials, restore points, and controller replacement
+workflow. Every other 3x-ui installation is a VLESS worker, even when it belongs
+to another Site; Site remains a geographic and ingress boundary rather than a
+subscription ownership boundary. Workers reach the controller over their
+confirmed Headscale/Tailscale or private service address, while each worker's
+REALITY traffic still enters directly through that worker's own public address
+and node-local HAProxy.
+
+The forward migration from legacy per-Site controllers records one canonical
+controller deterministically, preferring connected workers and existing
+panel/subscription publications. During Alpha, Center then processes each extra
+controller sequentially: it stores a fresh encrypted 3x-ui database restore
+point, switches that host and its former workers to the global controller,
+reconciles them one at a time, and only then retires the obsolete panel and
+subscription publications. Existing clients, inbounds, or remote-node rows do
+not block this Alpha conversion. Durable migration and Agent task state allow a
+restart to resume without running two conversions concurrently; a failed host
+stops the sequence for explicit recovery.
+
 3x-ui uses the private runtime bridge. Docker publishes the panel and the
-optional master subscription service only on a confirmed loopback, LAN, or
+global controller subscription service only on a confirmed loopback, LAN, or
 Headscale/Tailscale address; a public-only service address fails closed. Each
 physical VLESS node exposes exactly one REALITY socket, `443`, only inside the
 shared Docker network. Its local HAProxy is the sole public listener and
@@ -364,8 +395,8 @@ Center owns the subscription-facing node name and composes it from a structured
 ISO 3166-1 region plus the administrator-provided name (for example,
 `🇺🇸 US · Oracle 9929`). The region can be suggested from the VLESS node's own
 public address and remains manually searchable and editable. This keeps client
-grouping prefixes stable even when a 3x-ui controller manages nodes on other
-hosts.
+grouping prefixes stable while the global 3x-ui controller manages nodes across
+Sites.
 The administrator must provide a `.com` `targetHost` and exact `.com`
 `serverName`; target port is fixed to 443. Agent resolves the target, pins one
 IP, rejects addresses identified by cdncheck as shared CDN or WAF infrastructure,

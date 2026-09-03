@@ -22,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/tailscalehost"
 )
 
 func runAgent(arguments []string) error {
@@ -451,6 +452,22 @@ func runAgent(arguments []string) error {
 		default:
 			return errors.New("agent switch-control-plane action must be begin, rollback, or commit")
 		}
+	case "check-tailscale":
+		flags := flag.NewFlagSet("agent check-tailscale", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		requireRunning := flags.Bool("require-running", false, "also require a running session and loaded privacy settings")
+		if err := flags.Parse(arguments[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return errors.New("usage: vastora agent check-tailscale [--require-running]")
+		}
+		if err := requireLinuxRoot("agent check-tailscale"); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		return tailscalehost.CheckCompatibility(ctx, runHostCommand, *requireRunning)
 	case "prepare-tailscale":
 		flags := flag.NewFlagSet("agent prepare-tailscale", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)

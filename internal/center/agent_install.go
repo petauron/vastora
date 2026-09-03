@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -16,6 +17,9 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/tailscalehost"
 )
+
+//go:embed install-docker.sh
+var dockerInstallScript string
 
 const agentInstallLoaderScript = `#!/bin/sh
 set -eu
@@ -44,7 +48,14 @@ case "$bootstrap_url" in
 esac
 
 installer="$(mktemp -t vastora-agent-installer.XXXXXX)"
-trap 'rm -f "$installer"' EXIT HUP INT TERM
+docker_installer=""
+cleanup() {
+  rm -f "$installer"
+  if [ -n "$docker_installer" ]; then
+    rm -f "$docker_installer"
+  fi
+}
+trap cleanup EXIT HUP INT TERM
 bootstrap_curl() {
   if [ "$bootstrap_uses_ca" -eq 1 ]; then
     curl --cacert "$ca_certificate" "$@"
@@ -52,6 +63,19 @@ bootstrap_curl() {
     curl "$@"
   fi
 }
+if command -v docker >/dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker is installed but the daemon is not running. Start it before installing Vastora Agent." >&2
+    exit 1
+  fi
+  echo "Docker is already installed and running. Continuing with Vastora Agent."
+else
+  docker_installer="$(mktemp -t vastora-docker-installer.XXXXXX)"
+  echo "Docker is not installed; downloading the Vastora Docker installer..."
+  bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
+    "${bootstrap_url%/}/install/docker.sh" -o "$docker_installer"
+  sh "$docker_installer"
+fi
 bootstrap_curl --proto "=$curl_protocol" --tlsv1.2 --max-filesize 1048576 -fsS \
   -H "Authorization: Bearer $token" \
   "${bootstrap_url%/}/install/agent.sh" -o "$installer"
@@ -290,14 +314,11 @@ if ! command -v tailscale >/dev/null 2>&1; then
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y "tailscale=$tailscale_version" tailscale-archive-keyring
 fi
-installed_tailscale_version="$(tailscale version | awk 'NR == 1 {print $1}')"
-if [ "$installed_tailscale_version" != "$tailscale_version" ]; then
-  echo "Vastora requires Tailscale $tailscale_version; found $installed_tailscale_version." >&2
-  exit 1
-fi
+"$temporary" agent check-tailscale
 "$temporary" agent prepare-tailscale @@TAILSCALE_PREPARE_ARGUMENTS@@
 echo "Joining the private network..."
 ` + strings.TrimPrefix(profile.HeadscaleCommand, "sudo ") + `
+"$temporary" agent check-tailscale --require-running
 install -d -m 0700 /var/lib/vastora/agent
 if [ -f /var/lib/vastora/agent/host-install.env ]; then
   while IFS='=' read -r host_state_key host_state_value; do
@@ -315,7 +336,7 @@ else
   rm -f "$host_state_temporary"
 fi
 `
-		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_VERSION@@", shellQuote(tailscalehost.SupportedVersion))
+		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_VERSION@@", shellQuote(tailscalehost.DefaultInstallVersion))
 		headscaleBootstrap = strings.ReplaceAll(headscaleBootstrap, "@@TAILSCALE_PREPARE_ARGUMENTS@@", prepareArguments)
 	} else {
 		headscaleBootstrap = `install -d -m 0700 /var/lib/vastora/agent
@@ -403,6 +424,13 @@ func (s *Server) handleAgentInstallScript(writer http.ResponseWriter, request *h
 	writer.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	writer.Header().Set("Content-Disposition", `attachment; filename="vastora-agent-install.sh"`)
 	_, _ = writer.Write([]byte(renderAgentInstallScript(profile, bootstrapURL)))
+}
+
+func (s *Server) handleDockerInstallScript(writer http.ResponseWriter, _ *http.Request) {
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	writer.Header().Set("Content-Disposition", `attachment; filename="install-docker.sh"`)
+	_, _ = writer.Write([]byte(dockerInstallScript))
 }
 
 func agentInstallerRequestURL(request *http.Request) (string, error) {

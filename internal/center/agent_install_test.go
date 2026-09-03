@@ -138,6 +138,29 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 	}
 	defer store.Close()
 	handler := NewServer(store, "", false).Handler()
+	dockerRequest := httptest.NewRequest(http.MethodGet, "https://center.example.com/install/docker.sh", nil)
+	dockerResponse := httptest.NewRecorder()
+	handler.ServeHTTP(dockerResponse, dockerRequest)
+	if dockerResponse.Code != http.StatusOK {
+		t.Fatalf("Docker installer status = %d", dockerResponse.Code)
+	}
+	dockerScript := dockerResponse.Body.String()
+	for _, expected := range []string{"#!/bin/sh", "debian:12", "debian:13", "ubuntu:22.04", "ubuntu:24.04", "ubuntu:26.04", "amd64|arm64", "command -v docker", "docker info", "https://download.docker.com/linux/$distro/gpg", "docker-ce", "docker-compose-plugin", "systemctl enable --now docker"} {
+		if !strings.Contains(dockerScript, expected) {
+			t.Fatalf("Docker installer is missing %q:\n%s", expected, dockerScript)
+		}
+	}
+	if dockerResponse.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("Docker installer cache policy = %q", dockerResponse.Header().Get("Cache-Control"))
+	}
+	if dockerResponse.Header().Get("Content-Disposition") != `attachment; filename="install-docker.sh"` {
+		t.Fatalf("Docker installer disposition = %q", dockerResponse.Header().Get("Content-Disposition"))
+	}
+	dockerCommand := exec.Command("sh", "-n")
+	dockerCommand.Stdin = strings.NewReader(dockerScript)
+	if output, err := dockerCommand.CombinedOutput(); err != nil {
+		t.Fatalf("Docker installer is not valid POSIX shell: %v\n%s", err, output)
+	}
 	request := httptest.NewRequest(http.MethodGet, "https://center.example.com/install/agent.sh", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -145,10 +168,13 @@ func TestAgentInstallScriptUsesTLSAuthenticatedBinaryDownload(t *testing.T) {
 		t.Fatalf("public installer status = %d", response.Code)
 	}
 	loader := response.Body.String()
-	for _, expected := range []string{"token=\"${1:-}\"", "ca_certificate=\"${2:-}\"", "bootstrap_uses_ca=\"${3:-0}\"", "exec sudo \"$0\" \"$token\" \"$ca_certificate\" \"$bootstrap_uses_ca\"", "bootstrap_url='https://center.example.com'", "bootstrap_curl", "--cacert \"$ca_certificate\"", "Authorization: Bearer $token", "${bootstrap_url%/}/install/agent.sh", "printf '%s\\n' \"$token\" | sh \"$installer\" \"$ca_certificate\" \"$bootstrap_uses_ca\""} {
+	for _, expected := range []string{"token=\"${1:-}\"", "ca_certificate=\"${2:-}\"", "bootstrap_uses_ca=\"${3:-0}\"", "exec sudo \"$0\" \"$token\" \"$ca_certificate\" \"$bootstrap_uses_ca\"", "bootstrap_url='https://center.example.com'", "bootstrap_curl", "--cacert \"$ca_certificate\"", "command -v docker", "docker info", "${bootstrap_url%/}/install/docker.sh", "sh \"$docker_installer\"", "Authorization: Bearer $token", "${bootstrap_url%/}/install/agent.sh", "printf '%s\\n' \"$token\" | sh \"$installer\" \"$ca_certificate\" \"$bootstrap_uses_ca\""} {
 		if !strings.Contains(loader, expected) {
 			t.Fatalf("installer loader is missing %q:\n%s", expected, loader)
 		}
+	}
+	if dockerCheck, dockerInstall, agentDownload := strings.Index(loader, "command -v docker"), strings.Index(loader, "/install/docker.sh"), strings.Index(loader, "Authorization: Bearer $token"); dockerCheck < 0 || dockerInstall < dockerCheck || agentDownload < dockerInstall {
+		t.Fatal("installer loader must check and, when necessary, install Docker before downloading the authenticated Agent installer")
 	}
 	enrollment, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "bound-node", CenterURL: "https://center.example.com", Gateway: true, Tunnel: true})
 	if err != nil {
@@ -256,8 +282,8 @@ func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T)
 		"https://pkgs.tailscale.com/stable/$distro/$codename.tailscale-keyring.list",
 		"chmod 0644 /usr/share/keyrings/tailscale-archive-keyring.gpg /etc/apt/sources.list.d/tailscale.list",
 		"apt-get install -y \"tailscale=$tailscale_version\"",
-		"installed_tailscale_version=",
-		"Vastora requires Tailscale $tailscale_version",
+		"\"$temporary\" agent check-tailscale\n",
+		"\"$temporary\" agent check-tailscale --require-running",
 		"agent prepare-tailscale --control-url 'https://headscale.example.com' --control-address '203.0.113.10' --configure-only",
 		"agent prepare-tailscale --control-url 'https://headscale.example.com' --control-address '203.0.113.10'",
 		"Joining the private network...",
@@ -274,6 +300,17 @@ func TestAgentInstallScriptInstallsTailscaleBeforeJoiningHeadscale(t *testing.T)
 	}
 	if strings.Contains(script, "stable/ubuntu/noble") || strings.Contains(script, "only on Ubuntu 24.04") {
 		t.Fatal("private-network installer still hard-codes Ubuntu 24.04")
+	}
+	if strings.Contains(script, "installed_tailscale_version=") || strings.Contains(script, "--allow-downgrades") {
+		t.Fatal("installer still has a separate exact-version check or a downgrade path")
+	}
+	check := strings.Index(script, "\"$temporary\" agent check-tailscale\n")
+	prepare := strings.Index(script, "\"$temporary\" agent prepare-tailscale --control-url 'https://headscale.example.com' --control-address '203.0.113.10'\n")
+	joined := strings.Index(script, "tailscale login --login-server")
+	runtimeCheck := strings.Index(script, "\"$temporary\" agent check-tailscale --require-running")
+	ownership := strings.Index(script, "HOST_STATE_VERSION=1")
+	if check < 0 || prepare < check || joined < prepare || runtimeCheck < joined || ownership < runtimeCheck {
+		t.Fatal("compatibility and running-daemon checks must precede mutation and ownership recording")
 	}
 	if download, prompt, join := strings.Index(script, "Downloading the Vastora Agent"), strings.Index(script, "Switch this Agent to the requested Center?"), strings.Index(script, "Joining the private network"); download < 0 || prompt < download || join < prompt {
 		t.Fatalf("installer does not inspect and confirm an existing Agent before changing Headscale:\n%s", script)

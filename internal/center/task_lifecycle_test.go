@@ -110,6 +110,7 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 		VALUES(?, '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, applicationID, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
+	selectTestThreeXUIController(t, store, applicationID)
 	commandID := "application-command-reconciliation-replay"
 	input, _ := json.Marshal(ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{}})
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
@@ -472,6 +473,7 @@ func TestTaskLongPollWakesWhenACommandIsQueued(t *testing.T) {
 		VALUES('long-poll-controller', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, siteID, threeXUIAppKey, now, now); err != nil {
 		t.Fatal(err)
 	}
+	selectTestThreeXUIController(t, store, "long-poll-controller")
 	result := make(chan *AgentTask, 1)
 	errors := make(chan error, 1)
 	go func() {

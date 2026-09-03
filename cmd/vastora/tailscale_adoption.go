@@ -69,12 +69,12 @@ func adoptLegacyVastoraTailscale(ctx context.Context, environment tailscaleAdopt
 		return errors.New("cannot verify the installed Tailscale binary")
 	}
 	verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	version, err := environment.run(verifyCtx, "tailscale", "version")
+	err = tailscalehost.CheckCompatibility(verifyCtx, environment.run, true)
 	cancel()
-	if err != nil || strings.TrimSpace(strings.SplitN(string(version), "\n", 2)[0]) != tailscalehost.SupportedVersion {
-		return fmt.Errorf("cannot adopt Tailscale: Vastora requires installed version %s", tailscalehost.SupportedVersion)
+	if err != nil {
+		return fmt.Errorf("cannot adopt Tailscale: %w", err)
 	}
-	provenance, err := aptHistoryContainsVastoraTailscaleInstall(environment.aptHistoryDir, tailscalehost.SupportedVersion)
+	provenance, err := aptHistoryContainsVastoraTailscaleInstall(environment.aptHistoryDir)
 	if err != nil {
 		return err
 	}
@@ -123,12 +123,11 @@ func validVastoraTailscaleHostsSection(content string) bool {
 	return valid
 }
 
-func aptHistoryContainsVastoraTailscaleInstall(directory, version string) (bool, error) {
+func aptHistoryContainsVastoraTailscaleInstall(directory string) (bool, error) {
 	paths, err := filepath.Glob(filepath.Join(directory, "history.log*"))
 	if err != nil {
 		return false, fmt.Errorf("inspect apt history: %w", err)
 	}
-	needle := "apt-get install -y tailscale=" + version + " tailscale-archive-keyring"
 	for _, path := range paths {
 		file, err := os.Open(path)
 		if err != nil {
@@ -156,8 +155,20 @@ func aptHistoryContainsVastoraTailscaleInstall(directory, version string) (bool,
 		for strings.Contains(normalized, "  ") {
 			normalized = strings.ReplaceAll(normalized, "  ", " ")
 		}
-		if strings.Contains(normalized, "Commandline: "+needle) {
-			return true, nil
+		for _, line := range strings.Split(normalized, "\n") {
+			// Ownership proof is historical, not a comparison with today's
+			// installation pin. Require the complete older installer command.
+			fields := strings.Fields(line)
+			if len(fields) != 6 || fields[0] != "Commandline:" || fields[1] != "apt-get" || fields[2] != "install" || fields[3] != "-y" || fields[5] != "tailscale-archive-keyring" {
+				continue
+			}
+			version, ok := strings.CutPrefix(fields[4], "tailscale=")
+			if ok && version == "1.102.3" {
+				// This is the pin used by the historical installer whose missing
+				// ownership marker this explicit adoption command repairs. It is
+				// evidence of origin, not a requirement on the installed version.
+				return true, nil
+			}
 		}
 	}
 	return false, nil

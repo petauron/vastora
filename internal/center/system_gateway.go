@@ -13,19 +13,30 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 )
 
-const agentDecommissionCallbackRouteMigrationSetting = "migration_55_agent_decommission_callback_route"
+const (
+	agentDecommissionCallbackRouteMigrationSetting = "migration_55_agent_decommission_callback_route"
+	dockerInstallRouteMigrationSetting             = "migration_58_docker_install_route"
+)
 
 func (s *Store) activateAgentDecommissionCallbackRoute(ctx context.Context) error {
+	return s.activateSystemGatewayRouteMigration(ctx, agentDecommissionCallbackRouteMigrationSetting, "Agent cleanup callback")
+}
+
+func (s *Store) activateDockerInstallRoute(ctx context.Context) error {
+	return s.activateSystemGatewayRouteMigration(ctx, dockerInstallRouteMigrationSetting, "Docker installer")
+}
+
+func (s *Store) activateSystemGatewayRouteMigration(ctx context.Context, setting, label string) error {
 	var marker string
-	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, agentDecommissionCallbackRouteMigrationSetting).Scan(&marker)
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, setting).Scan(&marker)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("center: inspect Agent cleanup callback route migration: %w", err)
+		return fmt.Errorf("center: inspect %s route migration: %w", label, err)
 	}
 	if marker != "pending" {
-		return errors.New("center: Agent cleanup callback route migration marker is invalid")
+		return fmt.Errorf("center: %s route migration marker is invalid", label)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -33,10 +44,10 @@ func (s *Store) activateAgentDecommissionCallbackRoute(ctx context.Context) erro
 	}
 	defer tx.Rollback()
 	if err := s.queueAllGatewayStatesTx(ctx, tx); err != nil {
-		return fmt.Errorf("center: queue Agent cleanup callback route: %w", err)
+		return fmt.Errorf("center: queue %s route: %w", label, err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ? AND value = 'pending'`, agentDecommissionCallbackRouteMigrationSetting); err != nil {
-		return fmt.Errorf("center: finish Agent cleanup callback route migration: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ? AND value = 'pending'`, setting); err != nil {
+		return fmt.Errorf("center: finish %s route migration: %w", label, err)
 	}
 	return tx.Commit()
 }
@@ -108,6 +119,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 	state.Routes = append(state.Routes,
 		gateway.Route{ID: "system-center", Hostname: centerHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "headscale", System: true},
 		gateway.Route{ID: "system-headscale", Hostname: headscaleHostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.HeadscaleAlias, Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
+		gateway.Route{ID: "system-docker-bootstrap", Hostname: headscaleHostname, Path: "/install/docker.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 		gateway.Route{ID: "system-agent-bootstrap", Hostname: headscaleHostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 		gateway.Route{ID: "system-agent-binary-bootstrap", Hostname: headscaleHostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 		gateway.Route{ID: "system-agent-decommission-callback", Hostname: headscaleHostname, Path: "/api/v1/agent-decommission-results/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
@@ -147,6 +159,7 @@ func (s *Store) appendSystemGatewayRoutes(ctx context.Context, tx *sql.Tx, gatew
 		key := strings.ReplaceAll(hostname, ".", "-")
 		state.Routes = append(state.Routes,
 			gateway.Route{ID: "system-headscale-alias-" + key, Hostname: hostname, Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.HeadscaleAlias, Port: 8081}}, TLSEnabled: true, ListenerKind: "public", System: true},
+			gateway.Route{ID: "system-docker-bootstrap-alias-" + key, Hostname: hostname, Path: "/install/docker.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 			gateway.Route{ID: "system-agent-bootstrap-alias-" + key, Hostname: hostname, Path: "/install/agent.sh", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 			gateway.Route{ID: "system-agent-binary-bootstrap-alias-" + key, Hostname: hostname, Path: "/api/v1/agent-binaries/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},
 			gateway.Route{ID: "system-agent-decommission-callback-alias-" + key, Hostname: hostname, Path: "/api/v1/agent-decommission-results/*", Protocol: "http", Upstreams: []gateway.Upstream{{Address: dockerruntime.CenterAlias, Port: 8080}}, TLSEnabled: true, ListenerKind: "public", System: true},

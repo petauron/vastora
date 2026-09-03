@@ -25,6 +25,9 @@ import { RegionCombobox, regionBaseName, regionDisplayName } from "./RegionCombo
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 import { clearSecretOperation, deploymentSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
 import { administratorPasswordMinLength } from "../lib/security";
+import { normalizeHostname, validHostname } from "../lib/network";
+import { InstalledApps } from "./InstalledApps";
+import { canCreateRealityNode, installedAppGroups, type InstalledAppInstance } from "./installed-apps-model";
 
 type DeploymentEditor = { app: AppView; agent?: AgentView; operation: "install" | "upgrade" | "configure" } | null;
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
@@ -47,18 +50,30 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
   const [subscriptionApplication, setSubscriptionApplication] = useState<Application | null>(null);
   const [clientsApplication, setClientsApplication] = useState<Application | null>(null);
   const [migrationApplication, setMigrationApplication] = useState<Application | null>(null);
+	const [managedApplicationID, setManagedApplicationID] = useState<string | null>(null);
 	const [recoveringTask, setRecoveringTask] = useState("");
   const [section, setSection] = useState<"installed" | "store">(() => data.applications.some(isInstalledApplication) ? "installed" : "store");
   const catalogByKey = useMemo(() => new Map(data.apps.map((app) => [app.key, app])), [data.apps]);
   const installedApplications = data.applications.filter(isInstalledApplication);
+  const installedGroups = useMemo(() => installedAppGroups({
+    applications: data.applications, apps: data.apps, agents: data.agents, sites: data.sites,
+    services: data.services, publications: data.publications, deployments: data.deployments,
+    threeXUIControllerMigrations: data.threeXUIControllerMigrations,
+  }), [data.applications, data.apps, data.agents, data.sites, data.services, data.publications, data.deployments, data.threeXUIControllerMigrations]);
+  const managedInstance = installedGroups.flatMap((group) => group.instances).find((instance) => instance.application.id === managedApplicationID);
   const recentOperations = latestOperations(data.deployments).filter((deployment) => deployment.state === "pending" || deployment.state === "running" || deployment.state === "failed");
   const trafficApplication = trafficService ? data.applications.find((application) => application.id === trafficService.applicationId) : undefined;
-  const trafficController = trafficApplication?.role === "master" ? trafficApplication : data.applications.find((application) => application.id === trafficApplication?.controllerApplicationId);
+  const trafficController = data.applications.find((application) => application.id === trafficApplication?.controllerApplicationId && application.role === "master" && application.status === "running");
 
   const openChange = (application: Application, operation: "upgrade" | "configure") => {
     const app = catalogByKey.get(application.appKey);
     const agent = data.agents.find((value) => value.id === application.nodeId);
     if (app && agent) setDeploymentEditor({ app, agent, operation });
+  };
+
+  const openFromDetails = (action: () => void) => {
+    setManagedApplicationID(null);
+    action();
   };
 
 	useEffect(() => {
@@ -95,7 +110,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 
   return (
     <section className="flex flex-col gap-7">
-      <PageHeading title={copy(language, "应用", "Apps")} description={copy(language, "先把应用安装为私有服务，再为需要访问的服务添加一个或多个入口。", "Install an app as a private service first, then add one or more access points to the services you need.")} />
+      <PageHeading title={copy(language, "应用", "Apps")} description={copy(language, "管理应用、订阅与各节点的访问入口。", "Manage apps, subscriptions, and access on every node.")} />
 
       {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "请保存 3x-ui 管理账号", "Save the 3x-ui administrator account")}</AlertTitle><AlertDescription><p>{copy(language, "确认保存前可在断线或刷新后重新领取；确认后 Center 会永久关闭再次显示。", "Until you acknowledge it, the same browser can recover these credentials after a disconnect or refresh. Acknowledgement permanently disables disclosure.")}</p><dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password} /></dd></div></dl><Button className="mt-3" disabled={credentialAckBusy} onClick={() => void acknowledgeCredentials()} size="sm" variant="outline">{credentialAckBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存并关闭再次显示", "Saved — disable further disclosure")}</Button></AlertDescription></Alert> : null}
 
@@ -119,8 +134,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
       </div>
 
       {section === "installed" ? <div className="flex flex-col gap-4">
-        <div><h2 className="text-lg font-semibold">{copy(language, "已安装", "Installed")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "每个服务都可以有独立的访问方式。", "Each service can have its own access methods.")}</p></div>
-	        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <div className="grid gap-4 lg:grid-cols-2">{installedApplications.map((application) => <InstalledAppCard application={application} app={catalogByKey.get(application.appKey)} data={data} key={application.id} language={language} onClients={() => setClientsApplication(application)} onConfigure={() => openChange(application, "configure")} onCredentials={() => setCredentialApplication(application)} onMigrate={() => setMigrationApplication(application)} onPublish={setPublicationService} onReality={() => setRealityApplication(application)} onRenameReality={setRealityRenameService} onSubscription={() => setSubscriptionApplication(application)} onTraffic={setTrafficService} onUninstall={() => setUninstallApplication(application)} onUpgrade={() => openChange(application, "upgrade")} mutate={mutate} />)}</div>}
+	        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <InstalledApps groups={installedGroups} language={language} mutate={mutate} onClients={setClientsApplication} onManage={(application) => setManagedApplicationID(application.id)} onReality={setRealityApplication} />}
       </div> : null}
 
       {section === "store" ? <div className="flex flex-col gap-4">
@@ -133,6 +147,26 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
         })}</div>
       </div> : null}
 
+      <Sheet onOpenChange={(open) => { if (!open) setManagedApplicationID(null); }} open={Boolean(managedInstance)}>
+        {managedInstance ? <InstalledAppDetails
+          data={data}
+          instance={managedInstance}
+          key={managedInstance.application.id}
+          language={language}
+          mutate={mutate}
+          onClients={() => openFromDetails(() => setClientsApplication(managedInstance.application))}
+          onConfigure={() => openFromDetails(() => openChange(managedInstance.application, "configure"))}
+          onCredentials={() => openFromDetails(() => setCredentialApplication(managedInstance.application))}
+          onMigrate={() => openFromDetails(() => setMigrationApplication(managedInstance.application))}
+          onPublish={(service) => openFromDetails(() => setPublicationService(service))}
+          onReality={() => openFromDetails(() => setRealityApplication(managedInstance.application))}
+          onRenameReality={(service) => openFromDetails(() => setRealityRenameService(service))}
+          onSubscription={() => openFromDetails(() => setSubscriptionApplication(managedInstance.application))}
+          onTraffic={(service) => openFromDetails(() => setTrafficService(service))}
+          onUninstall={() => openFromDetails(() => setUninstallApplication(managedInstance.application))}
+          onUpgrade={() => openFromDetails(() => openChange(managedInstance.application, "upgrade"))}
+        /> : null}
+      </Sheet>
       <DeploymentSheet data={data} editor={deploymentEditor} language={language} onClose={() => setDeploymentEditor(null)} onSubmit={async (agent, app, config, operation, role, registryCredentialId) => {
         let result: Deployment | undefined;
 		const scope = deploymentSecretScope(agent.id, app.key, operation);
@@ -155,23 +189,20 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
   );
 }
 
-function InstalledAppCard({ application, app, data, language, onClients, onConfigure, onCredentials, onMigrate, onPublish, onReality, onRenameReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { application: Application; app?: AppView; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
+function InstalledAppDetails({ instance, data, language, onClients, onConfigure, onCredentials, onMigrate, onPublish, onReality, onRenameReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { instance: InstalledAppInstance; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const [syncingNode, setSyncingNode] = useState(false);
-  const agent = data.agents.find((value) => value.id === application.nodeId);
-  const services = data.services.filter((service) => service.applicationId === application.id && service.status !== "stopped");
-  const deployment = data.deployments.find((value) => value.applicationId === application.id && value.state === "succeeded" && value.operation !== "uninstall");
-  const activeChange = data.deployments.find((value) => value.applicationId === application.id && (value.state === "pending" || value.state === "running" || value.reconciliationRequired));
-  const serviceAccessLocked = Boolean(activeChange) || application.status !== "running";
+  const { application, app, agent, services, deployment, activeChange, locked: serviceAccessLocked } = instance;
   const subscriptionService = services.find((service) => service.name === "subscription");
   const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
   const isThreeXUI = application.appKey === "vastora-official/3x-ui";
 	const isCPA = application.appKey === "vastora-official/cpa";
-  const isController = isThreeXUI && application.role === "master";
+  const isController = isThreeXUI && application.role === "master" && application.id === application.controllerApplicationId;
+  const isLegacyController = isThreeXUI && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
   const isWorker = isThreeXUI && application.role === "worker";
   const nodeSyncing = application.nodeSyncStatus === "pending" || application.nodeSyncStatus === "applying";
   const nodeReady = application.nodeSyncStatus === "ready";
-  const visibleServices = isWorker ? services.filter((service) => service.protocol !== "http" && service.protocol !== "https") : services;
-  const activeWorkers = isController ? data.applications.filter((value) => value.controllerApplicationId === application.id && (value.status !== "stopped" || value.nodeSyncStatus === "pending" || value.nodeSyncStatus === "applying")) : [];
+  const visibleServices = isWorker || isLegacyController ? services.filter((service) => service.protocol !== "http" && service.protocol !== "https") : services;
+  const activeWorkers = isController ? data.applications.filter((value) => value.id !== application.id && value.role === "worker" && value.controllerApplicationId === application.id && (value.status !== "stopped" || value.nodeSyncStatus === "pending" || value.nodeSyncStatus === "applying")) : [];
   const managedApplicationIDs = new Set([application.id, ...activeWorkers.map((worker) => worker.id)]);
   const managedVLESSNodeCount = isController ? data.services.filter((service) => managedApplicationIDs.has(service.applicationId) && service.appProtocol === "vless/tcp/reality" && service.status !== "stopped").length : 0;
   const hasVLESSNode = services.some((service) => service.appProtocol === "vless/tcp/reality");
@@ -183,34 +214,35 @@ function InstalledAppCard({ application, app, data, language, onClients, onConfi
       setSyncingNode(false);
     }
   };
-  return <Card>
-    <CardHeader>
-      <CardTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}{isController ? <Badge>{copy(language, "订阅主机", "Subscription controller")}</Badge> : null}{isWorker ? <Badge variant="outline">{copy(language, "VLESS 节点", "VLESS node")}</Badge> : null}</CardTitle>
-      <CardDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</CardDescription>
-      <CardAction><StateBadge value={application.status} /></CardAction>
-    </CardHeader>
-    <CardContent className="flex flex-col gap-3">
+  return <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+    <SheetHeader className="pr-12">
+      <SheetTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}{isController ? <Badge>{copy(language, "全局订阅主机", "Global subscription controller")}</Badge> : null}{isLegacyController ? <Badge variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}{isWorker ? <Badge variant="outline">{copy(language, "VLESS 节点", "VLESS node")}</Badge> : null}</SheetTitle>
+      <SheetDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</SheetDescription>
+      <div className="mt-2"><StateBadge language={language} value={application.status} /></div>
+    </SheetHeader>
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
       {activeChange ? <Alert>{activeChange.reconciliationRequired ? <ShieldAlertIcon /> : <Spinner />}<AlertTitle>{activeChange.reconciliationRequired ? copy(language, "需要继续恢复", "Recovery required") : copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}</AlertTitle><AlertDescription>{activeChange.reconciliationRequired ? copy(language, "应用状态尚未确认，恢复完成前不能修改或发布服务；已有入口仍可停止。", "The app state is not confirmed. Services cannot be changed or published until recovery finishes; existing access points can still be stopped.") : copy(language, "完成前暂时不能发起其他应用变更。", "Other app changes are unavailable until this finishes.")}</AlertDescription></Alert> : null}
       {application.status === "failed" ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "最近一次操作失败，应用仍保留", "The last operation failed; the app is still installed")}</AlertTitle><AlertDescription>{copy(language, "原有安装记录和数据仍保留；请查看最近操作，修正后重试或卸载。", "The installed record and data remain available. Review the recent operation, then retry or uninstall.")}</AlertDescription></Alert> : null}
       {isController ? <p aria-atomic="true" className="text-sm text-muted-foreground" role="status">{managedVLESSNodeCount > 0 ? copy(language, `当前订阅包含 ${managedVLESSNodeCount} 个 VLESS 节点，由此订阅主机统一管理。`, `The current subscription includes ${managedVLESSNodeCount} VLESS node(s), managed by this subscription controller.`) : copy(language, "尚未创建 VLESS 节点；创建后会自动加入统一订阅。", "No VLESS nodes yet. New nodes are added to the shared subscription automatically.")}</p> : null}
-      {isController ? <p className="text-xs text-muted-foreground">{application.restorePointState === "ready" && application.restorePointAt ? copy(language, `恢复点已保存 · ${new Date(application.restorePointAt).toLocaleString()}`, `Restore point saved · ${new Date(application.restorePointAt).toLocaleString()}`) : application.restorePointState === "pending" ? copy(language, "正在保存恢复点…", "Saving a restore point…") : copy(language, "恢复点将在节点在线后自动保存。", "A restore point will be saved automatically when the node is online.")}</p> : null}
+      {isController || isLegacyController ? <p className="text-xs text-muted-foreground">{application.restorePointState === "ready" && application.restorePointAt ? copy(language, `恢复点已保存 · ${new Date(application.restorePointAt).toLocaleString()}`, `Restore point saved · ${new Date(application.restorePointAt).toLocaleString()}`) : application.restorePointState === "pending" ? copy(language, "正在保存恢复点…", "Saving a restore point…") : copy(language, "恢复点将在节点在线后自动保存。", "A restore point will be saved automatically when the node is online.")}</p> : null}
       {isWorker && nodeSyncing ? <Alert aria-live="polite"><Spinner /><AlertTitle>{copy(language, "正在接入订阅主机", "Connecting to the subscription controller")}</AlertTitle><AlertDescription>{copy(language, "连接完成后即可在此节点一键创建 VLESS。", "Once connected, you can create VLESS on this node.")}</AlertDescription></Alert> : null}
       {isWorker && (application.nodeSyncStatus === "failed" || !application.nodeSyncStatus) ? <Alert variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "尚未接入订阅主机", "Not connected to the subscription controller")}</AlertTitle><AlertDescription><p>{application.nodeSyncError || copy(language, "升级来的旧节点需要重新连接；新节点请确认两台主机能通过 Headscale 或私网互相访问。", "An upgraded existing node must reconnect. For a new node, confirm both hosts can reach each other over Headscale or the private network.")}</p><Button className="mt-3" disabled={syncingNode} onClick={() => void retryNodeSync()} size="sm" variant="outline">{syncingNode ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "重新连接", "Reconnect")}</Button></AlertDescription></Alert> : null}
-      {isWorker && nodeReady ? <p className="text-sm text-muted-foreground">{copy(language, "此节点只承载 VLESS；客户端和订阅由当前位置的订阅主机统一管理。", "This node only carries VLESS. Clients and subscriptions are managed by the location controller.")}</p> : null}
+      {isWorker && nodeReady ? <p className="text-sm text-muted-foreground">{copy(language, "此节点只承载 VLESS；客户端和订阅由全局订阅主机统一管理。", "This node only carries VLESS. Clients and subscriptions are managed by the global controller.")}</p> : null}
+      {isLegacyController ? <Alert><Spinner /><AlertTitle>{copy(language, "正在并入全局订阅", "Joining the global subscription")}</AlertTitle><AlertDescription>{copy(language, "系统会先保存恢复点，再把这台旧订阅主机直接转成普通 VLESS 节点。", "The system saves a restore point, then converts this legacy controller directly into a regular VLESS node.")}</AlertDescription></Alert> : null}
 	      {isThreeXUI ? <div className={`grid gap-2 ${isController ? "sm:grid-cols-2" : "sm:grid-cols-1"}`}>
 	        {isController ? <Button disabled={serviceAccessLocked} onClick={onClients} size="sm"><UsersIcon data-icon="inline-start" />{copy(language, "管理客户端", "Manage clients")}</Button> : null}
 	        {isController ? <Button onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "管理账号", "Admin credentials")}</Button> : null}
-	        <Button disabled={hasVLESSNode || serviceAccessLocked || isWorker && (!nodeReady || syncingNode)} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{hasVLESSNode ? copy(language, "VLESS 节点已配置", "VLESS node configured") : copy(language, "创建 VLESS", "Create VLESS")}</Button>
+	        {!hasVLESSNode ? <Button disabled={!canCreateRealityNode(instance) || syncingNode} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button> : null}
         {isController && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}
       </div> : null}
 			{isCPA ? <Button disabled={Boolean(activeChange)} onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "凭据", "Credentials")}</Button> : null}
-      {!isWorker && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
-      {!isWorker && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
+      {!isWorker && !isLegacyController && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && !isLegacyController && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
+      {!isWorker && !isLegacyController && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
 			{visibleServices.map((service) => <ServiceRow data={data} key={service.id} language={language} locked={serviceAccessLocked} onPublish={() => onPublish(service)} onRename={() => onRenameReality(service)} onTraffic={() => onTraffic(service)} service={service} mutate={mutate} />)}
       {isController && activeWorkers.length > 0 ? <p className="text-xs text-muted-foreground">{copy(language, "移除所有 VLESS 节点后才能卸载订阅主机。", "Remove all VLESS nodes before uninstalling the subscription controller.")}</p> : null}
-    </CardContent>
-    <CardFooter className="flex-wrap justify-end gap-2">{isController && activeWorkers.some((worker) => worker.nodeSyncStatus === "ready") ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} size="sm" variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "迁移订阅主机", "Move subscription host")}</Button> : null}{application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange)} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange) || activeWorkers.length > 0} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></CardFooter>
-	  </Card>;
+    </div>
+    <SheetFooter className="flex-row flex-wrap justify-end gap-2 border-t">{isLegacyController ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} size="sm" variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "查看转换进度", "View conversion")}</Button> : isController && activeWorkers.some((worker) => worker.nodeSyncStatus === "ready") ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} size="sm" variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "迁移订阅主机", "Move subscription host")}</Button> : null}{application.updateAvailable ? <Button disabled={Boolean(activeChange) || isLegacyController} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange) || isLegacyController} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange) || isLegacyController || activeWorkers.length > 0} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></SheetFooter>
+	  </SheetContent>;
 }
 
 function ApplicationCredentialsSheet({ application, language, onClose }: { application: Application | null; language: Language; onClose: () => void }) {
@@ -353,7 +385,7 @@ function ServiceRow({ data, language, service, locked, onPublish, onRename, onTr
 	const isReality = service.appProtocol === "vless/tcp/reality";
 	const application = data.applications.find((value) => value.id === service.applicationId);
 	const managedSubscription = application?.appKey === "vastora-official/3x-ui" && application.role === "master" && service.name === "subscription";
-	const trafficControllerAvailable = application?.role === "master" || Boolean(application?.controllerApplicationId && data.applications.some((value) => value.id === application.controllerApplicationId && value.role === "master" && value.status === "running"));
+	const trafficControllerAvailable = Boolean(application?.controllerApplicationId && data.applications.some((value) => value.id === application.controllerApplicationId && value.role === "master" && value.status === "running"));
 	const trafficHintID = `traffic-controller-${service.id}`;
 	const summary = isReality
 		? copy(language, "VLESS 节点 · 单独计量流量", "VLESS node · independently metered")
@@ -370,6 +402,7 @@ function ServiceRow({ data, language, service, locked, onPublish, onRename, onTr
 			{!managedSubscription ? <Button disabled={locked} onClick={onPublish} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{copy(language, "添加入口", "Add access")}</Button> : null}
 		</div>
 		{isReality && !trafficControllerAvailable ? <p className="mt-2 text-xs text-destructive" id={trafficHintID}>{copy(language, "订阅主机当前不可用，暂时不能修改节点套餐。", "The subscription controller is unavailable, so this node plan cannot be changed yet.")}</p> : null}
+		{service.lastError || service.actionRequiredReason ? <div className="mt-2"><TechnicalError error={service.lastError || service.actionRequiredReason} language={language} /></div> : null}
 		{publications.length ? <div className="mt-3 flex flex-col gap-2">{publications.map((publication) => <PublicationRow cloudflareReady={cloudflareReady} key={publication.id} language={language} locked={locked} mutate={mutate} publication={publication} />)}</div> : <p className="mt-3 text-xs text-muted-foreground">{managedSubscription ? copy(language, "请使用上方“开启订阅”配置唯一的公网订阅地址。", "Use Enable subscription above to configure the single public subscription URL.") : copy(language, "仅在节点内部运行，添加入口后才能访问。", "Runs privately on the node until you add an access point.")}</p>}
 		<details className="mt-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
 			<summary className="cursor-pointer font-medium text-foreground">{copy(language, "技术信息", "Technical details")}</summary>
@@ -396,12 +429,11 @@ function DeploymentSheet({ data, editor, language, onClose, onSubmit }: { data: 
   const [error, setError] = useState("");
   const [registryCredentialID, setRegistryCredentialID] = useState("");
   const candidates = editor ? data.agents.filter((agent) => editor.operation !== "install" ? agent.id === editor.agent?.id : canInstall(agent) && !data.applications.some((application) => application.nodeId === agent.id && application.appKey === editor.app.key && (isInstalledApplication(application) || isActiveApplication(application.status)))) : [];
-  const selectedAgent = data.agents.find((agent) => agent.id === agentID);
   const isThreeXUIInstall = editor?.operation === "install" && editor.app.key === "vastora-official/3x-ui";
-  const siteController = isThreeXUIInstall && selectedAgent ? data.applications.find((application) => application.siteId === selectedAgent.siteId && application.appKey === "vastora-official/3x-ui" && application.role === "master" && isActiveApplication(application.status)) : undefined;
-  const role: ThreeXUIRole | undefined = isThreeXUIInstall ? siteController ? "worker" : "master" : undefined;
-  const controllerReady = !siteController || siteController.status === "running";
-  const controllerNode = siteController ? data.agents.find((agent) => agent.id === siteController.nodeId) : undefined;
+  const globalController = isThreeXUIInstall ? data.applications.find((application) => application.appKey === "vastora-official/3x-ui" && application.role === "master" && application.id === application.controllerApplicationId && isActiveApplication(application.status)) : undefined;
+  const role: ThreeXUIRole | undefined = isThreeXUIInstall ? globalController ? "worker" : "master" : undefined;
+  const controllerReady = !globalController || globalController.status === "running";
+  const controllerNode = globalController ? data.agents.find((agent) => agent.id === globalController.nodeId) : undefined;
   useEffect(() => {
     if (!editor) return;
     const defaults: Record<string, string | boolean | number> = {};
@@ -415,9 +447,9 @@ function DeploymentSheet({ data, editor, language, onClose, onSubmit }: { data: 
     setRegistryCredentialID(editor.operation === "install" ? "" : "__preserve__");
     setError("");
   }, [editor]);
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!editor) return; const agent = data.agents.find((value) => value.id === agentID); if (!agent) { setError(copy(language, "请选择节点。", "Select a node.")); return; } if (!controllerReady) { setError(copy(language, "请等待当前位置的订阅主机启动完成。", "Wait for this location's subscription controller to finish starting.")); return; } setBusy(true); setError(""); try { await onSubmit(agent, editor.app, config, editor.operation, role, registryCredentialID === "__preserve__" ? undefined : registryCredentialID); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
+  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!editor) return; const agent = data.agents.find((value) => value.id === agentID); if (!agent) { setError(copy(language, "请选择节点。", "Select a node.")); return; } if (!controllerReady) { setError(copy(language, "请等待全局订阅主机启动完成。", "Wait for the global subscription controller to finish starting.")); return; } setBusy(true); setError(""); try { await onSubmit(agent, editor.app, config, editor.operation, role, registryCredentialID === "__preserve__" ? undefined : registryCredentialID); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
   const verbs = editor?.operation === "install" ? ["安装", "Install"] : editor?.operation === "upgrade" ? ["升级", "Upgrade"] : ["修改配置", "Change settings"];
-  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(editor)}><SheetContent className="sm:max-w-lg"><SheetHeader><SheetTitle>{editor ? `${copy(language, verbs[0], verbs[1])} ${localized(editor.app, language, "name")}` : ""}</SheetTitle><SheetDescription>{editor?.operation === "install" ? copy(language, "应用先作为私有源站启动；访问入口稍后单独添加。", "The app starts as a private origin. Add access points separately afterward.") : editor?.operation === "upgrade" ? copy(language, "升级到目录中的新版本；可同时填写需要修改的配置。", "Upgrade to the newer catalog version and optionally change settings.") : copy(language, "只填写至少一项要修改的配置；留空项保持原值。", "Enter at least one setting to change; omitted values keep their previous value.")}</SheetDescription></SheetHeader><form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="deployment-agent">{copy(language, "节点", "Node")}</FieldLabel><SelectControl disabled={editor?.operation !== "install"} id="deployment-agent" onValueChange={setAgentID} options={[{ value: "", label: copy(language, "选择节点", "Select a node"), disabled: true }, ...candidates.map((agent) => ({ value: agent.id, label: agent.name }))]} required value={agentID} /><FieldDescription>{candidates.length === 0 ? copy(language, "没有可用节点。请先确认节点网络。", "No eligible node. Confirm node networking first.") : editor?.operation === "install" ? copy(language, "同一应用在同一节点只能安装一次。", "An app can be installed only once on the same node.") : copy(language, "现有安装会在原节点上更新。", "The existing installation is changed on its current node.")}</FieldDescription></Field>{isThreeXUIInstall && role === "master" ? <Alert><UsersIcon /><AlertTitle>{copy(language, "将作为当前位置的订阅主机", "This will be the location subscription controller")}</AlertTitle><AlertDescription>{copy(language, "这是当前位置的第一台 3x-ui。它提供唯一管理面板和订阅地址，之后添加的节点会自动接入这里。", "This is the first 3x-ui in the location. It provides the only admin panel and subscription URL; later nodes connect here automatically.")}</AlertDescription></Alert> : null}{isThreeXUIInstall && role === "worker" ? <Alert><RadioTowerIcon /><AlertTitle>{copy(language, "将作为 VLESS 节点", "This will be a VLESS node")}</AlertTitle><AlertDescription>{copy(language, `安装后自动接入 ${controllerNode?.name ?? "当前位置的订阅主机"}；不会再创建独立面板或订阅地址。`, `After installation it connects to ${controllerNode?.name ?? "the location controller"}; no separate panel or subscription URL is created.`)}</AlertDescription></Alert> : null}{isThreeXUIInstall && !controllerReady ? <FieldError role="alert">{copy(language, "当前位置的订阅主机尚未就绪，请稍后再安装节点。", "The location subscription controller is not ready yet. Install the node after it is running.")}</FieldError> : null}{editor?.app.app.config.map((field) => <ConfigField config={config} field={field} key={field.key} language={language} operation={editor.operation} setConfig={setConfig} />)}<Field><FieldLabel htmlFor="deployment-registry">{copy(language, "镜像仓库凭据", "Image Registry credential")}</FieldLabel><SelectControl id="deployment-registry" onValueChange={setRegistryCredentialID} options={[...(editor?.operation === "install" ? [{ value: "", label: copy(language, "不使用凭据（公开镜像）", "No credential (public image)") }] : [{ value: "__preserve__", label: copy(language, "保持当前凭据", "Keep current credential") }, { value: "", label: copy(language, "清除凭据，改用公开镜像", "Clear credential and use public image") }]), ...data.registryCredentials.map((credential) => ({ value: credential.id, label: `${credential.host} — ${credential.username}` }))]} value={registryCredentialID} /><FieldDescription>{copy(language, "令牌不会显示或写入节点 Docker 配置；仅在本次拉取时使用。", "Tokens are never displayed or written to the node Docker config; they are used only for this pull.")}</FieldDescription></Field>{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !agentID || !controllerReady || editor?.operation === "configure" && Object.keys(config).length === 0} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{editor?.operation === "install" ? copy(language, "开始安装", "Install") : editor?.operation === "upgrade" ? copy(language, "开始升级", "Upgrade") : copy(language, "应用修改", "Apply changes")}</Button></SheetFooter></form></SheetContent></Sheet>;
+  return <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(editor)}><SheetContent className="sm:max-w-lg"><SheetHeader><SheetTitle>{editor ? `${copy(language, verbs[0], verbs[1])} ${localized(editor.app, language, "name")}` : ""}</SheetTitle><SheetDescription>{editor?.operation === "install" ? copy(language, "应用先作为私有源站启动；访问入口稍后单独添加。", "The app starts as a private origin. Add access points separately afterward.") : editor?.operation === "upgrade" ? copy(language, "升级到目录中的新版本；可同时填写需要修改的配置。", "Upgrade to the newer catalog version and optionally change settings.") : copy(language, "只填写至少一项要修改的配置；留空项保持原值。", "Enter at least one setting to change; omitted values keep their previous value.")}</SheetDescription></SheetHeader><form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}><div className="flex-1 overflow-y-auto px-4"><FieldGroup><Field><FieldLabel htmlFor="deployment-agent">{copy(language, "节点", "Node")}</FieldLabel><SelectControl disabled={editor?.operation !== "install"} id="deployment-agent" onValueChange={setAgentID} options={[{ value: "", label: copy(language, "选择节点", "Select a node"), disabled: true }, ...candidates.map((agent) => ({ value: agent.id, label: agent.name }))]} required value={agentID} /><FieldDescription>{candidates.length === 0 ? copy(language, "没有可用节点。请先确认节点网络。", "No eligible node. Confirm node networking first.") : editor?.operation === "install" ? copy(language, "同一应用在同一节点只能安装一次。", "An app can be installed only once on the same node.") : copy(language, "现有安装会在原节点上更新。", "The existing installation is changed on its current node.")}</FieldDescription></Field>{isThreeXUIInstall && role === "master" ? <Alert><UsersIcon /><AlertTitle>{copy(language, "将作为全局订阅主机", "This will be the global subscription controller")}</AlertTitle><AlertDescription>{copy(language, "这是 Center 中第一台 3x-ui。它提供唯一管理面板和订阅地址，所有地区后续添加的节点都会自动接入这里。", "This is the first 3x-ui in this Center. It provides the only admin panel and subscription URL; later nodes in every region connect here automatically.")}</AlertDescription></Alert> : null}{isThreeXUIInstall && role === "worker" ? <Alert><RadioTowerIcon /><AlertTitle>{copy(language, "将作为 VLESS 节点", "This will be a VLESS node")}</AlertTitle><AlertDescription>{copy(language, `安装后自动接入 ${controllerNode?.name ?? "全局订阅主机"}；不会再创建独立面板或订阅地址。`, `After installation it connects to ${controllerNode?.name ?? "the global subscription controller"}; no separate panel or subscription URL is created.`)}</AlertDescription></Alert> : null}{isThreeXUIInstall && !controllerReady ? <FieldError role="alert">{copy(language, "全局订阅主机尚未就绪，请稍后再安装节点。", "The global subscription controller is not ready yet. Install the node after it is running.")}</FieldError> : null}{editor?.app.app.config.map((field) => <ConfigField config={config} field={field} key={field.key} language={language} operation={editor.operation} setConfig={setConfig} />)}<Field><FieldLabel htmlFor="deployment-registry">{copy(language, "镜像仓库凭据", "Image Registry credential")}</FieldLabel><SelectControl id="deployment-registry" onValueChange={setRegistryCredentialID} options={[...(editor?.operation === "install" ? [{ value: "", label: copy(language, "不使用凭据（公开镜像）", "No credential (public image)") }] : [{ value: "__preserve__", label: copy(language, "保持当前凭据", "Keep current credential") }, { value: "", label: copy(language, "清除凭据，改用公开镜像", "Clear credential and use public image") }]), ...data.registryCredentials.map((credential) => ({ value: credential.id, label: `${credential.host} — ${credential.username}` }))]} value={registryCredentialID} /><FieldDescription>{copy(language, "令牌不会显示或写入节点 Docker 配置；仅在本次拉取时使用。", "Tokens are never displayed or written to the node Docker config; they are used only for this pull.")}</FieldDescription></Field>{error ? <FieldError role="alert">{error}</FieldError> : null}</FieldGroup></div><SheetFooter><Button onClick={onClose} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !agentID || !controllerReady || editor?.operation === "configure" && Object.keys(config).length === 0} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{editor?.operation === "install" ? copy(language, "开始安装", "Install") : editor?.operation === "upgrade" ? copy(language, "开始升级", "Upgrade") : copy(language, "应用修改", "Apply changes")}</Button></SheetFooter></form></SheetContent></Sheet>;
 }
 
 function ConfigField({ config, field, language, operation, setConfig }: { config: Record<string, string | boolean | number>; field: AppView["app"]["config"][number]; language: Language; operation: "install" | "upgrade" | "configure"; setConfig: React.Dispatch<React.SetStateAction<Record<string, string | boolean | number>>> }) {
@@ -433,6 +465,8 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
   const [kind, setKind] = useState<PublicationKind>("headscale_gateway");
   const [gatewayID, setGatewayID] = useState("");
   const [hostname, setHostname] = useState("");
+  const [hostnameTouched, setHostnameTouched] = useState(false);
+  const hostnameInput = useRef<HTMLInputElement>(null);
   const [sniHostname, setSNIHostname] = useState("");
   const [dnsProvider, setDNSProvider] = useState<"manual" | "cloudflare" | "headscale">("manual");
   const [highRisk, setHighRisk] = useState(false);
@@ -442,7 +476,9 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
   const [cloudflareAccessStatus, setCloudflareAccessStatus] = useState(data.centerRemoteAccess);
   const [cloudflareAccessLoadError, setCloudflareAccessLoadError] = useState(data.centerRemoteAccessError);
   const [cloudflareAccessLoading, setCloudflareAccessLoading] = useState(false);
-  const cloudflareReady = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
+  const cloudflare = data.integrations.find((value) => value.kind === "cloudflare" && value.status === "configured");
+  const cloudflareReady = Boolean(cloudflare);
+  const cloudflareZone = normalizeHostname(cloudflare?.endpoint ?? "");
   const headscaleReady = data.integrations.some((value) => value.kind === "headscale" && value.status === "configured" && value.mode === "builtin");
   const options = useMemo(() => publicationOptions(data, service, language), [data, service, language]);
   const intents = useMemo(() => publicationIntentOptions(data, service, language), [data, service, language]);
@@ -468,6 +504,7 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     setKind(nextKind);
     setGatewayID(gatewaysForKind(data, service, nextKind)[0]?.id ?? "");
     setHostname(defaultPublicationHostname(data, service, nextKind));
+    setHostnameTouched(false);
     setSNIHostname("");
     setDNSProvider(defaultDNS(nextKind));
     setTLSEnabled(cloudflareReady && (nextKind === "lan_gateway" || nextKind === "headscale_gateway"));
@@ -496,6 +533,8 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     setKind(next); const nodes = service ? gatewaysForKind(data, service, next) : [];
     setGatewayID(nodes[0]?.id ?? "");
     if (service) setHostname(defaultPublicationHostname(data, service, next));
+    setHostnameTouched(false);
+    setError("");
     setDNSProvider(defaultDNS(next));
     setTLSEnabled(cloudflareReady && (next === "lan_gateway" || next === "headscale_gateway"));
     setHighRisk(false);
@@ -506,11 +545,33 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
     const preferred = publicationIntentOptions(data, service, language).find((option) => option.intent === next)?.kind;
     if (preferred) selectKind(preferred);
   };
-  const submit = async (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!service) return; setBusy(true); setError(""); try { const ingress: PublicationIngressInput = applicationNodeIngress ? { owner: "application_node" } : ingressOwner === "tunnel_connector" ? { owner: "tunnel_connector", entryNodeId: gatewayID } : { owner: "site_gateway", entryNodeId: gatewayID }; await onSubmit({ serviceId: service.id, kind, ingress, hostname: hostname || undefined, sniHostname: kind === "public_shared_443" ? sniHostname : undefined, dnsProvider, tlsEnabled: (kind === "lan_gateway" || kind === "headscale_gateway") && tlsEnabled, confirmHighRisk: highRisk }); } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); } };
   const highRiskRequired = Boolean(service?.management && kind === "public_direct");
   const cloudflareAccessRequired = kind === "cloudflare_tunnel" && (cloudflareAccessLoading || Boolean(cloudflareAccessLoadError) || cloudflareAccessStatus?.status !== "configured");
   const automaticPublicHostname = kind === "public_direct" || kind === "cloudflare_tunnel";
-  const canSubmit = Boolean(selectedOption?.enabled && (hostname || automaticPublicHostname) && (applicationNodeIngress ? applicationNode : gatewayID) && (kind !== "public_shared_443" || sniHostname) && (!tlsEnabled || cloudflareReady) && !cloudflareAccessRequired && (!highRiskRequired || highRisk));
+  const normalizedHostname = normalizeHostname(hostname);
+  const hostnameZone = dnsProvider === "cloudflare" ? cloudflareZone : "";
+  const hostnameExample = `app.${hostnameZone || data.sites.find((site) => site.id === service?.siteId)?.domainSuffix || "example.com"}`;
+  const hostnameError = !normalizedHostname && automaticPublicHostname ? ""
+    : !validHostname(hostname)
+      ? copy(language, `请输入完整域名，例如 ${hostnameExample}；不能只填前缀，也不要包含 https://、端口或路径。`, `Enter a complete hostname, such as ${hostnameExample}, not just a prefix. Do not include https://, a port, or a path.`)
+      : hostnameZone && normalizedHostname !== hostnameZone && !normalizedHostname.endsWith(`.${hostnameZone}`)
+        ? copy(language, `域名必须属于当前 Cloudflare 域名 ${hostnameZone}，例如 ${hostnameExample}。`, `Use the configured Cloudflare zone ${hostnameZone} or one of its subdomains, such as ${hostnameExample}.`)
+        : "";
+  const hostnameInvalid = hostnameTouched && Boolean(hostnameError);
+  const canSubmit = Boolean(selectedOption?.enabled && !hostnameError && (applicationNodeIngress ? applicationNode : gatewayID) && (kind !== "public_shared_443" || sniHostname) && (!tlsEnabled || cloudflareReady) && !cloudflareAccessRequired && (!highRiskRequired || highRisk));
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!service) return;
+    setError("");
+    setHostnameTouched(true);
+    if (hostnameError) { hostnameInput.current?.focus(); return; }
+    if (!canSubmit || busy) return;
+    setBusy(true);
+    try {
+      const ingress: PublicationIngressInput = applicationNodeIngress ? { owner: "application_node" } : ingressOwner === "tunnel_connector" ? { owner: "tunnel_connector", entryNodeId: gatewayID } : { owner: "site_gateway", entryNodeId: gatewayID };
+      await onSubmit({ serviceId: service.id, kind, ingress, hostname: normalizedHostname || undefined, sniHostname: kind === "public_shared_443" ? sniHostname : undefined, dnsProvider, tlsEnabled: (kind === "lan_gateway" || kind === "headscale_gateway") && tlsEnabled, confirmHighRisk: highRisk });
+    } catch (submitError) { setError(userError(language, submitError)); } finally { setBusy(false); }
+  };
   return (
     <Sheet onOpenChange={(next) => { if (!next) onClose(); }} open={Boolean(service)}>
       <SheetContent className="sm:max-w-lg">
@@ -533,10 +594,11 @@ function PublicationSheet({ data, language, onClose, onSubmit, service }: { data
                   </label>
                 ))}
               </FieldSet>
-              <Field>
+              <Field data-invalid={hostnameInvalid}>
                 <FieldLabel htmlFor="publication-hostname">{copy(language, kind === "public_direct" || kind === "cloudflare_tunnel" ? "公网入口域名（可自定义）" : "访问域名", kind === "public_direct" || kind === "cloudflare_tunnel" ? "Public hostname (customizable)" : "Access hostname")}</FieldLabel>
-                <Input id="publication-hostname" onChange={(event) => setHostname(event.target.value.toLowerCase())} placeholder={automaticPublicHostname ? copy(language, "留空时自动生成", "Generated automatically when empty") : "app-node.example.com"} required={!automaticPublicHostname} value={hostname} />
-                <FieldDescription>{automaticPublicHostname ? copy(language, "默认由 Center 生成 128-bit 随机域名，不包含应用或节点信息；也可以在这里自定义。", "Center generates a random 128-bit hostname by default without app or node details; you can still customize it here.") : copy(language, "这是以后在浏览器或客户端中使用的地址。", "This is the address used by browsers or clients.")}</FieldDescription>
+                <Input aria-describedby={hostnameInvalid ? "publication-hostname-help publication-hostname-error" : "publication-hostname-help"} aria-invalid={hostnameInvalid} autoCapitalize="none" autoCorrect="off" id="publication-hostname" onBlur={(event) => { setHostnameTouched(true); setHostname(normalizeHostname(event.target.value)); }} onChange={(event) => { setHostname(event.target.value.toLowerCase()); setError(""); }} placeholder={automaticPublicHostname ? copy(language, "留空时自动生成", "Generated automatically when empty") : hostnameExample} ref={hostnameInput} required={!automaticPublicHostname} spellCheck={false} value={hostname} />
+                <FieldDescription id="publication-hostname-help">{automaticPublicHostname ? copy(language, `留空由 Center 生成 128-bit 随机域名，不包含应用或节点信息。自定义请填写完整域名，例如 ${hostnameExample}。`, `Leave empty for a random 128-bit hostname without app or node details. To customize it, enter a complete hostname such as ${hostnameExample}.`) : copy(language, `填写完整域名，例如 ${hostnameExample}，不要只填前缀。`, `Enter a complete hostname such as ${hostnameExample}, not just a prefix.`)}</FieldDescription>
+                {hostnameInvalid ? <FieldError id="publication-hostname-error">{hostnameError}</FieldError> : null}
               </Field>
               {kind === "public_shared_443" ? <Field><FieldLabel htmlFor="publication-sni">{copy(language, "协议 SNI", "Protocol SNI")}</FieldLabel><Input autoCapitalize="none" autoCorrect="off" id="publication-sni" onChange={(event) => setSNIHostname(event.target.value.toLowerCase())} placeholder="www.example.com" required spellCheck={false} value={sniHostname} /><FieldDescription>{copy(language, "客户端握手中使用的 SNI；它与上面的连接域名是两个不同地址。", "The SNI sent in the client handshake. It is different from the connection hostname above.")}</FieldDescription></Field> : null}
               {intent === "protocol" ? <Alert><ShieldAlertIcon /><AlertTitle>{copy(language, "这是高级公网入口", "This is an advanced public access method")}</AlertTitle><AlertDescription>{copy(language, "应用负责协议和端口配置；Vastora 只检查公网能力与运行状态。", "The app controls protocol and ports. Vastora only checks public reachability and runtime status.")}</AlertDescription></Alert> : null}
