@@ -42,26 +42,27 @@ type PublicationInput struct {
 }
 
 type PublicationView struct {
-	ID                   string                `json:"id"`
-	ServiceID            string                `json:"serviceId"`
-	Kind                 string                `json:"kind"`
-	Ingress              PublicationIngress    `json:"ingress"`
-	EntryNodeID          string                `json:"-"`
-	Hostname             string                `json:"hostname"`
-	SNIHostname          string                `json:"sniHostname,omitempty"`
-	DNSProvider          string                `json:"dnsProvider"`
-	DNSRecordID          string                `json:"dnsRecordId,omitempty"`
-	TLSEnabled           bool                  `json:"tlsEnabled"`
-	DesiredRevision      int64                 `json:"desiredRevision"`
-	AppliedRevision      int64                 `json:"appliedRevision"`
-	Status               string                `json:"status"`
-	LastError            string                `json:"lastError,omitempty"`
-	ActionRequired       bool                  `json:"actionRequired,omitempty"`
-	AccessURL            string                `json:"accessUrl,omitempty"`
-	CertificateExpiresAt *time.Time            `json:"certificateExpiresAt,omitempty"`
-	DNSRecord            *DNSRecordInstruction `json:"dnsRecord,omitempty"`
-	CreatedAt            time.Time             `json:"createdAt"`
-	UpdatedAt            time.Time             `json:"updatedAt"`
+	ID                   string                    `json:"id"`
+	ServiceID            string                    `json:"serviceId"`
+	Kind                 string                    `json:"kind"`
+	Ingress              PublicationIngress        `json:"ingress"`
+	EntryNodeID          string                    `json:"-"`
+	Hostname             string                    `json:"hostname"`
+	SNIHostname          string                    `json:"sniHostname,omitempty"`
+	DNSProvider          string                    `json:"dnsProvider"`
+	DNSRecordID          string                    `json:"dnsRecordId,omitempty"`
+	TLSEnabled           bool                      `json:"tlsEnabled"`
+	DesiredRevision      int64                     `json:"desiredRevision"`
+	AppliedRevision      int64                     `json:"appliedRevision"`
+	Status               string                    `json:"status"`
+	LastError            string                    `json:"lastError,omitempty"`
+	ActionRequired       bool                      `json:"actionRequired,omitempty"`
+	AccessURL            string                    `json:"accessUrl,omitempty"`
+	CertificateExpiresAt *time.Time                `json:"certificateExpiresAt,omitempty"`
+	DNSRecord            *DNSRecordInstruction     `json:"dnsRecord,omitempty"`
+	SecurityCheck        *RealitySecurityCheckView `json:"securityCheck,omitempty"`
+	CreatedAt            time.Time                 `json:"createdAt"`
+	UpdatedAt            time.Time                 `json:"updatedAt"`
 }
 
 type DNSRecordInstruction struct {
@@ -570,6 +571,10 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	if err != nil {
 		return PublicationView{}, err
 	}
+	value.SecurityCheck, err = s.realitySecurityCheck(ctx, value.ID)
+	if err != nil {
+		return PublicationView{}, err
+	}
 	return value, nil
 }
 
@@ -720,5 +725,18 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		}
 		values = append(values, value)
 	}
-	return values, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	securityChecks, err := s.realitySecurityChecks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range values {
+		values[index].SecurityCheck = securityChecks[values[index].ID]
+	}
+	return values, nil
 }

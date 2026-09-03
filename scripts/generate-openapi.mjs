@@ -211,9 +211,33 @@ const publicationIngressResponseSchema = {
   })),
 };
 
+const realitySecurityCheckItemSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["kind", "status", "reason"],
+  properties: {
+    kind: { type: "string", enum: ["expected_fallback", "openai_sni", "cloudflare_sni", "random_sni", "no_sni"] },
+    status: { type: "string", enum: ["passed", "failed", "inconclusive"] },
+    reason: { type: "string", enum: ["expected_fallback_verified", "expected_fallback_unavailable", "unauthorized_destination_rejected", "unauthorized_destination_reached", "local_tls_termination", "probe_timeout", "probe_interrupted"] },
+  },
+};
+
+const realitySecurityCheckResponseSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["status", "scope", "checks", "checkedAt"],
+  properties: {
+    status: { type: "string", enum: ["safe", "affected", "inconclusive"] },
+    scope: { type: "string", enum: ["remote", "same_host"] },
+    checks: { type: "array", minItems: 5, maxItems: 5, items: realitySecurityCheckItemSchema },
+    checkedAt: { type: "string", format: "date-time" },
+  },
+};
+
 const publicationResponseSchema = schemaForGoType("PublicationView");
 publicationResponseSchema.required = ["id", "serviceId", "kind", "ingress", "hostname", "dnsProvider", "tlsEnabled", "desiredRevision", "appliedRevision", "status", "createdAt", "updatedAt"];
 publicationResponseSchema.properties.ingress = { $ref: "#/components/schemas/PublicationIngress" };
+publicationResponseSchema.properties.securityCheck = { $ref: "#/components/schemas/RealitySecurityCheck" };
 
 const document = {
   openapi: "3.1.0",
@@ -258,6 +282,7 @@ const document = {
       JsonObject: { type: "object", additionalProperties: true, description: "Endpoint-specific JSON object. Runtime decoding rejects fields not declared by the corresponding Go request type." },
       PublicationIngress: publicationIngressResponseSchema,
       Publication: publicationResponseSchema,
+      RealitySecurityCheck: realitySecurityCheckResponseSchema,
       ApplicationCredentials: {
         oneOf: [
           {
@@ -368,6 +393,12 @@ for (const route of routes) {
     schema.properties.ingress = publicationIngressRequestSchema;
   } else if (route.handler === "handleVerifyRealityTarget") {
     operation.requestBody.content["application/json"].schema.required = ["targetHost", "serverName"];
+  } else if (route.handler === "handleRealitySecurityCheck") {
+    operation.summary = "Check Managed REALITY Publication Security";
+    operation.description = "Runs five bounded TLS handshakes from Center to the managed node's authoritative public IPv4 address on port 443. The caller cannot supply an address, port, or SNI. Only finite results are retained, and same-host checks are explicitly marked as non-external.";
+    operation.responses["200"].description = "The latest revision-fenced security result.";
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/RealitySecurityCheck" };
   } else if (route.handler === "handleRevealApplicationCredentials") {
     operation.summary = "Reveal Protected Application Credentials";
     operation.description = "Reauthenticates the current administrator, records a security audit event, and returns only the current credentials for the selected managed 3x-ui controller or CPA application. The response is never cacheable.";

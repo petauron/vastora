@@ -83,6 +83,15 @@
   so known shared CDN/WAF targets and unavailable safety checks remain rejected.
   A dataset non-match is not proof that all shared hosting is absent. This
   control does not claim zero unauthenticated traffic or volumetric DDoS protection.
+- The administrator-initiated REALITY behavior check is not an arbitrary scanner:
+  Center accepts only a managed Publication id, re-derives its current approved
+  public IPv4 address and fixed port 443, and uses a fixed five-probe set. Probes
+  are concurrent, deadline-bound, and globally serialized. Results contain only
+  finite status and reason values; certificates, response bodies, credentials,
+  and socket errors are not stored. A successful unauthorized TLS identity is
+  `affected`; any timeout, interrupted probe, unavailable expected fallback, or
+  revision change cannot become `safe`. A co-located Center check is labelled
+  `same_host` because it does not prove behavior from an independent network.
 - Cloudflare and Headscale credentials are encrypted; list APIs return only
   configuration metadata. Connector tokens are delivered only to the selected
   Agent through authenticated, leased tasks. Enrollment registers an Agent

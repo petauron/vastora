@@ -393,6 +393,21 @@ func (s *Server) handleVerifyPublication(writer http.ResponseWriter, request *ht
 	writeJSON(writer, http.StatusOK, value)
 }
 
+func (s *Server) handleRealitySecurityCheck(writer http.ResponseWriter, request *http.Request) {
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	value, err := s.store.RunRealitySecurityCheck(request.Context(), request.PathValue("id"), adminID)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusOK, value)
+}
+
 func (s *Server) handleListRoutes(writer http.ResponseWriter, request *http.Request) {
 	values, err := s.store.ListRoutes(request.Context())
 	if err != nil {

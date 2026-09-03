@@ -799,6 +799,32 @@ describe("network and app views", () => {
     expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
   });
 
+  it("runs a managed REALITY security check from Center and labels same-host results", async () => {
+    const data = realityDashboard();
+    data.services = [{ id: "reality", applicationId: "three-x-ui", siteId: "site", name: "inbound-1", protocol: "tcp", containerPort: 443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.publications = [{
+      id: "reality-entry", serviceId: "reality", kind: "public_shared_443", ingress: { owner: "application_node", entryNodeId: "agent" }, hostname: "node.example.com", sniHostname: "www.intel.com", dnsProvider: "cloudflare", tlsEnabled: false, desiredRevision: 2, appliedRevision: 2, status: "ready",
+      securityCheck: { status: "safe", scope: "same_host", checkedAt: "2026-08-18T00:00:00Z", checks: [
+        { kind: "expected_fallback", status: "passed", reason: "expected_fallback_verified" },
+        { kind: "openai_sni", status: "passed", reason: "unauthorized_destination_rejected" },
+        { kind: "cloudflare_sni", status: "passed", reason: "unauthorized_destination_rejected" },
+        { kind: "random_sni", status: "passed", reason: "unauthorized_destination_rejected" },
+        { kind: "no_sni", status: "passed", reason: "unauthorized_destination_rejected" },
+      ] },
+      createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z",
+    }];
+    const check = vi.spyOn(api, "checkRealitySecurity").mockResolvedValue(data.publications[0].securityCheck!);
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+
+    expect(container.textContent).toContain("本机检查通过");
+    expect(container.textContent).toContain("不代表外部网络");
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("安全检查"))?.click();
+      await Promise.resolve();
+    });
+    expect(check).toHaveBeenCalledWith("reality-entry");
+  });
+
   it("uses the ready panel entry for the controller shortcut and hides unavailable links", () => {
     const data = realityDashboard();
     data.services = [{ id: "panel", applicationId: "three-x-ui", siteId: "site", name: "panel", protocol: "http", containerPort: 2053, hostPort: 2053, endpoint: "10.0.0.10:2053", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
