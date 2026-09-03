@@ -91,10 +91,11 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 			return s.recordPublicationVerification(ctx, id, expectedRevision, "Cloudflare Tunnel connector is not ready")
 		}
 	}
-	var protocol, endpoint, routeStatus string
+	var protocol, endpoint, routeStatus, appKey, serviceName string
 	err = s.db.QueryRowContext(ctx, `SELECT s.protocol, s.endpoint,
+		a.app_key, s.name,
 		COALESCE((SELECT r.status FROM routes r WHERE r.publication_id = p.id LIMIT 1), '')
-		FROM publications p JOIN services s ON s.id = p.service_id WHERE p.id = ?`, id).Scan(&protocol, &endpoint, &routeStatus)
+		FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id WHERE p.id = ?`, id).Scan(&protocol, &endpoint, &appKey, &serviceName, &routeStatus)
 	if err != nil {
 		return PublicationView{}, err
 	}
@@ -163,7 +164,12 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	if publication.TLSEnabled {
 		scheme = "https"
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+publication.Hostname+"/", nil)
+	verificationPath := "/"
+	cpaClientAPI := isCPAClientAPIService(appKey, serviceName)
+	if cpaClientAPI {
+		verificationPath = cpaClientAPIHealthPath
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, scheme+"://"+publication.Hostname+verificationPath, nil)
 	if err != nil {
 		return PublicationView{}, err
 	}
@@ -177,6 +183,12 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	_ = response.Body.Close()
 	if response.StatusCode >= 300 && response.StatusCode < 400 && publication.Kind != publicationCloudflare {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, "service health check redirect was not accepted")
+	}
+	if cpaClientAPI {
+		if response.StatusCode != http.StatusUnauthorized {
+			return s.recordPublicationVerification(ctx, id, expectedRevision, "CPA public API route is not ready or did not require its client key")
+		}
+		return s.markPublicationReady(ctx, id, expectedRevision)
 	}
 	if response.StatusCode >= 500 {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, "service returned "+response.Status)

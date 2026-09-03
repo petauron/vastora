@@ -260,7 +260,7 @@ func TestNetworkEntryAddressChangesAreBlockedByActivePublications(t *testing.T) 
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, oldProfile.ServiceAddress)
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
+	if err != nil || len(services) != 2 || services[0].ApplicationID != applicationID {
 		t.Fatalf("services=%#v err=%v", services, err)
 	}
 	serviceID := services[0].ID
@@ -332,7 +332,7 @@ func TestPublicationChangesAreBlockedDuringApplicationReconciliation(t *testing.
 			completeNextTask(t, store, node, "gateway.component.apply", nil)
 			applicationID := installCPA(t, store, node, "10.0.0.96")
 			services, err := store.ListServices(ctx)
-			if err != nil || len(services) != 1 {
+			if err != nil || len(services) != 2 {
 				t.Fatalf("services=%#v err=%v", services, err)
 			}
 			publication, err := store.CreatePublication(ctx, PublicationInput{

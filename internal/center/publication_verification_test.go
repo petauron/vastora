@@ -562,8 +562,88 @@ func TestTunnelConnectorTargetsTheWebServiceWithoutSiteCaddy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ingress) != 1 || ingress[0].Hostname != "verification.example.test" || ingress[0].Service != "http://203.0.113.40:8080" {
+	if len(ingress) != 1 || ingress[0].Hostname != "verification.example.test" || ingress[0].Service != "http://203.0.113.40:8080" || ingress[0].Path != "" {
 		t.Fatalf("Tunnel connector did not target the service directly: %#v", ingress)
+	}
+}
+
+func TestCPAClientAPITunnelIngressIsPathScoped(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := seedVerificationPublication(t, store, publicationCloudflare, "cloudflare", 1, 0, "pending")
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET app_key = ? WHERE id = 'verification-app'`, cpaAppKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET name = ?, protocol = 'http', container_port = 8317, host_port = 8317, endpoint = '10.0.0.40:8317', app_protocol = '' WHERE id = 'verification-service'`, cpaClientAPIServiceName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET ingress_owner = 'tunnel_connector', entry_node_id = ? WHERE id = 'verification-publication'`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	ingress, err := tunnelIngressForNode(ctx, store.db, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ingress) != 1 || ingress[0].Path != cpaClientAPITunnelPath || ingress[0].Service != "http://10.0.0.40:8317" {
+		t.Fatalf("CPA client API Tunnel ingress was not path scoped: %#v", ingress)
+	}
+	accessURL, err := store.publicationAccessURL(ctx, PublicationView{ServiceID: "verification-service", Hostname: "cpa.example.com", TLSEnabled: true})
+	if err != nil || accessURL != "https://cpa.example.com/v1" {
+		t.Fatalf("CPA client API access URL = %q, err=%v", accessURL, err)
+	}
+}
+
+func TestCPAClientAPIVerificationRequiresClientKeyChallenge(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		statusCode int
+		wantStatus string
+	}{
+		{name: "client key required", statusCode: http.StatusUnauthorized, wantStatus: "ready"},
+		{name: "unauthenticated request accepted", statusCode: http.StatusOK, wantStatus: "pending"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requestedPath string
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				requestedPath = request.URL.Path
+				writer.WriteHeader(test.statusCode)
+			}))
+			defer server.Close()
+
+			store := openOrchestrationStore(t)
+			defer store.Close()
+			ctx := context.Background()
+			node := seedVerificationPublication(t, store, publicationLAN, "manual", 1, 0, "pending")
+			endpoint := strings.TrimPrefix(server.URL, "http://")
+			_, port, err := net.SplitHostPort(endpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx, `UPDATE agent_network_profiles SET lan_address = '127.0.0.1' WHERE agent_id = ?`, node.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx, `UPDATE applications SET app_key = ? WHERE id = 'verification-app'`, cpaAppKey); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx, `UPDATE services SET name = ?, protocol = 'http', endpoint = ? WHERE id = 'verification-service'`, cpaClientAPIServiceName, endpoint); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx, `UPDATE publications SET hostname = ? WHERE id = 'verification-publication'`, "cpa.example.test:"+port); err != nil {
+				t.Fatal(err)
+			}
+
+			publication, err := store.VerifyPublication(ctx, "verification-publication")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requestedPath != cpaClientAPIHealthPath || publication.Status != test.wantStatus {
+				t.Fatalf("path=%q publication=%#v", requestedPath, publication)
+			}
+			if test.statusCode == http.StatusOK && !strings.Contains(publication.LastError, "did not require its client key") {
+				t.Fatalf("unsafe unauthenticated response was not explained: %#v", publication)
+			}
+		})
 	}
 }
 

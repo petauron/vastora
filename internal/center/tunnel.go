@@ -172,7 +172,7 @@ func finishTunnelConnectorMigration(ctx context.Context, tx *sql.Tx) error {
 }
 
 func tunnelIngressForNode(ctx context.Context, queryer networkQueryer, agentID string) ([]TunnelTaskIngress, error) {
-	rows, err := queryer.QueryContext(ctx, `SELECT p.hostname, s.protocol, s.endpoint, a.app_key, a.runtime, a.node_id, s.container_port
+	rows, err := queryer.QueryContext(ctx, `SELECT p.hostname, s.protocol, s.endpoint, a.app_key, a.runtime, a.node_id, s.name, s.container_port
 		FROM publications p
 		JOIN services s ON s.id = p.service_id
 		JOIN applications a ON a.id = s.application_id
@@ -186,9 +186,9 @@ func tunnelIngressForNode(ctx context.Context, queryer networkQueryer, agentID s
 	ingress := []TunnelTaskIngress{}
 	for rows.Next() {
 		var value TunnelTaskIngress
-		var protocol, endpoint, appKey, runtime, applicationNodeID string
+		var protocol, endpoint, appKey, runtime, applicationNodeID, serviceName string
 		var containerPort int
-		if err := rows.Scan(&value.Hostname, &protocol, &endpoint, &appKey, &runtime, &applicationNodeID, &containerPort); err != nil {
+		if err := rows.Scan(&value.Hostname, &protocol, &endpoint, &appKey, &runtime, &applicationNodeID, &serviceName, &containerPort); err != nil {
 			return nil, err
 		}
 		if protocol != "http" && protocol != "https" {
@@ -199,6 +199,9 @@ func tunnelIngressForNode(ctx context.Context, queryer networkQueryer, agentID s
 			return nil, errors.New("center: Tunnel connector service endpoint is invalid")
 		}
 		value.Service = protocol + "://" + endpoint
+		if isCPAClientAPIService(appKey, serviceName) {
+			value.Path = cpaClientAPITunnelPath
+		}
 		ingress = append(ingress, value)
 	}
 	return ingress, rows.Err()

@@ -4,7 +4,7 @@
   "apps": [
     {
       "id": "cpa",
-      "version": "7.2.129",
+      "version": "7.2.130",
       "name": {
         "en": "CPA",
         "zh-CN": "CPA"
@@ -21,7 +21,8 @@
         }
       ],
       "services": [
-        {"name":"api","protocol":"http","containerPort":8317,"defaultHostPort":8317,"healthPath":"/","management":true}
+        {"name":"api","protocol":"http","containerPort":8317,"defaultHostPort":8317,"healthPath":"/","management":true},
+        {"name":"client-api","protocol":"http","containerPort":8317,"defaultHostPort":8317,"healthPath":"/v1/models"}
       ],
       "homepage": {"service":"api","path":"/management.html"},
       "config": [

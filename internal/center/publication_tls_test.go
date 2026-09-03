@@ -20,7 +20,7 @@ func TestExistingPrivatePublicationCanSwitchBetweenHTTPAndHTTPS(t *testing.T) {
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, "10.0.0.64")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
+	if err != nil || len(services) != 2 || services[0].ApplicationID != applicationID {
 		t.Fatalf("services = %#v, err=%v", services, err)
 	}
 	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.private.example.test", DNSProvider: "manual"})
