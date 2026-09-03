@@ -41,7 +41,7 @@ func CompatibleVersion(value string) (string, error) {
 }
 
 func compatibilityError(found, reason string) error {
-	return fmt.Errorf("Tailscale %q is not compatible: %s; minimum stable version is %s. Install a supported stable package and restart tailscaled; Vastora will not replace or downgrade it automatically", found, reason, MinimumCompatibleVersion)
+	return fmt.Errorf("tailscale %q is not compatible: %s; minimum stable version is %s. Install a supported stable package and restart tailscaled; Vastora will not replace or downgrade it automatically", found, reason, MinimumCompatibleVersion)
 }
 
 type Versions struct {
