@@ -41,6 +41,7 @@ type Server struct {
 	assistantRuns            map[string]context.CancelFunc
 	assistantWatchers        map[string]struct{}
 	assistantResumeOnce      sync.Once
+	loginMu                  sync.Mutex
 	startupReady             atomic.Bool
 }
 
@@ -319,7 +320,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		writer.Header().Set("Referrer-Policy", "no-referrer")
 		writer.Header().Set("X-Frame-Options", "DENY")
-		writer.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'")
+		writer.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com")
 		next.ServeHTTP(writer, request)
 	})
 }

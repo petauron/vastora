@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestAdministratorPasswordMinimumLength(t *testing.T) {
@@ -78,5 +79,58 @@ func TestConcurrentBootstrapCreatesExactlyOneArgon2idAdministrator(t *testing.T)
 	}
 	if strings.Contains(passwordHash, "correct-horse-battery-staple") {
 		t.Fatal("administrator password was stored in plaintext")
+	}
+}
+
+func TestLoginFailuresPersistBackoffAndLockoutWithoutStoringIdentifiers(t *testing.T) {
+	directory := t.TempDir()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixed := time.Date(2026, time.September, 3, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return fixed }
+
+	expected := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 15 * time.Minute}
+	for index, want := range expected {
+		throttle, err := store.RecordLoginFailure(context.Background(), "Admin", "203.0.113.9", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if throttle.RetryAfter != want {
+			t.Fatalf("failure %d retry delay = %s, want %s", index+1, throttle.RetryAfter, want)
+		}
+	}
+	var rows int
+	var storedKeys string
+	if err := store.db.QueryRow(`SELECT COUNT(*), GROUP_CONCAT(key_hash, ',') FROM login_failures`).Scan(&rows, &storedKeys); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 || strings.Contains(strings.ToLower(storedKeys), "admin") || strings.Contains(storedKeys, "203.0.113.9") {
+		t.Fatalf("login throttle stored unexpected identifiers: rows=%d keys=%q", rows, storedKeys)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	reopened.now = func() time.Time { return fixed }
+	throttle, err := reopened.LoginThrottle(context.Background(), "admin", "203.0.113.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if throttle.RetryAfter != 15*time.Minute {
+		t.Fatalf("persistent lockout = %s, want 15m", throttle.RetryAfter)
+	}
+	if err := reopened.ClearLoginFailures(context.Background(), "ADMIN", "203.0.113.9"); err != nil {
+		t.Fatal(err)
+	}
+	throttle, err = reopened.LoginThrottle(context.Background(), "admin", "203.0.113.9")
+	if err != nil || throttle.RetryAfter != 0 {
+		t.Fatalf("successful-login reset left throttle=%s err=%v", throttle.RetryAfter, err)
 	}
 }

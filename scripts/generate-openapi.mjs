@@ -244,6 +244,17 @@ const document = {
           error: { type: "string", example: "center: request is invalid" },
         },
       },
+      LoginError: {
+        type: "object",
+        additionalProperties: false,
+        required: ["code", "error", "retryAfterSeconds", "captchaRequired"],
+        properties: {
+          code: { type: "string", enum: ["invalid_credentials", "captcha_failed", "login_throttled", "login_protection_unavailable"] },
+          error: { type: "string" },
+          retryAfterSeconds: { type: "integer", minimum: 0 },
+          captchaRequired: { type: "boolean" },
+        },
+      },
       JsonObject: { type: "object", additionalProperties: true, description: "Endpoint-specific JSON object. Runtime decoding rejects fields not declared by the corresponding Go request type." },
       PublicationIngress: publicationIngressResponseSchema,
       Publication: publicationResponseSchema,
@@ -345,6 +356,12 @@ for (const route of routes) {
       "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName",
     ];
+  } else if (route.handler === "handleLogin") {
+    operation.description = "Authenticates the administrator. Server-side account and client throttles add exponential retry delays and lock sign-in for 15 minutes after five consecutive failures. Direct Cloudflare Tunnel login additionally requires a single-use Turnstile token validated by Center.";
+    operation.requestBody.content["application/json"].schema.required = ["username", "password"];
+    operation.responses["403"] = { description: "The required login security check failed or is unavailable.", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginError" } } } };
+    operation.responses["429"] = { description: "Sign-in is temporarily throttled.", headers: { "Retry-After": { schema: { type: "integer", minimum: 1 }, description: "Seconds until another attempt is allowed." } }, content: { "application/json": { schema: { $ref: "#/components/schemas/LoginError" } } } };
+    operation.responses["401"] = { description: "The credentials were rejected.", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginError" } } } };
   } else if (route.handler === "handleCreatePublication") {
     const schema = operation.requestBody.content["application/json"].schema;
     schema.required = ["serviceId", "kind", "ingress", "dnsProvider"];

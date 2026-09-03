@@ -500,6 +500,9 @@
                           "enabled": {
                             "type": "boolean"
                           },
+                          "protectionMode": {
+                            "type": "string"
+                          },
                           "audienceKind": {
                             "type": "string"
                           },
@@ -542,13 +545,49 @@
             "$ref": "#/components/responses/Error"
           },
           "401": {
-            "$ref": "#/components/responses/Error"
+            "description": "The credentials were rejected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The required login security check failed or is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginError"
+                }
+              }
+            }
           },
           "404": {
             "$ref": "#/components/responses/Error"
           },
           "409": {
             "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "description": "Sign-in is temporarily throttled.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "Seconds until another attempt is allowed."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginError"
+                }
+              }
+            }
           },
           "500": {
             "$ref": "#/components/responses/Error"
@@ -568,12 +607,20 @@
                   },
                   "password": {
                     "type": "string"
+                  },
+                  "turnstileToken": {
+                    "type": "string"
                   }
-                }
+                },
+                "required": [
+                  "username",
+                  "password"
+                ]
               }
             }
           }
-        }
+        },
+        "description": "Authenticates the administrator. Server-side account and client throttles add exponential retry delays and lock sign-in for 15 minutes after five consecutive failures. Direct Cloudflare Tunnel login additionally requires a single-use Turnstile token validated by Center."
       }
     },
     "/api/v1/auth/logout": {
@@ -3907,6 +3954,9 @@
                   "enabled": {
                     "type": "boolean"
                   },
+                  "protectionMode": {
+                    "type": "string"
+                  },
                   "audienceKind": {
                     "type": "string"
                   },
@@ -3968,6 +4018,9 @@
                 "properties": {
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "protectionMode": {
+                    "type": "string"
                   },
                   "audienceKind": {
                     "type": "string"
@@ -6851,6 +6904,37 @@
           "error": {
             "type": "string",
             "example": "center: request is invalid"
+          }
+        }
+      },
+      "LoginError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "error",
+          "retryAfterSeconds",
+          "captchaRequired"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid_credentials",
+              "captcha_failed",
+              "login_throttled",
+              "login_protection_unavailable"
+            ]
+          },
+          "error": {
+            "type": "string"
+          },
+          "retryAfterSeconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "captchaRequired": {
+            "type": "boolean"
           }
         }
       },

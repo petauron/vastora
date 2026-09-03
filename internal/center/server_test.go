@@ -132,6 +132,86 @@ func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 	}
 }
 
+func TestDirectTunnelLoginRequiresTurnstileAndUsesCloudflareClientIdentity(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fixed := time.Date(2026, time.September, 3, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return fixed }
+	if _, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple"); err != nil {
+		t.Fatal(err)
+	}
+	now := fixed.Format(time.RFC3339Nano)
+	if _, err := store.db.Exec(`INSERT INTO center_remote_access(id, hostname, audience_kind, audience_value, protection_mode, status, created_at, updated_at)
+		VALUES(1, 'center-vastora.example.com', 'email', '', 'native', 'configured', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.saveCenterRemoteAccessTurnstile(context.Background(), cloudflareTurnstileWidget{SiteKey: "site-key", Secret: "turnstile-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	turnstile := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if request.Form.Get("secret") != "turnstile-secret" || request.Form.Get("response") != "valid-token" || request.Form.Get("remoteip") != "203.0.113.9" {
+			t.Fatalf("unexpected Turnstile verification: %#v", request.Form)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"success":true,"hostname":"center-vastora.example.com","action":"center_login"}`))
+	}))
+	defer turnstile.Close()
+	store.turnstileVerifyURL = turnstile.URL
+	store.turnstileHTTPClient = turnstile.Client()
+	handler := NewServer(store, "", false).Handler()
+
+	missingTokenBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "correct-horse-battery-staple"})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(missingTokenBody))
+	request.Host = "center-vastora.example.com"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("CF-Connecting-IP", "203.0.113.9")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || response.Header().Get("Retry-After") != "2" || !strings.Contains(response.Body.String(), `"code":"captcha_failed"`) {
+		t.Fatalf("missing Turnstile token response = %d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
+	}
+
+	fixed = fixed.Add(2 * time.Second)
+	validBody, _ := json.Marshal(map[string]string{"username": "admin", "password": "correct-horse-battery-staple", "turnstileToken": "valid-token"})
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(validBody))
+	request.Host = "center-vastora.example.com"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("CF-Connecting-IP", "203.0.113.9")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid protected login response = %d body=%q", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(validBody))
+	request.Host = "center-vastora.example.com"
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"login_protection_unavailable"`) {
+		t.Fatalf("missing Cloudflare client identity response = %d body=%q", response.Code, response.Body.String())
+	}
+
+	if _, err := store.db.Exec(`UPDATE center_remote_access SET status = 'failed' WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(validBody))
+	request.Host = "center-vastora.example.com"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("CF-Connecting-IP", "203.0.113.9")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), `"code":"login_protection_unavailable"`) {
+		t.Fatalf("failed native protection did not fail closed: status=%d body=%q", response.Code, response.Body.String())
+	}
+}
+
 func TestAuthenticationCookiesFollowDirectAndProxiedHTTPS(t *testing.T) {
 	for _, test := range []struct {
 		name           string

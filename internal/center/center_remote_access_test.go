@@ -100,6 +100,76 @@ func TestCenterRemoteAccessCreatesAccessBeforePublishingDNS(t *testing.T) {
 	}
 }
 
+func TestCenterRemoteAccessCreatesTurnstileBeforePublishingDirectTunnel(t *testing.T) {
+	operations := []string{}
+	cloudflare := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		operations = append(operations, request.Method+" "+request.URL.Path)
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/accounts/account/cfd_tunnel":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"name":"example.com"}}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/accounts/account/challenges/widgets":
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["mode"] != "managed" || !strings.Contains(mustJSONString(t, body["domains"]), "center-vastora.example.com") {
+				t.Fatalf("unexpected Turnstile widget: %#v", body)
+			}
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"sitekey":"turnstile-site-key","secret":"turnstile-secret"}}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/accounts/account/cfd_tunnel":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"tunnel-id"}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/accounts/account/cfd_tunnel/tunnel-id/token":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":"cloudflare-tunnel-token-value"}`))
+		case request.Method == http.MethodPut && request.URL.Path == "/accounts/account/cfd_tunnel/tunnel-id/configurations":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
+		case request.Method == http.MethodGet && request.URL.Path == "/zones/zone/dns_records":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":[]}`))
+		case request.Method == http.MethodPost && request.URL.Path == "/zones/zone/dns_records":
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"dns-id"}}`))
+		case request.Method == http.MethodDelete:
+			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
+		default:
+			t.Fatalf("unexpected Cloudflare request: %s %s", request.Method, request.URL.String())
+		}
+	}))
+	defer cloudflare.Close()
+
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.cloudflareOAuth = cloudflareOAuthConfig{APIURL: cloudflare.URL, HTTPClient: cloudflare.Client()}
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access", RefreshToken: "refresh", Scope: "zone.read dns.write argotunnel.write turnstile.write", ExpiresAt: time.Now().Add(time.Hour)})
+	infrastructure := &fakeBuiltinHeadscaleInstaller{}
+	server := NewServer(store, "", false).WithInfrastructureManager(infrastructure)
+	view, err := server.ConfigureCenterRemoteAccess(context.Background(), CenterRemoteAccessInput{Enabled: true, ProtectionMode: "native"}, "https://center.vastora.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.Enabled || view.ProtectionMode != "native" || view.TurnstileSiteKey != "turnstile-site-key" || view.AudienceKind != "" || view.AudienceValue != "" {
+		t.Fatalf("unexpected native remote access result: %#v", view)
+	}
+	turnstileIndex, dnsIndex := operationIndex(operations, "POST /accounts/account/challenges/widgets"), operationIndex(operations, "POST /zones/zone/dns_records")
+	if turnstileIndex < 0 || dnsIndex < 0 || turnstileIndex >= dnsIndex {
+		t.Fatalf("DNS was published before Turnstile: %v", operations)
+	}
+	var secretID string
+	if err := store.db.QueryRow(`SELECT COALESCE(turnstile_secret_id, '') FROM center_remote_access WHERE id = 1`).Scan(&secretID); err != nil || secretID == "" {
+		t.Fatalf("Turnstile secret was not stored by reference: id=%q err=%v", secretID, err)
+	}
+	view, err = server.ConfigureCenterRemoteAccess(context.Background(), CenterRemoteAccessInput{Enabled: false}, "https://center.vastora.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Enabled || operationIndex(operations, "DELETE /accounts/account/challenges/widgets/turnstile-site-key") < 0 {
+		t.Fatalf("native remote access was not fully disabled: view=%#v operations=%v", view, operations)
+	}
+}
+
 func TestNormalizeCenterRemoteAccessUsesUniversalSSLCompatibleHostname(t *testing.T) {
 	input, hostname, err := normalizeCenterRemoteAccess(CenterRemoteAccessInput{Enabled: true, AudienceKind: "email", AudienceValue: "admin@example.com"}, "https://center.vastora.example.com", "example.com")
 	if err != nil {
@@ -209,19 +279,19 @@ func TestDisabledCenterRemoteAccessDoesNotRequireDeploymentHelper(t *testing.T) 
 	}
 }
 
-func TestCloudflareIntegrationReportsAccessManagementCapability(t *testing.T) {
+func TestCloudflareIntegrationReportsLoginProtectionCapabilities(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access", RefreshToken: "refresh", Scope: "zone.read access.write access-acct.write", ExpiresAt: time.Now().Add(time.Hour)})
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{AccessToken: "access", RefreshToken: "refresh", Scope: "zone.read access.write access-acct.write turnstile.write", ExpiresAt: time.Now().Add(time.Hour)})
 	view, err := store.Integration(context.Background(), "cloudflare")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !view.AccessManagement {
-		t.Fatalf("Access management capability was not reported: %#v", view)
+	if !view.AccessManagement || !view.TurnstileManagement {
+		t.Fatalf("login protection capabilities were not reported: %#v", view)
 	}
 }
 

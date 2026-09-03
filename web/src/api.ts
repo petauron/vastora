@@ -4,7 +4,9 @@ export class APIError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly code = "request_failed"
+    readonly code = "request_failed",
+    readonly retryAfterSeconds = 0,
+    readonly captchaRequired = false
   ) {
     super(message);
   }
@@ -24,9 +26,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("X-CSRF-Token", csrfToken());
   }
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
-  const body = (await response.json().catch(() => ({}))) as T & { error?: string; code?: string };
+  const body = (await response.json().catch(() => ({}))) as T & { error?: string; code?: string; retryAfterSeconds?: number; captchaRequired?: boolean };
   if (!response.ok) {
-    throw new APIError(body.error ?? "Request failed", response.status, body.code);
+    throw new APIError(body.error ?? "Request failed", response.status, body.code, body.retryAfterSeconds, body.captchaRequired);
   }
   return body;
 }
@@ -62,10 +64,10 @@ export const api = {
       body: JSON.stringify({ username, password })
     }),
   completeSetup: (input: InitialSetupInput) => request<{ site: Site; network: InitialSetupInput["network"] }>("/api/v1/setup/complete", { method: "POST", body: JSON.stringify(input) }),
-  login: (username: string, password: string) =>
+  login: (username: string, password: string, turnstileToken = "") =>
     request<{ authenticated: boolean }>("/api/v1/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify({ username, password, ...(turnstileToken ? { turnstileToken } : {}) })
     }),
   logout: () => request<{ authenticated: boolean }>("/api/v1/auth/logout", { method: "POST", body: "{}" }),
   changePassword: (currentPassword: string, newPassword: string) => request<{ changed: boolean }>("/api/v1/auth/password", { method: "PUT", body: JSON.stringify({ currentPassword, newPassword }) }),

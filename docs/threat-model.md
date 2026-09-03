@@ -210,11 +210,16 @@
 Vastora does not protect against a malicious root user on an Agent, operate a
 quorum or leader election system, provide automatic cross-Site routing or
 Gateway HA scheduling, provide multi-user RBAC, or collect telemetry by default.
-Vastora manages Cloudflare Access only for the optional Center browser fallback.
-It creates the Access application before the proxied DNS record, limits entry to
-an exact email or email domain through one-time PIN login, and keeps Center's
-own administrator authentication as a second layer. This policy does not cover
-Agent APIs or application publications. Vastora does not manage host firewall
-rules. Publishing an application management page publicly therefore still
-relies on the application's own authentication and an explicit administrator
-confirmation.
+The optional Center browser fallback supports two explicit protection modes.
+The recommended native mode sends Cloudflare Tunnel directly to Center's login page,
+requires a hostname-bound Turnstile token on every public login, and enforces
+persistent account and client failure counters with exponential retry delays and
+a fifteen-minute lock after five consecutive failures. Counter keys use a
+database-keyed digest instead of storing raw usernames or client addresses.
+Turnstile is always
+validated by Center; its secret is encrypted at rest, while the browser receives
+only the site key. The alternative Access mode limits entry to an exact email or
+email domain through one-time PIN login before Center authentication. Neither
+mode changes the private Center address configured for Agents. Vastora does not
+manage host firewall rules or
+claim that login throttling prevents volumetric denial-of-service attacks.

@@ -9,7 +9,7 @@ Authentication is divided into four explicit audiences:
 - **Agent control-plane calls** require the bearer credential bound to the Agent id in the path.
 - **Bootstrap calls** are unauthenticated unless the operation declares a one-time enrollment bearer token. `GET /api/v1/setup/status` optionally accepts an administrator session and returns only non-sensitive bootstrap data otherwise.
 
-JSON request bodies must use `application/json`, contain exactly one value, remain at or below 1 MiB, and contain no unknown fields. Errors use the JSON shape `{ "code": "invalid_request", "error": "..." }`. The contract declares binary downloads and server-sent event streams separately from JSON responses.
+JSON request bodies must use `application/json`, contain exactly one value, remain at or below 1 MiB, and contain no unknown fields. General errors use the JSON shape `{ "code": "invalid_request", "error": "..." }`. Login failures additionally return `retryAfterSeconds` and `captchaRequired`; throttled responses also set the standard `Retry-After` header. The contract declares binary downloads and server-sent event streams separately from JSON responses.
 
 Regenerate the checked-in document after changing Center routes:
 

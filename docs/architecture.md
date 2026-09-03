@@ -159,14 +159,19 @@ still depends on it.
 The optional Center remote fallback is separate from application publications.
 It uses the first-level `center-vastora.<zone>` hostname so Cloudflare Universal
 SSL covers the browser entry even when the private Center address lives under a
-multi-level service namespace. Center creates a dedicated Cloudflare Access
-application and policy first,
+multi-level service namespace. The native mode creates a hostname-restricted
+managed Turnstile widget and stores its secret encrypted; the optional Access
+mode instead creates an email one-time-PIN application and policy. Center then
 configures a dedicated remotely managed Tunnel to
 `http://vastora-center:8080`, asks the restricted local deployer to start the
 fixed cloudflared image on `vastora-runtime`, and publishes the proxied CNAME
 last. Cleanup removes DNS first and stops the connector before deleting the
-Access application and Tunnel. Agent control APIs never share this interactive
-browser entry.
+Turnstile widget or Access application and then the Tunnel. Native-mode login
+accepts `CF-Connecting-IP` only on the exact managed hostname, validates every
+Turnstile token server-side, and combines per-client and per-account persistent
+failure throttles. Access-protected Web publications remain an explicit feature
+of Access mode because they reuse its configured email audience. Agents are not
+configured to use the interactive browser hostname.
 
 Removing one Publication leaves sibling Publications and the private Service
 running. Uninstall stops all Publications for the Application and removes their

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 59
+const centerSchemaVersion = 60
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -79,6 +79,16 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			admin_id TEXT NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
 			expires_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE login_failures (
+			scope TEXT NOT NULL CHECK(scope IN ('account', 'client')),
+			key_hash TEXT NOT NULL,
+			failed_count INTEGER NOT NULL CHECK(failed_count >= 0),
+			window_started_at TEXT NOT NULL,
+			blocked_until TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(scope, key_hash)
+		)`,
+		`CREATE INDEX login_failures_updated_idx ON login_failures(updated_at)`,
 		`CREATE TABLE catalog_sources (
 			id TEXT PRIMARY KEY,
 			display_name TEXT NOT NULL,
@@ -541,6 +551,9 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			audience_value TEXT NOT NULL,
 			otp_identity_provider_id TEXT NOT NULL DEFAULT '',
 			access_application_id TEXT NOT NULL DEFAULT '',
+			protection_mode TEXT NOT NULL DEFAULT 'access' CHECK(protection_mode IN ('access', 'native')),
+			turnstile_site_key TEXT NOT NULL DEFAULT '',
+			turnstile_secret_id TEXT REFERENCES secrets(id) ON DELETE RESTRICT,
 			tunnel_id TEXT NOT NULL DEFAULT '',
 			tunnel_token_secret_id TEXT REFERENCES secrets(id) ON DELETE RESTRICT,
 			dns_record_id TEXT NOT NULL DEFAULT '',

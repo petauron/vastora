@@ -234,8 +234,13 @@ func (s *Server) preflightInitialSetup(ctx context.Context, input InitialSetupIn
 			if cloudflareErr != nil {
 				return validatedInitialSetup{}, InitialSetupInput{}, "", cloudflareErr
 			}
-			if cloudflare.Status != "configured" || cloudflare.Mode != "oauth" || !cloudflare.AccessManagement {
-				return validatedInitialSetup{}, InitialSetupInput{}, "", errors.New("center: Cloudflare OAuth with Access permissions is required for remote access")
+			mode := strings.TrimSpace(remote.ProtectionMode)
+			if mode == "" {
+				mode = "access"
+			}
+			permissionReady := mode == "native" && cloudflare.TurnstileManagement || mode == "access" && cloudflare.AccessManagement
+			if cloudflare.Status != "configured" || cloudflare.Mode != "oauth" || !permissionReady {
+				return validatedInitialSetup{}, InitialSetupInput{}, "", errors.New("center: Cloudflare OAuth with the selected login-protection permission is required for remote access")
 			}
 			remote, _, err = normalizeCenterRemoteAccess(remote, validated.Network.AgentConnectURL, cloudflare.Endpoint)
 			if err != nil {

@@ -69,6 +69,7 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 		{"cloudflare_tunnels", []string{"agent_id", "token_secret_id"}, `SELECT token_secret_id, 'cloudflare-tunnel:' || agent_id FROM cloudflare_tunnels`},
 		{"cloudflare_tunnel_operations", []string{"agent_id", "tunnel_secret_id"}, `SELECT tunnel_secret_id, 'cloudflare-tunnel-operation:' || agent_id FROM cloudflare_tunnel_operations`},
 		{"center_remote_access", []string{"tunnel_token_secret_id"}, `SELECT tunnel_token_secret_id, 'center-remote-access-tunnel' FROM center_remote_access WHERE tunnel_token_secret_id IS NOT NULL`},
+		{"center_remote_access", []string{"turnstile_secret_id"}, `SELECT turnstile_secret_id, 'center-remote-access-turnstile' FROM center_remote_access WHERE turnstile_secret_id IS NOT NULL`},
 		{"deployments", []string{"id", "secret_id"}, `SELECT secret_id, 'deployment:' || id FROM deployments WHERE secret_id IS NOT NULL`},
 		{"application_credential_rotations", []string{"id", "secret_id"}, `SELECT secret_id, 'credential-rotation:' || id FROM application_credential_rotations WHERE secret_id IS NOT NULL`},
 		{"application_commands", []string{"id", "result_secret_id"}, `SELECT result_secret_id, 'application-command:' || id FROM application_commands WHERE result_secret_id IS NOT NULL`},

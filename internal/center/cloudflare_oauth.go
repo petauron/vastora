@@ -21,7 +21,7 @@ import (
 
 const (
 	cloudflareOAuthLifetime    = 10 * time.Minute
-	cloudflareOAuthScopes      = "zone.read dns.write argotunnel.write access.write access-acct.write offline_access"
+	cloudflareOAuthScopes      = "zone.read dns.write argotunnel.write access.write access-acct.write turnstile.write offline_access"
 	setupGatewayBindingSetting = "cloudflare_setup_gateway_binding"
 )
 
