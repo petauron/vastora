@@ -35,7 +35,7 @@ func TestApplicationInstallAndPublicationAreIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(services) != 1 || services[0].ApplicationID != applicationID || services[0].Status != "ready" {
+	if len(services) != 2 || services[0].ApplicationID != applicationID || services[0].Status != "ready" {
 		t.Fatalf("unexpected private service: %#v", services)
 	}
 	if routes, err := store.ListRoutes(ctx); err != nil || len(routes) != 0 {
@@ -134,12 +134,51 @@ func TestCloudflareWebPublicationRequiresConfiguredCenterAccess(t *testing.T) {
 	node := enrollOrchestrationNode(t, store, "tunnel-node", NodeCapabilities{Docker: true, Tunnel: true}, []networking.Candidate{{Address: "10.0.0.12", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", EnabledKinds: []string{networking.KindLAN}})
 	applicationID := installCPA(t, store, node, "10.0.0.12")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
+	if err != nil || len(services) != 2 || services[0].ApplicationID != applicationID {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
 	_, err = store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationCloudflare, Ingress: PublicationIngress{Owner: ingressTunnelConnector, EntryNodeID: node.ID}, Hostname: "cpa-tunnel-node.example.com", DNSProvider: "cloudflare"})
 	if err == nil || !strings.Contains(err.Error(), "enable the Center Cloudflare Access entry") {
 		t.Fatalf("unconfigured Center Access returned the wrong publication error: %v", err)
+	}
+}
+
+func TestCPAClientAPIPublicationPolicyIsSeparateFromManagement(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	storeCloudflareOAuthIntegration(t, store, cloudflareOAuthToken{})
+	node := enrollOrchestrationNode(t, store, "cpa-tunnel-node", NodeCapabilities{Docker: true, Tunnel: true}, []networking.Candidate{{Address: "10.0.0.13", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.13", LANAddress: "10.0.0.13", EnabledKinds: []string{networking.KindLAN}})
+	applicationID := installCPA(t, store, node, "10.0.0.13")
+	services, err := store.ListServices(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var managementService, clientAPIService ServiceView
+	for _, service := range services {
+		if service.ApplicationID != applicationID {
+			continue
+		}
+		switch service.Name {
+		case "api":
+			managementService = service
+		case cpaClientAPIServiceName:
+			clientAPIService = service
+		}
+	}
+	if managementService.ID == "" || clientAPIService.ID == "" {
+		t.Fatalf("CPA services were not separated: %#v", services)
+	}
+	if !cloudflareAccessRequiredForService(cpaAppKey, managementService.Name) || cloudflareAccessRequiredForService(cpaAppKey, clientAPIService.Name) {
+		t.Fatal("CPA management and client API received the wrong Cloudflare Access policy")
+	}
+	for _, input := range []PublicationInput{
+		{ServiceID: clientAPIService.ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.private.example.test", DNSProvider: "manual"},
+		{ServiceID: clientAPIService.ID, Kind: publicationCloudflare, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.example.com", DNSProvider: "cloudflare"},
+	} {
+		if _, err := store.CreatePublication(ctx, input); err == nil || !strings.Contains(err.Error(), "only through Cloudflare Tunnel") {
+			t.Fatalf("unsupported CPA client API publication was accepted: input=%#v err=%v", input, err)
+		}
 	}
 }
 
@@ -172,7 +211,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	if task.Kind != "application.apply" || task.Operation != "configure" || task.AppKey != cpaAppKey || task.ServiceAddress != "10.0.0.81" || len(task.Secrets) == 0 || task.RegistryCredential == nil || task.RegistryCredential.Password != "runtime-token" {
 		t.Fatalf("unexpected runtime migration task: %#v", task)
 	}
-	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.81"}]}`)
+	result := cpaApplicationResult("10.0.0.81")
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +249,7 @@ func TestAgentRuntimeGenerationFencesClaimsAndResultEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.83"}]}`)
+	result := cpaApplicationResult("10.0.0.83")
 	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false); err == nil || !strings.Contains(err.Error(), "missing application runtime generation") {
 		t.Fatalf("result without executor generation was accepted: %v", err)
 	}
@@ -246,7 +285,7 @@ func TestNewerAgentCompletesOlderPendingRuntimeTaskAtExecutedGeneration(t *testi
 	if task.RequiredRuntimeGeneration != 0 {
 		t.Fatalf("required runtime generation = %d", task.RequiredRuntimeGeneration)
 	}
-	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.85"}]}`)
+	result := cpaApplicationResult("10.0.0.85")
 	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +414,7 @@ func TestShared443AddsHAProxyInFrontOfCaddy(t *testing.T) {
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, "10.0.0.10")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 {
+	if err != nil || len(services) != 2 {
 		t.Fatalf("unexpected Web service: %#v err=%v", services, err)
 	}
 	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationPublic, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "center.example.test", DNSProvider: "manual", ConfirmHighRisk: true}); err != nil {
@@ -475,7 +514,7 @@ func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	installCPA(t, store, node, "100.64.0.40")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 {
+	if err != nil || len(services) != 2 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
 	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.tail.example.test", DNSProvider: "headscale"}); err != nil {
@@ -524,7 +563,7 @@ func TestFailedPublicationCleanupIsPersistedAndRetried(t *testing.T) {
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	installCPA(t, store, node, "100.64.0.41")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 {
+	if err != nil || len(services) != 2 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
 	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationHeadscale, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "retry.tail.example.test", DNSProvider: "headscale"})
@@ -576,7 +615,7 @@ func TestPublicationCanUseGatewayOnAnotherNode(t *testing.T) {
 	completeNextTask(t, store, gateway, "gateway.component.apply", nil)
 	installCPA(t, store, worker, "10.20.0.11")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 {
+	if err != nil || len(services) != 2 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
 	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: gateway.ID}, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err != nil {
@@ -600,7 +639,7 @@ func TestPublicationRejectsUnreachableCrossNodeOrigin(t *testing.T) {
 	completeNextTask(t, store, gateway, "gateway.component.apply", nil)
 	installCPA(t, store, worker, "10.20.0.21")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 {
+	if err != nil || len(services) != 2 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE services SET endpoint = '127.0.0.1:8317' WHERE id = ?`, services[0].ID); err != nil {
@@ -623,7 +662,7 @@ func TestPublicationRejectsCrossNodeWithoutSharedPrivateNetwork(t *testing.T) {
 	completeNextTask(t, store, gateway, "gateway.component.apply", nil)
 	installCPA(t, store, worker, "100.64.0.21")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 {
+	if err != nil || len(services) != 2 {
 		t.Fatalf("unexpected services: %#v err=%v", services, err)
 	}
 	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: gateway.ID}, Hostname: "cpa.apps.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "cannot reach") {
@@ -637,9 +676,12 @@ func installCPA(t *testing.T, store *Store, node AgentCredential, address string
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"` + address + `"}]}`)
-	completeNextTask(t, store, node, "application.apply", result)
+	completeNextTask(t, store, node, "application.apply", cpaApplicationResult(address))
 	return deployment.ApplicationID
+}
+
+func cpaApplicationResult(address string) json.RawMessage {
+	return json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"` + address + `"},{"name":"client-api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"` + address + `"}]}`)
 }
 
 func claimTask(t *testing.T, store *Store, node AgentCredential) *AgentTask {
@@ -1031,7 +1073,7 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
 	applicationID := installCPA(t, store, node, "10.0.0.63")
 	services, err := store.ListServices(ctx)
-	if err != nil || len(services) != 1 || services[0].ApplicationID != applicationID {
+	if err != nil || len(services) != 2 || services[0].ApplicationID != applicationID {
 		t.Fatalf("services = %#v, err=%v", services, err)
 	}
 	publication, err := store.CreatePublication(ctx, PublicationInput{ServiceID: services[0].ID, Kind: publicationLAN, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "cpa.test.example.test", DNSProvider: "manual"})

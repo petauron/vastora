@@ -107,6 +107,15 @@
   and sends cloudflared directly to that origin. Existing Tunnel migrations
   keep the former Caddy route until the replacement connector revision and
   external hostname probe succeed, then remove it through desired state.
+- CPA uses separate logical management and client API Services on the same
+  private origin. The management Service follows the normal private or
+  Cloudflare Access-protected Web publication policy. The client API Service
+  can only use a Cloudflare Tunnel publication whose native ingress rule
+  matches `^/v1(/.*)?$`; all other paths reach the terminal 404 rule. This API
+  hostname intentionally does not use browser-oriented Cloudflare Access and
+  instead fails closed unless an unauthenticated `/v1/models` probe receives
+  CPA's `401 Unauthorized`. The hostname is not a secret; every API request
+  still requires the independently generated CPA client key.
 - CPA management and client credentials are generated independently with the
   Center cryptographic token facility. They are removed from the Catalog form,
   encrypted in deployment state, preserved unchanged during ordinary upgrades

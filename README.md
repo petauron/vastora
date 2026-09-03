@@ -27,6 +27,9 @@ when the Center is unavailable.
   raw TCP must share `443`.
 - Signed 3x-ui, CPA, and Keeper images pinned by digest, plus a native Komari
   Agent binary pinned by platform and SHA-256.
+- Separate CPA management and public client API entries: the public hostname
+  routes only `/v1` through Cloudflare Tunnel and keeps CPA key authentication,
+  while the management page remains on its protected entry.
 - One global 3x-ui subscription controller with cross-Site VLESS workers,
   encrypted controller restore points, and sequential Alpha convergence from
   legacy per-Site controllers.

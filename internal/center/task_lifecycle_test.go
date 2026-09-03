@@ -556,7 +556,7 @@ func TestDeploymentLifecyclePreventsDuplicateInstallAndControlsDataDeletion(t *t
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
 		t.Fatalf("parallel install was not rejected: %v", err)
 	}
-	completeNextTask(t, store, node, "application.apply", json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.20"}]}`))
+	completeNextTask(t, store, node, "application.apply", cpaApplicationResult("10.0.0.20"))
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: config}); err == nil || !strings.Contains(err.Error(), "use upgrade") {
 		t.Fatalf("duplicate install was not rejected: %v", err)
 	}
@@ -585,7 +585,7 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/cpa", Config: initial}); err != nil {
 		t.Fatal(err)
 	}
-	completeNextTask(t, store, node, "application.apply", json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.30"}]}`))
+	completeNextTask(t, store, node, "application.apply", cpaApplicationResult("10.0.0.30"))
 	originalCredentials, err := store.currentCPACredentials(ctx, node.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -594,7 +594,7 @@ func TestConfigureReusesInstalledVersionAndEncryptedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configured.AppVersion != "7.2.129" {
+	if configured.AppVersion != "7.2.130" {
 		t.Fatalf("configure changed installed version: %#v", configured)
 	}
 	task := claimTask(t, store, node)
@@ -617,7 +617,7 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
 		t.Fatal(err)
 	}
-	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.31"}]}`)
+	result := cpaApplicationResult("10.0.0.31")
 	completeNextTask(t, store, node, "application.apply", result)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "already at version") {
 		t.Fatalf("same-version upgrade was accepted: %v", err)
@@ -626,11 +626,11 @@ func TestUpgradeRequiresANewerCatalogVersionAndRejectsDowngrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	upgrade, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"})
-	if err != nil || upgrade.AppVersion != "7.2.129" {
+	if err != nil || upgrade.AppVersion != "7.2.130" {
 		t.Fatalf("newer version was not accepted: %#v err=%v", upgrade, err)
 	}
 	completeNextTask(t, store, node, "application.apply", result)
-	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.130' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '7.2.131' WHERE app_key = ? AND state = 'succeeded'`, cpaAppKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "upgrade"}); err == nil || !strings.Contains(err.Error(), "downgrade is not allowed") {
@@ -647,7 +647,7 @@ func TestFailedChangeRemainsAnInstalledApplication(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
 		t.Fatal(err)
 	}
-	result := json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.32"}]}`)
+	result := cpaApplicationResult("10.0.0.32")
 	completeNextTask(t, store, node, "application.apply", result)
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "configure", Config: json.RawMessage(`{"debug":true}`)}); err != nil {
 		t.Fatal(err)
@@ -657,7 +657,7 @@ func TestFailedChangeRemainsAnInstalledApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	applications, err := store.ListApplications(ctx)
-	if err != nil || len(applications) != 1 || applications[0].InstalledVersion != "7.2.129" || applications[0].Status != "failed" {
+	if err != nil || len(applications) != 1 || applications[0].InstalledVersion != "7.2.130" || applications[0].Status != "failed" {
 		t.Fatalf("failed change lost installed state: %#v err=%v", applications, err)
 	}
 }
@@ -671,12 +671,12 @@ func TestInstalledAppCanBeUninstalledAfterCatalogRemoval(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: initial}); err != nil {
 		t.Fatal(err)
 	}
-	completeNextTask(t, store, node, "application.apply", json.RawMessage(`{"services":[{"name":"api","protocol":"http","containerPort":8317,"hostPort":8317,"address":"10.0.0.33"}]}`))
+	completeNextTask(t, store, node, "application.apply", cpaApplicationResult("10.0.0.33"))
 	if _, err := store.db.ExecContext(ctx, `UPDATE catalog_sources SET enabled = 0`); err != nil {
 		t.Fatal(err)
 	}
 	uninstall, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Operation: "uninstall"})
-	if err != nil || uninstall.AppVersion != "7.2.129" {
+	if err != nil || uninstall.AppVersion != "7.2.130" {
 		t.Fatalf("installed app became unmanageable after catalog removal: %#v err=%v", uninstall, err)
 	}
 }

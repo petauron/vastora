@@ -149,8 +149,12 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 	if serviceStatus == "stopped" || serviceStatus == "failed" {
 		return PublicationView{}, errors.New("center: service must be running before it can be published")
 	}
+	cpaClientAPI := isCPAClientAPIService(appKey, serviceName)
 	if appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster && serviceName == "subscription" && !managedSubscription {
 		return PublicationView{}, errors.New("center: use the public subscription workflow for the 3x-ui subscription service")
+	}
+	if cpaClientAPI && (input.Kind != publicationCloudflare || input.DNSProvider != "cloudflare" || input.Ingress.Owner != ingressTunnelConnector) {
+		return PublicationView{}, errors.New("center: CPA client API is published only through Cloudflare Tunnel")
 	}
 	if appProtocol == "vless/tcp/reality" {
 		var guardStatus string
@@ -160,6 +164,15 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 	}
 	if err := s.ensureServicePublicationChangeAllowed(ctx, tx, input.ServiceID); err != nil {
 		return PublicationView{}, err
+	}
+	if cpaClientAPI {
+		var active int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id = ? AND status <> 'stopped'`, input.ServiceID).Scan(&active); err != nil {
+			return PublicationView{}, err
+		}
+		if active != 0 {
+			return PublicationView{}, errors.New("center: CPA client API already has a public endpoint")
+		}
 	}
 	if management == 1 && input.Kind == publicationPublic && !input.ConfirmHighRisk {
 		return PublicationView{}, errors.New("center: publishing a management page publicly requires explicit high-risk confirmation")
@@ -290,7 +303,7 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		}
 	}
 	publicWeb := webService && (input.Kind == publicationPublic || input.Kind == publicationCloudflare)
-	cloudflareProtectedWeb := input.Kind == publicationCloudflare && !(appKey == threeXUIAppKey && serviceName == "subscription")
+	cloudflareProtectedWeb := input.Kind == publicationCloudflare && cloudflareAccessRequiredForService(appKey, serviceName)
 	if cloudflareProtectedWeb {
 		var accessReady int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM center_remote_access WHERE id = 1 AND status = 'configured' AND access_application_id <> '' AND otp_identity_provider_id <> ''`).Scan(&accessReady); err != nil {
@@ -599,6 +612,8 @@ func (s *Store) publicationAccessURL(ctx context.Context, publication Publicatio
 	}
 	if appKey == threeXUIAppKey && serviceName == "subscription" {
 		path = "/sub/"
+	} else if isCPAClientAPIService(appKey, serviceName) {
+		path = cpaClientAPIPath
 	}
 	scheme := "http"
 	if publication.TLSEnabled {
@@ -634,6 +649,7 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		}
 	}
 	homepagePaths[threeXUIAppKey+"\x00subscription"] = "/sub/"
+	homepagePaths[cpaAppKey+"\x00"+cpaClientAPIServiceName] = cpaClientAPIPath
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		p.id, p.service_id, p.kind, p.ingress_owner, COALESCE(p.entry_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,
 		p.tls_enabled, CASE WHEN p.tls_enabled = 1 AND p.kind IN ('lan_gateway', 'headscale_gateway') THEN COALESCE(c.not_after, '') ELSE '' END,

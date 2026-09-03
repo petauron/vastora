@@ -61,8 +61,20 @@ type OneTimeCredentials struct {
 
 const applicationTaskRevision int64 = 1
 const cpaAppKey = "vastora-official/cpa"
+const cpaClientAPIServiceName = "client-api"
+const cpaClientAPIPath = "/v1"
+const cpaClientAPIHealthPath = "/v1/models"
+const cpaClientAPITunnelPath = "^/v1(/.*)?$"
 const threeXUIAppKey = "vastora-official/3x-ui"
 const komariAppKey = "vastora-official/komari-agent"
+
+func isCPAClientAPIService(appKey, serviceName string) bool {
+	return appKey == cpaAppKey && serviceName == cpaClientAPIServiceName
+}
+
+func cloudflareAccessRequiredForService(appKey, serviceName string) bool {
+	return !(appKey == threeXUIAppKey && serviceName == "subscription") && !isCPAClientAPIService(appKey, serviceName)
+}
 
 type registryCredentialQuerier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row

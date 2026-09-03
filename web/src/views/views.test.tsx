@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppData } from "../App";
-import type { ApplicationCommand } from "../types";
+import type { ApplicationCommand, Publication } from "../types";
 import { APIError, api } from "../api";
 import { vastoraDomainDefaults } from "../lib/network";
 import { AppsView } from "./AppsView";
@@ -301,7 +301,7 @@ describe("network and app views", () => {
   it("keeps CPA installation one-click and protects reveal and rotation", async () => {
     const data = dashboard();
     const reauthentication = ["test", "reauth"].join("-");
-    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.129", name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [{ key: "debug", label: { en: "Debug logging", "zh-CN": "调试日志" }, description: { en: "Extra logs", "zh-CN": "额外日志" }, type: "boolean", required: false, secret: false, default: false }] } }];
+    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.130", name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [{ key: "debug", label: { en: "Debug logging", "zh-CN": "调试日志" }, description: { en: "Extra logs", "zh-CN": "额外日志" }, type: "boolean", required: false, secret: false, default: false }] } }];
     data.applications = [];
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装")?.click());
@@ -311,7 +311,7 @@ describe("network and app views", () => {
     expect(document.body.textContent).not.toContain("时区");
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.trim() === "取消")?.click());
 
-    data.applications = [{ id: "cpa-application", name: "CPA", nodeId: "agent", siteId: "site", appKey: "vastora-official/cpa", image: "cpa", status: "running", runtime: "docker", installedVersion: "7.2.129", availableVersion: "7.2.129", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    data.applications = [{ id: "cpa-application", name: "CPA", nodeId: "agent", siteId: "site", appKey: "vastora-official/cpa", image: "cpa", status: "running", runtime: "docker", installedVersion: "7.2.130", availableVersion: "7.2.130", updateAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const reveal = vi.spyOn(api, "revealApplicationCredentials").mockResolvedValue({ kind: "cpa", managementKey: "management-value", clientApiKey: "client-value" });
     const rotate = vi.spyOn(api, "rotateApplicationCredentials").mockResolvedValue({ id: "rotation-1", applicationId: "cpa-application", target: "management", state: "pending", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" });
     act(() => root?.render(<ThemeProvider><AppsView data={data} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
@@ -520,6 +520,42 @@ describe("network and app views", () => {
     expect(status).toHaveBeenCalledOnce();
     expect(document.body.textContent).not.toContain("尚未读取 Center 远程入口状态");
     expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("创建访问方式"))?.disabled).toBe(false);
+  });
+
+  it("opens the CPA client API through a dedicated Tunnel flow without requiring Center Access", async () => {
+    const data = dashboard();
+    data.apps = [{ key: "vastora-official/cpa", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "cpa", version: "7.2.130", name: { en: "CPA", "zh-CN": "CPA" }, description: { en: "Proxy API", "zh-CN": "代理 API" }, config: [] } }];
+    data.applications = [{ ...data.applications[0], id: "cpa-application", name: "CPA", appKey: "vastora-official/cpa", image: "cpa", runtime: "docker", installedVersion: "7.2.130", availableVersion: "7.2.130" }];
+    data.services = [
+      { id: "cpa-api", applicationId: "cpa-application", siteId: "site", name: "api", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: true, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" },
+      { id: "cpa-client-api", applicationId: "cpa-application", siteId: "site", name: "client-api", protocol: "http", containerPort: 8317, hostPort: 8317, endpoint: "192.168.1.2:8317", source: "catalog", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }
+    ];
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
+    data.centerRemoteAccess = null;
+    data.centerRemoteAccessError = "Center Access is unavailable";
+    const status = vi.spyOn(api, "centerRemoteAccess").mockRejectedValue(new Error("unexpected Center Access request"));
+    const created: Publication = { id: "cpa-public-api", serviceId: "cpa-client-api", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: "cpa.example.com", dnsProvider: "cloudflare", tlsEnabled: true, desiredRevision: 1, appliedRevision: 0, status: "pending", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" };
+    const create = vi.spyOn(api, "createPublication").mockResolvedValue(created);
+    const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
+    const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+
+    act(() => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("开启公网 API"))?.click());
+
+    expect(document.body.textContent).toContain("开启 CPA 公网 API");
+    expect(document.body.textContent).toContain("只转发 /v1 请求");
+    expect(document.body.textContent).toContain("API 域名（可自定义）");
+    expect(document.body.textContent).not.toContain("谁需要访问");
+    expect(document.body.textContent).not.toContain("Center 远程入口状态");
+    expect(status).not.toHaveBeenCalled();
+    const submit = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "开启公网 API")!;
+    expect(submit.disabled).toBe(false);
+    await act(async () => {
+      submit.click();
+      await Promise.resolve();
+    });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ serviceId: "cpa-client-api", kind: "cloudflare_tunnel", ingress: { owner: "tunnel_connector", entryNodeId: "agent" }, hostname: undefined, dnsProvider: "cloudflare" }));
+    expect(mutate).toHaveBeenCalledWith(expect.any(Function), "公网 API 已开启。", { reportError: false });
   });
 
 	it("shows a failed install with its reason and a retry action", () => {

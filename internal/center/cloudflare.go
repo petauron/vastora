@@ -279,7 +279,7 @@ func (s *Store) reconcileCloudflarePublication(ctx context.Context, publicationI
 				return err
 			}
 		}
-		if !(appKey == threeXUIAppKey && serviceName == "subscription") && accessApplicationID == "" {
+		if cloudflareAccessRequiredForService(appKey, serviceName) && accessApplicationID == "" {
 			if err := s.ensureCloudflareServiceAccess(ctx, publicationID, revision, hostname); err != nil {
 				return err
 			}
@@ -560,7 +560,11 @@ func (client cloudflareClient) tunnelToken(ctx context.Context, tunnelID string)
 func (client cloudflareClient) putTunnelConfiguration(ctx context.Context, tunnelID string, ingress []TunnelTaskIngress) error {
 	rules := make([]map[string]string, 0, len(ingress)+1)
 	for _, value := range ingress {
-		rules = append(rules, map[string]string{"hostname": value.Hostname, "service": value.Service})
+		rule := map[string]string{"hostname": value.Hostname, "service": value.Service}
+		if value.Path != "" {
+			rule["path"] = value.Path
+		}
+		rules = append(rules, rule)
 	}
 	rules = append(rules, map[string]string{"service": "http_status:404"})
 	var ignored json.RawMessage

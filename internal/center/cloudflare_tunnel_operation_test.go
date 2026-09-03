@@ -233,3 +233,33 @@ func TestCloudflareTunnelCreationConcurrentCallsConverge(t *testing.T) {
 		t.Fatalf("concurrent requests created %d Tunnels", createCalls)
 	}
 }
+
+func TestCloudflareTunnelConfigurationPreservesPathRules(t *testing.T) {
+	var payload struct {
+		Config struct {
+			Ingress []struct {
+				Hostname string `json:"hostname"`
+				Service  string `json:"service"`
+				Path     string `json:"path"`
+			} `json:"ingress"`
+		} `json:"config"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut || request.URL.Path != "/accounts/account/cfd_tunnel/tunnel/configurations" {
+			t.Fatalf("unexpected Tunnel configuration request: %s %s", request.Method, request.URL.Path)
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{}}`))
+	}))
+	defer server.Close()
+	client := cloudflareClient{accountID: "account", token: "token", baseURL: server.URL, http: server.Client()}
+	if err := client.putTunnelConfiguration(context.Background(), "tunnel", []TunnelTaskIngress{{Hostname: "cpa.example.com", Service: "http://10.0.0.4:8317", Path: cpaClientAPITunnelPath}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Config.Ingress) != 2 || payload.Config.Ingress[0].Hostname != "cpa.example.com" || payload.Config.Ingress[0].Path != cpaClientAPITunnelPath || payload.Config.Ingress[1].Service != "http_status:404" || payload.Config.Ingress[1].Path != "" {
+		t.Fatalf("unexpected Tunnel ingress payload: %#v", payload.Config.Ingress)
+	}
+}
