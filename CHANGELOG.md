@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.0-alpha.105](https://github.com/petauron/vastora/compare/v0.1.0-alpha.104...v0.1.0-alpha.105) (2026-09-03)
+
+
+### Features
+
+* **center:** add REALITY behavior security check ([#343](https://github.com/petauron/vastora/issues/343)) ([bc7adb4](https://github.com/petauron/vastora/commit/bc7adb496763e6820e14b7279717c7cc5daaecb7)), closes [#321](https://github.com/petauron/vastora/issues/321)
+* **center:** harden direct Tunnel login ([#338](https://github.com/petauron/vastora/issues/338)) ([49825cf](https://github.com/petauron/vastora/commit/49825cfe8437f5825a98be55804856b1d66cdf79))
+* **cpa:** publish authenticated client API ([#345](https://github.com/petauron/vastora/issues/345)) ([452ec06](https://github.com/petauron/vastora/commit/452ec060eb75ac4644d53f573f352771f3a465f9))
+
 ## [0.1.0-alpha.104](https://github.com/petauron/vastora/compare/v0.1.0-alpha.103...v0.1.0-alpha.104) (2026-09-03)
 
 
