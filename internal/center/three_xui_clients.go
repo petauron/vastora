@@ -109,7 +109,11 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 		return ApplicationCommandView{}, err
 	}
 	if appKey != threeXUIAppKey || status != "running" || role != threeXUIRoleMaster {
-		return ApplicationCommandView{}, errors.New("center: client management is available only on the running Site 3x-ui controller")
+		return ApplicationCommandView{}, errors.New("center: client management is available only on the running global 3x-ui controller")
+	}
+	controllerApplicationID, controllerAgentID, err := runningGlobalThreeXUIController(ctx, tx)
+	if err != nil || controllerApplicationID != input.ApplicationID || controllerAgentID != agentID {
+		return ApplicationCommandView{}, errors.New("center: client management is available only on the running global 3x-ui controller")
 	}
 	var active int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
@@ -218,10 +222,14 @@ func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID strin
 		COALESCE(plan.status, 'active'), COALESCE(plan.last_error, ''), COALESCE(plan.revision, 0), COALESCE(plan.inbound_tag, '')
 		FROM services s JOIN applications target ON target.id = s.application_id JOIN agents agent ON agent.id = target.node_id
 		LEFT JOIN three_x_ui_inbound_plans plan ON plan.service_id = s.id
-		WHERE target.site_id = (SELECT site_id FROM applications WHERE id = ?)
-		AND target.app_key = ? AND target.status = 'running'
+		WHERE target.app_key = ? AND target.status = 'running'
+		AND (target.id = ? OR EXISTS (
+			SELECT 1 FROM three_x_ui_nodes topology
+			WHERE topology.worker_application_id = target.id
+			AND topology.master_application_id = ? AND topology.status = 'ready'
+		))
 		AND s.name GLOB 'inbound-[0-9]*' AND s.app_protocol = 'vless/tcp/reality' AND s.status IN ('running', 'ready')
-		ORDER BY agent.name, CAST(SUBSTR(s.name, 9) AS INTEGER)`, applicationID, threeXUIAppKey)
+		ORDER BY agent.name, CAST(SUBSTR(s.name, 9) AS INTEGER)`, threeXUIAppKey, applicationID, applicationID)
 	if err != nil {
 		return nil, err
 	}

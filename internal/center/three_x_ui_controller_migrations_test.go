@@ -18,6 +18,13 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	ctx := context.Background()
 	master := enrollOrchestrationNode(t, store, "old-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.10", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.10", HeadscaleAddress: "100.64.0.10", EnabledKinds: []string{networking.KindHeadscale}})
 	worker := enrollOrchestrationNode(t, store, "new-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.20", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.20", HeadscaleAddress: "100.64.0.20", EnabledKinds: []string{networking.KindHeadscale}})
+	remoteSite, err := store.CreateSite(ctx, SiteInput{Name: "Remote", Code: "remote-controller", Timezone: "UTC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET site_id = ? WHERE id = ?`, remoteSite.ID, worker.ID); err != nil {
+		t.Fatal(err)
+	}
 	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
 
 	masterDeployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})

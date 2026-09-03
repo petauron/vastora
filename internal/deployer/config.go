@@ -366,6 +366,9 @@ func writeHeadscaleSite(result *strings.Builder, hostname, listenerKind, centerO
 
 https://%s:%d {
 	bind 0.0.0.0
+	handle /install/docker.sh {
+		reverse_proxy %s
+	}
 	handle /install/agent.sh {
 		reverse_proxy %s
 	}
@@ -379,5 +382,5 @@ https://%s:%d {
 		reverse_proxy %s:8081
 	}
 }
-`, hostname, httpPort, hostname, httpsPort, centerOrigin, centerOrigin, centerOrigin, dockerruntime.HeadscaleAlias))
+`, hostname, httpPort, hostname, httpsPort, centerOrigin, centerOrigin, centerOrigin, centerOrigin, dockerruntime.HeadscaleAlias))
 }

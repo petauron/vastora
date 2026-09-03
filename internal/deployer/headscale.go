@@ -853,7 +853,7 @@ func waitForURL(ctx context.Context, httpClient *http.Client, target string, tim
 
 func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, internalPort int, timeout time.Duration) error {
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.Path != "" || parsed.RawPath != "" || strings.ContainsAny(endpoint, "?#") || parsed.Opaque != "" {
 		return errors.New("deployer: local gateway endpoint is invalid")
 	}
 	transport := &http.Transport{
@@ -902,10 +902,19 @@ func waitForLocalGateway(ctx context.Context, endpoint, healthPath string, inter
 }
 
 func localGatewayProbeRequest(ctx context.Context, authority, healthPath string) (*http.Request, error) {
-	if strings.TrimSpace(authority) == "" || !strings.HasPrefix(healthPath, "/") || strings.HasPrefix(healthPath, "//") || strings.ContainsAny(healthPath, "?#") {
+	if strings.TrimSpace(authority) == "" {
 		return nil, errors.New("deployer: local gateway health target is invalid")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, localGatewayProbeOrigin+healthPath, nil)
+	var target string
+	switch healthPath {
+	case "/health":
+		target = localGatewayProbeOrigin + "/health"
+	case "/healthz":
+		target = localGatewayProbeOrigin + "/healthz"
+	default:
+		return nil, errors.New("deployer: local gateway health target is invalid")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -43,7 +43,7 @@ func TestLocalGatewayProbeUsesPinnedRequestDestination(t *testing.T) {
 	if request.URL.String() != localGatewayProbeOrigin+"/health" || request.Host != "headscale.example.com" {
 		t.Fatalf("local probe target = %q host = %q", request.URL.String(), request.Host)
 	}
-	for _, path := range []string{"//metadata.invalid", "/health?target=metadata", "/health#metadata", "health"} {
+	for _, path := range []string{"//metadata.invalid", "/health?target=metadata", "/health#metadata", "health", "/health/../admin", "/%2f%2fmetadata.invalid", "/unknown"} {
 		if _, err := localGatewayProbeRequest(context.Background(), "headscale.example.com", path); err == nil {
 			t.Fatalf("unsafe local probe path was accepted: %q", path)
 		}
@@ -56,7 +56,9 @@ func TestLocalGatewayProbeRejectsNonOriginEndpoints(t *testing.T) {
 		"https://user:credential@headscale.example.com",
 		"https://headscale.example.com/another-target",
 		"https://headscale.example.com?target=another",
+		"https://headscale.example.com?",
 		"https://headscale.example.com#another",
+		"https://headscale.example.com#",
 	} {
 		if err := waitForLocalGateway(context.Background(), endpoint, "/health", 8443, 0); err == nil || !strings.Contains(err.Error(), "endpoint is invalid") {
 			t.Fatalf("non-origin probe endpoint was accepted: %q err=%v", endpoint, err)
@@ -119,7 +121,7 @@ func TestGeneratedConfigurationUsesStandardHTTPSAndKeepsSecretsOut(t *testing.T)
 		t.Fatalf("unexpected Headscale configuration:\n%s", headscale)
 	}
 	caddy := string(renderCaddyfile("https://center.example.com", dockerruntime.CenterAlias+":8080", "https://headscale.example.com", []string{"100.64.0.1"}, []string{"203.0.113.10"}, []deployapi.CenterEndpointAlias{{URL: "https://old-center.example.com"}}, nil))
-	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || strings.Count(caddy, "bind 0.0.0.0") < 6 || !strings.Contains(caddy, "reverse_proxy "+dockerruntime.CenterAlias+":8080") || !strings.Contains(caddy, "reverse_proxy "+dockerruntime.HeadscaleAlias+":8081") || !strings.Contains(caddy, "tls /etc/caddy/system/center.crt /etc/caddy/system/center.key") || !strings.Contains(caddy, "handle /install/agent.sh") || !strings.Contains(caddy, "handle /api/v1/agent-binaries/*") || !strings.Contains(caddy, "handle /api/v1/agent-decommission-results/*") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com:12443") || !strings.Contains(caddy, "https://center.example.com:10443") || !strings.Contains(caddy, "https://headscale.example.com:443") || strings.Contains(caddy, ":8443") {
+	if !strings.Contains(caddy, "admin unix//run/vastora/caddy-admin.sock|0600") || strings.Count(caddy, "bind 0.0.0.0") < 6 || !strings.Contains(caddy, "reverse_proxy "+dockerruntime.CenterAlias+":8080") || !strings.Contains(caddy, "reverse_proxy "+dockerruntime.HeadscaleAlias+":8081") || !strings.Contains(caddy, "tls /etc/caddy/system/center.crt /etc/caddy/system/center.key") || !strings.Contains(caddy, "handle /install/docker.sh") || !strings.Contains(caddy, "handle /install/agent.sh") || !strings.Contains(caddy, "handle /api/v1/agent-binaries/*") || !strings.Contains(caddy, "handle /api/v1/agent-decommission-results/*") || !strings.Contains(caddy, "redir https://{host}{uri} 308") || !strings.Contains(caddy, "https://center.example.com:12443") || !strings.Contains(caddy, "https://center.example.com:10443") || !strings.Contains(caddy, "https://headscale.example.com:443") || strings.Contains(caddy, ":8443") {
 		t.Fatalf("unexpected Caddy configuration:\n%s", caddy)
 	}
 	policy := string(renderHeadscalePolicy())

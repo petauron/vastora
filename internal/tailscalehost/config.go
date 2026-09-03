@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	SupportedVersion = "1.102.3"
-	FixedPort        = 41641
+	// Installation pin and compatibility floor are intentionally independent.
+	DefaultInstallVersion    = "1.102.3"
+	MinimumCompatibleVersion = "1.102.3"
+	FixedPort                = 41641
 )
 
 type ConfigVAlpha struct {

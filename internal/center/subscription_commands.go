@@ -40,7 +40,11 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 		return ApplicationCommandView{}, err
 	}
 	if appKey != threeXUIAppKey || status != "running" || role != threeXUIRoleMaster {
-		return ApplicationCommandView{}, errors.New("center: public subscription is available only on the running Site 3x-ui controller")
+		return ApplicationCommandView{}, errors.New("center: public subscription is available only on the running global 3x-ui controller")
+	}
+	controllerApplicationID, controllerAgentID, err := runningGlobalThreeXUIController(ctx, s.db)
+	if err != nil || controllerApplicationID != input.ApplicationID || controllerAgentID != agentID {
+		return ApplicationCommandView{}, errors.New("center: public subscription is available only on the running global 3x-ui controller")
 	}
 	var active int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {

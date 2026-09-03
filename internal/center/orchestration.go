@@ -73,11 +73,17 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_nodes WHERE worker_application_id = ?`, applicationID); err != nil {
 			return "", fmt.Errorf("center: reset 3x-ui topology role: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_control_plane(id, controller_application_id, selection_reason, selected_at)
+			VALUES(1, ?, 'install:first-global-controller', ?)
+			ON CONFLICT(id) DO UPDATE SET controller_application_id = excluded.controller_application_id,
+			selection_reason = excluded.selection_reason, selected_at = excluded.selected_at`, applicationID, now.Format(time.RFC3339Nano)); err != nil {
+			return "", fmt.Errorf("center: select global 3x-ui subscription controller: %w", err)
+		}
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleWorker {
-		var masterApplicationID string
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE site_id = ? AND app_key = ? AND role = 'master' AND status = 'running'`, siteID, threeXUIAppKey).Scan(&masterApplicationID); err != nil {
-			return "", errors.New("center: this Site has no running 3x-ui controller")
+		masterApplicationID, _, err := runningGlobalThreeXUIController(ctx, tx)
+		if err != nil {
+			return "", errors.New("center: the global 3x-ui subscription controller is unavailable")
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id, master_application_id, status, last_error, created_at, updated_at)
 			VALUES(?, ?, 'pending', '', ?, ?)
@@ -457,12 +463,15 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 		availableVersions[app.Key] = app.App.Version
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.name, a.node_id, a.site_id, a.app_key, a.image, a.status, a.runtime, a.role,
-		COALESCE(n.master_application_id, ''), COALESCE(n.status, ''), COALESCE(n.last_error, ''),
+		CASE WHEN a.app_key = 'vastora-official/3x-ui' THEN COALESCE(control.controller_application_id, '') ELSE '' END,
+		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND a.role = 'worker' AND COALESCE(n.master_application_id, '') <> COALESCE(control.controller_application_id, '') THEN 'failed' ELSE COALESCE(n.status, '') END,
+		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND a.role = 'worker' AND COALESCE(n.master_application_id, '') <> COALESCE(control.controller_application_id, '') THEN 'VLESS node is linked to a legacy controller; finish global convergence first' ELSE COALESCE(n.last_error, '') END,
 		COALESCE(b.state, ''), COALESCE(b.updated_at, ''),
 		COALESCE(CASE WHEN latest.operation IN ('install', 'upgrade', 'configure') THEN latest.app_version ELSE '' END, ''),
 		a.created_at, a.updated_at
 		FROM applications a
 		LEFT JOIN three_x_ui_nodes n ON n.worker_application_id = a.id
+		LEFT JOIN three_x_ui_control_plane control ON control.id = 1
 		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
 		LEFT JOIN deployments latest ON latest.rowid = (
 			SELECT candidate.rowid FROM deployments candidate

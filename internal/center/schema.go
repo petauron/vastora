@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 56
+const centerSchemaVersion = 58
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -253,7 +253,23 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(node_id, app_key)
 		)`,
-		`CREATE UNIQUE INDEX applications_one_three_x_ui_master_idx ON applications(site_id) WHERE app_key = 'vastora-official/3x-ui' AND role = 'master' AND status IN ('pending', 'deploying', 'running')`,
+		`CREATE TRIGGER applications_one_global_three_x_ui_master_insert
+			BEFORE INSERT ON applications
+			WHEN NEW.app_key = 'vastora-official/3x-ui' AND NEW.role = 'master' AND NEW.status IN ('pending', 'deploying', 'running')
+			AND EXISTS (SELECT 1 FROM applications existing WHERE existing.app_key = 'vastora-official/3x-ui' AND existing.role = 'master' AND existing.status IN ('pending', 'deploying', 'running'))
+			BEGIN SELECT RAISE(ABORT, 'a global 3x-ui subscription controller already exists'); END`,
+		`CREATE TRIGGER applications_one_global_three_x_ui_master_update
+			BEFORE UPDATE OF app_key, role, status ON applications
+			WHEN NEW.app_key = 'vastora-official/3x-ui' AND NEW.role = 'master' AND NEW.status IN ('pending', 'deploying', 'running')
+			AND NOT (OLD.app_key = 'vastora-official/3x-ui' AND OLD.role = 'master' AND OLD.status IN ('pending', 'deploying', 'running'))
+			AND EXISTS (SELECT 1 FROM applications existing WHERE existing.id <> NEW.id AND existing.app_key = 'vastora-official/3x-ui' AND existing.role = 'master' AND existing.status IN ('pending', 'deploying', 'running'))
+			BEGIN SELECT RAISE(ABORT, 'a global 3x-ui subscription controller already exists'); END`,
+		`CREATE TABLE three_x_ui_control_plane (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			controller_application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE RESTRICT,
+			selection_reason TEXT NOT NULL,
+			selected_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE three_x_ui_nodes (
 			worker_application_id TEXT PRIMARY KEY REFERENCES applications(id) ON DELETE CASCADE,
 			master_application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
@@ -287,9 +303,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			last_error TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'replace' CHECK(kind IN ('replace', 'consolidate')),
+			failed_worker_application_id TEXT NOT NULL DEFAULT '',
 			CHECK(source_application_id <> target_application_id)
 		)`,
-		`CREATE UNIQUE INDEX three_x_ui_migrations_one_active_idx ON three_x_ui_migrations(site_id) WHERE state IN ('backing_up', 'restoring', 'switching')`,
+		`CREATE UNIQUE INDEX three_x_ui_migrations_one_active_idx ON three_x_ui_migrations((1)) WHERE state IN ('backing_up', 'restoring', 'switching')`,
 		`CREATE TABLE services (
 			id TEXT PRIMARY KEY,
 			application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
@@ -610,33 +628,22 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
 			))
-			AND EXISTS (
-				SELECT 1 FROM three_x_ui_migrations migration
-				JOIN applications queued ON queued.id = NEW.application_id
-				WHERE migration.state IN ('backing_up', 'restoring', 'switching')
-				AND migration.site_id = queued.site_id
-			)
+			AND EXISTS (SELECT 1 FROM three_x_ui_migrations WHERE state IN ('backing_up', 'restoring', 'switching'))
 			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
 		`CREATE TRIGGER application_command_updates_block_during_three_x_ui_migration
-			BEFORE UPDATE OF application_id, kind, input_json, state ON application_commands
+			BEFORE UPDATE OF application_id, kind, input_json, state, reconciliation_required ON application_commands
 			WHEN NEW.kind <> '3xui.controller.manage' AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
 			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
 			))
-			AND EXISTS (
-				SELECT 1 FROM three_x_ui_migrations migration
-				JOIN applications queued ON queued.id = NEW.application_id
-				WHERE migration.state IN ('backing_up', 'restoring', 'switching')
-				AND migration.site_id = queued.site_id
-			)
+			AND EXISTS (SELECT 1 FROM three_x_ui_migrations WHERE state IN ('backing_up', 'restoring', 'switching'))
 			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
 		`CREATE TRIGGER deployments_block_during_three_x_ui_migration
 			BEFORE INSERT ON deployments
 			WHEN NEW.app_key = 'vastora-official/3x-ui' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE state IN ('backing_up', 'restoring', 'switching')
-				AND (source_application_id = NEW.application_id OR target_application_id = NEW.application_id)
 			)
 			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
 		`CREATE TRIGGER deployments_block_during_three_x_ui_data_plane
@@ -644,10 +651,9 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			WHEN NEW.app_key = 'vastora-official/3x-ui' AND EXISTS (
 				SELECT 1 FROM application_commands command
 				JOIN applications command_app ON command_app.id = command.application_id
-				JOIN applications deployment_app ON deployment_app.id = NEW.application_id
 				WHERE (command.state IN ('pending', 'running') OR command.reconciliation_required = 1)
 				AND command.kind <> '3xui.controller.manage'
-				AND command_app.site_id = deployment_app.site_id
+				AND command_app.app_key = 'vastora-official/3x-ui'
 			)
 			BEGIN SELECT RAISE(ABORT, '3x-ui data-plane operation is in progress'); END`,
 		`CREATE TRIGGER application_commands_block_during_three_x_ui_deployment
@@ -656,11 +662,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
 			AND EXISTS (
 				SELECT 1 FROM deployments deployment
-				JOIN applications deployment_app ON deployment_app.id = deployment.application_id
-				JOIN applications command_app ON command_app.id = NEW.application_id
 				WHERE deployment.app_key = 'vastora-official/3x-ui'
 				AND (deployment.state IN ('pending', 'running') OR deployment.reconciliation_required = 1)
-				AND deployment_app.site_id = command_app.site_id
 			)
 			BEGIN SELECT RAISE(ABORT, '3x-ui deployment is in progress'); END`,
 		`CREATE TRIGGER application_command_updates_block_during_three_x_ui_deployment
@@ -668,11 +671,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile')
 			AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1) AND EXISTS (
 				SELECT 1 FROM deployments deployment
-				JOIN applications deployment_app ON deployment_app.id = deployment.application_id
-				JOIN applications command_app ON command_app.id = NEW.application_id
 				WHERE deployment.app_key = 'vastora-official/3x-ui'
 				AND (deployment.state IN ('pending', 'running') OR deployment.reconciliation_required = 1)
-				AND deployment_app.site_id = command_app.site_id
 			)
 			BEGIN SELECT RAISE(ABORT, '3x-ui deployment is in progress'); END`,
 		`CREATE TABLE task_events (

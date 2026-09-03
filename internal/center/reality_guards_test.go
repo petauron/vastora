@@ -70,6 +70,7 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 			t.Fatal(err)
 		}
 	}
+	selectTestThreeXUIController(t, store, "reality-guard-app")
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)

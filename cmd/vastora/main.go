@@ -82,6 +82,7 @@ Usage:
   vastora agent configure-center --center-url URL [--ca-certificate FILE] [--defer-loopback-health-verification]
   vastora agent resolve-legacy-task --task-id ID --confirm-external-state-reviewed
   vastora agent adopt-tailscale --confirm-vastora-ownership
+  vastora agent check-tailscale [--require-running]
   vastora agent update [--data-dir /var/lib/vastora/agent] [--center-url URL]
   vastora agent uninstall --purge
   vastora agent serve --data-dir DIR [--listen 127.0.0.1:8090]

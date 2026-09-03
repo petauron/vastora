@@ -1934,6 +1934,7 @@
           "Applications"
         ],
         "summary": "Create Three XUIController Migration",
+        "description": "Move the single global 3x-ui controller to a connected VLESS node in any Site, or convert a legacy per-Site controller into a worker attached to the current global controller. Legacy Alpha conversion always stores a restore point first and is globally serialized.",
         "operationId": "createThreeXUIControllerMigration_post",
         "x-vastora-audience": "browser-admin",
         "security": [
@@ -2009,6 +2010,7 @@
           "Applications"
         ],
         "summary": "List Three XUIController Migrations",
+        "description": "Lists globally serialized 3x-ui workflows. The kind is replace for an explicit global-controller move and consolidate for forward conversion of a legacy per-Site controller.",
         "operationId": "listThreeXUIControllerMigrations_get",
         "x-vastora-audience": "browser-admin",
         "security": [

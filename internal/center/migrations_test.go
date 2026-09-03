@@ -58,6 +58,82 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 	}
 }
 
+func TestVersion57MigrationSelectsOneGlobalThreeXUIControllerAndQueuesLegacyConvergence(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 56); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	older := now.Add(-time.Hour).Format(time.RFC3339Nano)
+	newer := now.Format(time.RFC3339Nano)
+	statements := []string{
+		`INSERT INTO sites(id, organization_id, name, code, timezone, status, created_at, updated_at) VALUES
+			('global-site-a', '` + defaultOrganizationID + `', 'A', 'global-a', 'UTC', 'active', '` + older + `', '` + older + `'),
+			('global-site-b', '` + defaultOrganizationID + `', 'B', 'global-b', 'UTC', 'active', '` + newer + `', '` + newer + `')`,
+		`INSERT INTO agents(id, name, credential_hash, version, status, enrolled_at, last_seen_at, site_id) VALUES
+			('global-agent-a', 'A', X'5701', '0.1.0-alpha.1', 'active', '` + older + `', '` + newer + `', 'global-site-a'),
+			('global-agent-b', 'B', X'5702', '0.1.0-alpha.1', 'active', '` + newer + `', '` + newer + `', 'global-site-b')`,
+		`INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at) VALUES
+			('global-controller-a', '3x-ui A', 'global-agent-a', 'global-site-a', '` + threeXUIAppKey + `', 'example/3x-ui', 'running', 'docker', 'master', '` + older + `', '` + newer + `'),
+			('global-controller-b', '3x-ui B', 'global-agent-b', 'global-site-b', '` + threeXUIAppKey + `', 'example/3x-ui', 'running', 'docker', 'master', '` + newer + `', '` + newer + `')`,
+		`INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, management, status, created_at, updated_at)
+			VALUES('global-panel-b', 'global-controller-b', 'global-site-b', 'panel', 'http', 2053, 2053, '10.0.0.2:2053', 'catalog', 1, 'ready', '` + newer + `', '` + newer + `')`,
+		`INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider, status, created_at, updated_at)
+			VALUES('global-panel-publication-b', 'global-panel-b', 'lan_gateway', 'site_gateway', 'global-agent-b', 'panel.example.test', 'manual', 'ready', '` + newer + `', '` + newer + `')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var controllerID string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT controller_application_id FROM three_x_ui_control_plane WHERE id = 1`).Scan(&controllerID); err != nil || controllerID != "global-controller-b" {
+		t.Fatalf("global controller = %q, err = %v", controllerID, err)
+	}
+	var kind, sourceID, targetID, state, step string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT kind, source_application_id, target_application_id, state, step FROM three_x_ui_migrations WHERE kind = 'consolidate'`).Scan(&kind, &sourceID, &targetID, &state, &step); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "consolidate" || sourceID != "global-controller-a" || targetID != "global-controller-b" || state != "backing_up" || step != "backup" {
+		t.Fatalf("automatic convergence = kind=%q source=%q target=%q state=%q step=%q", kind, sourceID, targetID, state, step)
+	}
+	var queued int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = 'global-controller-a' AND kind = '3xui.controller.manage' AND state = 'pending'`).Scan(&queued); err != nil || queued != 1 {
+		t.Fatalf("queued restore point commands = %d, err = %v", queued, err)
+	}
+	if _, err := migrated.db.ExecContext(ctx, `UPDATE applications SET status = 'running' WHERE id = 'global-controller-a'`); err != nil {
+		t.Fatalf("legacy controller self-update was blocked: %v", err)
+	}
+	if _, err := migrated.db.ExecContext(ctx, `UPDATE applications SET app_key = ?, role = 'master', status = 'running' WHERE id = 'application-v3'`, threeXUIAppKey); err == nil {
+		t.Fatal("global controller guard accepted a second new controller")
+	}
+}
+
 func TestVersion56MigrationSeparatesNodeDirectIngressAndFailsClosedOnCrossNodeRows(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
@@ -958,7 +1034,7 @@ func TestVersion11MigrationSelectsOneRunningThreeXUIControllerPerSite(t *testing
 		t.Fatalf("legacy worker panel status=%q err=%v", workerPanelStatus, err)
 	}
 	if _, err := migrated.db.ExecContext(ctx, `UPDATE applications SET role = 'master', status = 'pending' WHERE id = 'three-x-ui-failed'`); err == nil {
-		t.Fatal("migration did not enforce one active 3x-ui controller per Site")
+		t.Fatal("migration did not enforce one active 3x-ui controller for the Center")
 	}
 	var topologyTable int
 	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'three_x_ui_nodes'`).Scan(&topologyTable); err != nil || topologyTable != 1 {
@@ -1373,6 +1449,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TRIGGER deployments_block_during_three_x_ui_migration`,
 		`DROP TABLE three_x_ui_inbound_plans`,
 		`DROP TABLE site_certificates`,
+		`DROP TABLE three_x_ui_control_plane`,
 		`DROP TABLE three_x_ui_migrations`,
 		`DROP TABLE three_x_ui_backups`,
 		`DROP TABLE three_x_ui_nodes`,
@@ -1386,7 +1463,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE catalog_manifest_history`,
 		`DROP TABLE agent_updates`,
 		`DROP TABLE agent_decommissions`,
-		`DROP INDEX applications_one_three_x_ui_master_idx`,
+		`DROP TRIGGER applications_one_global_three_x_ui_master_insert`,
+		`DROP TRIGGER applications_one_global_three_x_ui_master_update`,
 		`ALTER TABLE agents DROP COLUMN operating_system`,
 		`ALTER TABLE agents DROP COLUMN architecture`,
 		`ALTER TABLE agents DROP COLUMN runtime_generation`,

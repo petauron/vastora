@@ -51,7 +51,7 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 		return err
 	}
 	if role == threeXUIRoleWorker {
-		// A worker reports its local database ids, while the Site controller owns
+		// A worker reports its local database ids, while the global controller owns
 		// the stable cross-node ids used by clients and subscriptions.
 		return nil
 	}
