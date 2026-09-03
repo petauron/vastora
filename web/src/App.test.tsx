@@ -100,6 +100,7 @@ describe("application shell", () => {
 
   it("requires a Turnstile token on the direct Cloudflare Tunnel login", async () => {
     vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: true, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: true, loginProtection: { captchaRequired: true, turnstileSiteKey: "site-key", maxFailures: 5, lockoutSeconds: 900 }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+    vi.spyOn(api, "status").mockRejectedValue(new APIError("center: authentication required", 401, "authentication_required"));
     const renderTurnstile = vi.fn((_container: HTMLElement, options: Record<string, unknown>) => {
       (options.callback as (token: string) => void)("verified-token");
       return "widget-id";
