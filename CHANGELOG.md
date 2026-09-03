@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.104](https://github.com/petauron/vastora/compare/v0.1.0-alpha.103...v0.1.0-alpha.104) (2026-09-03)
+
+
+### Features
+
+* **agent:** reconnect offline nodes in place ([#336](https://github.com/petauron/vastora/issues/336)) ([fca9f89](https://github.com/petauron/vastora/commit/fca9f895820d6d6c0bae837159ec0f941ed87fc4))
+
 ## [0.1.0-alpha.103](https://github.com/petauron/vastora/compare/v0.1.0-alpha.102...v0.1.0-alpha.103) (2026-09-03)
 
 
