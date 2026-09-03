@@ -64,7 +64,7 @@ func TestAgentUpdateRequiresAFeatureCapableOnlineAgent(t *testing.T) {
 	}
 }
 
-func TestAgentUpdateRolloutQueuesOnlineAgentsSequentially(t *testing.T) {
+func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -72,37 +72,27 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsSequentially(t *testing.T) {
 	second := enrollOrchestrationNode(t, store, "rollout-b", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.97", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.97", LANAddress: "10.0.0.97", EnabledKinds: []string{networking.KindLAN}})
 	heartbeatAgentUpdateVersion(t, store, first, "0.1.0-alpha.88", true)
 	heartbeatAgentUpdateVersion(t, store, second, "0.1.0-alpha.88", true)
-	credentials := map[string]AgentCredential{first.ID: first, second.ID: second}
 
-	firstID, queued, err := store.QueueNextAgentUpdate(ctx, "0.1.0-alpha.89")
-	if err != nil || !queued {
-		t.Fatalf("first rollout queue = %q, %t, %v", firstID, queued, err)
+	queuedIDs, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89")
+	if err != nil || len(queuedIDs) != 2 {
+		t.Fatalf("rollout queue = %#v, %v", queuedIDs, err)
 	}
-	if nextID, nextQueued, err := store.QueueNextAgentUpdate(ctx, "0.1.0-alpha.89"); err != nil || nextQueued || nextID != "" {
-		t.Fatalf("parallel rollout was queued: %q, %t, %v", nextID, nextQueued, err)
+	if queuedAgain, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queuedAgain) != 0 {
+		t.Fatalf("duplicate rollout queue = %#v, %v", queuedAgain, err)
 	}
-	selected := credentials[firstID]
-	task, err := store.ClaimNextTask(ctx, selected.ID, selected.Credential)
-	if err != nil || task == nil || task.Kind != "agent.update" {
-		t.Fatalf("claim first rollout task: %#v, %v", task, err)
+	firstTask, err := store.ClaimNextTask(ctx, first.ID, first.Credential)
+	if err != nil || firstTask == nil || firstTask.Kind != "agent.update" {
+		t.Fatalf("claim first concurrent rollout task: %#v, %v", firstTask, err)
 	}
-	if err := store.beginAgentUpdate(ctx, selected.ID, selected.Credential, task.ID, task.Attempt); err != nil {
-		t.Fatal(err)
-	}
-	heartbeatAgentUpdateVersion(t, store, selected, "0.1.0-alpha.89", true)
-	if err := store.CompleteTask(ctx, selected.ID, selected.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	secondID, queued, err := store.QueueNextAgentUpdate(ctx, "0.1.0-alpha.89")
-	if err != nil || !queued || secondID == firstID {
-		t.Fatalf("second rollout queue = %q, %t, %v", secondID, queued, err)
+	secondTask, err := store.ClaimNextTask(ctx, second.ID, second.Credential)
+	if err != nil || secondTask == nil || secondTask.Kind != "agent.update" {
+		t.Fatalf("claim second concurrent rollout task: %#v, %v", secondTask, err)
 	}
 	status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Total != 2 || status.Updated != 1 || status.Updating != 1 || status.Pending != 0 {
+	if status.Total != 2 || status.Updated != 0 || status.Updating != 2 || status.Pending != 0 {
 		t.Fatalf("unexpected rollout status: %#v", status)
 	}
 }
@@ -114,8 +104,8 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	node := enrollOrchestrationNode(t, store, "rollout-failure", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.98", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.98", LANAddress: "10.0.0.98", EnabledKinds: []string{networking.KindLAN}})
 	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
 
-	if _, queued, err := store.QueueNextAgentUpdate(ctx, "0.1.0-alpha.89"); err != nil || !queued {
-		t.Fatalf("queue rollout: %t, %v", queued, err)
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 1 {
+		t.Fatalf("queue rollout: %#v, %v", queued, err)
 	}
 	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
 	if err != nil || task == nil {
@@ -124,8 +114,8 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "host update failed", nil, 0); err != nil {
 		t.Fatal(err)
 	}
-	if nextID, queued, err := store.QueueNextAgentUpdate(ctx, "0.1.0-alpha.89"); err != nil || queued || nextID != "" {
-		t.Fatalf("failed rollout was automatically retried: %q, %t, %v", nextID, queued, err)
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 0 {
+		t.Fatalf("failed rollout was automatically retried: %#v, %v", queued, err)
 	}
 	status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
 	if err != nil {

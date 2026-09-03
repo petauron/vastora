@@ -200,7 +200,7 @@ func (s *Server) RunAgentUpdateRollout(ctx context.Context, interval time.Durati
 		if !s.startupReady.Load() || strings.TrimSpace(s.agentBinariesDir) == "" {
 			return
 		}
-		_, _, err := s.store.QueueNextAgentUpdate(ctx, Version)
+		_, err := s.store.QueueAgentUpdates(ctx, Version)
 		if err != nil && ctx.Err() == nil && report != nil {
 			report(err)
 		}

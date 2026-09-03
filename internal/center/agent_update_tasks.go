@@ -94,23 +94,18 @@ func (s *Store) QueueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	return update, nil
 }
 
-func (s *Store) QueueNextAgentUpdate(ctx context.Context, targetVersion string) (string, bool, error) {
+// QueueAgentUpdates starts every eligible online Agent independently so one
+// unhealthy node cannot prevent the rest of the fleet from moving forward.
+func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]string, error) {
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
-		return "", false, errors.New("center: Agent rollout target version is invalid")
+		return nil, errors.New("center: Agent rollout target version is invalid")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
 	defer tx.Rollback()
-	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_updates WHERE state IN ('pending', 'running', 'installing')`).Scan(&active); err != nil {
-		return "", false, fmt.Errorf("center: inspect active Agent rollout: %w", err)
-	}
-	if active != 0 {
-		return "", false, tx.Commit()
-	}
 	rows, err := tx.QueryContext(ctx, `SELECT agent.id, agent.version
 		FROM agents agent
 		WHERE agent.status = 'active'
@@ -119,40 +114,46 @@ func (s *Store) QueueNextAgentUpdate(ctx context.Context, targetVersion string) 
 		  AND agent.last_seen_at > ?
 		  AND agent.version <> ?
 		  AND NOT EXISTS (
+			SELECT 1 FROM agent_updates active_task
+			WHERE active_task.agent_id = agent.id AND active_task.state IN ('pending', 'running', 'installing')
+		  )
+		  AND NOT EXISTS (
 			SELECT 1 FROM agent_updates update_task
 			WHERE update_task.agent_id = agent.id AND update_task.target_version = ?
 		  )
 		ORDER BY agent.last_seen_at DESC, agent.name, agent.id`, s.now().UTC().Add(-agentConnectedMaxAge).Format(time.RFC3339Nano), targetVersion, targetVersion)
 	if err != nil {
-		return "", false, fmt.Errorf("center: select next Agent rollout target: %w", err)
+		return nil, fmt.Errorf("center: select Agent rollout targets: %w", err)
 	}
-	candidateID := ""
+	candidateIDs := []string{}
 	for rows.Next() {
 		var agentID, currentVersion string
 		if err := rows.Scan(&agentID, &currentVersion); err != nil {
 			rows.Close()
-			return "", false, err
+			return nil, err
 		}
 		currentSemver := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
 		if semver.IsValid(currentSemver) && semver.Compare("v"+targetVersion, currentSemver) <= 0 {
 			continue
 		}
-		candidateID = agentID
-		break
+		candidateIDs = append(candidateIDs, agentID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
-		return "", false, err
+		return nil, err
 	}
-	if candidateID == "" {
-		return "", false, tx.Commit()
-	}
-	if _, err := s.queueAgentUpdateTx(ctx, tx, candidateID, targetVersion, "Agent update to "+targetVersion+" queued automatically after Center upgrade"); err != nil {
-		return "", false, err
+	for _, agentID := range candidateIDs {
+		if _, err := s.queueAgentUpdateTx(ctx, tx, agentID, targetVersion, "Agent update to "+targetVersion+" queued automatically after Center upgrade"); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return "", false, err
+		return nil, err
 	}
-	return candidateID, true, nil
+	return candidateIDs, nil
 }
 
 func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion string) (AgentUpdateRolloutStatus, error) {

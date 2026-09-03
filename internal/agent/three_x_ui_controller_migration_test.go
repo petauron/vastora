@@ -4,11 +4,79 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+func TestDemoteThreeXUIControllerPersistsWorkerRole(t *testing.T) {
+	var restarted atomic.Bool
+	var restartProbeFailed atomic.Bool
+	var workerSettingsApplied atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/panel/api/inbounds/list", "/panel/api/nodes/list":
+			_, _ = response.Write([]byte(`{"success":true,"obj":[]}`))
+		case "/panel/api/setting/all":
+			if restarted.Load() && restartProbeFailed.CompareAndSwap(false, true) {
+				response.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = response.Write([]byte(`{"success":false,"msg":"restarting"}`))
+				return
+			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"subEnable":true,"subClashEnable":true}}`))
+		case "/panel/api/setting/update":
+			var settings map[string]any
+			if json.NewDecoder(request.Body).Decode(&settings) == nil && settings["subEnable"] == false && settings["subClashEnable"] == false {
+				workerSettingsApplied.Store(true)
+			}
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		case "/panel/api/setting/restartPanel":
+			restarted.Store(true)
+			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	panelPort, err := strconv.Atoi(endpoint.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	installation := AppliedInstallation{
+		InstanceID: "source-installation", ApplicationID: "source-application", AppKey: threeXUIKey, Version: "3.7.0",
+		Config:  json.RawMessage(`{"timezone":"UTC","panel_port":` + strconv.Itoa(panelPort) + `,"enable_fail2ban":true,"vmess_aead_forced":false}`),
+		Secrets: json.RawMessage(`{}`), ServiceAddress: endpoint.Hostname(), ApplicationRole: "master",
+	}
+	if _, err := store.RecordApplied(context.Background(), installation); err != nil {
+		t.Fatal(err)
+	}
+	if err := demoteThreeXUIController(context.Background(), store, server.URL, "controller-token"); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.AppliedInstallation(context.Background(), threeXUIKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ApplicationRole != "worker" || !workerSettingsApplied.Load() {
+		t.Fatalf("demoted controller = role %q, settings applied %t", persisted.ApplicationRole, workerSettingsApplied.Load())
+	}
+}
 
 func TestTransformThreeXUIControllerDatabaseSwapsLocalAndTargetInbounds(t *testing.T) {
 	path := createThreeXUIMigrationDatabase(t)
