@@ -4236,15 +4236,6 @@
               "application/json": {
                 "schema": {}
               }
-            },
-            "headers": {
-              "Cache-Control": {
-                "description": "Prevents storage of the one-time enrollment token.",
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
-              }
             }
           },
           "400": {
@@ -4319,19 +4310,10 @@
         ],
         "responses": {
           "201": {
-            "description": "A one-time enrollment that replaces the offline Agent identity while preserving its Center node ID and relationships.",
+            "description": "Created.",
             "content": {
               "application/json": {
                 "schema": {}
-              }
-            },
-            "headers": {
-              "Cache-Control": {
-                "description": "Prevents storage of the one-time enrollment token.",
-                "schema": {
-                  "type": "string",
-                  "const": "no-store"
-                }
               }
             }
           },
