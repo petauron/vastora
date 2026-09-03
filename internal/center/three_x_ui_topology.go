@@ -297,6 +297,7 @@ func (s *Store) queueThreeXUINodeReconcile(ctx context.Context, tx *sql.Tx, depl
 	if json.Unmarshal(configJSON, &config) != nil || config.PanelPort < 1024 || config.PanelPort > 65535 {
 		return errors.New("center: stored 3x-ui node configuration is invalid")
 	}
+	var err error
 	if masterApplicationID, masterAgentID, err = runningGlobalThreeXUIController(ctx, tx); errors.Is(err, sql.ErrNoRows) {
 		return errors.New("center: the global 3x-ui subscription controller is unavailable")
 	} else if err != nil {
