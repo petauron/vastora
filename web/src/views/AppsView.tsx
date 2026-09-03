@@ -429,7 +429,6 @@ function DeploymentSheet({ data, editor, language, onClose, onSubmit }: { data: 
   const [error, setError] = useState("");
   const [registryCredentialID, setRegistryCredentialID] = useState("");
   const candidates = editor ? data.agents.filter((agent) => editor.operation !== "install" ? agent.id === editor.agent?.id : canInstall(agent) && !data.applications.some((application) => application.nodeId === agent.id && application.appKey === editor.app.key && (isInstalledApplication(application) || isActiveApplication(application.status)))) : [];
-  const selectedAgent = data.agents.find((agent) => agent.id === agentID);
   const isThreeXUIInstall = editor?.operation === "install" && editor.app.key === "vastora-official/3x-ui";
   const globalController = isThreeXUIInstall ? data.applications.find((application) => application.appKey === "vastora-official/3x-ui" && application.role === "master" && application.id === application.controllerApplicationId && isActiveApplication(application.status)) : undefined;
   const role: ThreeXUIRole | undefined = isThreeXUIInstall ? globalController ? "worker" : "master" : undefined;
