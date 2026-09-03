@@ -78,7 +78,23 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-for required in curl systemctl docker sha256sum awk; do
+if [ ! -r /etc/os-release ]; then
+  echo "Cannot identify this server: /etc/os-release is missing." >&2
+  exit 1
+fi
+. /etc/os-release
+case "${ID:-}:${VERSION_ID:-}" in
+  debian:12) distro=debian; codename=bookworm ;;
+  debian:13) distro=debian; codename=trixie ;;
+  ubuntu:22.04) distro=ubuntu; codename=jammy ;;
+  ubuntu:24.04) distro=ubuntu; codename=noble ;;
+  ubuntu:26.04) distro=ubuntu; codename=resolute ;;
+  *)
+    echo "Unsupported system: ${PRETTY_NAME:-unknown}. Use Debian 12/13 or Ubuntu 22.04/24.04/26.04." >&2
+    exit 1 ;;
+esac
+
+for required in curl systemctl docker sha256sum awk dpkg; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "Required command is not installed: $required" >&2
     exit 1
@@ -89,10 +105,10 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-case "$(uname -m)" in
-  x86_64|amd64) arch="amd64" ;;
-  aarch64|arm64) arch="arm64" ;;
-  *) echo "Vastora Agent supports Ubuntu 24.04 on x86_64 and ARM64." >&2; exit 1 ;;
+arch="$(dpkg --print-architecture)"
+case "$arch" in
+  amd64|arm64) ;;
+  *) echo "Unsupported architecture: $arch. Vastora Agent requires amd64 or arm64." >&2; exit 1 ;;
 esac
 
 temporary="$(mktemp -t vastora-agent.XXXXXX)"
@@ -256,20 +272,21 @@ func renderAgentInstallScript(profile AgentEnrollmentInstallProfile, bootstrapUR
 		headscaleBootstrap = `tailscale_version=@@TAILSCALE_VERSION@@
 tailscale_ownership=external
 if ! command -v tailscale >/dev/null 2>&1; then
-  tailscale_ownership=managed
-  "$temporary" agent prepare-tailscale @@TAILSCALE_PREPARE_ARGUMENTS@@ --configure-only
   if ! command -v apt-get >/dev/null 2>&1; then
-    echo "Vastora can install Tailscale automatically only on Ubuntu 24.04." >&2
+    echo "apt-get is required to install Tailscale on this server." >&2
     exit 1
   fi
-  echo "Installing Tailscale $tailscale_version..."
+  tailscale_ownership=managed
+  "$temporary" agent prepare-tailscale @@TAILSCALE_PREPARE_ARGUMENTS@@ --configure-only
+  echo "Installing Tailscale $tailscale_version for $distro $VERSION_ID ($codename)..."
   install -d -m 0755 /usr/share/keyrings /etc/apt/sources.list.d
   curl --proto '=https' --tlsv1.2 --max-filesize 1048576 -fsS \
-    https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+    "https://pkgs.tailscale.com/stable/$distro/$codename.noarmor.gpg" \
     -o /usr/share/keyrings/tailscale-archive-keyring.gpg
   curl --proto '=https' --tlsv1.2 --max-filesize 1048576 -fsS \
-    https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
+    "https://pkgs.tailscale.com/stable/$distro/$codename.tailscale-keyring.list" \
     -o /etc/apt/sources.list.d/tailscale.list
+  chmod 0644 /usr/share/keyrings/tailscale-archive-keyring.gpg /etc/apt/sources.list.d/tailscale.list
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y "tailscale=$tailscale_version" tailscale-archive-keyring
 fi

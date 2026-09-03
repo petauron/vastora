@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { CheckCircle2Icon, CircleArrowUpIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon } from "lucide-react";
 import { api } from "../api";
 import { validCenterURL } from "../lib/network";
+import { dockerInstallCommand, dockerInstallDocsURLs } from "../lib/docker-install";
 import type { AppData, Mutate, Screen } from "../App";
 import type { AgentEnrollment, AgentView } from "../types";
 import type { Language } from "../translations";
@@ -34,6 +35,26 @@ export function agentInstallCommand({ centerURL, enrollment, installerAvailable 
   }
   const caArgument = caPath ? ` --ca-certificate ${caPath}` : "";
   return `${writeCA}printf '%s' ${shellQuote(enrollment.token)} | sudo /usr/local/bin/vastora agent install --center-url ${shellQuote(enrollmentCenterURL)} --token-file -${caArgument}`;
+}
+
+function DockerInstallInstructions({ language }: { language: Language }) {
+  return (
+    <details className="min-w-0 rounded-xl border p-3">
+      <summary className="cursor-pointer text-sm font-medium">{copy(language, "安装 Docker（自动识别系统）", "Install Docker (automatic OS detection)")}</summary>
+      <div className="mt-4 flex min-w-0 flex-col gap-3">
+        <p className="text-sm text-muted-foreground">{copy(language, "在要添加的服务器上运行以下命令，脚本会自动识别系统和架构。完成后，再运行 Agent 接入命令。", "Run this command on the server you want to add. It detects that server's operating system and architecture. Then run the Agent join command.")}</p>
+        <p className="text-sm text-muted-foreground">{copy(language, "支持 Debian 12/13、Ubuntu 22.04/24.04/26.04，架构为 x64 或 ARM64。已有 Docker 会自动跳过，不会卸载或升级。", "Supports Debian 12/13 and Ubuntu 22.04/24.04/26.04 on x64 or ARM64. An existing Docker installation is skipped, not uninstalled or upgraded.")}</p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CopyButton label={copy(language, "复制 Docker 安装命令", "Copy Docker install commands")} language={language} value={dockerInstallCommand} />
+          <div className="flex flex-wrap gap-3">
+            <a className="text-sm underline underline-offset-4" href={dockerInstallDocsURLs.debian} rel="noreferrer" target="_blank">{copy(language, "Debian 官方说明", "Debian instructions")}</a>
+            <a className="text-sm underline underline-offset-4" href={dockerInstallDocsURLs.ubuntu} rel="noreferrer" target="_blank">{copy(language, "Ubuntu 官方说明", "Ubuntu instructions")}</a>
+          </div>
+        </div>
+        <pre aria-label={copy(language, "自动识别系统的 Docker 安装命令", "OS-aware Docker install commands")} className="max-h-64 min-w-0 overflow-auto rounded-lg bg-muted p-3 text-xs leading-5" tabIndex={0}><code>{dockerInstallCommand}</code></pre>
+      </div>
+    </details>
+  );
 }
 
 export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNavigate, startAdding = false }: { data: AppData; language: Language; mutate: Mutate; onAddFirstNodeHandled?: () => void; onNavigate: (screen: Screen) => void; startAdding?: boolean }) {
@@ -104,8 +125,9 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
           <SheetTitle>{copy(language, "添加节点", "Add node")}</SheetTitle>
           <SheetDescription>{enrollment ? copy(language, "在要作为节点的 Linux 设备运行一次下面的命令；它可以就是当前 Center 主机。", "Run the command once on the Linux device that will become the node. It can be this Center host.") : copy(language, "填写名称和位置即可。当前 Center 主机也可以同时作为应用节点。", "Enter a name and location. This Center host can also serve as an app node.")}</SheetDescription>
         </SheetHeader>
-        {enrollment ? <div className="flex flex-1 flex-col gap-5 px-4">
-          <Alert><TerminalIcon /><AlertTitle>{copy(language, "在目标设备运行一次", "Run once on the target device")}</AlertTitle><AlertDescription>{data.status.agentInstallerAvailable ? copy(language, useHeadscale ? "需要 Linux、systemd、Docker 和 curl。脚本会自动安装 Tailscale、加入安全私网并安装 Agent。" : "需要 Linux、systemd、Docker 和 curl。脚本会读取 Center 保存的配置并自动安装 Agent。", useHeadscale ? "Linux, systemd, Docker, and curl are required. The script installs Tailscale, joins the private network, and installs Agent automatically." : "Linux, systemd, Docker, and curl are required. The script reads the configuration saved by Center and installs Agent automatically.") : copy(language, "当前 Center 没有内置 Agent 文件，请先把 vastora 放到 /usr/local/bin/vastora。", "This Center does not include Agent binaries. Put vastora at /usr/local/bin/vastora first.")}</AlertDescription></Alert>
+        {enrollment ? <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4">
+          <Alert><TerminalIcon /><AlertTitle>{copy(language, "在目标设备运行一次", "Run once on the target device")}</AlertTitle><AlertDescription>{data.status.agentInstallerAvailable ? <><p>{copy(language, "需要 Debian 12/13 或 Ubuntu 22.04/24.04/26.04（x64/ARM64），以及 systemd、Docker 和 curl。", "Requires Debian 12/13 or Ubuntu 22.04/24.04/26.04 (x64/ARM64), systemd, Docker, and curl.")}</p><p>{copy(language, useHeadscale ? "脚本会按系统安装 Tailscale、加入安全私网并安装 Agent。" : "脚本会读取 Center 保存的配置并自动安装 Agent。", useHeadscale ? "The script installs Tailscale for this operating system, joins the private network, and installs Agent." : "The script reads the configuration saved by Center and installs Agent automatically.")}</p></> : copy(language, "当前 Center 没有内置 Agent 文件，请先把 vastora 放到 /usr/local/bin/vastora。", "This Center does not include Agent binaries. Put vastora at /usr/local/bin/vastora first.")}</AlertDescription></Alert>
+          <DockerInstallInstructions language={language} />
           <div className="relative"><code className="block max-h-56 overflow-auto break-all rounded-xl bg-muted p-4 pr-14 text-xs leading-6">{command}</code><CopyButton className="absolute right-2 top-2" label={copy(language, "复制命令", "Copy command")} language={language} size="icon" value={command} /></div>
           <div aria-live="polite" className="flex items-start gap-3 rounded-xl border p-4">{joinedAgent ? <CheckCircle2Icon className="mt-0.5 text-success" /> : <Spinner className="mt-0.5" />}<div><p className="text-sm font-medium">{joinedAgent ? copy(language, `${joinedAgent.name} 已上线`, `${joinedAgent.name} is online`) : copy(language, "正在等待节点上线…", "Waiting for the node to come online…")}</p><p className="mt-1 text-xs text-muted-foreground">{joinedAgent ? copy(language, "下一步确认 Agent 自动发现的网络地址。", "Next, confirm the network addresses discovered by the Agent.") : copy(language, `命令将在 ${formatDate(language, enrollment.expiresAt)} 失效。`, `The command expires at ${formatDate(language, enrollment.expiresAt)}.`)}</p></div></div>
           <Alert><CheckCircle2Icon /><AlertTitle>{copy(language, "凭据仅显示这一次", "Credential is shown only once")}</AlertTitle><AlertDescription>{copy(language, "令牌十分钟后失效且只能使用一次。关闭后如未执行，请重新生成。", "The token expires in ten minutes and works only once. Generate a new one if you close before running it.")}</AlertDescription></Alert>
@@ -116,6 +138,7 @@ function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppDa
                 {firstPrivateNode ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "先让当前 Center 主机加入私网", "Join this Center host first")}</AlertTitle><AlertDescription>{copy(language, "请在安装 Center 的这台服务器运行生成的命令。完成网络确认后，其他节点就能通过私网地址连接。", "Run the generated command on the server hosting Center. After confirming its network, other nodes can connect through the private address.")}</AlertDescription></Alert> : null}
                 <Field><FieldLabel htmlFor="new-node-name">{copy(language, "节点名称", "Node name")}</FieldLabel><Input autoFocus id="new-node-name" maxLength={128} onChange={(event) => setName(event.target.value)} placeholder={copy(language, "例如：新加坡服务器", "For example: Singapore server")} required value={name} /><FieldDescription>{copy(language, "使用容易识别设备或位置的名称。", "Use a name that identifies the device or location.")}</FieldDescription></Field>
                 <Field><FieldLabel htmlFor="new-node-site">{copy(language, "位置", "Location")}</FieldLabel><SelectControl id="new-node-site" onValueChange={setSiteID} options={data.sites.map((site) => ({ value: site.id, label: site.name }))} required value={siteID} /></Field>
+                <DockerInstallInstructions language={language} />
                 <div className="rounded-xl border bg-muted/25 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium">{copy(language, "Agent 将连接 Center", "Agent will connect to Center")}</p><p className="mt-1 text-xs text-muted-foreground">{data.status.agentConnectionMode === "headscale" ? copy(language, "使用安全私网", "Using the secure private network") : data.status.agentConnectionMode === "public" ? copy(language, "使用公网安全连接", "Using a secure public connection") : copy(language, "使用同一局域网", "Using the same local network")}</p></div><Badge variant="secondary">{copy(language, "已自动配置", "Automatic")}</Badge></div></div>
                 <details className="rounded-xl border p-3">
                   <summary className="cursor-pointer text-sm font-medium">{copy(language, "高级设置", "Advanced settings")}</summary>
