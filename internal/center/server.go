@@ -161,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/publications/{id}/tls", s.requireAuth(true, s.handleUpdatePublicationTLS))
 	mux.HandleFunc("DELETE /api/v1/publications/{id}", s.requireAuth(true, s.handleStopPublication))
 	mux.HandleFunc("POST /api/v1/publications/{id}/verify", s.requireAuth(true, s.handleVerifyPublication))
+	mux.HandleFunc("POST /api/v1/publications/{id}/security-check", s.requireAuth(true, s.handleRealitySecurityCheck))
 	mux.HandleFunc("GET /api/v1/routes", s.requireAuth(false, s.handleListRoutes))
 	mux.HandleFunc("GET /api/v1/integrations", s.requireAuth(false, s.handleListIntegrations))
 	mux.HandleFunc("POST /api/v1/integrations/cloudflare/oauth/start", s.requireAuth(true, s.handleStartCloudflareOAuth))

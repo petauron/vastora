@@ -258,6 +258,19 @@ the live HAProxy configuration back from the running container and reports the
 listener healthy only when its content hash matches the desired revision. Center
 then performs an exact-SNI TLS 1.3 handshake before marking the Publication ready.
 
+An authenticated administrator can also start an on-demand behavior check for a
+ready node-direct REALITY Publication. Center derives the node IPv4 address,
+port 443, expected SNI, and guard revision only from authoritative stored state;
+the request accepts no probe destination. It runs five bounded TLS 1.3 handshakes
+in parallel: the approved fallback, fixed OpenAI and Cloudflare names, one random
+name, and no SNI. `affected` requires a successful unauthorized TLS identity,
+while `safe` requires the expected fallback to succeed and every negative probe
+to reject or terminate locally; timeouts and partial results are `inconclusive`.
+Only the latest finite result is retained, and a publication or guard revision
+change invalidates it. One check runs at a time. When Center and the node are
+co-located, the result is marked `same_host` and is not presented as external
+network proof.
+
 Each Cloudflare entry node owns one remotely managed Tunnel. One Tunnel can
 carry multiple Web ingress rules. Agent runs the fixed cloudflared image on the
 private runtime bridge and forwards each hostname directly to its validated Web

@@ -54,6 +54,8 @@ type Store struct {
 	publicationVerificationMu      sync.Mutex
 	publicationVerificationJobs    map[string]*publicationVerificationJob
 	publicationVerificationBackoff func(int) time.Duration
+	realitySecurityCheckMu         sync.Mutex
+	dialRealitySecurityProbe       func(context.Context, string, string) error
 	secretDeliveryMu               sync.Mutex
 	verifyPublication              func(context.Context, string, int64) (PublicationView, error)
 	taskChanges                    changeNotifier
@@ -204,6 +206,7 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		assistantResolve:               net.DefaultResolver.LookupIPAddr,
 		publicationVerificationJobs:    make(map[string]*publicationVerificationJob),
 		publicationVerificationBackoff: defaultPublicationVerificationBackoff,
+		dialRealitySecurityProbe:       defaultRealitySecurityProbe,
 		now:                            time.Now,
 		discoverNetworkCandidates:      networking.Discover,
 		lookupGatewayAddress:           networking.DefaultRouteAddress,

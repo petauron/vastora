@@ -3286,6 +3286,70 @@
         ]
       }
     },
+    "/api/v1/publications/{id}/security-check": {
+      "post": {
+        "tags": [
+          "Publications"
+        ],
+        "summary": "Check Managed REALITY Publication Security",
+        "operationId": "realitySecurityCheck_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The latest revision-fenced security result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealitySecurityCheck"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Runs five bounded TLS handshakes from Center to the managed node's authoritative public IPv4 address on port 443. The caller cannot supply an address, port, or SNI. Only finite results are retained, and same-host checks are explicitly marked as non-external."
+      }
+    },
     "/api/v1/routes": {
       "get": {
         "tags": [
@@ -7086,6 +7150,9 @@
               }
             ]
           },
+          "securityCheck": {
+            "$ref": "#/components/schemas/RealitySecurityCheck"
+          },
           "createdAt": {
             "type": "string",
             "format": "date-time"
@@ -7109,6 +7176,83 @@
           "createdAt",
           "updatedAt"
         ]
+      },
+      "RealitySecurityCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "scope",
+          "checks",
+          "checkedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "safe",
+              "affected",
+              "inconclusive"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "remote",
+              "same_host"
+            ]
+          },
+          "checks": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "status",
+                "reason"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "expected_fallback",
+                    "openai_sni",
+                    "cloudflare_sni",
+                    "random_sni",
+                    "no_sni"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "passed",
+                    "failed",
+                    "inconclusive"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "expected_fallback_verified",
+                    "expected_fallback_unavailable",
+                    "unauthorized_destination_rejected",
+                    "unauthorized_destination_reached",
+                    "local_tls_termination",
+                    "probe_timeout",
+                    "probe_interrupted"
+                  ]
+                }
+              }
+            }
+          },
+          "checkedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "ApplicationCredentials": {
         "oneOf": [
