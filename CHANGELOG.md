@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.100](https://github.com/petauron/vastora/compare/v0.1.0-alpha.99...v0.1.0-alpha.100) (2026-09-03)
+
+
+### Features
+
+* **install:** support Debian and Ubuntu node installers ([#327](https://github.com/petauron/vastora/issues/327)) ([c396209](https://github.com/petauron/vastora/commit/c396209e983cf771e270a32156e96e67626e4da6))
+
 ## [0.1.0-alpha.99](https://github.com/petauron/vastora/compare/v0.1.0-alpha.98...v0.1.0-alpha.99) (2026-09-03)
 
 
