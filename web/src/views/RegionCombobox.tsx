@@ -11,6 +11,27 @@ type RegionOption = Region & {
   searchText: string;
 };
 
+// Keep this subscription-label policy in sync with internal/center/regions.go.
+const maxRegionNameLength = 6;
+const shortChineseRegionNames: Readonly<Record<string, string>> = {
+  AE: "阿联酋",
+  AG: "安巴",
+  BA: "波黑",
+  CC: "科科斯群岛",
+  DO: "多米尼加",
+  HK: "香港",
+  ID: "印尼",
+  IO: "英属印度洋",
+  MO: "澳门",
+  MP: "北马里亚纳",
+  PG: "巴新",
+  PS: "巴勒斯坦",
+  SA: "沙特",
+  TT: "特多",
+  VG: "英属维尔京",
+  VI: "美属维尔京",
+};
+
 function normalizedSearch(value: string) {
   return value.normalize("NFKD").replace(/\p{Diacritic}/gu, "").toLocaleLowerCase();
 }
@@ -19,20 +40,27 @@ export function regionDisplayName(code: string, name: string) {
   const normalizedCode = code.trim().toUpperCase();
   const normalizedName = name.trim();
   if (!normalizedCode || !normalizedName) return normalizedName;
-  return `${regionFlag(normalizedCode)} ${regionName(normalizedCode, ["zh-CN"])}${normalizedName}`;
+  return `${regionFlag(normalizedCode)} ${subscriptionRegionName(normalizedCode)}${normalizedName}`;
 }
 
 export function regionBaseName(displayName: string, code?: string) {
   if (!code) return displayName;
-  const normalizedCode = code.toUpperCase();
-  const chineseName = regionName(normalizedCode, ["zh-CN"]);
+  const normalizedCode = code.trim().toUpperCase();
   const prefixes = [
-    `${regionFlag(normalizedCode)} ${chineseName}`,
     `${regionFlag(normalizedCode)} ${normalizedCode} · `,
     `${regionFlag(normalizedCode)} ${normalizedCode} `,
+    // Full names must precede short names that they start with.
+    `${regionFlag(normalizedCode)} ${regionName(normalizedCode, ["zh-CN"])}`,
+    `${regionFlag(normalizedCode)} ${subscriptionRegionName(normalizedCode)}`,
   ].filter(Boolean);
   const prefix = prefixes.find((candidate) => displayName.startsWith(candidate));
   return prefix ? displayName.slice(prefix.length).trim() : displayName;
+}
+
+function subscriptionRegionName(code: string) {
+  if (Object.hasOwn(shortChineseRegionNames, code)) return shortChineseRegionNames[code];
+  const name = regionName(code, ["zh-CN"]);
+  return Array.from(name).length > maxRegionNameLength ? code : name;
 }
 
 function regionName(code: string, locales: string[]) {
@@ -69,7 +97,7 @@ export function RegionCombobox({ id, language, onValueChange, value }: { id: str
     const chineseNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
     return regions.map((region) => {
       const localName = language === "zh-CN" ? region.nameZh : localNames.of(region.code) ?? region.code;
-      const searchText = normalizedSearch([region.code, localName, region.nameZh, englishNames.of(region.code), chineseNames.of(region.code)].filter(Boolean).join(" "));
+      const searchText = normalizedSearch([region.code, localName, region.nameZh, region.prefix, englishNames.of(region.code), chineseNames.of(region.code)].filter(Boolean).join(" "));
       return { ...region, label: `${regionFlag(region.code)} ${localName}`, searchText };
     }).sort((left, right) => left.label.localeCompare(right.label, language));
   }, [language, regions]);

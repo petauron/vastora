@@ -13,9 +13,11 @@ func realityBaseName(displayName, code string) string {
 		return strings.TrimSpace(displayName)
 	}
 	prefixes := []string{
-		regionPrefix(code),
 		regionFlag(code) + " " + code + " · ",
 		regionFlag(code) + " " + code + " ",
+		// Match the full name before its short prefix (e.g. 多米尼加共和国).
+		regionFlag(code) + " " + regionFullNameZH(code),
+		regionPrefix(code),
 	}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(displayName, prefix) {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -26,6 +27,29 @@ var supportedRegionCodeSet = func() map[string]struct{} {
 }()
 
 var chineseRegionNames = display.Regions(language.SimplifiedChinese)
+
+// Keep this subscription-label policy in sync with RegionCombobox.tsx.
+// Full names remain available for searching and normalizing stored names.
+const maxRegionNameRunes = 6
+
+var shortChineseRegionNames = map[string]string{
+	"AE": "阿联酋",
+	"AG": "安巴",
+	"BA": "波黑",
+	"CC": "科科斯群岛",
+	"DO": "多米尼加",
+	"HK": "香港",
+	"ID": "印尼",
+	"IO": "英属印度洋",
+	"MO": "澳门",
+	"MP": "北马里亚纳",
+	"PG": "巴新",
+	"PS": "巴勒斯坦",
+	"SA": "沙特",
+	"TT": "特多",
+	"VG": "英属维尔京",
+	"VI": "美属维尔京",
+}
 
 type RegionView struct {
 	Code   string `json:"code"`
@@ -59,6 +83,17 @@ func regionPrefix(code string) string {
 }
 
 func regionNameZH(code string) string {
+	if name, ok := shortChineseRegionNames[code]; ok {
+		return name
+	}
+	name := regionFullNameZH(code)
+	if utf8.RuneCountInString(name) > maxRegionNameRunes {
+		return code
+	}
+	return name
+}
+
+func regionFullNameZH(code string) string {
 	region, err := language.ParseRegion(code)
 	if err != nil {
 		return code
@@ -91,7 +126,11 @@ func validRegionPrefixedRealityName(code, displayName string) bool {
 func (s *Store) Regions() []RegionView {
 	regions := make([]RegionView, 0, len(supportedRegionCodes))
 	for _, code := range supportedRegionCodes {
-		regions = append(regions, RegionView{Code: code, NameZH: regionNameZH(code), Prefix: regionPrefix(code)})
+		name := regionNameZH(code)
+		if name == code {
+			name = regionFullNameZH(code)
+		}
+		regions = append(regions, RegionView{Code: code, NameZH: name, Prefix: regionPrefix(code)})
 	}
 	return regions
 }
