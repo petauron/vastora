@@ -277,7 +277,7 @@ func (s *Store) beginAgentUpdate(ctx context.Context, agentID, credential, taskI
 	return nil
 }
 
-func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string) error {
+func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, recoveryRequired bool) error {
 	taskError = strings.TrimSpace(taskError)
 	if len(taskError) > 1024 {
 		taskError = taskError[:1024]
@@ -287,13 +287,16 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 		return err
 	}
 	defer tx.Rollback()
-	var targetVersion, currentState string
+	var targetVersion, currentState, previousError string
 	var attempt int64
-	if err := tx.QueryRowContext(ctx, `SELECT target_version, state, attempt FROM agent_updates WHERE id = ? AND agent_id = ?`, taskID, agentID).Scan(&targetVersion, &currentState, &attempt); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT target_version, state, attempt, last_error FROM agent_updates WHERE id = ? AND agent_id = ?`, taskID, agentID).Scan(&targetVersion, &currentState, &attempt, &previousError); err != nil {
 		return errors.New("center: Agent update task not found")
 	}
 	if attempt != expectedAttempt || expectedAttempt <= 0 {
 		return errors.New("center: Agent update task is stale")
+	}
+	if recoveryRequired && (succeeded || taskError == "" || currentState != "installing") {
+		return errInvalidReconciliationDisposition
 	}
 	desiredState := "succeeded"
 	if !succeeded {
@@ -302,7 +305,13 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 			taskError = "Agent update failed"
 		}
 	}
-	if currentState == desiredState {
+	if recoveryRequired {
+		// The persistent helper still owns this attempt. Keep it active so
+		// neither a manual retry nor a Center rollout can replace its candidate
+		// and pre-migration recovery point with a competing update.
+		desiredState = "installing"
+	}
+	if currentState == desiredState && (!recoveryRequired || previousError == taskError) {
 		return tx.Commit()
 	}
 	if succeeded {
@@ -315,11 +324,7 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 		if parseErr != nil || liveVersion != targetVersion || !supported || !seen.After(s.now().Add(-agentConnectedMaxAge)) {
 			return errors.New("center: updated Agent has not reconnected with the target version")
 		}
-		// A persistent helper reports a schema-committed activation failure as
-		// failed while it retains and retries the compatible candidate. Permit
-		// that same task attempt to converge only after Center observes a fresh
-		// heartbeat from the exact target version.
-		if currentState != "installing" && currentState != "failed" {
+		if currentState != "installing" {
 			return errors.New("center: Agent update is not installing")
 		}
 	} else if currentState != "running" && currentState != "installing" {
@@ -332,7 +337,11 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return errors.New("center: Agent update changed before completion")
 	}
-	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "agent.update", 1, desiredState, taskError); err != nil {
+	eventState := desiredState
+	if recoveryRequired {
+		eventState = "recovery_required"
+	}
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "agent.update", 1, eventState, taskError); err != nil {
 		return err
 	}
 	return tx.Commit()

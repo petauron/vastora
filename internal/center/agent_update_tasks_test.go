@@ -53,7 +53,7 @@ func TestAgentUpdateRequiresHandoffAndTargetVersionReconnect(t *testing.T) {
 	}
 }
 
-func TestAgentUpdateRecoveryCanConvergeAfterSchemaCommittedFailure(t *testing.T) {
+func TestAgentUpdateRecoveryRemainsActiveUntilTargetReconnects(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -72,11 +72,35 @@ func TestAgentUpdateRecoveryCanConvergeAfterSchemaCommittedFailure(t *testing.T)
 		t.Fatal(err)
 	}
 	const recoveryRequired = "recovery required; schema-compatible candidate remains installed"
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, 0); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
 		t.Fatal(err)
 	}
+	for range 2 {
+		if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
+			t.Fatalf("recovery report replay failed: %v", err)
+		}
+	}
+	var state, lastError string
+	if err := store.db.QueryRowContext(ctx, `SELECT state, last_error FROM agent_updates WHERE id = ?`, task.ID).Scan(&state, &lastError); err != nil || state != "installing" || lastError != recoveryRequired {
+		t.Fatalf("recovery no longer owns the update: state=%q error=%q err=%v", state, lastError, err)
+	}
+	if repeated, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89"); err != nil || repeated.ID != queued.ID {
+		t.Fatalf("manual retry replaced the recovering attempt: %#v %v", repeated, err)
+	}
+	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.90"); err == nil {
+		t.Fatal("a competing version replaced an active recovery")
+	}
+	if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(nodes) != 0 {
+		t.Fatalf("automatic rollout replaced an active recovery: %v %v", nodes, err)
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
+		t.Fatal("recovery succeeded without a target-version heartbeat")
+	}
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt+1, false, "stale", nil, true); err == nil {
+		t.Fatal("a stale attempt changed recovery state")
+	}
 	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
-		t.Fatalf("failed update could not resume the same durable attempt: %v", err)
+		t.Fatalf("recovering update could not resume the same durable attempt: %v", err)
 	}
 	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.89", true)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
@@ -89,6 +113,9 @@ func TestAgentUpdateRecoveryCanConvergeAfterSchemaCommittedFailure(t *testing.T)
 	}
 	if len(agents) != 1 || agents[0].Update == nil || agents[0].Update.ID != queued.ID || agents[0].Update.State != "succeeded" || agents[0].Update.LastError != "" {
 		t.Fatalf("recovered update state = %#v", agents)
+	}
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err == nil {
+		t.Fatal("a late recovery report reopened a completed update")
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/petauron/vastora/internal/agent"
+	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
 )
 
@@ -34,6 +35,9 @@ type hostUpdateRecoveryFile struct {
 type hostUpdateRecoveryManifest struct {
 	Version             int                    `json:"version"`
 	Phase               string                 `json:"phase"`
+	TaskID              string                 `json:"taskId"`
+	Attempt             int64                  `json:"attempt"`
+	AgentID             string                 `json:"agentId"`
 	SourceVersion       string                 `json:"sourceVersion"`
 	TargetVersion       string                 `json:"targetVersion"`
 	TargetSchemaVersion int                    `json:"targetSchemaVersion"`
@@ -84,6 +88,7 @@ func prepareHostUpdateRecovery(ctx context.Context, operation hostUpdateOperatio
 	}
 	manifest := hostUpdateRecoveryManifest{
 		Version: 1, Phase: "pre_migration_recovery_ready",
+		TaskID: operation.TaskID, Attempt: operation.Attempt, AgentID: operation.AgentID,
 		SourceVersion: operation.SourceVersion, TargetVersion: operation.TargetVersion,
 		TargetSchemaVersion: agent.CurrentSchemaVersion(), DataDir: dataDir, SchemaVersion: schemaVersion,
 		Candidate: candidate, Database: database, Key: key,
@@ -96,6 +101,9 @@ func prepareHostUpdateRecovery(ctx context.Context, operation hostUpdateOperatio
 		return err
 	}
 	if err := writeHostUpdateRecoveryFile(filepath.Join(partialDirectory, hostUpdateRecoveryManifestName), append(raw, '\n')); err != nil {
+		return err
+	}
+	if err := verifyHostUpdateRecovery(ctx, operation, partialDirectory, candidatePath); err != nil {
 		return err
 	}
 	if err := syncHostUpdateDirectory(partialDirectory); err != nil {
@@ -186,7 +194,7 @@ func verifyHostUpdateRecovery(ctx context.Context, operation hostUpdateOperation
 	if err != nil {
 		return err
 	}
-	if manifest.SourceVersion != operation.SourceVersion || manifest.TargetVersion != operation.TargetVersion || manifest.TargetSchemaVersion != agent.CurrentSchemaVersion() || manifest.DataDir != dataDir || manifest.SchemaVersion < 1 || manifest.SchemaVersion > manifest.TargetSchemaVersion {
+	if manifest.TaskID != operation.TaskID || manifest.Attempt != operation.Attempt || manifest.AgentID != operation.AgentID || manifest.SourceVersion != operation.SourceVersion || manifest.TargetVersion != operation.TargetVersion || manifest.TargetSchemaVersion != agent.CurrentSchemaVersion() || manifest.DataDir != dataDir || manifest.SchemaVersion < 1 || manifest.SchemaVersion > manifest.TargetSchemaVersion {
 		return errors.New("agent: pre-migration recovery point belongs to another update")
 	}
 	candidate, err := hashHostUpdateRecoveryFile(candidatePath)
@@ -208,7 +216,11 @@ func verifyHostUpdateRecovery(ctx context.Context, operation hostUpdateOperation
 			return errors.New("agent: pre-migration recovery file integrity check failed")
 		}
 	}
-	schemaVersion, err := inspectHostUpdateRecoveryDatabase(ctx, filepath.Join(directory, hostUpdateRecoveryDatabaseName))
+	key, err := secret.LoadKey(filepath.Join(directory, hostUpdateRecoveryKeyName))
+	if err != nil {
+		return fmt.Errorf("agent: read pre-migration recovery key: %w", err)
+	}
+	schemaVersion, err := inspectHostUpdateRecoveryDatabase(ctx, filepath.Join(directory, hostUpdateRecoveryDatabaseName), key)
 	if err != nil {
 		return err
 	}
@@ -218,7 +230,7 @@ func verifyHostUpdateRecovery(ctx context.Context, operation hostUpdateOperation
 	return nil
 }
 
-func inspectHostUpdateRecoveryDatabase(ctx context.Context, path string) (int, error) {
+func inspectHostUpdateRecoveryDatabase(ctx context.Context, path string, key []byte) (int, error) {
 	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro&immutable=1"}).String()
 	database, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -232,6 +244,9 @@ func inspectHostUpdateRecoveryDatabase(ctx context.Context, path string) (int, e
 	var schemaVersion int
 	if err := database.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&schemaVersion); err != nil {
 		return 0, err
+	}
+	if err := agent.VerifyRecoveryDatabaseKey(ctx, database, key); err != nil {
+		return 0, fmt.Errorf("agent: pre-migration database and key do not match: %w", err)
 	}
 	return schemaVersion, nil
 }

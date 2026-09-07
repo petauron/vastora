@@ -152,6 +152,10 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 }
 
 func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
+	return runPersistentHostUpdateWithEnvironment(ctx, operationPath, defaultHostUpdateActivationEnvironment(filepath.Dir(operationPath)), agent.Client{})
+}
+
+func runPersistentHostUpdateWithEnvironment(ctx context.Context, operationPath string, environment hostUpdateActivationEnvironment, client agent.Client) error {
 	if cancelled, err := hostUpdateCancelled(operationPath); err != nil || cancelled {
 		return err
 	}
@@ -165,24 +169,41 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 	if err != nil {
 		return err
 	}
-	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
-	client := agent.Client{}
-	requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
-	err = client.BeginHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt)
-	cancel()
-	if err != nil {
-		return fmt.Errorf("agent: transfer update responsibility to Center: %w", err)
-	}
 	resultPath := filepath.Join(filepath.Dir(operationPath), filepath.Base(hostUpdateResultPath))
 	result, exists, err := readHostUpdateResult(resultPath)
 	if err != nil {
 		return err
 	}
-	environment := defaultHostUpdateActivationEnvironment(filepath.Dir(operationPath))
+	// A published recovery point proves that the handoff already happened.
+	// Recover host-local state before contacting Center: ingress restoration
+	// may itself be needed to make that control-plane connection reachable.
+	var activationErr error
+	activationAttempted := false
+	activate := func() error {
+		if !activationAttempted {
+			activationErr = activateHostUpdate(ctx, operation, environment)
+			activationAttempted = true
+		}
+		return activationErr
+	}
+	if !exists || result.Succeeded {
+		if _, err := os.Lstat(environment.recoveryDirectory); err == nil {
+			_ = activate()
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("agent: inspect local recovery before update handoff: %w", err)
+		}
+	}
+	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
+	requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+	err = client.BeginHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt)
+	cancel()
+	if err != nil {
+		return errors.Join(activationErr, fmt.Errorf("agent: transfer update responsibility to Center: %w", err))
+	}
 	reportRecoveryRequired := func(updateErr error) error {
 		recoveryRequired := fmt.Errorf("agent: recovery required; schema-compatible candidate remains installed and will be retried; expected protected pre-migration recovery at %s: %v", environment.recoveryDirectory, updateErr)
 		requestContext, cancel = context.WithTimeout(ctx, 30*time.Second)
-		reportErr := client.CompleteHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt, recoveryRequired)
+		reportErr := client.CompleteHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt, recoveryRequired, true)
 		cancel()
 		if reportErr != nil {
 			return errors.Join(updateErr, fmt.Errorf("agent: report recovery-required host update: %w", reportErr))
@@ -190,14 +211,14 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 		return updateErr
 	}
 	if !exists {
-		updateErr := activateHostUpdate(ctx, operation, environment)
+		updateErr := activate()
 		var terminal bool
 		result, terminal = hostUpdateActivationResult(updateErr)
 		if !terminal {
 			// The candidate may already have migrated agent.db. Keep the helper
 			// retrying it and do not publish a local terminal result that would
 			// trigger cleanup or restore the source executable. Center still gets
-			// an actionable failed state; the same attempt can later converge after
+			// an actionable recovery error; the same attempt can later converge after
 			// an exact-version heartbeat proves that the candidate recovered.
 			return reportRecoveryRequired(updateErr)
 		}
@@ -208,7 +229,7 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 		// A successful activation can be persisted before Center acknowledges
 		// it. Re-establish the target Agent on every replay; never roll back a
 		// binary after it may have committed a forward schema migration.
-		if err := activateHostUpdate(ctx, operation, environment); err != nil {
+		if err := activate(); err != nil {
 			if errors.Is(err, errHostUpdateCandidatePending) {
 				return reportRecoveryRequired(err)
 			}
@@ -220,7 +241,7 @@ func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
 		updateErr = errors.New(result.Error)
 	}
 	requestContext, cancel = context.WithTimeout(ctx, 30*time.Second)
-	err = client.CompleteHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt, updateErr)
+	err = client.CompleteHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt, updateErr, false)
 	cancel()
 	if err != nil {
 		return fmt.Errorf("agent: report host update result: %w", err)

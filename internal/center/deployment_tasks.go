@@ -361,10 +361,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		return s.failAgentDecommissionClaim(ctx, agentID, expectedAttempt, taskError)
 	}
 	if isAgentUpdateTaskID(taskID) {
-		if reconciliationRequired {
-			return errInvalidReconciliationDisposition
-		}
-		return s.completeAgentUpdate(ctx, agentID, taskID, expectedAttempt, succeeded, taskError)
+		return s.completeAgentUpdate(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
 	}
 	if revision, gatewayTask := gatewayTaskRevision(taskID); gatewayTask {
 		if reconciliationRequired {

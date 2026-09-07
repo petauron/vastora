@@ -851,11 +851,41 @@ func TestHostUpdateHelperUsesAuthenticatedLifecycleCallbacks(t *testing.T) {
 	if err := client.BeginHostUpdate(context.Background(), connection, "agent-update-task-1", 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.CompleteHostUpdate(context.Background(), connection, "agent-update-task-1", 2, nil); err != nil {
+	if err := client.CompleteHostUpdate(context.Background(), connection, "agent-update-task-1", 2, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if !started || !completed {
 		t.Fatalf("host update lifecycle callbacks: started=%v completed=%v", started, completed)
+	}
+}
+
+func TestHostUpdateHelperReportsRecoveryWithoutTerminalFailure(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer credential" || r.URL.Path != "/api/v1/agents/agent-1/tasks/agent-update-task-1/result" {
+			t.Errorf("invalid recovery callback: %s %s", r.Method, r.URL.Path)
+		}
+		var payload struct {
+			Attempt                int64  `json:"attempt"`
+			Succeeded              bool   `json:"succeeded"`
+			Error                  string `json:"error"`
+			ReconciliationRequired bool   `json:"reconciliationRequired"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Attempt != 2 || payload.Succeeded || !payload.ReconciliationRequired || payload.Error == "" {
+			t.Errorf("recovery was not explicitly marked as nonterminal: %#v %v", payload, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"completed":true}`))
+	}))
+	defer server.Close()
+	connection := testConnection(t, "agent-1", "node", server.URL, "credential")
+	client := Client{HTTPClient: server.Client()}
+	if err := client.CompleteHostUpdate(context.Background(), connection, "agent-update-task-1", 2, errors.New("candidate requires recovery"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CompleteHostUpdate(context.Background(), connection, "agent-update-task-1", 2, nil, true); err == nil || calls != 1 {
+		t.Fatal("invalid successful-recovery payload was sent to Center")
 	}
 }
 

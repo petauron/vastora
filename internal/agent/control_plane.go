@@ -1398,11 +1398,14 @@ func (c Client) BeginHostUpdate(ctx context.Context, connection Connection, task
 
 // CompleteHostUpdate reports the persistent helper outcome. Center accepts a
 // success only after the target Agent version has reconnected by heartbeat.
-func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64, updateErr error) error {
+func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64, updateErr error, recoveryRequired bool) error {
 	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
 		return errors.New("agent: invalid host update completion")
 	}
-	payload := map[string]any{"attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": false}
+	if recoveryRequired && updateErr == nil {
+		return errors.New("agent: host update recovery requires an error")
+	}
+	payload := map[string]any{"attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": recoveryRequired}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
