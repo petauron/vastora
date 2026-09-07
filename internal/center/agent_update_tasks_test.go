@@ -84,6 +84,10 @@ func TestAgentUpdateRecoveryRemainsActiveUntilTargetReconnects(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT state, last_error FROM agent_updates WHERE id = ?`, task.ID).Scan(&state, &lastError); err != nil || state != "installing" || lastError != recoveryRequired {
 		t.Fatalf("recovery no longer owns the update: state=%q error=%q err=%v", state, lastError, err)
 	}
+	var failedActivations int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id = ? AND event = 'failed'`, task.ID).Scan(&failedActivations); err != nil || failedActivations != 1 {
+		t.Fatalf("replayed recovery reports duplicated activation events: count=%d err=%v", failedActivations, err)
+	}
 	if repeated, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89"); err != nil || repeated.ID != queued.ID {
 		t.Fatalf("manual retry replaced the recovering attempt: %#v %v", repeated, err)
 	}

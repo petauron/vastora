@@ -339,7 +339,9 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 	}
 	eventState := desiredState
 	if recoveryRequired {
-		eventState = "recovery_required"
+		// Record the failed activation using the existing event vocabulary;
+		// the owning update task remains installing until recovery completes.
+		eventState = "failed"
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "agent.update", 1, eventState, taskError); err != nil {
 		return err
