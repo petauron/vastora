@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.107](https://github.com/petauron/vastora/compare/v0.1.0-alpha.106...v0.1.0-alpha.107) (2026-09-07)
+
+
+### Bug Fixes
+
+* **security:** refresh CodeQL alerts on main pushes ([#342](https://github.com/petauron/vastora/issues/342)) ([926db7a](https://github.com/petauron/vastora/commit/926db7a65bbff70e8d98392ebdbb540c14b02610)), closes [#304](https://github.com/petauron/vastora/issues/304)
+
 ## [0.1.0-alpha.106](https://github.com/petauron/vastora/compare/v0.1.0-alpha.105...v0.1.0-alpha.106) (2026-09-07)
 
 
