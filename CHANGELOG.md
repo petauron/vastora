@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.106](https://github.com/petauron/vastora/compare/v0.1.0-alpha.105...v0.1.0-alpha.106) (2026-09-07)
+
+
+### Bug Fixes
+
+* **3x-ui:** shorten subscription region labels ([#355](https://github.com/petauron/vastora/issues/355)) ([362262f](https://github.com/petauron/vastora/commit/362262fef7a1413722ba16461da0fe334dff6604))
+* **agent:** keep remote updates schema compatible ([#344](https://github.com/petauron/vastora/issues/344)) ([01d9391](https://github.com/petauron/vastora/commit/01d939140a2eb561fb9f388da0e5fdf2c73fad70)), closes [#341](https://github.com/petauron/vastora/issues/341)
+
 ## [0.1.0-alpha.105](https://github.com/petauron/vastora/compare/v0.1.0-alpha.104...v0.1.0-alpha.105) (2026-09-03)
 
 
