@@ -147,6 +147,17 @@ func newHostUpdateCancellationFixture(t *testing.T, dataDir string) hostHelperCa
 	if err := os.Mkdir(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	for _, recoveryDirectory := range []string{
+		filepath.Join(directory, hostUpdateRecoveryDirectoryName),
+		filepath.Join(directory, hostUpdateRecoveryPartialDirectoryName),
+	} {
+		if err := os.Mkdir(recoveryDirectory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(recoveryDirectory, hostUpdateRecoveryManifestName), []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	operation := hostUpdateOperation{
 		Version: 1, TaskID: "agent-update-fixture", Attempt: 1, TargetVersion: "0.1.0-alpha.2", SourceVersion: "0.1.0-alpha.1",
 		DataDir: dataDir, Executable: filepath.Join(root, "vastora"), AgentID: "fixture", CenterURL: "http://127.0.0.1:1", Credential: "synthetic-update-credential",
@@ -175,5 +186,11 @@ func newHostUpdateCancellationFixture(t *testing.T, dataDir string) hostHelperCa
 		directory: directory, unitName: hostUpdateUnitName, unitPath: unitPath, unitContents: hostUpdateServiceUnit(),
 		enabledLink: enabledLink, operationDataDir: hostUpdateDataDir,
 		run: func(context.Context, string, ...string) ([]byte, error) { return nil, nil },
+		cleanupAdditionalState: func() error {
+			return errors.Join(
+				removeHostUpdateRecovery(filepath.Join(directory, hostUpdateRecoveryDirectoryName)),
+				removeHostUpdateRecovery(filepath.Join(directory, hostUpdateRecoveryPartialDirectoryName)),
+			)
+		},
 	}
 }

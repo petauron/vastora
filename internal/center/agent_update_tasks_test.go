@@ -53,6 +53,76 @@ func TestAgentUpdateRequiresHandoffAndTargetVersionReconnect(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateRecoveryRemainsActiveUntilTargetReconnects(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "update-recovery-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.99", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.99", LANAddress: "10.0.0.99", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+
+	queued, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || task == nil {
+		t.Fatalf("claim update: %#v, %v", task, err)
+	}
+	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+		t.Fatal(err)
+	}
+	const recoveryRequired = "recovery required; schema-compatible candidate remains installed"
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
+			t.Fatalf("recovery report replay failed: %v", err)
+		}
+	}
+	var state, lastError string
+	if err := store.db.QueryRowContext(ctx, `SELECT state, last_error FROM agent_updates WHERE id = ?`, task.ID).Scan(&state, &lastError); err != nil || state != "installing" || lastError != recoveryRequired {
+		t.Fatalf("recovery no longer owns the update: state=%q error=%q err=%v", state, lastError, err)
+	}
+	var failedActivations int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id = ? AND event = 'failed'`, task.ID).Scan(&failedActivations); err != nil || failedActivations != 1 {
+		t.Fatalf("replayed recovery reports duplicated activation events: count=%d err=%v", failedActivations, err)
+	}
+	if repeated, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89"); err != nil || repeated.ID != queued.ID {
+		t.Fatalf("manual retry replaced the recovering attempt: %#v %v", repeated, err)
+	}
+	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.90"); err == nil {
+		t.Fatal("a competing version replaced an active recovery")
+	}
+	if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(nodes) != 0 {
+		t.Fatalf("automatic rollout replaced an active recovery: %v %v", nodes, err)
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
+		t.Fatal("recovery succeeded without a target-version heartbeat")
+	}
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt+1, false, "stale", nil, true); err == nil {
+		t.Fatal("a stale attempt changed recovery state")
+	}
+	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+		t.Fatalf("recovering update could not resume the same durable attempt: %v", err)
+	}
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.89", true)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
+		t.Fatalf("recovered target heartbeat could not complete update: %v", err)
+	}
+
+	agents, err := store.ListAgents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 || agents[0].Update == nil || agents[0].Update.ID != queued.ID || agents[0].Update.State != "succeeded" || agents[0].Update.LastError != "" {
+		t.Fatalf("recovered update state = %#v", agents)
+	}
+	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err == nil {
+		t.Fatal("a late recovery report reopened a completed update")
+	}
+}
+
 func TestAgentUpdateRequiresAFeatureCapableOnlineAgent(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

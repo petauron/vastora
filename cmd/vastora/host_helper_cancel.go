@@ -12,15 +12,16 @@ import (
 )
 
 type hostHelperCancellationEnvironment struct {
-	directory         string
-	unitName          string
-	unitPath          string
-	unitContents      string
-	enabledLink       string
-	generatorPath     string
-	generatorContents string
-	operationDataDir  func(string) (string, error)
-	run               func(context.Context, string, ...string) ([]byte, error)
+	directory              string
+	unitName               string
+	unitPath               string
+	unitContents           string
+	enabledLink            string
+	generatorPath          string
+	generatorContents      string
+	operationDataDir       func(string) (string, error)
+	run                    func(context.Context, string, ...string) ([]byte, error)
+	cleanupAdditionalState func() error
 }
 
 // An explicit local uninstall takes ownership from the autonomous helper.
@@ -148,6 +149,11 @@ func cancelHostHelper(ctx context.Context, dataDir string, environment hostHelpe
 	for _, name := range []string{"result.json", "operation.json", "completed", "vastora"} {
 		if err := os.Remove(filepath.Join(environment.directory, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("agent: remove cancelled host cleanup state: %w", err)
+		}
+	}
+	if environment.cleanupAdditionalState != nil {
+		if err := environment.cleanupAdditionalState(); err != nil {
+			return fmt.Errorf("agent: remove cancelled host cleanup recovery state: %w", err)
 		}
 	}
 	entries, err := os.ReadDir(environment.directory)

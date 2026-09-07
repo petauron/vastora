@@ -463,6 +463,30 @@ states and restores them before contacting Center. Existing containers, Caddy
 routes, and connectors continue while Center is unavailable; only desired-state
 changes pause.
 
+Remote Agent updates stop the Agent and publish a protected, integrity-checked
+copy of `agent.db` and `agent.key` before installing the candidate executable.
+Installing the candidate is the update commit point: it may open and migrate the
+production database before startup health is known. After that point the helper
+retains and retries the candidate, never restoring the previous executable. On
+interrupted runs, the published recovery manifest conservatively requires the
+same candidate even if replacement may not yet have completed. The manifest binds
+the task, attempt, Agent identity, candidate digest, and schema capability; its
+database/key pair is verified by decryption before publication. A failure known
+to precede replacement can restart the unchanged source executable. The copy stays under
+`/var/lib/vastora-agent-update/pre-migration-recovery` while activation is
+pending and is removed only after the candidate is stable and Center has
+acknowledged completion. It is explicit operator recovery material, not an
+automatic database downgrade path. A failed activation is reported to Center
+as `installing` with a recovery error using the existing task-result
+`reconciliationRequired` disposition. The active attempt excludes competing
+manual and automatic upgrades while the systemd helper keeps the exact candidate
+and retries it. Recovery from a published manifest restores the local Agent before
+contacting Center, so loss of the control-plane connection cannot strand local
+ingress restoration. The same task becomes successful only after Center observes
+a fresh heartbeat from that target version. After that acknowledgement, cleanup
+removes both the temporary recovery material and the incompatible previous
+executable.
+
 Center backup contains a consistent Center SQLite snapshot and its encryption
 key. ACME account keys and certificates are encrypted records in that snapshot,
 so no separate control-plane CA file exists. Restore requires an equivalent

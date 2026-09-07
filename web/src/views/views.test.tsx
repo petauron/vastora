@@ -1813,6 +1813,19 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("--capabilities 'docker,gateway'");
   });
 
+  it("shows a recovering Agent update error while keeping competing updates disabled", () => {
+    const data = dashboard();
+    data.agents[0].version = "old";
+    data.agents[0].update = { id: "agent-update-1", targetVersion: "test", state: "installing", lastError: "Recovery required: candidate startup failed", updatedAt: "2026-08-18T00:00:00Z" };
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    const manage = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理"));
+    act(() => manage?.click());
+    expect(document.body.textContent).toContain("Recovery required: candidate startup failed");
+    const updateButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("正在更新"));
+    expect(updateButton?.disabled).toBe(true);
+    expect(document.body.textContent).not.toContain("重试更新");
+  });
+
   it("shows one manual bootstrap update for legacy Agents", () => {
     const data = dashboard();
     data.agents[0].version = "old";

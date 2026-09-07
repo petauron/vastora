@@ -12,6 +12,15 @@ import (
 
 const agentDatabaseKeyBindingComponent = "agent"
 
+// VerifyRecoveryDatabaseKey proves that a recovery database can be decrypted
+// with its companion key, without initializing or migrating the database.
+func VerifyRecoveryDatabaseKey(ctx context.Context, db *sql.DB, key []byte) error {
+	if _, err := inspectAgentDatabaseKeyBinding(ctx, db, key); err != nil {
+		return err
+	}
+	return verifyAgentEncryptedState(ctx, db, key)
+}
+
 func inspectAgentDatabaseKeyBinding(ctx context.Context, db *sql.DB, key []byte) (bool, error) {
 	exists, err := agentTableHasColumns(ctx, db, "storage_key_binding", "id", "sealed")
 	if err != nil || !exists {

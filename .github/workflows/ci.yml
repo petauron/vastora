@@ -66,6 +66,8 @@ jobs:
           go-version: "1.26.6"
           cache: false
       - run: make go-format-check go-static-check
+      - name: Verify Agent update recovery invariants
+        run: go test ./cmd/vastora ./internal/agent ./internal/center -run '^(TestHostUpdate|TestAgentUpdate|TestUninstall.*Updater|TestCancelledUpdater)' -count=1
       - name: Validate generated Headscale config with pinned binary
         if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         env:

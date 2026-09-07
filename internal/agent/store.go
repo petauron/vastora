@@ -83,6 +83,13 @@ type Connection struct {
 
 const agentSchemaVersion = 16
 
+// CurrentSchemaVersion is the highest Agent database schema this executable
+// can open. The persistent host updater records it before a candidate can
+// migrate production state so reboot recovery never selects an older binary.
+func CurrentSchemaVersion() int {
+	return agentSchemaVersion
+}
+
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("agent: create data directory: %w", err)
