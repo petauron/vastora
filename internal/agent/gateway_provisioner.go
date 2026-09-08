@@ -96,6 +96,9 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	if err != nil {
 		return err
 	}
+	if err := prepareAdminSocketDirectory(settings.AdminSocketPath); err != nil {
+		return err
+	}
 	docker, err := provisioner.client()
 	if err != nil {
 		return err
@@ -132,11 +135,16 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	matchesPorts := desired == nil || existing != nil && caddyPortsMatch(existing.Container.Config, existing.Container.HostConfig, exposedPorts, portBindings)
 	matchesProtection := desired == nil || existingSystemServices == desiredSystemServices
 	if existing != nil && matchesRuntime && matchesPorts && matchesProtection && caddySharesAdminPath(existing.Container.HostConfig, settings.AdminSocketPath) && (protectedSystemGateway || existing.Container.Config.Image == settings.Image) {
-		if existing.Container.State != nil && existing.Container.State.Running {
-			return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
+		if err := waitForPublishedAddresses(ctx, existing.Container.HostConfig.PortBindings); err != nil {
+			return err
 		}
-		if _, err := docker.ContainerStart(ctx, existing.Container.ID, client.ContainerStartOptions{}); err != nil {
-			return fmt.Errorf("agent: start existing Caddy container: %w", err)
+		if existing.Container.State == nil || !existing.Container.State.Running {
+			if _, err := docker.ContainerStart(ctx, existing.Container.ID, client.ContainerStartOptions{}); err != nil && !errdefs.IsNotModified(err) {
+				return fmt.Errorf("agent: start existing Caddy container: %w", err)
+			}
+		}
+		if err := dockerruntime.RecoverAttachment(ctx, docker, existing.Container.ID, dockerruntime.NetworkName, "runtime-network", dockerruntime.CaddyAlias); err != nil {
+			return err
 		}
 		return waitForCaddyAdminSocket(ctx, settings.AdminSocketPath)
 	}
@@ -155,24 +163,14 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 		}
 	}
 	if existing != nil {
-		if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil {
+		if _, err := docker.ContainerRemove(ctx, existing.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 			return fmt.Errorf("agent: replace Caddy container: %w", err)
 		}
-	} else if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("agent: replace Caddy container: %w", err)
 	}
 	mounts := gatewayMounts(settings)
 	if settings.AdminSocketPath != "" {
-		adminDirectory := filepath.Dir(settings.AdminSocketPath)
-		if err := os.MkdirAll(adminDirectory, 0o700); err != nil {
-			return fmt.Errorf("agent: create Caddy Admin socket directory: %w", err)
-		}
-		if info, err := os.Lstat(settings.AdminSocketPath); err == nil {
-			if info.Mode()&os.ModeSocket == 0 {
-				return errors.New("agent: Caddy Admin socket path is occupied by a non-socket file")
-			}
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("agent: inspect stale Caddy Admin socket: %w", err)
+		if err := prepareAdminSocketDirectory(settings.AdminSocketPath); err != nil {
+			return err
 		}
 		if err := os.Remove(settings.AdminSocketPath); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("agent: remove stale Caddy Admin socket: %w", err)
@@ -184,6 +182,9 @@ func (provisioner DockerGatewayProvisioner) reconcile(ctx context.Context, desir
 	}
 	if desiredSystemServices != "" {
 		labels[gatewayruntime.SystemServicesLabel] = desiredSystemServices
+	}
+	if err := waitForPublishedAddresses(ctx, portBindings); err != nil {
+		return err
 	}
 	created, err := docker.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{

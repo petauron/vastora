@@ -176,7 +176,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 	completeThreeXUIDeployment(t, store, controller, installTask, "10.0.0.17", "controller-api-token")
 
 	create := func(name string) (ApplicationCommandView, error) {
-		return store.CreateRealityCommand(ctx, RealityCommandInput{
+		return createVerifiedRealityCommand(t, store, ctx, RealityCommandInput{
 			ApplicationID: deployment.ApplicationID,
 			RegionCode:    "US",
 			Name:          name,

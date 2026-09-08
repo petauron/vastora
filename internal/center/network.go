@@ -129,6 +129,15 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 	if err != nil {
 		return nil, err
 	}
+	if !lastSeenAt.After(s.now().UTC().Add(-agentConnectedMaxAge)) {
+		return nil, errors.New("center: reconnect the node before confirming its network")
+	}
+	if previous == nil {
+		previous, err = recoverableNetworkProfile(ctx, tx, agentID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if previous != nil && (previous.PublicAddress != input.PublicAddress || previous.PublicBindAddress != input.PublicBindAddress || previous.PublicMode != input.PublicMode) {
 		var publicationCount int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications
@@ -172,7 +181,16 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 			return nil, err
 		}
 		if applicationCount != 0 {
-			return nil, errors.New("center: stop applications before changing the private service address")
+			matches := false
+			if previous == nil {
+				matches, err = retainedApplicationBindingMatches(ctx, tx, agentID, input.ServiceAddress)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if !matches {
+				return nil, errors.New("center: stop applications before changing the private service address")
+			}
 		}
 	}
 	if previous != nil {
@@ -231,15 +249,8 @@ func (s *Store) ConfirmNetworkProfile(ctx context.Context, agentID string, input
 			return nil, fmt.Errorf("center: stop %s publications before disabling this network", check.kind)
 		}
 	}
-	enabledJSON, _ := json.Marshal(input.EnabledKinds)
-	verifiedAt := ""
-	if !input.PublicVerifiedAt.IsZero() {
-		verifiedAt = input.PublicVerifiedAt.Format(time.RFC3339Nano)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_network_profiles(agent_id, service_address, lan_address, headscale_address, public_address, public_bind_address, public_mode, enabled_kinds_json, direct_public, public_verified_at, confirmed_at, candidate_observed_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(agent_id) DO UPDATE SET service_address = excluded.service_address, lan_address = excluded.lan_address, headscale_address = excluded.headscale_address, public_address = excluded.public_address, public_bind_address = excluded.public_bind_address, public_mode = excluded.public_mode, enabled_kinds_json = excluded.enabled_kinds_json, direct_public = excluded.direct_public, public_verified_at = excluded.public_verified_at, confirmed_at = excluded.confirmed_at, candidate_observed_at = excluded.candidate_observed_at`, agentID, input.ServiceAddress, input.LANAddress, input.HeadscaleAddress, input.PublicAddress, input.PublicBindAddress, input.PublicMode, enabledJSON, input.DirectPublic, verifiedAt, input.ConfirmedAt.Format(time.RFC3339Nano), input.CandidateObserved.Format(time.RFC3339Nano)); err != nil {
-		return nil, fmt.Errorf("center: save network profile: %w", err)
+	if err := saveNetworkProfile(ctx, tx, agentID, input); err != nil {
+		return nil, err
 	}
 	if err := s.autoAssignFirstSiteGateway(ctx, tx, agentID, s.now().UTC()); err != nil {
 		return nil, err

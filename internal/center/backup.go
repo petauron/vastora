@@ -4,9 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
@@ -22,15 +19,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/petauron/vastora/internal/backupcrypto"
 	"github.com/petauron/vastora/internal/secret"
-	"golang.org/x/crypto/scrypt"
 )
 
 const (
-	backupMagic   = "VASTORA1"
-	backupVersion = byte(2)
-	saltSize      = 16
-
 	backupPasswordMinimumLength = 12
 )
 
@@ -95,7 +88,7 @@ func (s *Store) Backup(ctx context.Context, outputPath, password string) error {
 	if err != nil {
 		return err
 	}
-	encrypted, err := encryptBackup(plain, password)
+	encrypted, err := backupcrypto.Encrypt(plain, password)
 	if err != nil {
 		return err
 	}
@@ -119,7 +112,7 @@ func Restore(backupPath, destination, password string) error {
 	if err != nil {
 		return fmt.Errorf("center: read backup: %w", err)
 	}
-	plain, err := decryptBackup(raw, password)
+	plain, err := backupcrypto.Decrypt(raw, password)
 	if err != nil {
 		return err
 	}
@@ -311,69 +304,6 @@ func verifyMetadata(files map[string][]byte) (backupMetadata, error) {
 		}
 	}
 	return metadata, nil
-}
-
-func encryptBackup(plain []byte, password string) ([]byte, error) {
-	salt := make([]byte, saltSize)
-	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-		return nil, fmt.Errorf("center: create backup salt: %w", err)
-	}
-	key, err := deriveBackupKey(password, salt)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	seal, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, seal.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("center: create backup nonce: %w", err)
-	}
-	header := append(append([]byte(backupMagic), backupVersion), salt...)
-	sealed := seal.Seal(nil, nonce, plain, header)
-	return append(append(header, nonce...), sealed...), nil
-}
-
-func decryptBackup(raw []byte, password string) ([]byte, error) {
-	minimum := len(backupMagic) + 1 + saltSize + 12 + 16
-	if len(raw) < minimum || string(raw[:len(backupMagic)]) != backupMagic || raw[len(backupMagic)] != backupVersion {
-		return nil, errors.New("center: backup format is not supported")
-	}
-	headerEnd := len(backupMagic) + 1 + saltSize
-	key, err := deriveBackupKey(password, raw[len(backupMagic)+1:headerEnd])
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	seal, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonceEnd := headerEnd + seal.NonceSize()
-	if len(raw) < nonceEnd+seal.Overhead() {
-		return nil, errors.New("center: backup is truncated")
-	}
-	plain, err := seal.Open(nil, raw[headerEnd:nonceEnd], raw[nonceEnd:], raw[:headerEnd])
-	if err != nil {
-		return nil, errors.New("center: backup password or integrity check failed")
-	}
-	return plain, nil
-}
-
-func deriveBackupKey(password string, salt []byte) ([]byte, error) {
-	key, err := scrypt.Key([]byte(password), salt, 32768, 8, 1, 32)
-	if err != nil {
-		return nil, fmt.Errorf("center: derive backup key: %w", err)
-	}
-	return key, nil
 }
 
 func fileHash(content []byte) string {

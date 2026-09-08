@@ -68,6 +68,34 @@ jobs:
       - run: make go-format-check go-static-check
       - name: Verify Agent update recovery invariants
         run: go test ./cmd/vastora ./internal/agent ./internal/center -run '^(TestHostUpdate|TestAgentUpdate|TestUninstall.*Updater|TestCancelledUpdater)' -count=1
+      - name: Verify recovery and REALITY invariants
+        run: |
+          ci_test_status=0
+          go test ./internal/recovery ./internal/landing ./internal/realitytarget ./internal/dockerruntime -count=1 || ci_test_status=$?
+          go test ./internal/agent ./internal/center -run 'Test.*(Landing|Recovery|Recover|Reality|REALITY|HAProxy|AdminRuntimeDirectory|Migration|Migrated|Backup|ExternalVolume|Heartbeat)' -count=1 || ci_test_status=$?
+          exit "$ci_test_status"
+      - name: Set up native landing artifact builder
+        if: ${{ !cancelled() }}
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.0.0
+      - name: Verify landing kernel lease in an isolated network
+        if: ${{ !cancelled() }}
+        run: |
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends nftables
+          fi
+          docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64,linux/arm64 --output "type=local,dest=$RUNNER_TEMP/dante" .
+          cp "$RUNNER_TEMP/dante/linux_amd64/"* internal/dantebundle/assets/
+          VASTORA_DANTE_BUNDLE_INTEGRATION=1 go test ./internal/dantebundle -count=1
+          gzip -dc "$RUNNER_TEMP/dante/linux_amd64/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"
+          chmod 0755 "$RUNNER_TEMP/dante/danted"
+          go test -c -tags=integration -o "$RUNNER_TEMP/landing.test" ./internal/landing
+          sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestBridgeGateKernelPolicyAndExpiry$' -test.v
+          sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestNativeServerKernelPolicy$' -test.v
+          VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteConfiguration$' -test.v
+          VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteTransfersTCPAndUDP$' -test.v
+          go test -c -tags=integration -o "$RUNNER_TEMP/landing-host.test" ./internal/agent
+          sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/landing-host.test" -test.run '^TestLandingNativeHostLifecycle$' -test.v
       - name: Validate generated Headscale config with pinned binary
         if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         env:

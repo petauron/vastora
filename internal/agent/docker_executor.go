@@ -84,6 +84,9 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	if task.Operation == "uninstall" {
 		return ApplicationTaskResult{}, uninstallDockerApp(ctx, docker, task.AppKey, task.ApplicationID, task.DeleteData)
 	}
+	if err := waitForBindAddress(ctx, bindAddress); err != nil {
+		return ApplicationTaskResult{}, err
+	}
 	if task.OfflineRestore && task.AppKey == threeXUIKey {
 		if _, exists, err := inspectThreeXUIVolume(ctx, docker, threeXUIDatabaseVolume); err != nil {
 			return ApplicationTaskResult{}, fmt.Errorf("agent: inspect retained 3x-ui state: %w", err)
@@ -236,12 +239,25 @@ func (e ApplicationExecutor) Maintain(ctx context.Context) error {
 // offline recovery is limited to digest-pinned images and managed host files
 // that are already present on this machine.
 func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
+	store.landingMutationMu.Lock()
+	defer store.landingMutationMu.Unlock()
 	installations, err := store.RestorableInstallations(ctx)
 	if err != nil {
 		return err
 	}
 	var failures []error
 	for _, installation := range installations {
+		if installation.AppKey == threeXUIKey {
+			state, err := store.landingRuntime(ctx)
+			if err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			if state != nil && state.Route != nil {
+				// restoreLandingProxy owns this instance and its boot fence.
+				continue
+			}
+		}
 		task := DeploymentTask{
 			Kind: "application.apply", ID: installation.InstanceID, Attempt: 1,
 			ApplicationID: installation.ApplicationID,
@@ -314,15 +330,47 @@ func (e ApplicationExecutor) containerMatchesInstallation(ctx context.Context, c
 	if err != nil {
 		return false, fmt.Errorf("agent: verify %s ownership for offline restore: %w", installation.AppKey, err)
 	}
-	if inspection.Container.State == nil || !inspection.Container.State.Running {
-		return false, nil
-	}
 	imageName := map[string]string{threeXUIKey: "3x-ui", cpaKey: "cli-proxy-api", keeperKey: "keeper"}[installation.AppKey]
 	expectedImage, err := declaredImage(installation.Manifest, imageName)
 	if err != nil {
 		return false, err
 	}
-	return inspection.Container.Config.Image == expectedImage, nil
+	if inspection.Container.Config.Image != expectedImage {
+		return false, nil
+	}
+	bindAddress := installation.ServiceAddress
+	if bindAddress == "" {
+		bindAddress = "127.0.0.1"
+	}
+	if inspection.Container.HostConfig == nil || len(inspection.Container.HostConfig.PortBindings) == 0 {
+		return false, errors.New("agent: retained application has no proven private port bindings")
+	}
+	for _, bindings := range inspection.Container.HostConfig.PortBindings {
+		for _, binding := range bindings {
+			if binding.HostIP.String() != bindAddress {
+				return false, errors.New("agent: retained application binding differs from its recorded private address")
+			}
+		}
+	}
+	if err := waitForBindAddress(ctx, bindAddress); err != nil {
+		return false, err
+	}
+	networkName, networkComponent := cpaNetwork, "cpa-network"
+	if installation.AppKey == threeXUIKey {
+		networkName, networkComponent = dockerruntime.NetworkName, "runtime-network"
+	}
+	if err := dockerruntime.EnsureBridgeNetwork(ctx, docker, networkName, networkComponent); err != nil {
+		return false, err
+	}
+	if inspection.Container.State == nil || !inspection.Container.State.Running {
+		if _, err := docker.ContainerStart(ctx, inspection.Container.ID, client.ContainerStartOptions{}); err != nil && !errdefs.IsNotModified(err) {
+			return false, fmt.Errorf("agent: restart retained application container: %w", err)
+		}
+	}
+	if err := dockerruntime.RecoverAttachment(ctx, docker, inspection.Container.ID, networkName, networkComponent, containerName); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 type appUninstallEngine interface {

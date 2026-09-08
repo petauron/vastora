@@ -101,6 +101,19 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 		FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id = a.node_id WHERE a.id = ?`, applicationID).Scan(&siteID, &serviceAddress); err != nil {
 		return err
 	}
+	if serviceAddress == "" {
+		// A controller can observe multiple workers. One worker temporarily
+		// losing its private profile must not roll back everybody's heartbeat
+		// or erase their inbounds. Retain identity and mark only this app unsure.
+		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'degraded', last_error = 'Node network is recovering', updated_at = ?
+			WHERE application_id = ? AND source = 'observed' AND status NOT IN ('stopped', 'failed')`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'degraded', last_error = 'Node network is recovering', updated_at = ?
+			WHERE service_id IN (SELECT id FROM services WHERE application_id = ?) AND status IN ('ready', 'degraded')
+			AND action_required = 0 AND (last_error = '' OR last_error = 'Node network is recovering')`, now.Format(time.RFC3339Nano), applicationID)
+		return err
+	}
 	if net.ParseIP(serviceAddress) == nil {
 		return errors.New("center: application node has an invalid service address")
 	}

@@ -25,6 +25,11 @@ import (
 const threeXUIControllerBackupMaxSize = 64 << 20
 
 func (c Client) applyThreeXUIControllerCommand(ctx context.Context, store *Store, taskID string, command ThreeXUIControllerCommandTask) (ThreeXUIControllerCommandResult, error) {
+	// A migration backup must not copy host-bound landing routes to another
+	// machine, and promotion/demotion must not invalidate a live checkpoint.
+	if err := store.checkLandingApplicationMutation(ctx, threeXUIKey); err != nil {
+		return ThreeXUIControllerCommandResult{}, err
+	}
 	if command.ApplicationID == "" || (command.Action != "backup" && command.Action != "promote" && command.Action != "demote") {
 		return ThreeXUIControllerCommandResult{}, errors.New("agent: invalid 3x-ui controller operation")
 	}

@@ -61,6 +61,27 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 				return fmt.Errorf("center: prepare private HTTPS certificates before database migration (backup: %s): %w", backup, err)
 			}
 		}
+		if current < 56 {
+			if _, err := provider.UpTo(ctx, 55); err != nil {
+				return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
+			}
+			// The released migration 56 reset shared/Tunnel publications to
+			// pending, including explicit stops. Preserve those rows before
+			// crossing that boundary; migration 64 consumes this durable input.
+			if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS migration_56_stopped_publications (
+				publication_id TEXT PRIMARY KEY, last_error TEXT NOT NULL, action_required INTEGER NOT NULL CHECK(action_required IN (0,1)));
+				INSERT OR IGNORE INTO migration_56_stopped_publications(publication_id, last_error, action_required)
+				SELECT p.id, p.last_error, CASE
+					WHEN p.last_error = 'REALITY guard requires hardening before publication' OR p.gateway_node_id IS NULL THEN 1
+					WHEN (p.kind = 'public_shared_443' OR (p.kind = 'public_direct' AND service.protocol NOT IN ('http', 'https')))
+					 AND p.gateway_node_id <> application.node_id THEN 1
+					ELSE 0 END
+				FROM publications p JOIN services service ON service.id = p.service_id
+				JOIN applications application ON application.id = service.application_id
+				WHERE p.status = 'stopped'`); err != nil {
+				return fmt.Errorf("center: preserve stopped entries before database migration (backup: %s): %w", backup, err)
+			}
+		}
 		if _, err := provider.Up(ctx); err != nil {
 			return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
 		}

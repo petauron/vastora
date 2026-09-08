@@ -30,6 +30,7 @@ func TestRealityTargetProofTreatsASNAsAdvisory(t *testing.T) {
 		"key exchange":     func(value *RealityCommandResult) { value.X25519 = false },
 		"HTTP2":            func(value *RealityCommandResult) { value.HTTP2 = false },
 		"private IP":       func(value *RealityCommandResult) { value.TargetIP = "10.0.0.1" },
+		"tailnet IP":       func(value *RealityCommandResult) { value.TargetIP = "100.64.0.1" },
 		"loopback":         func(value *RealityCommandResult) { value.TargetIP = "127.0.0.1" },
 		"invalid IP":       func(value *RealityCommandResult) { value.TargetIP = "bad" },
 		"invalid hostname": func(value *RealityCommandResult) { value.TargetHost = "bad" },
@@ -46,7 +47,7 @@ func TestRealityTargetProofTreatsASNAsAdvisory(t *testing.T) {
 	}
 }
 
-func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.T) {
+func TestRealityGuardRecoveryPreservesReadyPublication(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -120,7 +121,11 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 		t.Fatalf("unknown ASN service summary = %#v, err = %v", services, err)
 	}
 
-	if err := store.quarantineReadyRealityGuards(ctx); err != nil {
+	if err := store.startRealityGuardHardening(ctx); err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return time.Now().Add(12 * time.Hour) }
+	if err := store.startRealityGuardHardening(ctx); err != nil {
 		t.Fatal(err)
 	}
 	var guardStatus, guardError, serviceStatus, publicationStatus string
@@ -130,8 +135,8 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 		WHERE guard.service_id = 'reality-guard-service'`).Scan(&guardStatus, &guardError, &serviceStatus, &publicationStatus); err != nil {
 		t.Fatal(err)
 	}
-	if guardStatus != "action_required" || serviceStatus != "degraded" || publicationStatus != "stopped" || !strings.Contains(guardError, "revalidation") {
-		t.Fatalf("quarantined guard=%q error=%q service=%q publication=%q", guardStatus, guardError, serviceStatus, publicationStatus)
+	if guardStatus != "ready" || serviceStatus != "ready" || publicationStatus != "ready" || guardError != "" {
+		t.Fatalf("ready guard changed during recovery: guard=%q error=%q service=%q publication=%q", guardStatus, guardError, serviceStatus, publicationStatus)
 	}
 	var desiredJSON []byte
 	if err := store.db.QueryRowContext(ctx, `SELECT desired_json FROM node_listener_states WHERE node_id = ?`, node.ID).Scan(&desiredJSON); err != nil {
@@ -141,9 +146,7 @@ func TestRealityGuardRevalidationWithdrawsPublicationBeforeHardening(t *testing.
 	if json.Unmarshal(desiredJSON, &desired) != nil {
 		t.Fatalf("invalid node-listener state: %s", desiredJSON)
 	}
-	for _, route := range desired.Listener.Routes {
-		if route.Hostname == "www.example.com" {
-			t.Fatalf("quarantined REALITY SNI remained published: %#v", desired.Listener.Routes)
-		}
+	if len(desired.Listener.Routes) != 1 || desired.Listener.Routes[0].Hostname != "www.example.com" {
+		t.Fatalf("ready REALITY SNI was withdrawn: %#v", desired.Listener.Routes)
 	}
 }

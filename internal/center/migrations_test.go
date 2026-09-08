@@ -136,10 +136,7 @@ func TestVersion57MigrationSelectsOneGlobalThreeXUIControllerAndQueuesLegacyConv
 
 func TestVersion56MigrationSeparatesNodeDirectIngressAndFailsClosedOnCrossNodeRows(t *testing.T) {
 	directory := t.TempDir()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := legacyMigrationStore(t, directory, 55)
 	ctx := context.Background()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	statements := []string{
@@ -151,7 +148,7 @@ func TestVersion56MigrationSeparatesNodeDirectIngressAndFailsClosedOnCrossNodeRo
 		`INSERT INTO applications(id, name, node_id, site_id, app_key, status, runtime, created_at, updated_at) VALUES('app-v55', '3x-ui', 'node-v55-a', 'site-v55', 'vastora-official/3x-ui', 'running', 'docker', '` + now + `', '` + now + `'), ('app-v55-unready', '3x-ui C', 'node-v55-c', 'site-v55', 'vastora-official/3x-ui', 'running', 'docker', '` + now + `', '` + now + `'), ('app-v55-web', 'Web', 'node-v55-a', 'site-v55', 'test/web', 'running', 'systemd', '` + now + `', '` + now + `')`,
 		`INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, status, created_at, updated_at) VALUES('service-v55-valid', 'app-v55', 'site-v55', 'valid', 'tcp', 443, 443, '10.0.0.10:443', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `'), ('service-v55-cross', 'app-v55', 'site-v55', 'cross', 'tcp', 2443, 2443, '10.0.0.10:2443', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `'), ('service-v55-unready', 'app-v55-unready', 'site-v55', 'unready', 'tcp', 443, 443, '10.0.0.30:443', 'observed', 'vless/tcp/reality', 'ready', '` + now + `', '` + now + `'), ('service-v55-web', 'app-v55-web', 'site-v55', 'web', 'http', 8080, 8080, '10.0.0.10:8080', 'observed', 'http', 'ready', '` + now + `', '` + now + `')`,
 		`INSERT INTO three_x_ui_reality_guards(service_id, target_host, target_ip, server_name, companion_tag, status, created_at, updated_at) VALUES('service-v55-valid', 'www.example.com:443', '93.184.216.34', 'www.example.com', 'valid-guard', 'ready', '` + now + `', '` + now + `'), ('service-v55-unready', 'www.example.com:443', '93.184.216.34', 'www.example.com', 'unready-guard', 'ready', '` + now + `', '` + now + `')`,
-		`INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, sni_hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at) VALUES('publication-v55-valid', 'service-v55-valid', 'public_shared_443', 'application_node', 'node-v55-a', 'valid.example.test', 'www.example.com', 'manual', 7, 7, 'ready', '` + now + `', '` + now + `'), ('publication-v55-cross', 'service-v55-cross', 'public_shared_443', 'application_node', 'node-v55-b', 'cross.example.test', 'www.example.com', 'manual', 4, 4, 'ready', '` + now + `', '` + now + `'), ('publication-v55-unready', 'service-v55-unready', 'public_shared_443', 'application_node', 'node-v55-c', 'unready.example.test', 'www.example.com', 'manual', 2, 2, 'ready', '` + now + `', '` + now + `'), ('publication-v55-tunnel', 'service-v55-web', 'cloudflare_tunnel', 'tunnel_connector', 'node-v55-a', 'tunnel.example.test', '', 'cloudflare', 9, 9, 'ready', '` + now + `', '` + now + `')`,
+		`INSERT INTO publications(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at) VALUES('publication-v55-valid', 'service-v55-valid', 'public_shared_443', 'node-v55-a', 'valid.example.test', 'www.example.com', 'manual', 7, 7, 'ready', '` + now + `', '` + now + `'), ('publication-v55-cross', 'service-v55-cross', 'public_shared_443', 'node-v55-b', 'cross.example.test', 'www.example.com', 'manual', 4, 4, 'ready', '` + now + `', '` + now + `'), ('publication-v55-unready', 'service-v55-unready', 'public_shared_443', 'node-v55-c', 'unready.example.test', 'www.example.com', 'manual', 2, 2, 'ready', '` + now + `', '` + now + `'), ('publication-v55-tunnel', 'service-v55-web', 'cloudflare_tunnel', 'node-v55-a', 'tunnel.example.test', '', 'cloudflare', 9, 9, 'ready', '` + now + `', '` + now + `')`,
 		`INSERT INTO routes(id, publication_id, site_id, service_id, gateway_node_id, hostname, protocol, upstreams_json, desired_revision, applied_revision, status, created_at, updated_at) VALUES('route-v55-tunnel', 'publication-v55-tunnel', 'site-v55', 'service-v55-web', 'node-v55-a', 'tunnel.example.test', 'http', '["10.0.0.10:8080"]', 9, 9, 'ready', '` + now + `', '` + now + `')`,
 	}
 	for _, statement := range statements {
@@ -160,40 +157,6 @@ func TestVersion56MigrationSeparatesNodeDirectIngressAndFailsClosedOnCrossNodeRo
 		}
 	}
 	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.ExecContext(ctx, `PRAGMA foreign_keys = OFF;
-		CREATE TABLE publications_v55 (
-			id TEXT PRIMARY KEY, service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-			kind TEXT NOT NULL CHECK(kind IN ('lan_gateway', 'headscale_gateway', 'public_direct', 'public_shared_443', 'cloudflare_tunnel')),
-			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT, hostname TEXT NOT NULL,
-			sni_hostname TEXT NOT NULL DEFAULT '', dns_provider TEXT NOT NULL CHECK(dns_provider IN ('manual', 'cloudflare', 'headscale')),
-			dns_record_id TEXT NOT NULL DEFAULT '', access_application_id TEXT NOT NULL DEFAULT '', tls_enabled INTEGER NOT NULL DEFAULT 0,
-			desired_revision INTEGER NOT NULL DEFAULT 1, applied_revision INTEGER NOT NULL DEFAULT 0,
-			status TEXT NOT NULL CHECK(status IN ('pending', 'applying', 'ready', 'degraded', 'failed', 'stopped')),
-			last_error TEXT NOT NULL DEFAULT '', cleanup_pending INTEGER NOT NULL DEFAULT 0, cleanup_attempt INTEGER NOT NULL DEFAULT 0,
-			cleanup_retry_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-			UNIQUE(service_id, kind, hostname));
-		INSERT INTO publications_v55(id, service_id, kind, gateway_node_id, hostname, sni_hostname, dns_provider, dns_record_id, access_application_id, tls_enabled, desired_revision, applied_revision, status, last_error, cleanup_pending, cleanup_attempt, cleanup_retry_at, created_at, updated_at)
-			SELECT id, service_id, kind, entry_node_id, hostname, sni_hostname, dns_provider, dns_record_id, access_application_id, tls_enabled, desired_revision, applied_revision, status, last_error, cleanup_pending, cleanup_attempt, cleanup_retry_at, created_at, updated_at FROM publications;
-		DROP TABLE publications;
-		ALTER TABLE publications_v55 RENAME TO publications;
-		DROP TABLE node_listener_states;
-		DROP INDEX agent_enrollment_one_reconnect_idx;
-		ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id;
-		DELETE FROM goose_db_version WHERE version_id >= 56;
-		PRAGMA user_version = 55;
-		PRAGMA foreign_keys = ON;`)
-	if err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,7 +298,7 @@ func databaseSchemaShape(t *testing.T, db *sql.DB) map[string]schemaTable {
 			t.Fatal(err)
 		}
 		for _, index := range indexes {
-			columnNames, err := db.Query(`SELECT name FROM pragma_index_info(?) ORDER BY seqno`, index.Name)
+			columnNames, err := db.Query(`SELECT COALESCE(name, '<expression>') FROM pragma_index_info(?) ORDER BY seqno`, index.Name)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -656,10 +619,7 @@ func TestVersion27MigrationBackfillsImmutableCatalogHistory(t *testing.T) {
 
 func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 	directory := t.TempDir()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := legacyMigrationStore(t, directory, 41)
 	ctx := context.Background()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	publicKey := make([]byte, ed25519.PublicKeySize)
@@ -677,42 +637,6 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	restoreLegacyInboundPlanSchemaForTest(t, db)
-	if _, err := db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id >= 42`); err != nil {
-		t.Fatal(err)
-	}
-	for _, statement := range []string{
-		`DROP TABLE agent_updates`,
-		`DROP INDEX agent_enrollment_one_reconnect_idx`,
-		`ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id`,
-		`ALTER TABLE publications DROP COLUMN access_application_id`,
-		`ALTER TABLE application_commands DROP COLUMN reconciliation_requested`,
-		`ALTER TABLE agent_enrollment_tokens DROP COLUMN ca_certificate_pem`,
-		`ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at`,
-		`ALTER TABLE agent_network_profiles DROP COLUMN public_mode`,
-		`ALTER TABLE agent_network_profiles DROP COLUMN public_bind_address`,
-		`ALTER TABLE agents DROP COLUMN remote_update_supported`,
-		`ALTER TABLE agents DROP COLUMN public_egress_observed_at`,
-		`ALTER TABLE agents DROP COLUMN public_egress_mode`,
-		`ALTER TABLE agents DROP COLUMN public_egress_bind_address`,
-		`ALTER TABLE agents DROP COLUMN public_egress_address`,
-		`ALTER TABLE agent_decommissions DROP COLUMN callback_token_hash`,
-	} {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 41`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -739,19 +663,11 @@ func TestVersion42MigrationDropsOnlyLegacyCatalogCache(t *testing.T) {
 
 func TestVersion52MigrationPreservesBuiltinHeadscaleCloudflareDNS(t *testing.T) {
 	directory := t.TempDir()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := legacyMigrationStore(t, directory, 51)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.Exec(`INSERT INTO network_integrations(kind, mode, endpoint, secret_id, status, created_at, updated_at)
 		VALUES('headscale', 'builtin', 'https://headscale.example.com', NULL, 'failed', ?, ?);
-		DELETE FROM settings WHERE key IN ('headscale_dns_policy', 'headscale_dns_resolvers');
-		ALTER TABLE agent_decommissions DROP COLUMN callback_token_hash;
-		DROP INDEX agent_enrollment_one_reconnect_idx;
-		ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id;
-		DELETE FROM goose_db_version WHERE version_id >= 52;
-		PRAGMA user_version = 51`, now, now); err != nil {
+		DELETE FROM settings WHERE key IN ('headscale_dns_policy', 'headscale_dns_resolvers')`, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -1397,6 +1313,34 @@ func TestFailedMigrationRollsBackSchemaAndLeavesBackup(t *testing.T) {
 	}
 }
 
+// Construct historical versions by applying the released forward migrations.
+// Individual migration tests must not relabel the current schema as an old
+// version: that leaves future columns/tables in place and does not test an
+// upgrade that any released Center could actually perform.
+func legacyMigrationStore(t *testing.T, directory string, version int64) *Store {
+	t.Helper()
+	createLegacyVersion3Database(t, directory)
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	store := &Store{db: db}
+	ctx := context.Background()
+	if err := store.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, version); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
 func createLegacyVersion3Database(t *testing.T, directory string) {
 	t.Helper()
 	store, err := Open(directory)
@@ -1436,6 +1380,10 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE reality_security_checks`,
+		`DROP TABLE node_listener_states`,
+		`DROP TABLE landing_server_states`,
+		`DROP TABLE landing_proxy_states`,
 		`DROP TABLE assistant_audit_events`,
 		`DROP TABLE assistant_events`,
 		`DROP TABLE change_approvals`,
@@ -1445,6 +1393,9 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`DROP TABLE assistant_messages`,
 		`DROP TABLE assistant_conversations`,
 		`DROP TABLE assistant_model_providers`,
+		`DROP TABLE recovery_evidence`,
+		`DROP TABLE agent_network_profile_recovery`,
+		`ALTER TABLE agents DROP COLUMN runtime_recovery`,
 		`DROP INDEX deployments_change_proposal_idx`,
 		`DROP TRIGGER application_command_updates_block_during_three_x_ui_deployment`,
 		`DROP TRIGGER agent_enrollment_operation_secret_cleanup`,

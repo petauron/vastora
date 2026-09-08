@@ -10,7 +10,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error("Vastora interface failed", error, info.componentStack);
+    if (import.meta.env.DEV) console.error("Vastora interface failed", error, info.componentStack);
   }
 
   render() {

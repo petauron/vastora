@@ -30,6 +30,11 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "landing-firewall":
+		if len(arguments) != 1 {
+			return errors.New("landing-firewall takes no arguments")
+		}
+		return agent.RestoreLandingFirewall(context.Background())
 	case "install":
 		flags := flag.NewFlagSet("agent install", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -577,6 +582,7 @@ func runAgent(arguments []string) error {
 		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
 		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
+			client.LandingServer = agent.NativeLandingServer{}
 		}
 		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
 		if capabilities.Docker {
@@ -602,24 +608,30 @@ func runAgent(arguments []string) error {
 			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
 		}
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-		restoreContext, restoreCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		err = client.PrepareGatewayStartup(restoreContext, store)
-		if err == nil {
-			coordinator, _ := client.GatewayDriver.(agent.NodeListenerCoordinator)
-			err = agent.RestoreNodeListenerStartup(restoreContext, store, client.NodeListener, coordinator)
-		}
-		restoreCancel()
-		if err != nil {
-			return fmt.Errorf("restore ingress state before starting the Agent control plane: %w", err)
-		}
+		// Keep management reachable while the private address/runtime recovers.
+		// RunTasks serializes receipt recovery, applications, then ingress; no
+		// new work is claimed and no ingress is reported ready before recovery.
 		go func() {
+			runtimeRecovered := false
 			for {
-				if err := client.StartupHeartbeat(context.Background(), store); err != nil {
+				// Tell a reachable Center that management is alive before waiting
+				// for services. If Center itself is unavailable, offline recovery
+				// can restore the gateway needed to reach it.
+				if err := client.StartupHeartbeat(context.Background(), store); err == nil {
+					break
+				} else {
 					controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
-					time.Sleep(time.Second)
-					continue
 				}
-				break
+				if !runtimeRecovered {
+					restoreContext, restoreCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+					restoreErr := client.RecoverStartupRuntime(restoreContext, store)
+					restoreCancel()
+					runtimeRecovered = restoreErr == nil
+					if restoreErr != nil {
+						controlLogger.Error("Agent runtime recovery is pending", "event", "runtime.recovery", "error", controlplane.SafeError(restoreErr.Error()))
+					}
+				}
+				time.Sleep(time.Second)
 			}
 			go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
 				controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))

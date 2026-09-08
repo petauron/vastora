@@ -58,7 +58,7 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
       freshResolved = true;
       if (!cancelled) setShowingCached(false);
     }).catch((loadError) => {
-      if (!cancelled) setRefreshError(readableError(language, loadError));
+      if (!cancelled) setRefreshError(userError(language, loadError));
     });
     return () => { cancelled = true; };
   }, [controller?.id, language, run, service?.id]);
@@ -98,7 +98,7 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
   const retryLoad = () => {
     setNotice("");
     setRefreshError("");
-    void run({ action: "list_inbounds" }).then(() => setShowingCached(false)).catch((loadError) => setRefreshError(readableError(language, loadError)));
+    void run({ action: "list_inbounds" }).then(() => setShowingCached(false)).catch((loadError) => setRefreshError(userError(language, loadError)));
   };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -115,7 +115,7 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
       setEditing(false);
       setNotice(copy(language, "节点套餐已保存。", "Node plan saved."));
     } catch (saveError) {
-      setError(readableError(language, saveError));
+      setError(userError(language, saveError));
     }
   };
 
@@ -144,13 +144,6 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
       {!editing ? <SheetFooter><Button onClick={requestClose} variant="outline">{copy(language, "关闭", "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
-}
-
-function readableError(language: Language, error: unknown) {
-  if (!(error instanceof Error) || !error.message) return copy(language, "操作失败，请稍后重试。", "Operation failed. Try again shortly.");
-  const normalized = error.message.toLowerCase();
-  if (normalized.includes("session expired") || normalized.includes("live connection") || normalized.includes("did not respond in time")) return userError(language, error);
-  return error.message.replace(/^center:\s*/i, "");
 }
 
 function formatDate(value: string, language: Language, timeZone?: string) {

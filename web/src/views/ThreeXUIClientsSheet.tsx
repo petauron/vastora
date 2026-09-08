@@ -82,7 +82,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
       freshResolved = true;
       if (!cancelled) setShowingCached(false);
     }).catch((loadError) => {
-      if (!cancelled) setRefreshError(readableError(language, loadError));
+      if (!cancelled) setRefreshError(userError(language, loadError));
     });
     return () => { cancelled = true; };
   }, [application?.id, language, runCommand]);
@@ -114,7 +114,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 
   const refresh = () => {
     setRefreshError("");
-    void runCommand({ action: "list" }).then(() => setShowingCached(false)).catch((loadError) => setRefreshError(readableError(language, loadError)));
+    void runCommand({ action: "list" }).then(() => setShowingCached(false)).catch((loadError) => setRefreshError(userError(language, loadError)));
   };
 
   const run = async (input: Omit<ThreeXUIClientCommandInput, "applicationId">) => {
@@ -123,7 +123,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
       const next = await runCommand(input);
       if (next && input.action !== "list" && input.action !== "reveal_link" && input.action !== "reveal_subscription") setNotice(copy(language, "更改已同步到所选节点。", "The change was synced to the selected nodes."));
     } catch (operationError) {
-      setError(readableError(language, operationError));
+      setError(userError(language, operationError));
       throw operationError;
     }
   };
@@ -142,7 +142,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 		setRevealed({ title, value: result.shareUri, commandId: next.id, operationKey, scope });
       await navigator.clipboard?.writeText(result.shareUri).catch(() => undefined);
     } catch (operationError) {
-      setError(readableError(language, operationError));
+      setError(userError(language, operationError));
     }
   };
 
@@ -154,7 +154,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 			setRevealed(null);
 			setCommand((current) => current?.id === revealed.commandId ? { ...current, resultAvailable: false } : current);
 		} catch (operationError) {
-			setError(readableError(language, operationError));
+			setError(userError(language, operationError));
 		}
 	};
 
@@ -239,7 +239,7 @@ function ClientEditor({ busy, editor, inbounds, language, onCancel, onDirtyChang
     try {
       await onSave(client ? { action: "update", email: client.email, newEmail: name.trim(), inboundIds: inboundIDs, totalBytes, resetDays: renewalDays, expiryTime, limitIp: limit } : { action: "create", newEmail: name.trim(), inboundIds: inboundIDs, enabled, totalBytes, resetDays: renewalDays, expiryTime, limitIp: limit });
     } catch (saveError) {
-      setError(readableError(language, saveError));
+      setError(userError(language, saveError));
     }
   };
   return <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
@@ -310,10 +310,4 @@ function formatExpiry(value: number, language: Language, timeZone?: string) {
   } catch {
     return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeZone: "UTC" }).format(value);
   }
-}
-function readableError(language: Language, error: unknown) {
-  if (!(error instanceof Error) || !error.message) return copy(language, "操作失败，请稍后重试。", "Operation failed. Try again shortly.");
-  const normalized = error.message.toLowerCase();
-  if (normalized.includes("session expired") || normalized.includes("live connection") || normalized.includes("did not respond in time")) return userError(language, error);
-  return error.message.replace(/^center:\s*/i, "");
 }

@@ -10,6 +10,8 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -346,16 +348,55 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 		return err
 	}
 	configurationHash := haproxyConfigurationHash(configuration)
+	expected := haproxyContainerCreateOptions(settings, desired, configuration, configurationHash)
+	current, inspectErr := docker.ContainerInspect(ctx, settings.Container, client.ContainerInspectOptions{})
+	if inspectErr != nil && !errdefs.IsNotFound(inspectErr) {
+		return fmt.Errorf("agent: inspect HAProxy before reconcile: %w", inspectErr)
+	}
+	if inspectErr == nil {
+		if err := validateHAProxyOwnership(current); err != nil {
+			return err
+		}
+		if haproxyRuntimeMatches(current, expected) {
+			if err := waitForPublishedAddresses(ctx, expected.HostConfig.PortBindings); err != nil {
+				return err
+			}
+			if current.Container.State == nil || !current.Container.State.Running {
+				if _, err := docker.ContainerStart(ctx, current.Container.ID, client.ContainerStartOptions{}); err != nil && !errdefs.IsNotModified(err) {
+					return fmt.Errorf("agent: restart retained HAProxy: %w", err)
+				}
+			}
+			if err := dockerruntime.RecoverAttachment(ctx, docker, current.Container.ID, dockerruntime.NetworkName, "runtime-network", dockerruntime.HAProxyAlias); err != nil {
+				return err
+			}
+			if err := provisioner.waitHealthy(ctx, docker, current.Container.ID); err != nil {
+				return err
+			}
+			live, err := readLiveHAProxyConfiguration(ctx, docker, current.Container.ID)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(live, configuration) {
+				return errors.New("agent: retained HAProxy configuration differs from the desired state")
+			}
+			return nil
+		}
+	}
+	if err := waitForPublishedAddresses(ctx, expected.HostConfig.PortBindings); err != nil {
+		return err
+	}
 	pull, err := docker.ImagePull(ctx, settings.Image, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("agent: pull HAProxy image: %w", err)
 	}
 	_, _ = io.Copy(io.Discard, pull)
 	_ = pull.Close()
-	if _, err := docker.ContainerRemove(ctx, settings.Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("agent: replace HAProxy container: %w", err)
+	if inspectErr == nil {
+		if _, err := docker.ContainerRemove(ctx, current.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+			return fmt.Errorf("agent: replace HAProxy container: %w", err)
+		}
 	}
-	created, err := docker.ContainerCreate(ctx, haproxyContainerCreateOptions(settings, desired, configuration, configurationHash))
+	created, err := docker.ContainerCreate(ctx, expected)
 	if err != nil {
 		return fmt.Errorf("agent: create HAProxy container: %w", err)
 	}
@@ -364,6 +405,26 @@ func (provisioner DockerLayer4Provisioner) Apply(ctx context.Context, desired ga
 		return fmt.Errorf("agent: start HAProxy container: %w", err)
 	}
 	return provisioner.waitHealthy(ctx, docker, created.ID)
+}
+
+func validateHAProxyOwnership(current client.ContainerInspectResult) error {
+	if current.Container.Config == nil || current.Container.Config.Labels[gatewayruntime.ManagedLabel] != "true" || current.Container.Config.Labels[gatewayruntime.ComponentLabel] != gatewayruntime.Layer4ComponentLabel {
+		return errors.New("agent: refusing to alter an unowned HAProxy container")
+	}
+	return nil
+}
+
+func haproxyRuntimeMatches(current client.ContainerInspectResult, expected client.ContainerCreateOptions) bool {
+	c, h := current.Container.Config, current.Container.HostConfig
+	e, eh := expected.Config, expected.HostConfig
+	return c != nil && h != nil && c.Image == e.Image && c.User == e.User &&
+		c.Labels[layer4ConfigurationLabel] == e.Labels[layer4ConfigurationLabel] &&
+		slices.Contains(c.Env, e.Env[0]) && h.RestartPolicy.Name == eh.RestartPolicy.Name &&
+		reflect.DeepEqual(c.Entrypoint, e.Entrypoint) && reflect.DeepEqual(c.Cmd, e.Cmd) &&
+		h.NetworkMode == eh.NetworkMode && reflect.DeepEqual(h.PortBindings, eh.PortBindings) &&
+		h.ReadonlyRootfs == eh.ReadonlyRootfs && reflect.DeepEqual(h.CapDrop, eh.CapDrop) &&
+		reflect.DeepEqual(h.CapAdd, eh.CapAdd) && reflect.DeepEqual(h.SecurityOpt, eh.SecurityOpt) &&
+		reflect.DeepEqual(h.Tmpfs, eh.Tmpfs) && len(h.Binds) == 0 && len(h.Mounts) == 0
 }
 
 func haproxyContainerCreateOptions(settings DockerLayer4Provisioner, desired gateway.SharedHTTPS, configuration []byte, configurationHash string) client.ContainerCreateOptions {
@@ -406,7 +467,17 @@ func (provisioner DockerLayer4Provisioner) Remove(ctx context.Context) error {
 		return err
 	}
 	defer docker.Close()
-	if _, err := docker.ContainerRemove(ctx, provisioner.settings().Container, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+	current, err := docker.ContainerInspect(ctx, provisioner.settings().Container, client.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := validateHAProxyOwnership(current); err != nil {
+		return err
+	}
+	if _, err := docker.ContainerRemove(ctx, current.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("agent: remove HAProxy container: %w", err)
 	}
 	return nil
@@ -440,6 +511,12 @@ func (provisioner DockerLayer4Provisioner) Health(ctx context.Context) error {
 	}
 	if inspection.Container.State == nil || !inspection.Container.State.Running {
 		return errors.New("agent: HAProxy gateway is not running")
+	}
+	if err := validateHAProxyOwnership(inspection); err != nil {
+		return err
+	}
+	if !dockerruntime.AttachmentHealthy(inspection, dockerruntime.NetworkName, dockerruntime.HAProxyAlias) {
+		return errors.New("agent: HAProxy network attachment is incomplete")
 	}
 	return nil
 }

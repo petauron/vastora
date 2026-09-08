@@ -917,7 +917,7 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 	}
 	installTask := claimTask(t, store, node)
 	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.61", "edge-api-token")
-	command, err := store.CreateRealityCommand(ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", Hostname: "reality.edge.site.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
+	command, err := createVerifiedRealityCommand(t, store, ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", Hostname: "reality.edge.site.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -979,7 +979,7 @@ func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(
 
 	deadline, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if _, err := store.CreateRealityCommand(deadline, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Random", ClientName: "MacBook", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
+	if _, err := createVerifiedRealityCommand(t, store, deadline, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Random", ClientName: "MacBook", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"}); err != nil {
 		t.Fatalf("random hostname allocation blocked inside the command transaction: %v", err)
 	}
 	task := claimTask(t, store, node)
@@ -1175,6 +1175,10 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 		InboundTag:       "vastora-test",
 		ClientCreated:    true,
 	}
+	proofJSON, _ := json.Marshal(valid)
+	if err := json.Unmarshal(proofJSON, &input.VerifiedTarget); err != nil {
+		t.Fatal(err)
+	}
 	if err := validateRealityCommandResult(input, valid); err != nil {
 		t.Fatalf("valid result rejected: %v", err)
 	}
@@ -1184,6 +1188,7 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 		t.Fatalf("unknown advisory ASN rejected a valid result: %v", err)
 	}
 	for name, mutate := range map[string]func(*RealityCommandResult){
+		"changed verified IP": func(value *RealityCommandResult) { value.TargetIP = "203.0.113.11" },
 		"private service address": func(value *RealityCommandResult) {
 			value.Listen = "10.0.0.62"
 		},

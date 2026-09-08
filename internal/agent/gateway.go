@@ -64,7 +64,6 @@ func restoreGatewayState(ctx context.Context, store *Store, driver GatewayDriver
 	store.gatewayMutationMu.Lock()
 	defer store.gatewayMutationMu.Unlock()
 	var restoreErr error
-	defer func() { store.setGatewayStartupResult(restoreErr) }()
 	if driver == nil {
 		return nil
 	}
@@ -104,7 +103,9 @@ func restoreGatewayState(ctx context.Context, store *Store, driver GatewayDriver
 }
 
 func (c Client) PrepareGatewayStartup(ctx context.Context, store *Store) error {
-	return restoreGatewayState(ctx, store, c.GatewayDriver)
+	err := restoreGatewayState(ctx, store, c.GatewayDriver)
+	store.setGatewayStartupResult(err)
+	return err
 }
 
 func (s *Store) setGatewayStartupResult(err error) {

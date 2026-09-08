@@ -49,6 +49,7 @@ func (server *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/headscale/install", server.installHeadscale)
 	mux.HandleFunc("POST /v1/headscale/install/commit", server.commitHeadscaleInstall)
 	mux.HandleFunc("POST /v1/headscale/reconcile", server.reconcileHeadscale)
+	mux.HandleFunc("PUT /v1/headscale/landing-policy", server.applyLandingPolicy)
 	mux.HandleFunc("POST /v1/headscale/api-key/prepare", server.prepareHeadscaleAPIKeyRotation)
 	mux.HandleFunc("POST /v1/headscale/api-key/commit", server.commitHeadscaleAPIKeyRotation)
 	mux.HandleFunc("POST /v1/public-entry/probes", server.startPublicEntryProbe)

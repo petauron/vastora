@@ -451,7 +451,7 @@ func TestSucceededRealityPublicationRecoveryRequiresReadyGuardAndPreservesExplic
 	}
 	selectTestThreeXUIController(t, store, "reality-recovery-app")
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, region_code, protocol, container_port, host_port, endpoint, source, app_protocol, observed_listen, status, created_at, updated_at)
-		VALUES('reality-recovery-service', 'reality-recovery-app', ?, 'inbound-9', '🇺🇸 美国Recovery', 'US', 'tcp', 35443, 35443, '10.0.0.97:35443', 'observed', 'vless/tcp/reality', '10.0.0.97', 'ready', ?, ?)`, siteID, now, now); err != nil {
+		VALUES('reality-recovery-service', 'reality-recovery-app', ?, 'inbound-9', '🇺🇸 美国Recovery', 'US', 'tcp', 443, 443, '10.0.0.97:443', 'observed', 'vless/tcp/reality', '10.0.0.97', 'ready', ?, ?)`, siteID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	input := RealityCommandTask{
@@ -471,7 +471,7 @@ func TestSucceededRealityPublicationRecoveryRequiresReadyGuardAndPreservesExplic
 		InboundID:       9,
 		DisplayName:     input.DisplayName,
 		Listen:          "10.0.0.97",
-		Port:            35443,
+		Port:            443,
 		TargetHost:      "www.example.com",
 		ServerName:      "www.example.com",
 		ConnectHostname: input.ConnectHostname,
@@ -507,7 +507,11 @@ func TestSucceededRealityPublicationRecoveryRequiresReadyGuardAndPreservesExplic
 		t.Fatal(err)
 	}
 	if len(publications) != 1 || publications[0].ServiceID != "reality-recovery-service" || publications[0].Kind != publicationShared443 || publications[0].Status == "stopped" {
-		t.Fatalf("missing REALITY access was not reconstructed: %#v", publications)
+		var recoveryError string
+		if err := store.db.QueryRow(`SELECT error FROM application_commands WHERE id = 'reality-recovery-command'`).Scan(&recoveryError); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("missing REALITY access was not reconstructed: %#v; recovery error: %s", publications, recoveryError)
 	}
 	publicationID := publications[0].ID
 	if err := store.StopPublication(ctx, publicationID); err != nil {

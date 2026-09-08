@@ -30,6 +30,7 @@ import (
 	"github.com/petauron/vastora/internal/deployapi"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gatewayruntime"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 const (
@@ -201,6 +202,16 @@ func (installer DockerHeadscaleInstaller) applyHeadscale(ctx context.Context, in
 		"config.yaml":   headscaleConfig,
 		"derp.yaml":     renderHeadscaleDERPMap(),
 		"policy.hujson": renderHeadscalePolicy(),
+	}
+	landingPolicy, err := readLandingPolicyJournal(settings.ConfigDir)
+	if err != nil {
+		return "", deployapi.HeadscaleAPIKeyRotation{}, err
+	}
+	if landingPolicy != nil {
+		headscaleFiles["policy.hujson"], err = landing.ExtendHeadscalePolicy(renderHeadscalePolicy(), landingPolicy.Rules)
+		if err != nil {
+			return "", deployapi.HeadscaleAPIKeyRotation{}, err
+		}
 	}
 	for _, image := range []string{settings.HeadscaleImage, settings.CaddyImage} {
 		pull, err := docker.ImagePull(ctx, image, client.ImagePullOptions{})

@@ -12,119 +12,26 @@ import (
 	"time"
 )
 
-const realityGuardRevalidationInterval = 6 * time.Hour
-
-// RunRealityGuardRevalidation re-proves every ready guard at Center startup
-// and then on the configured interval. Revalidation deliberately withdraws
-// the HAProxy route before the Agent disables and rechecks the inbound, so an
-// unavailable external dependency can never leave an unverified service
-// published.
-func (s *Store) RunRealityGuardRevalidation(ctx context.Context, interval time.Duration, report func(error)) {
-	if interval <= 0 {
-		interval = realityGuardRevalidationInterval
-	}
+// RunRealityGuardRecovery retries only unfinished hardening. A restart or elapsed
+// time is not evidence that a previously verified target became unsafe. Ready
+// services retain their pinned target, listener and client connections.
+func (s *Store) RunRealityGuardRecovery(ctx context.Context, report func(error)) {
 	run := func() {
-		if err := s.quarantineReadyRealityGuards(ctx); err != nil {
-			if report != nil && !errors.Is(err, context.Canceled) {
-				report(err)
-			}
-			return
-		}
 		if err := s.startRealityGuardHardening(ctx); err != nil && report != nil && !errors.Is(err, context.Canceled) {
 			report(err)
 		}
 	}
 	run()
-	revalidationTicker := time.NewTicker(interval)
 	retryTicker := time.NewTicker(time.Minute)
-	defer revalidationTicker.Stop()
 	defer retryTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-revalidationTicker.C:
-			run()
 		case <-retryTicker.C:
-			if err := s.startRealityGuardHardening(ctx); err != nil && report != nil && !errors.Is(err, context.Canceled) {
-				report(err)
-			}
+			run()
 		}
 	}
-}
-
-func (s *Store) quarantineReadyRealityGuards(ctx context.Context) error {
-	return s.quarantineReadyRealityGuardsForAgent(ctx, "")
-}
-
-func (s *Store) quarantineReadyRealityGuardsForAgent(ctx context.Context, agentID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT publication.entry_node_id
-		FROM three_x_ui_reality_guards guard
-		JOIN services service ON service.id = guard.service_id
-		JOIN applications application ON application.id = service.application_id
-		JOIN publications publication ON publication.service_id = guard.service_id
-		WHERE guard.status = 'ready' AND publication.entry_node_id IS NOT NULL
-		 AND publication.status <> 'stopped' AND (? = '' OR application.node_id = ?)`, agentID, agentID)
-	if err != nil {
-		return err
-	}
-	listenerNodes := []string{}
-	for rows.Next() {
-		var nodeID string
-		if err := rows.Scan(&nodeID); err != nil {
-			rows.Close()
-			return err
-		}
-		listenerNodes = append(listenerNodes, nodeID)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	now := s.now().UTC()
-	nowText := now.Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_reality_guards
-		SET status = 'action_required', last_error = 'scheduled REALITY guard revalidation', updated_at = ?
-		WHERE status = 'ready' AND (? = '' OR service_id IN (
-		 SELECT service.id FROM services service JOIN applications application ON application.id = service.application_id
-		 WHERE application.node_id = ?
-	))`, nowText, agentID, agentID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'degraded',
-		last_error = 'scheduled REALITY guard revalidation', updated_at = ?
-		WHERE id IN (SELECT service_id FROM three_x_ui_reality_guards WHERE status = 'action_required'
-		 AND last_error = 'scheduled REALITY guard revalidation') AND status <> 'stopped'`, nowText); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM routes WHERE publication_id IN (
-		SELECT publication.id FROM publications publication
-		JOIN three_x_ui_reality_guards guard ON guard.service_id = publication.service_id
-		WHERE guard.status = 'action_required' AND guard.last_error = 'scheduled REALITY guard revalidation'
-	)`); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE publications SET status = 'stopped',
-		last_error = 'REALITY guard revalidation is in progress', updated_at = ?
-		WHERE service_id IN (SELECT service_id FROM three_x_ui_reality_guards
-		 WHERE status = 'action_required' AND last_error = 'scheduled REALITY guard revalidation')
-		AND status <> 'stopped'`, nowText); err != nil {
-		return err
-	}
-	for _, nodeID := range listenerNodes {
-		if err := s.queueNodeListenerState(ctx, tx, nodeID, now); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 func (s *Store) startRealityGuardHardening(ctx context.Context) error {

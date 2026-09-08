@@ -21,6 +21,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
 )
@@ -35,6 +36,11 @@ type Store struct {
 	dataDir           string
 	now               func() time.Time
 	gatewayMutationMu sync.Mutex
+	landingMutationMu sync.Mutex
+	landingCancel     context.CancelFunc
+	landingDone       chan struct{}
+	landingStatusMu   sync.RWMutex
+	landingStatus     landing.MonitorStatus
 	gatewayStartupMu  sync.RWMutex
 	gatewayStartupErr error
 	gatewayStartupOK  bool
@@ -81,7 +87,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 16
+const agentSchemaVersion = 17
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can
@@ -588,6 +594,26 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 16
 		}
+		if version == 16 {
+			tx, migrateErr := db.Begin()
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE landing_runtime_state (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					sealed_state BLOB NOT NULL
+				);
+				PRAGMA user_version = 17`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 16 to 17: %w", migrateErr)
+			}
+			version = 17
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -698,7 +724,11 @@ func Open(dataDir string) (*Store, error) {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);
-		PRAGMA user_version = 16;`); err != nil {
+		CREATE TABLE landing_runtime_state (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			sealed_state BLOB NOT NULL
+		);
+		PRAGMA user_version = 17;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
@@ -1025,7 +1055,12 @@ func (s *Store) Connection(ctx context.Context) (Connection, error) {
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	s.landingMutationMu.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	err := s.stopLandingMonitor(ctx)
+	cancel()
+	s.landingMutationMu.Unlock()
+	return errors.Join(err, s.db.Close())
 }
 
 // RecordApplied stores a configuration only after a deployment executor has

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/petauron/vastora/internal/backupcrypto"
 )
 
 func TestBackupPasswordPolicyIsSharedByStoreRestoreAndWeb(t *testing.T) {
@@ -34,7 +36,7 @@ func TestBackupPasswordPolicyIsSharedByStoreRestoreAndWeb(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.handleCreateBackup(response, request)
-	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "at least 12 characters") {
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) || strings.Contains(response.Body.String(), "at least 12 characters") {
 		t.Fatalf("web short-password response = %d %q", response.Code, response.Body.String())
 	}
 }
@@ -60,10 +62,10 @@ func TestRestoreRejectsIncompatibleBackupVersionsBeforePublication(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, version := range []byte{backupVersion - 1, backupVersion + 1} {
+	for _, version := range []byte{backupcrypto.Version - 1, backupcrypto.Version + 1} {
 		candidate := filepath.Join(t.TempDir(), "format.vastora")
 		modified := append([]byte(nil), raw...)
-		modified[len(backupMagic)] = version
+		modified[len(backupcrypto.Magic)] = version
 		if err := os.WriteFile(candidate, modified, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +114,7 @@ func rewriteBackupForRestoreValidationTest(t *testing.T, source, password string
 	if err != nil {
 		t.Fatal(err)
 	}
-	plain, err := decryptBackup(raw, password)
+	plain, err := backupcrypto.Decrypt(raw, password)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +132,7 @@ func rewriteBackupForRestoreValidationTest(t *testing.T, source, password string
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err = encryptBackup(plain, password)
+	raw, err = backupcrypto.Encrypt(plain, password)
 	if err != nil {
 		t.Fatal(err)
 	}

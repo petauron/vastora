@@ -44,10 +44,13 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY operation is invalid"))
 		}
+		if kind == realityCommandKind && (command.VerifiedTarget == nil || !validRealityCandidate(*command.VerifiedTarget) || command.VerifiedTarget.TargetHost != command.TargetHost || command.VerifiedTarget.ServerName != command.ServerName) {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY target selection is invalid; check the target again"))
+		}
 		if kind == realityCommandKind && (command.Action != "create" || !validRegionPrefixedRealityName(command.RegionCode, command.DisplayName) || (command.CreateInitialClient && !validThreeXUIClientName(command.ClientName)) || command.InboundTag != realityCommandInboundTag(id) || command.ConnectHostname == "" || !networking.IsPrivateServiceAddress(command.TargetAddress) || net.ParseIP(command.TargetPublicAddress) == nil || !validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName) || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > maxThreeXUIResetDay || command.ClientTotalBytes < 0 || command.ClientResetDays < 0 || command.ClientResetDays > maxThreeXUIResetDays || command.ClientExpiryTime < 0) {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY creation operation is invalid"))
 		}
-		if kind == realityVerifyCommandKind && (command.Action != "verify" || net.ParseIP(command.TargetPublicAddress) == nil || !validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName)) {
+		if kind == realityVerifyCommandKind && (command.Action != "verify" || net.ParseIP(command.TargetPublicAddress) == nil || !command.Recommend && (!validRealityTargetHostname(command.TargetHost) || !validRealityTargetHostname(command.ServerName)) || command.Recommend && (command.TargetHost != "" || command.ServerName != "")) {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY verification operation is invalid"))
 		}
 		if kind == realityHardenCommandKind && (command.Action != "harden" || command.ServiceID == "" || command.InboundID < 1 || command.InboundTag == "" || net.ParseIP(command.TargetAddress) == nil || command.GuardRevision < 1) {
@@ -325,7 +328,7 @@ func (s *Store) completeRealityVerifyCommand(ctx context.Context, tx *sql.Tx, ta
 			taskError = "center: Agent returned an invalid REALITY verification result"
 		} else {
 			result := envelope.ApplicationCommand
-			if result.Action != "verify" || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || !validRealityTargetProof(*result) {
+			if !validRealityVerification(input, *result) {
 				succeeded = false
 				taskError = "center: Agent returned an unsafe REALITY target verification"
 			}

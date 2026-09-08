@@ -12,13 +12,16 @@ const centerSource = fs.readdirSync(centerDir)
   .sort()
   .map((name) => fs.readFileSync(path.join(centerDir, name), "utf8"))
   .join("\n");
+const packageSources = new Map();
 const internalSource = fs.readdirSync(path.join(root, "internal"), { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .flatMap((entry) => {
     const directory = path.join(root, "internal", entry.name);
-    return fs.readdirSync(directory)
+    const sources = fs.readdirSync(directory)
       .filter((name) => name.endsWith(".go") && !name.endsWith("_test.go"))
       .map((name) => fs.readFileSync(path.join(directory, name), "utf8"));
+    packageSources.set(entry.name, sources.join("\n"));
+    return sources;
   })
   .join("\n");
 
@@ -74,6 +77,7 @@ function tagFor(routePath) {
     system: "System",
     tasks: "Agents",
     "three-x-ui-migrations": "Applications",
+    "three-x-ui": "Applications",
     actions: "System",
   };
   return tags[segment] || "System";
@@ -145,7 +149,8 @@ function schemaForGoType(rawType) {
     schema = {};
   } else {
     const name = type.split(".").at(-1);
-    const match = internalSource.match(new RegExp(`type\\s+${name}\\s+struct\\s*\\{([\\s\\S]*?)\\n\\}`));
+    const source = type.includes(".") ? packageSources.get(type.split(".")[0]) ?? "" : internalSource;
+    const match = source.match(new RegExp(`type\\s+${name}\\s+struct\\s*\\{([\\s\\S]*?)\\n\\}`));
     schema = match ? schemaForStructFields(match[1]) : { type: "object", additionalProperties: true };
   }
   return nullable ? { anyOf: [schema, { type: "null" }] } : schema;
@@ -265,17 +270,16 @@ const document = {
         required: ["code", "error"],
         properties: {
           code: { type: "string", example: "invalid_request" },
-          error: { type: "string", example: "center: request is invalid" },
+          error: { type: "string", example: "Check your entries and try again." },
         },
       },
       LoginError: {
         type: "object",
         additionalProperties: false,
-        required: ["code", "error", "retryAfterSeconds", "captchaRequired"],
+        required: ["code", "error", "captchaRequired"],
         properties: {
           code: { type: "string", enum: ["invalid_credentials", "captcha_failed", "login_throttled", "login_protection_unavailable"] },
           error: { type: "string" },
-          retryAfterSeconds: { type: "integer", minimum: 0 },
           captchaRequired: { type: "boolean" },
         },
       },
@@ -283,6 +287,15 @@ const document = {
       PublicationIngress: publicationIngressResponseSchema,
       Publication: publicationResponseSchema,
       RealitySecurityCheck: realitySecurityCheckResponseSchema,
+      LandingView: {
+        type: "object",
+        additionalProperties: false,
+        required: ["nodeId", "revision", "status", "candidates", "proxies"],
+        properties: {
+          ...schemaForGoType("LandingSelection").properties,
+          ...schemaForGoType("LandingView").properties,
+        },
+      },
       ApplicationCredentials: {
         oneOf: [
           {
@@ -376,23 +389,34 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
-  if (route.handler === "handleCreateRealityCommand") {
+  if (["handleLanding", "handleSelectLanding", "handleConfigureLandingProxy"].includes(route.handler)) {
+    operation.description = "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations.";
+    operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/LandingView" };
+  } else if (route.handler === "handleCreateRealityCommand") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "regionCode", "name",
-      "dnsProvider", "targetHost", "serverName",
+      "dnsProvider", "targetHost", "serverName", "verificationId", "targetIp",
     ];
+  } else if (route.handler === "handleRecoveryReadiness") {
+    operation.description = "Reads the cluster recovery inventory without probing nodes or opening caller-supplied files. Center-only backup never establishes cluster readiness. External application restore evidence is operator-attested; readiness is not proof of an actual cluster recovery drill or off-host storage.";
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("RecoveryReadiness");
   } else if (route.handler === "handleLogin") {
-    operation.description = "Authenticates the administrator. Server-side account and client throttles add exponential retry delays and lock sign-in for 15 minutes after five consecutive failures. Direct Cloudflare Tunnel login additionally requires a single-use Turnstile token validated by Center.";
+    operation.description = "Authenticates the administrator with server-enforced abuse protection. Public responses do not expose failure thresholds, lockout durations or retry countdowns. Complete the security check when captchaRequired is true.";
     operation.requestBody.content["application/json"].schema.required = ["username", "password"];
     operation.responses["403"] = { description: "The required login security check failed or is unavailable.", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginError" } } } };
-    operation.responses["429"] = { description: "Sign-in is temporarily throttled.", headers: { "Retry-After": { schema: { type: "integer", minimum: 1 }, description: "Seconds until another attempt is allowed." } }, content: { "application/json": { schema: { $ref: "#/components/schemas/LoginError" } } } };
+    operation.responses["429"] = { description: "Sign-in is temporarily unavailable. Try again later.", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginError" } } } };
     operation.responses["401"] = { description: "The credentials were rejected.", content: { "application/json": { schema: { $ref: "#/components/schemas/LoginError" } } } };
   } else if (route.handler === "handleCreatePublication") {
     const schema = operation.requestBody.content["application/json"].schema;
     schema.required = ["serviceId", "kind", "ingress", "dnsProvider"];
     schema.properties.ingress = publicationIngressRequestSchema;
   } else if (route.handler === "handleVerifyRealityTarget") {
-    operation.requestBody.content["application/json"].schema.required = ["targetHost", "serverName"];
+    operation.requestBody.content["application/json"].schema.required = [];
+    operation.requestBody.content["application/json"].schema.oneOf = [
+      { required: ["recommend"], properties: { recommend: { const: true } } },
+      { required: ["targetHost", "serverName"], properties: { recommend: { const: false } } },
+    ];
   } else if (route.handler === "handleRealitySecurityCheck") {
     operation.summary = "Check Managed REALITY Publication Security";
     operation.description = "Runs five bounded TLS handshakes from Center to the managed node's authoritative public IPv4 address on port 443. The caller cannot supply an address, port, or SNI. Only finite results are retained, and same-host checks are explicitly marked as non-external.";

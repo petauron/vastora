@@ -76,18 +76,20 @@ func (s *Server) handleSetupStatus(writer http.ResponseWriter, request *http.Req
 	}
 	setupOperationPhase := ""
 	setupLastError := ""
+	suggestedAgentConnectURL := ""
 	if authenticated {
 		setupOperationPhase = status.OperationPhase
 		setupLastError = status.LastError
+		suggestedAgentConnectURL = s.setupAgentConnectURL
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"administratorConfigured":       status.AdministratorConfigured,
 		"onboardingComplete":            status.OnboardingComplete,
-		"suggestedAgentConnectUrl":      s.setupAgentConnectURL,
-		"builtinHeadscaleAvailable":     s.infrastructure != nil,
-		"cloudflareOAuthAvailable":      s.store.CloudflareOAuthAvailable(),
-		"publicNetworkHelperAvailable":  s.store.lookupPublicAddress != nil && s.store.verifyPublicEntry != nil,
-		"regionLookupAvailable":         s.store.lookupPublicRegion != nil,
+		"suggestedAgentConnectUrl":      suggestedAgentConnectURL,
+		"builtinHeadscaleAvailable":     authenticated && s.infrastructure != nil,
+		"cloudflareOAuthAvailable":      authenticated && s.store.CloudflareOAuthAvailable(),
+		"publicNetworkHelperAvailable":  authenticated && s.store.lookupPublicAddress != nil && s.store.verifyPublicEntry != nil,
+		"regionLookupAvailable":         authenticated && s.store.lookupPublicRegion != nil,
 		"cloudflareConfigured":          cloudflare.Status == "configured" && cloudflare.Mode == "oauth",
 		"cloudflareAccessConfigured":    cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.AccessManagement,
 		"cloudflareTurnstileConfigured": cloudflare.Status == "configured" && cloudflare.Mode == "oauth" && cloudflare.TurnstileManagement,
@@ -149,7 +151,7 @@ func (s *Server) handleLogin(writer http.ResponseWriter, request *http.Request) 
 	defer s.loginMu.Unlock()
 	loginContext, err := s.loginContext(request.Context(), request)
 	if err != nil {
-		writeLoginError(writer, http.StatusForbidden, "login_protection_unavailable", "center: login protection is unavailable", 0, true)
+		writeLoginError(writer, http.StatusForbidden, "login_protection_unavailable", "Sign-in is temporarily unavailable. Try again later.", true)
 		return
 	}
 	throttle, err := s.store.LoginThrottle(request.Context(), input.Username, loginContext.ClientAddress)
@@ -158,28 +160,28 @@ func (s *Server) handleLogin(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if throttle.RetryAfter > 0 {
-		writeLoginError(writer, http.StatusTooManyRequests, "login_throttled", "center: too many sign-in attempts; wait before retrying", throttle.RetryAfter, loginContext.Protection.CaptchaRequired)
+		writeLoginError(writer, http.StatusTooManyRequests, "login_throttled", "Unable to sign in right now. Try again later.", loginContext.Protection.CaptchaRequired)
 		return
 	}
 	if loginContext.Protection.CaptchaRequired {
 		if err := s.store.verifyCenterLoginTurnstile(request.Context(), input.TurnstileToken, loginContext.ClientAddress, loginContext.Hostname); err != nil {
-			throttle, recordErr := s.store.RecordLoginFailure(request.Context(), input.Username, loginContext.ClientAddress, false)
+			_, recordErr := s.store.RecordLoginFailure(request.Context(), input.Username, loginContext.ClientAddress, false)
 			if recordErr != nil {
 				writeError(writer, http.StatusInternalServerError, recordErr)
 				return
 			}
-			writeLoginError(writer, http.StatusForbidden, "captcha_failed", "center: security check failed; complete a new challenge", throttle.RetryAfter, true)
+			writeLoginError(writer, http.StatusForbidden, "captcha_failed", "Complete the security check and try again.", true)
 			return
 		}
 	}
 	session, csrf, err := s.store.Authenticate(request.Context(), input.Username, input.Password)
 	if err != nil {
-		throttle, recordErr := s.store.RecordLoginFailure(request.Context(), input.Username, loginContext.ClientAddress, true)
+		_, recordErr := s.store.RecordLoginFailure(request.Context(), input.Username, loginContext.ClientAddress, true)
 		if recordErr != nil {
 			writeError(writer, http.StatusInternalServerError, recordErr)
 			return
 		}
-		writeLoginError(writer, http.StatusUnauthorized, "invalid_credentials", "center: sign-in failed", throttle.RetryAfter, loginContext.Protection.CaptchaRequired)
+		writeLoginError(writer, http.StatusUnauthorized, "invalid_credentials", "The username or password is incorrect.", loginContext.Protection.CaptchaRequired)
 		return
 	}
 	if err := s.store.ClearLoginFailures(request.Context(), input.Username, loginContext.ClientAddress); err != nil {
