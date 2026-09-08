@@ -64,7 +64,7 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
 		case "GET /panel/api/clients/get/MacBook":
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","id":17,"uuid":"11111111-2222-4333-8444-555555555555","subId":"","flow":"xtls-rprx-vision","allowedIPs":"10.0.0.0/8, 192.168.0.0/16","enable":true},"inboundIds":[9]}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","id":17,"uuid":"11111111-2222-4333-8444-555555555555","subId":"` + updatedSubID + `","flow":"xtls-rprx-vision","allowedIPs":"10.0.0.0/8, 192.168.0.0/16","enable":true},"inboundIds":[9]}}`))
 		case "GET /panel/api/inbounds/get/9":
 			minClientVersion := ""
 			proxySettings := ""

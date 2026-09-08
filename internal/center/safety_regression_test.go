@@ -507,7 +507,11 @@ func TestSucceededRealityPublicationRecoveryRequiresReadyGuardAndPreservesExplic
 		t.Fatal(err)
 	}
 	if len(publications) != 1 || publications[0].ServiceID != "reality-recovery-service" || publications[0].Kind != publicationShared443 || publications[0].Status == "stopped" {
-		t.Fatalf("missing REALITY access was not reconstructed: %#v", publications)
+		var recoveryError string
+		if err := store.db.QueryRow(`SELECT error FROM application_commands WHERE id = 'reality-recovery-command'`).Scan(&recoveryError); err != nil {
+			t.Fatal(err)
+		}
+		t.Fatalf("missing REALITY access was not reconstructed: %#v; recovery error: %s", publications, recoveryError)
 	}
 	publicationID := publications[0].ID
 	if err := store.StopPublication(ctx, publicationID); err != nil {

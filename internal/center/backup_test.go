@@ -36,7 +36,7 @@ func TestBackupPasswordPolicyIsSharedByStoreRestoreAndWeb(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.handleCreateBackup(response, request)
-	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "at least 12 characters") {
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"code":"invalid_request"`) || strings.Contains(response.Body.String(), "at least 12 characters") {
 		t.Fatalf("web short-password response = %d %q", response.Code, response.Body.String())
 	}
 }

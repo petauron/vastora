@@ -3,8 +3,6 @@ package center
 import (
 	"bytes"
 	"context"
-	"database/sql"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -118,32 +116,14 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 
 func TestMigration59AddsAgentReconnectTargetBinding(t *testing.T) {
 	directory := t.TempDir()
-	store, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	siteID := testSiteID(t, store)
-	if _, err := store.CreateAgentEnrollment(context.Background(), AgentEnrollmentSpec{SiteID: siteID, Name: "existing enrollment", CenterURL: "https://center.example.com"}); err != nil {
+	store := legacyMigrationStore(t, directory, 58)
+	if _, err := store.db.Exec(`INSERT INTO agent_enrollment_tokens(token_hash, site_id, name, center_url, roles_json, capabilities_json, expires_at)
+		VALUES(X'1234', 'site-v3', 'existing enrollment', 'https://center.example.com', '["worker"]', '{}', '2099-01-01T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`DROP INDEX agent_enrollment_one_reconnect_idx;
-		ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id;
-		DELETE FROM goose_db_version WHERE version_id >= 59;
-		PRAGMA user_version = 58;`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
 	migrated, err := Open(directory)
 	if err != nil {
 		t.Fatal(err)

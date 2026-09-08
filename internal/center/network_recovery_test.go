@@ -17,12 +17,14 @@ func TestHeartbeatRecoversOnlyTheConfirmedNetworkAddress(t *testing.T) {
 	}, profile)
 	for _, address := range []string{"10.0.0.93", "100.64.0.94", profile.ServiceAddress} {
 		iface := "tailscale0"
+		kind := networking.KindHeadscale
 		if address == "10.0.0.93" {
 			iface = "eth0"
+			kind = networking.KindLAN
 		}
 		if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
 			Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true},
-			NetworkCandidates: []networking.Candidate{{Address: address, Interface: iface}},
+			NetworkCandidates: []networking.Candidate{{Address: address, Interface: iface, Kind: kind}},
 		}); err != nil {
 			t.Fatal(err)
 		}

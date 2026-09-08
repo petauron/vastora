@@ -401,7 +401,13 @@ func (s *Store) completeNodeListenerState(ctx context.Context, agentID string, r
 	if succeeded {
 		_, err = tx.ExecContext(ctx, `UPDATE node_listener_states SET applied_revision = desired_revision, status = 'ready', lease_expires_at = '', last_error = '', updated_at = ? WHERE node_id = ?`, now, agentID)
 		if err == nil {
-			_, err = tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision, status = 'applying', last_error = '', updated_at = ? WHERE ingress_owner = 'application_node' AND entry_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped'`, now, agentID)
+			// Applying the listener proves neither DNS nor public reachability.
+			// Preserve an outstanding managed DNS failure until the verifier has
+			// actually reconciled it; the listener's own status is already ready.
+			_, err = tx.ExecContext(ctx, `UPDATE publications SET applied_revision = desired_revision,
+				status = CASE WHEN dns_provider = 'cloudflare' AND status = 'failed' AND last_error <> '' THEN status ELSE 'applying' END,
+				last_error = CASE WHEN dns_provider = 'cloudflare' AND status = 'failed' AND last_error <> '' THEN last_error ELSE '' END,
+				updated_at = ? WHERE ingress_owner = 'application_node' AND entry_node_id = ? AND kind = 'public_shared_443' AND status <> 'stopped' AND action_required = 0`, now, agentID)
 		}
 		if err == nil {
 			verificationTargets, err = s.publicationVerificationTargetsForNodeListener(ctx, tx, agentID)
@@ -474,7 +480,7 @@ func (s *Store) queueMismatchedNodeListenerReconcile(ctx context.Context, tx *sq
 }
 
 func (s *Store) publicationVerificationTargetsForNodeListener(ctx context.Context, tx *sql.Tx, nodeID string) ([]publicationVerificationTarget, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, desired_revision FROM publications WHERE ingress_owner = 'application_node' AND entry_node_id = ? AND kind = 'public_shared_443' AND status = 'applying'`, nodeID)
+	rows, err := tx.QueryContext(ctx, `SELECT id, desired_revision FROM publications WHERE ingress_owner = 'application_node' AND entry_node_id = ? AND kind = 'public_shared_443' AND status IN ('applying', 'failed') AND applied_revision = desired_revision AND action_required = 0`, nodeID)
 	if err != nil {
 		return nil, err
 	}

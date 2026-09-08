@@ -24,7 +24,7 @@ func TestRealitySelectionRequiresCurrentNodeProof(t *testing.T) {
 			defer store.Close()
 			ctx := context.Background()
 			profile := networking.Profile{ServiceAddress: "10.0.0.61", LANAddress: "10.0.0.61", PublicAddress: "203.0.113.61", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true}
-			node := enrollOrchestrationNode(t, store, "target-proof", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: profile.ServiceAddress, Interface: "eth0"}, {Address: profile.PublicAddress, Interface: "eth0"}}, profile)
+			node := enrollOrchestrationNode(t, store, "target-proof", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: profile.ServiceAddress, Interface: "eth0", Kind: networking.KindLAN}, {Address: profile.PublicAddress, Interface: "eth0", Kind: networking.KindPublic}}, profile)
 			now := store.now().UTC().Format(time.RFC3339Nano)
 			if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
 				VALUES('verified-app', '3x-ui', ?, ?, ?, '', 'running', 'docker', 'master', ?, ?)`, node.ID, testSiteID(t, store), threeXUIAppKey, now, now); err != nil {

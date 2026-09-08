@@ -592,10 +592,12 @@ func TestApplyRealityCommandRollsBackKnownFailureAtRetryLimit(t *testing.T) {
 		case "POST /panel/api/hosts/update/vastora-public-9":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
 		case "GET /panel/api/clients/list/paged":
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"Phone","inboundIds":[]}],"total":1}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"Phone","subId":"existing-subscription","inboundIds":[]}],"total":1}}`))
 		case "POST /panel/api/clients/bulkAttach":
 			response.WriteHeader(http.StatusBadGateway)
 			_, _ = response.Write([]byte(`{"success":false,"msg":"attach failed"}`))
+		case "GET /panel/api/clients/get/Phone":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"Phone","id":"11111111-2222-4333-8444-555555555555","subId":"existing-subscription"},"inboundIds":[]}}`))
 		case "POST /panel/api/inbounds/del/9":
 			deleted = true
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
