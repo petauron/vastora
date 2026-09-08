@@ -94,6 +94,8 @@ jobs:
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestNativeServerKernelPolicy$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteConfiguration$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteTransfersTCPAndUDP$' -test.v
+          go test -c -tags=integration -o "$RUNNER_TEMP/landing-host.test" ./internal/agent
+          sudo env VASTORA_NATIVE_LANDING_INTEGRATION=1 "$RUNNER_TEMP/landing-host.test" -test.run '^TestLandingNativeHostLifecycle$' -test.v
       - name: Validate generated Headscale config with pinned binary
         if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         env:
