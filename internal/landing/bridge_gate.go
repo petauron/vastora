@@ -79,14 +79,16 @@ func (g *BridgeGate) objects() []map[string]nftObject {
 	rule := func(chain string, expr ...any) {
 		objects = append(objects, map[string]nftObject{"rule": {"family": "inet", "table": g.table, "chain": chain, "expr": expr}})
 	}
-	// Separate TCP and UDP rules avoid ambiguous transport-header dependencies.
+	// Named payload protocols make nft generate the required family/transport
+	// dependencies. Its JSON read-back omits redundant explicit meta checks;
+	// emit the canonical form instead of weakening ownership comparison.
 	for _, protocol := range []string{"tcp", "udp"} {
-		rule("forward", match(meta("nfproto"), "ipv4"), match(meta("iifname"), g.bridge), match(payload("ip", "daddr"), g.peer.Address), match(meta("l4proto"), protocol), match(payload(protocol, "dport"), SOCKSPort), nftObject{"jump": nftObject{"target": "outbound"}})
-		rule("forward", match(meta("nfproto"), "ipv4"), match(meta("oifname"), g.bridge), match(payload("ip", "saddr"), g.peer.Address), match(meta("l4proto"), protocol), match(payload(protocol, "sport"), SOCKSPort), nftObject{"jump": nftObject{"target": "inbound"}})
+		rule("forward", match(meta("iifname"), g.bridge), match(payload("ip", "daddr"), g.peer.Address), match(payload(protocol, "dport"), SOCKSPort), nftObject{"jump": nftObject{"target": "outbound"}})
+		rule("forward", match(meta("oifname"), g.bridge), match(payload("ip", "saddr"), g.peer.Address), match(payload(protocol, "sport"), SOCKSPort), nftObject{"jump": nftObject{"target": "inbound"}})
 	}
-	rule("outbound", match(meta("nfproto"), "ipv4"), match(payload("ip", "daddr"), "@allowed"), nftObject{"return": nil})
+	rule("outbound", match(payload("ip", "daddr"), "@allowed"), nftObject{"return": nil})
 	rule("outbound", nftObject{"drop": nil})
-	rule("inbound", match(meta("nfproto"), "ipv4"), match(payload("ip", "saddr"), "@allowed"), nftObject{"return": nil})
+	rule("inbound", match(payload("ip", "saddr"), "@allowed"), nftObject{"return": nil})
 	rule("inbound", nftObject{"drop": nil})
 	return objects
 }

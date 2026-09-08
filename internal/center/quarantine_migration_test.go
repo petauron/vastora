@@ -14,14 +14,14 @@ func TestVersion64MigrationWithdrawsOnlyUnsafeRealitySnapshots(t *testing.T) {
 		`UPDATE applications SET app_key = 'vastora-official/3x-ui', role = 'master' WHERE id = 'application-v3'`,
 		`UPDATE services SET app_protocol = 'vless/tcp/reality', protocol = 'tcp' WHERE id = 'service-v3'`,
 		`UPDATE publications SET status = 'pending' WHERE id = 'publication-v3'`,
-		`INSERT INTO three_x_ui_reality_guards(service_id,target_host,target_ip,server_name,status,created_at,updated_at)
-		 VALUES('service-v3','www.example.com','1.1.1.1','www.example.com','action_required','2026-09-08','2026-09-08')`,
+		`INSERT INTO three_x_ui_reality_guards(service_id,target_host,target_ip,server_name,companion_tag,status,created_at,updated_at)
+		 VALUES('service-v3','www.example.com','1.1.1.1','www.example.com','','action_required','2026-09-08','2026-09-08')`,
 		`INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,status,created_at,updated_at)
 		 VALUES('healthy-service','application-v3','site-v3','inbound-2','tcp',443,443,'10.0.0.2:443','observed','vless/tcp/reality','ready','2026-09-08','2026-09-08')`,
 		`INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,dns_provider,status,created_at,updated_at)
 		 VALUES('healthy-publication','healthy-service','public_shared_443','application_node','agent-v3','healthy.example.test','manual','ready','2026-09-08','2026-09-08')`,
-		`INSERT INTO three_x_ui_reality_guards(service_id,target_host,target_ip,server_name,status,created_at,updated_at)
-		 VALUES('healthy-service','www.example.com','1.1.1.1','www.example.com','ready','2026-09-08','2026-09-08')`,
+		`INSERT INTO three_x_ui_reality_guards(service_id,target_host,target_ip,server_name,companion_tag,status,created_at,updated_at)
+		 VALUES('healthy-service','www.example.com','1.1.1.1','www.example.com','','ready','2026-09-08','2026-09-08')`,
 		`INSERT INTO node_listener_states(node_id,desired_revision,applied_revision,desired_json,status,lease_expires_at,updated_at)
 		 VALUES('agent-v3',7,7,'{"revision":7,"nodeId":"agent-v3","listener":{"routes":[{"id":"publication-v3"},{"id":"healthy-publication"}]}}','applying','2099-01-01','2026-09-08')`,
 		`INSERT INTO gateway_states(gateway_node_id,desired_revision,applied_revision,desired_json,status,lease_expires_at,updated_at)
