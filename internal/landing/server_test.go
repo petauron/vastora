@@ -51,6 +51,9 @@ func TestNativeDantePrivateMembershipAndUDP(t *testing.T) {
 	if strings.Contains(config, "password") || strings.Contains(config, "command: bind") {
 		t.Fatal("unexpected password or BIND")
 	}
+	if !strings.Contains(config, "from: 0.0.0.0/0 to: 100.64.0.9/32\n command: udpreply\n protocol: udp") {
+		t.Fatal("UDP replies must be allowed only toward authorized clients")
+	}
 	plan := testServerPlan()
 	plan.Sources = nil
 	raw, err = plan.RenderDante("10.0.0.2")

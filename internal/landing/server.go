@@ -88,6 +88,11 @@ timeout.io.udp: 60
 	}
 	for _, source := range plan.Sources {
 		fmt.Fprintf(&config, "socks pass {\n from: %s/32 to: 0.0.0.0/0\n command: connect udpassociate\n protocol: tcp udp\n udp.portrange: %d-%d\n}\n", source.Address, UDPRelayFirst, UDPRelayLast)
+		// Dante evaluates UDP replies in the reverse direction. Restrict the
+		// recipient to the same authorized client; this does not grant another
+		// source permission to establish a SOCKS association. The UID firewall
+		// still requires replies to an established private client flow.
+		fmt.Fprintf(&config, "socks pass {\n from: 0.0.0.0/0 to: %s/32\n command: udpreply\n protocol: udp\n}\n", source.Address)
 	}
 	config.WriteString("socks block {\n from: 0.0.0.0/0 to: 0.0.0.0/0\n}\n")
 	return []byte(config.String()), nil
