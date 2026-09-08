@@ -69,9 +69,9 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 			// pending, including explicit stops. Preserve those rows before
 			// crossing that boundary; migration 64 consumes this durable input.
 			if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS migration_56_stopped_publications (
-				publication_id TEXT PRIMARY KEY, last_error TEXT NOT NULL);
-				INSERT OR IGNORE INTO migration_56_stopped_publications(publication_id, last_error)
-				SELECT id, last_error FROM publications WHERE status = 'stopped'`); err != nil {
+				publication_id TEXT PRIMARY KEY, last_error TEXT NOT NULL, action_required INTEGER NOT NULL CHECK(action_required IN (0,1)));
+				INSERT OR IGNORE INTO migration_56_stopped_publications(publication_id, last_error, action_required)
+				SELECT id, last_error, action_required FROM publications WHERE status = 'stopped'`); err != nil {
 				return fmt.Errorf("center: preserve stopped entries before database migration (backup: %s): %w", backup, err)
 			}
 		}

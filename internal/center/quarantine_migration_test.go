@@ -3,13 +3,22 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
 func TestMigrationPreservesExplicitlyStoppedEntriesAcrossVersion56(t *testing.T) {
+	for _, action := range []int{0, 1} {
+		t.Run(fmt.Sprintf("action_required_%d", action), func(t *testing.T) {
+			testMigrationPreservesStoppedEntry(t, action)
+		})
+	}
+}
+
+func testMigrationPreservesStoppedEntry(t *testing.T, originalAction int) {
 	directory := t.TempDir()
 	store := legacyMigrationStore(t, directory, 55)
-	if _, err := store.db.Exec(`UPDATE publications SET kind='cloudflare_tunnel', dns_provider='cloudflare', status='stopped', last_error='user stopped' WHERE id='publication-v3'`); err != nil {
+	if _, err := store.db.Exec(`UPDATE publications SET kind='cloudflare_tunnel', dns_provider='cloudflare', status='stopped', last_error='retained stop reason', action_required=? WHERE id='publication-v3'`, originalAction); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -31,7 +40,7 @@ func TestMigrationPreservesExplicitlyStoppedEntriesAcrossVersion56(t *testing.T)
 	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='migration_56_stopped_publications'`).Scan(&staging); err != nil {
 		t.Fatal(err)
 	}
-	if state != "stopped" || reason != "user stopped" || action != 0 || routes != 0 || staging != 0 {
+	if state != "stopped" || reason != "retained stop reason" || action != originalAction || routes != 0 || staging != 0 {
 		t.Fatalf("explicit stop changed: state=%s reason=%s action=%d routes=%d staging=%d", state, reason, action, routes, staging)
 	}
 }

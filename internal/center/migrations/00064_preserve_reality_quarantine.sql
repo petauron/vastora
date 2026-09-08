@@ -6,7 +6,8 @@
 -- installations already beyond that version there is no trustworthy way to
 -- infer a past user stop from a pending row, so no such state is fabricated.
 CREATE TABLE IF NOT EXISTS migration_56_stopped_publications (
-    publication_id TEXT PRIMARY KEY, last_error TEXT NOT NULL
+    publication_id TEXT PRIMARY KEY, last_error TEXT NOT NULL,
+    action_required INTEGER NOT NULL CHECK(action_required IN (0,1))
 );
 CREATE TABLE reality_quarantine_v64 (publication_id TEXT PRIMARY KEY);
 INSERT INTO reality_quarantine_v64(publication_id)
@@ -52,7 +53,8 @@ SET status = 'stopped', action_required = 1, desired_revision = desired_revision
 last_error = 'REALITY guard requires hardening before publication', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 WHERE id IN (SELECT publication_id FROM reality_quarantine_v64);
 UPDATE publications
-SET status = 'stopped', action_required = 0,
+SET status = 'stopped',
+action_required = (SELECT action_required FROM migration_56_stopped_publications stopped WHERE stopped.publication_id = publications.id),
 last_error = (SELECT last_error FROM migration_56_stopped_publications stopped WHERE stopped.publication_id = publications.id)
 WHERE id IN (SELECT publication_id FROM migration_56_stopped_publications);
 
