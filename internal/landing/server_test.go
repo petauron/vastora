@@ -38,6 +38,11 @@ func TestNativeDantePrivateMembershipAndUDP(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := string(raw)
+	for _, side := range []string{"internal", "external"} {
+		if strings.Index(config, side+".protocol:") > strings.Index(config, side+":") {
+			t.Fatalf("%s protocol must precede its address", side)
+		}
+	}
 	for _, token := range []string{"internal: 100.64.0.8 port = 1080", "external: 10.0.0.2", "clientmethod: none", "socksmethod: none", "from: 100.64.0.9/32 to: 100.64.0.8/32", "command: connect udpassociate", "udp.portrange: 1081-1208", "internal.protocol: ipv4", "external.protocol: ipv4"} {
 		if !strings.Contains(config, token) {
 			t.Fatalf("missing %s", token)

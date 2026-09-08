@@ -61,10 +61,10 @@ func (plan ServerPlan) RenderDante(egress string) ([]byte, error) {
 	}
 	var config strings.Builder
 	fmt.Fprintf(&config, `# Managed by Vastora
-internal: %s port = %d
 internal.protocol: ipv4
-external: %s
+internal: %s port = %d
 external.protocol: ipv4
+external: %s
 clientmethod: none
 socksmethod: none
 user.privileged: vastora-landing

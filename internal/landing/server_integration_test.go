@@ -29,6 +29,7 @@ func TestNativeDanteConfiguration(t *testing.T) {
 	}
 	fixture := strings.ReplaceAll(string(config), "vastora-landing", "nobody")
 	fixture = strings.ReplaceAll(fixture, "10.0.0.2", "127.0.0.1")
+	fixture = strings.ReplaceAll(fixture, testServerPlan().Address, "127.0.0.1")
 	path := filepath.Join(t.TempDir(), "danted.conf")
 	if err := os.WriteFile(path, []byte(fixture), 0600); err != nil {
 		t.Fatal(err)
