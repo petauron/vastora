@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.109](https://github.com/petauron/vastora/compare/v0.1.0-alpha.108...v0.1.0-alpha.109) (2026-09-08)
+
+
+### Bug Fixes
+
+* 修复落地切换重启循环并显示节点到落地机延迟 ([#361](https://github.com/petauron/vastora/issues/361)) ([63ac409](https://github.com/petauron/vastora/commit/63ac409a8ab60820db7c91f842c89d8362deed48))
+
 ## [0.1.0-alpha.108](https://github.com/petauron/vastora/compare/v0.1.0-alpha.107...v0.1.0-alpha.108) (2026-09-08)
 
 
