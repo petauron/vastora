@@ -61,3 +61,22 @@ func TestManagedAttachmentRecoveryRequiresLiveReadBack(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedAttachmentRecoveryPreservesEndpointConfiguration(t *testing.T) {
+	value := managedContainer("3x-ui")
+	value.Container.HostConfig = &container.HostConfig{NetworkMode: "test-network"}
+	value.Container.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
+		"test-network": {Aliases: []string{"retained-alias"}, GwPriority: 42, DriverOpts: map[string]string{"configured-option": "retained"}, Links: []string{"retained-link"}},
+	}}
+	engine := &fakeAttachmentEngine{fakeNetworkEngine: fakeNetworkEngine{
+		inspectResults: []client.NetworkInspectResult{ownedNetwork("component")},
+		containers:     map[string]client.ContainerInspectResult{"immutable-id": value},
+	}, recover: true}
+	if err := RecoverAttachment(context.Background(), engine, "immutable-id", "test-network", "component", "vastora-3x-ui"); err != nil {
+		t.Fatal(err)
+	}
+	actual := engine.containers["immutable-id"].Container.NetworkSettings.Networks["test-network"]
+	if len(actual.Aliases) != 2 || actual.Aliases[0] != "retained-alias" || actual.GwPriority != 42 || actual.DriverOpts["configured-option"] != "retained" || len(actual.Links) != 1 || actual.Links[0] != "retained-link" || engine.disconnects != 1 || engine.connects != 1 {
+		t.Fatalf("endpoint configuration was lost: %#v", actual)
+	}
+}

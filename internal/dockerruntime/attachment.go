@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 
@@ -36,6 +37,7 @@ func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID
 	}
 	var endpoint *network.EndpointSettings
 	aliases := []string{alias}
+	restored := &network.EndpointSettings{}
 	if current.Container.NetworkSettings != nil {
 		endpoint = current.Container.NetworkSettings.Networks[networkName]
 	}
@@ -47,14 +49,32 @@ func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID
 		if endpoint.IPAMConfig != nil {
 			return errors.New("docker runtime: refusing to replace a custom static network attachment")
 		}
+		// Preserve configured endpoint behavior, not stale runtime addresses or
+		// IDs. In particular, losing GwPriority can change the container's exit.
+		restored.Links = slices.Clone(endpoint.Links)
+		restored.DriverOpts = maps.Clone(endpoint.DriverOpts)
+		restored.GwPriority = endpoint.GwPriority
 		if _, err := docker.NetworkDisconnect(ctx, networkName, client.NetworkDisconnectOptions{Container: containerID}); err != nil {
 			return fmt.Errorf("docker runtime: disconnect incomplete managed endpoint: %w", err)
 		}
 	}
-	if _, err := docker.NetworkConnect(ctx, networkName, client.NetworkConnectOptions{Container: containerID, EndpointConfig: &network.EndpointSettings{Aliases: aliases}}); err != nil {
+	restored.Aliases = aliases
+	confirmed := func(value client.ContainerInspectResult) bool {
+		if !AttachmentHealthy(value, networkName, alias) {
+			return false
+		}
+		actual := value.Container.NetworkSettings.Networks[networkName]
+		for _, name := range aliases {
+			if !slices.Contains(actual.Aliases, name) {
+				return false
+			}
+		}
+		return slices.Equal(actual.Links, restored.Links) && maps.Equal(actual.DriverOpts, restored.DriverOpts) && actual.GwPriority == restored.GwPriority
+	}
+	if _, err := docker.NetworkConnect(ctx, networkName, client.NetworkConnectOptions{Container: containerID, EndpointConfig: restored}); err != nil {
 		// A lost response is not proof of failure; read back the immutable ID.
 		verified, inspectErr := docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
-		if inspectErr != nil || !AttachmentHealthy(verified, networkName, alias) {
+		if inspectErr != nil || !confirmed(verified) {
 			return errors.Join(fmt.Errorf("docker runtime: restore managed endpoint: %w", err), inspectErr)
 		}
 	}
@@ -62,7 +82,7 @@ func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID
 	if err != nil {
 		return err
 	}
-	if !AttachmentHealthy(verified, networkName, alias) {
+	if !confirmed(verified) {
 		return errors.New("docker runtime: managed network attachment or published ports did not recover")
 	}
 	return nil
