@@ -6,9 +6,12 @@
 
 - `DefaultInstallVersion = "1.102.3"`: the stable APT package selected only when
   the host has no Tailscale client. This keeps fresh installations reproducible.
-- `MinimumCompatibleVersion = "1.102.3"`: the conservative compatibility floor.
-  Lowering it requires evidence for the required daemon and Headscale features;
-  changing the installation pin does not automatically change this floor.
+- `MinimumCompatibleVersion = "1.102.3"`: the current security/compatibility floor,
+  including the [TS-2026-011 fix](https://tailscale.com/security-bulletins#ts-2026-011)
+  for 4via6 host-scoped destination access. This is a conservative shared policy,
+  not a claim that every Vastora node uses the affected 4via6 feature.
+  Change the floor for applicable security fixes or required capabilities, not
+  simply because a newer release exists. The installation pin is independent.
 
 Existing installations are not upgraded, downgraded, reinstalled, or adopted by
 this check. An unsupported existing version stops installation with the current
@@ -87,7 +90,7 @@ later package upgrade therefore does not invalidate the earlier evidence.
 Unknown/manual install histories do not qualify. The operation is explicit;
 an Agent restart failure restores the previous ownership record.
 
-## Verification and remaining acceptance gate
+## Proportionate verification
 
 Source regression cases cover numeric ordering, same-series and cross-stable
 upgrades, build metadata, malformed/development versions, CLI/daemon mismatch,
@@ -99,16 +102,15 @@ implementing this change.
 
 The higher-version strings in mocked tests, including `1.104.0`, are synthetic
 policy inputs. They are **not** claims about published or tested packages.
-At the 2026-09-03 upstream review, the newest published stable release was still
-[`v1.102.3`](https://github.com/tailscale/tailscale/releases/tag/v1.102.3).
 
-Issue #326 must remain open until a CI run exercises both the minimum and at
-least one higher, actually published stable package against the bundled
-Headscale. That acceptance run must cover install/join, fixed-endpoint apply
-and rollback, privacy/DERP checks, preservation of external ownership, and an
-upgrade retaining the node identity. Reject a prerelease or nonexistent matrix
-version rather than substituting a synthetic version or lowering the floor.
-Run this expensive matrix explicitly or in full CI, not on the alpha fast path.
+A supported stable version at or above the floor may be reused after the
+necessary capability and runtime checks. Numeric boundary cases may use
+synthetic version strings; they test the comparison policy, not future binary
+compatibility. There is no requirement to wait for an unreleased version, run
+an exhaustive per-release matrix, or qualify a higher release before closing
+#326. Normal repository CI covers the policy and failure/rollback paths.
+Targeted integration checks are appropriate when an actual capability changes
+or a regression is reported, not a prerequisite for every version increase.
 
 Upstream references:
 

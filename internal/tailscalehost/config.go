@@ -10,6 +10,9 @@ import (
 
 const (
 	// Installation pin and compatibility floor are intentionally independent.
+	// The current floor includes the TS-2026-011 security fix. Do not advance
+	// it merely because a new default install version is selected.
+	// https://tailscale.com/security-bulletins#ts-2026-011
 	DefaultInstallVersion    = "1.102.3"
 	MinimumCompatibleVersion = "1.102.3"
 	FixedPort                = 41641
