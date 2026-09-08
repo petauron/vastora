@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/petauron/vastora/internal/dantebundle"
 	"github.com/petauron/vastora/internal/landing"
@@ -467,9 +468,23 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	// A self-dial is intentionally denied by the source allowlist. Inspect the
 	// kernel listener owned by the dedicated UID instead; actual remote TCP/UDP
 	// business health is established by the selected proxy node's probe.
-	listeners, err := os.ReadFile("/proc/net/tcp")
-	if err != nil || !landingListenerPresent(listeners, plan.Address, journal.UID) {
-		return errors.New("agent: landing private listener did not become ready")
+	readyCtx, cancelReady := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelReady()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		listeners, err := os.ReadFile("/proc/net/tcp")
+		if err != nil {
+			return errors.New("agent: landing private listener could not be inspected")
+		}
+		if landingListenerPresent(listeners, plan.Address, journal.UID) {
+			break
+		}
+		select {
+		case <-readyCtx.Done():
+			return errors.New("agent: landing private listener did not become ready")
+		case <-ticker.C:
+		}
 	}
 	journal.Files, journal.PendingFiles = journal.PendingFiles, nil
 	return saveLandingHostJournal(journal)
