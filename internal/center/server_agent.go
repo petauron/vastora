@@ -127,6 +127,14 @@ func (s *Server) handleUpdateAgent(writer http.ResponseWriter, request *http.Req
 	writeJSON(writer, http.StatusOK, map[string]bool{"updated": true})
 }
 
+func (s *Server) handleDeleteAgent(writer http.ResponseWriter, request *http.Request) {
+	if err := s.store.DeleteAgent(request.Context(), request.PathValue("id")); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]bool{"deleted": true})
+}
+
 func (s *Server) handleDisableAgent(writer http.ResponseWriter, request *http.Request) {
 	if err := s.store.DisableAgent(request.Context(), request.PathValue("id")); err != nil {
 		writeError(writer, http.StatusBadRequest, err)

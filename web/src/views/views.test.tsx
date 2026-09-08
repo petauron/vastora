@@ -1803,6 +1803,26 @@ describe("network and app views", () => {
     expect(command).toContain("'one-time-token' '/tmp/vastora-center-ca.pem' 1");
   });
 
+  it("requires the disabled node name before deleting its Center record", async () => {
+    const data = dashboard();
+    data.agents[0].status = "disabled";
+    data.agents[0].connected = false;
+    const remove = vi.spyOn(api, "deleteAgent").mockResolvedValue({ deleted: true });
+    const close = vi.fn();
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={close} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "删除节点")?.click());
+    expect(document.body.textContent).toContain("服务器上的程序和数据不会被删除");
+    const confirm = [...document.querySelectorAll("button")].filter((button) => button.textContent === "删除节点").at(-1);
+    expect(confirm?.disabled).toBe(true);
+    const input = document.querySelector<HTMLInputElement>("#disable-node-confirmation")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, data.agents[0].name);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => confirm?.click());
+    expect(remove).toHaveBeenCalledWith(data.agents[0].id);
+  });
+
   it("queues supported Agent updates through Center and keeps purpose changes explicit", async () => {
     const data = dashboard();
     data.agents[0].version = "old";
@@ -2172,7 +2192,9 @@ describe("network and app views", () => {
     };
     vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
-    expect(container.textContent).toContain("正在并发更新远端 Agent");
+    expect(container.textContent).toContain("正在更新节点 Agent");
+    expect(container.textContent).not.toContain("并发");
+    expect(container.textContent).not.toContain("远端");
     expect(container.textContent).toContain("2/4 个 Agent 已是当前版本");
     expect(container.textContent).toContain("在线的远端 Agent 会同时更新");
   });

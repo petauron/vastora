@@ -10,6 +10,12 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  if (code === "node_delete_requires_disabled") {
+    return copy(language, "请先停用节点，再删除。", "Disable the node before deleting it.");
+  }
+  if (code === "node_delete_in_use") {
+    return copy(language, "节点仍有关联服务或未完成的操作，请先解除应用、入口和落地机的关联，并等待操作完成。", "Remove the node from apps, access entries and landing services, and wait for unfinished operations to complete.");
+  }
   if (code === "authentication_required" || normalized.includes("authentication required") || normalized.includes("unauthorized") || normalized.includes("session expired")) {
     return copy(language, "登录状态已失效，请重新登录后再试。", "Your session has expired. Sign in and try again.");
   }

@@ -76,7 +76,7 @@ function NodeCard({ agent, data, language, onConfigure, onNetwork, onReconnect }
   const site = data.sites.find((value) => value.id === agent.siteId);
   const selectedGateway = Boolean(site?.gatewayNodes.includes(agent.id));
   const architecture = agent.architecture === "arm64" ? "ARM64" : "x64";
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerIcon />{agent.name}</CardTitle><CardDescription>{copy(language, "位置", "Location")}：{site?.name ?? agent.siteId} · {agent.version}</CardDescription><CardAction><StateBadge value={agent.status === "disabled" ? "disabled" : agent.connected ? "connected" : "offline"} /></CardAction></CardHeader><CardContent className="flex flex-col gap-4"><div className="flex flex-wrap gap-2"><Badge variant="outline">{architecture}</Badge>{agent.capabilities.docker ? <Badge variant="secondary">{copy(language, "运行应用", "Runs apps")}</Badge> : null}{selectedGateway ? <Badge variant="default">{copy(language, "当前位置网关", "Location gateway")}</Badge> : agent.capabilities.gateway ? <Badge variant="outline">{copy(language, "可作为网关", "Gateway capable")}</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="outline">Cloudflare</Badge> : null}</div><dl className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-muted-foreground">{copy(language, "网络", "Network")}</dt><dd className="mt-1 font-medium">{agent.networkProfile ? copy(language, "已确认", "Confirmed") : copy(language, "需要确认", "Needs confirmation")}</dd></div><div><dt className="text-muted-foreground">{copy(language, "最后在线", "Last seen")}</dt><dd className="mt-1 font-medium">{formatDate(language, agent.lastSeenAt)}</dd></div><div className="col-span-2"><dt className="text-muted-foreground">{copy(language, "私有服务地址", "Private service address")}</dt><dd className="mt-1 font-mono text-xs">{agent.networkProfile?.serviceAddress || "—"}</dd></div></dl>{agent.connected && agent.runtimeRecovery ? <Alert><NetworkIcon /><AlertTitle>{copy(language, "服务正在恢复", "Restoring services")}</AlertTitle><AlertDescription>{runtimeRecoveryDescription(language, agent.runtimeRecovery)}</AlertDescription></Alert> : null}</CardContent><CardFooter className="justify-end gap-2">{agent.status === "active" && !agent.networkProfile ? <Button onClick={onNetwork} size="sm"><NetworkIcon data-icon="inline-start" />{copy(language, "确认网络", "Confirm network")}</Button> : null}{agent.status === "active" && !agent.connected ? <Button onClick={onReconnect} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重新接入", "Reconnect")}</Button> : null}{agent.status === "active" ? <Button onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "管理", "Manage")}</Button> : null}</CardFooter></Card>;
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerIcon />{agent.name}</CardTitle><CardDescription>{copy(language, "位置", "Location")}：{site?.name ?? agent.siteId} · {agent.version}</CardDescription><CardAction><StateBadge value={agent.status === "disabled" ? "disabled" : agent.connected ? "connected" : "offline"} /></CardAction></CardHeader><CardContent className="flex flex-col gap-4"><div className="flex flex-wrap gap-2"><Badge variant="outline">{architecture}</Badge>{agent.capabilities.docker ? <Badge variant="secondary">{copy(language, "运行应用", "Runs apps")}</Badge> : null}{selectedGateway ? <Badge variant="default">{copy(language, "当前位置网关", "Location gateway")}</Badge> : agent.capabilities.gateway ? <Badge variant="outline">{copy(language, "可作为网关", "Gateway capable")}</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="outline">Cloudflare</Badge> : null}</div><dl className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-muted-foreground">{copy(language, "网络", "Network")}</dt><dd className="mt-1 font-medium">{agent.networkProfile ? copy(language, "已确认", "Confirmed") : copy(language, "需要确认", "Needs confirmation")}</dd></div><div><dt className="text-muted-foreground">{copy(language, "最后在线", "Last seen")}</dt><dd className="mt-1 font-medium">{formatDate(language, agent.lastSeenAt)}</dd></div><div className="col-span-2"><dt className="text-muted-foreground">{copy(language, "私有服务地址", "Private service address")}</dt><dd className="mt-1 font-mono text-xs">{agent.networkProfile?.serviceAddress || "—"}</dd></div></dl>{agent.connected && agent.runtimeRecovery ? <Alert><NetworkIcon /><AlertTitle>{copy(language, "服务正在恢复", "Restoring services")}</AlertTitle><AlertDescription>{runtimeRecoveryDescription(language, agent.runtimeRecovery)}</AlertDescription></Alert> : null}</CardContent><CardFooter className="justify-end gap-2">{agent.status === "active" && !agent.networkProfile ? <Button onClick={onNetwork} size="sm"><NetworkIcon data-icon="inline-start" />{copy(language, "确认网络", "Confirm network")}</Button> : null}{agent.status === "active" && !agent.connected ? <Button onClick={onReconnect} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重新接入", "Reconnect")}</Button> : null}{agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除节点", "Delete node")}</Button> : null}{agent.status === "active" ? <Button onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "管理", "Manage")}</Button> : null}</CardFooter></Card>;
 }
 
 function runtimeRecoveryDescription(language: Language, stage: NonNullable<AgentView["runtimeRecovery"]>) {
@@ -207,6 +207,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
   const [error, setError] = useState("");
   const [danger, setDanger] = useState(false);
   const [confirmation, setConfirmation] = useState("");
+  const deleting = agent?.status === "disabled";
   useEffect(() => {
     if (!agent) return;
     setName(agent.name);
@@ -215,7 +216,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
     setTunnel(agent.capabilities.tunnel);
     setCommandKind(null);
     setError("");
-    setDanger(false);
+    setDanger(agent.status === "disabled");
     setConfirmation("");
   }, [agent?.id]);
   const gatewayRequired = Boolean(agent && (data.sites.some((site) => site.gatewayNodes.includes(agent.id)) || data.publications.some((publication) => publication.ingress.owner === "site_gateway" && publication.ingress.entryNodeId === agent.id && publication.status !== "stopped")));
@@ -241,10 +242,10 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
     }
   };
   const disable = async () => {
-    if (!agent) return;
+    if (!agent || busy || confirmation !== agent.name) return;
     setBusy(true); setError("");
     try {
-      await mutate(() => api.disableAgent(agent.id), copy(language, "节点已停用，原凭据已失效。", "Node disabled and its credential is no longer accepted."));
+      await mutate(() => deleting ? api.deleteAgent(agent.id) : api.disableAgent(agent.id), deleting ? copy(language, "节点已删除，服务器上的数据未改动。", "Node deleted. Server data was not changed.") : copy(language, "节点已停用，原凭据已失效。", "Node disabled and its credential is no longer accepted."));
       onClose();
     } catch (disableError) {
       setError(userError(language, disableError));
@@ -268,10 +269,10 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
       <SheetContent className="sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{copy(language, `管理 ${agent?.name ?? ""}`, `Manage ${agent?.name ?? ""}`)}</SheetTitle>
-          <SheetDescription>{danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : copy(language, "修改名称、位置或节点用途；支持的 Agent 可以由 Center 安全更新。", "Change its name, location, or purpose. Supported Agents can update securely through Center.")}</SheetDescription>
+          <SheetDescription>{deleting ? copy(language, "从 Center 移除这个已停用的节点。", "Remove this disabled node from Center.") : danger ? copy(language, "停用会立即拒绝此 Agent 的后续连接。", "Disabling immediately rejects future connections from this Agent.") : copy(language, "修改名称、位置或节点用途；支持的 Agent 可以由 Center 安全更新。", "Change its name, location, or purpose. Supported Agents can update securely through Center.")}</SheetDescription>
         </SheetHeader>
         {danger ? <div className="flex flex-1 flex-col gap-4 px-4">
-          <Alert variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, "确认停用节点", "Confirm node disable")}</AlertTitle><AlertDescription>{copy(language, "Center 会撤销管理权限，但不会远程删除节点上的二进制或数据。", "Center revokes management access but does not remotely delete the binary or local data.")}</AlertDescription></Alert>
+          <Alert variant="destructive"><Trash2Icon /><AlertTitle>{deleting ? copy(language, "确认删除节点", "Confirm node deletion") : copy(language, "确认停用节点", "Confirm node disable")}</AlertTitle><AlertDescription>{deleting ? copy(language, "删除后无法撤销，服务器上的程序和数据不会被删除。仍被应用或入口使用的节点不能删除。", "Deletion cannot be undone. Programs and data on the server are not deleted. Nodes still used by apps or access points cannot be deleted.") : copy(language, "Center 会撤销管理权限，但不会远程删除节点上的二进制或数据。", "Center revokes management access but does not remotely delete the binary or local data.")}</AlertDescription></Alert>
           <Field><FieldLabel htmlFor="disable-node-confirmation">{copy(language, `输入“${agent?.name ?? ""}”确认`, `Type “${agent?.name ?? ""}” to confirm`)}</FieldLabel><Input autoFocus id="disable-node-confirmation" onChange={(event) => setConfirmation(event.target.value)} value={confirmation} /></Field>
           {error ? <FieldError>{error}</FieldError> : null}
         </div> : <form className="flex min-h-0 flex-1 flex-col" onSubmit={(event) => void submit(event)}>
@@ -292,7 +293,7 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose }: { agent: 
           </FieldGroup></div>
           <SheetFooter className="justify-between"><Button onClick={() => setDanger(true)} type="button" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "停用节点", "Disable node")}</Button><div className="flex gap-2"><Button onClick={onClose} type="button" variant="outline">{copy(language, "关闭", "Close")}</Button><Button disabled={busy || !name || name === agent?.name && siteID === agent?.siteId} type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "保存信息", "Save details")}</Button></div></SheetFooter>
         </form>}
-        {danger ? <SheetFooter><Button onClick={() => { setDanger(false); setError(""); }} variant="outline">{copy(language, "返回", "Back")}</Button><Button disabled={busy || confirmation !== agent?.name} onClick={() => void disable()} variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "停用节点", "Disable node")}</Button></SheetFooter> : null}
+        {danger ? <SheetFooter><Button disabled={busy} onClick={() => { if (deleting) onClose(); else { setDanger(false); setError(""); } }} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || confirmation !== agent?.name} onClick={() => void disable()} variant="destructive">{busy ? <Spinner data-icon="inline-start" /> : null}{deleting ? copy(language, "删除节点", "Delete node") : copy(language, "停用节点", "Disable node")}</Button></SheetFooter> : null}
       </SheetContent>
     </Sheet>
   );
