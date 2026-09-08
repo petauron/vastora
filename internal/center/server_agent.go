@@ -195,6 +195,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		GatewayConfigHash            string                           `json:"gatewayConfigHash"`
 		NodeListenerHealthy          bool                             `json:"nodeListenerHealthy"`
 		LandingHealth                *landing.Health                  `json:"landingHealth"`
+		LandingLatency               *landing.LatencyObservation      `json:"landingLatency"`
 		NodeListenerRevision         int64                            `json:"nodeListenerRevision"`
 		NodeListenerConfigHash       string                           `json:"nodeListenerConfigHash"`
 		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
@@ -216,6 +217,12 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
+	target, err := s.store.landingLatencyTarget(request.Context(), request.PathValue("id"))
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	s.store.recordLandingLatency(request.PathValue("id"), target, input.LandingLatency)
 	network, err := s.store.CenterNetworkConfig(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, err)
@@ -242,6 +249,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{
 		"connected":                true,
+		"landingLatencyTarget":     target,
 		"centerUrl":                centerURL,
 		"tailscaleIsolation":       isolation,
 		"publicAddressLookupUrl":   s.publicAddressLookupURL,

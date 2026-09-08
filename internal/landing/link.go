@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -29,6 +30,7 @@ type PeerIdentity struct {
 }
 
 type LinkResult struct {
+	LatencyMS *float64  `json:"latencyMs,omitempty"`
 	State     string    `json:"state"`
 	Reason    string    `json:"reason"`
 	StartedAt time.Time `json:"startedAt"`
@@ -52,6 +54,7 @@ type localStatus struct {
 // Online and historical handshakes are intentionally absent from pingResult.
 // Contract: tailscale v1.102.3 ipn/ipnstate.PingResult and client/local.Ping.
 type pingResult struct {
+	LatencySeconds *float64
 	IP             string
 	NodeIP         string
 	Endpoint       string
@@ -137,6 +140,10 @@ func (c *LinkChecker) Check(ctx context.Context, expected PeerIdentity) LinkResu
 	}
 	if time.Since(started) > CheckTimeout || ctx.Err() != nil {
 		return finish("unknown", "probe_expired")
+	}
+	if ping.LatencySeconds != nil && !math.IsNaN(*ping.LatencySeconds) && !math.IsInf(*ping.LatencySeconds, 0) && *ping.LatencySeconds > 0 && *ping.LatencySeconds <= CheckTimeout.Seconds() {
+		ms := *ping.LatencySeconds * 1000
+		result.LatencyMS = &ms
 	}
 	return finish("direct", "fresh_disco_direct_response")
 }

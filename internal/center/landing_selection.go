@@ -25,9 +25,10 @@ type LandingCandidate struct {
 
 type LandingView struct {
 	LandingSelection
-	Status     string             `json:"status"`
-	Candidates []LandingCandidate `json:"candidates"`
-	Proxies    []LandingProxyView `json:"proxies"`
+	Status     string               `json:"status"`
+	Candidates []LandingCandidate   `json:"candidates"`
+	Proxies    []LandingProxyView   `json:"proxies"`
+	Latencies  []LandingLatencyView `json:"latencies"`
 }
 
 type LandingProxyView struct {
@@ -65,6 +66,7 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		return LandingView{}, err
 	}
 	view := LandingView{LandingSelection: selection, Status: "disabled", Candidates: []LandingCandidate{}, Proxies: []LandingProxyView{}}
+	view.Latencies = s.landingLatencyViews(selection)
 	if selection.NodeID != "" {
 		var status string
 		if err := tx.QueryRowContext(ctx, `SELECT status FROM landing_server_states WHERE node_id=?`, selection.NodeID).Scan(&status); err != nil {

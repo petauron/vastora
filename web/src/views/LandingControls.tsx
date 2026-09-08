@@ -141,19 +141,30 @@ export function LandingSwitch({ applicationId, nodeId, name, locked, language }:
   const proxy = view?.proxies.find((item) => item.applicationId === applicationId);
   const enabled = proxy?.enabled ?? false;
   const pending = proxy?.status === "pending" || proxy?.status === "applying";
+  const configurationFailed = proxy?.status === "failed";
+  const latency = view?.latencies.find((item) => item.nodeId === nodeId);
+  const landingName = view?.candidates.find((item) => item.nodeId === view.nodeId)?.name ?? copy(language, "落地机", "Landing server");
   const disabled = locked || busy || failed || !view || pending || (!enabled && (view.status !== "ready" || view.nodeId === nodeId));
   const status = failed ? copy(language, "状态暂不可用", "Status unavailable")
     : pending ? copy(language, "正在调整…", "Applying…")
+      : configurationFailed ? copy(language, "调整失败，请重试", "Change failed. Please retry.")
       : enabled ? proxy?.connection === "healthy" ? copy(language, "落地已连接", "Landing connected") : copy(language, "落地连接不可用", "Landing unavailable")
         : !view ? copy(language, "正在读取…", "Loading…")
           : view.nodeId === nodeId ? copy(language, "本机提供落地", "This is the landing server")
             : !view.nodeId ? copy(language, "请先选择落地机", "Choose a landing server first")
-              : copy(language, "未使用落地", "Landing off");
+              : null;
+  const latencyText = !failed && view?.nodeId && view.nodeId !== nodeId
+    ? `${landingName} · ${latency?.state === "direct" && latency.latencyMs != null
+      ? `${latency.latencyMs < 1 ? "<1" : Math.round(latency.latencyMs)} ms`
+      : latency?.state === "unavailable" ? copy(language, "无法直连", "Direct connection unavailable")
+        : copy(language, "延迟待检测", "Latency pending")}`
+    : null;
   return <FieldGroup className="mt-2 gap-1">
     <Field orientation="horizontal" data-disabled={disabled} className="min-h-11" aria-busy={busy || pending}>
       <Switch id={id} checked={enabled} disabled={disabled} aria-label={copy(language, `${name} 使用落地机`, `Use landing server for ${name}`)} aria-describedby={`${id}-status`} onCheckedChange={(checked) => void state.change((signal) => api.configureLandingProxy(applicationId, checked, proxy?.revision ?? 0, signal))} />
       <FieldLabel htmlFor={id}>{copy(language, "使用落地", "Use landing")}</FieldLabel>
     </Field>
-    <FieldDescription id={`${id}-status`} aria-live="polite">{status}</FieldDescription>
+    <FieldDescription id={`${id}-status`} aria-live="polite">{status}{status && latencyText ? " · " : null}{latencyText}</FieldDescription>
+    {configurationFailed ? <Button type="button" variant="outline" size="sm" disabled={locked || busy || failed || !view || (enabled && view.status !== "ready")} aria-label={copy(language, `${name} 重试落地设置`, `Retry landing settings for ${name}`)} onClick={() => void state.change((signal) => api.configureLandingProxy(applicationId, enabled, proxy.revision, signal))}>{copy(language, "重试", "Retry")}</Button> : null}
   </FieldGroup>;
 }

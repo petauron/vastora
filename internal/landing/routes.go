@@ -199,6 +199,28 @@ func decodeRouteSettings(raw json.RawMessage) (map[string]any, json.RawMessage, 
 	if decoder.Decode(&config) != nil || config == nil {
 		return nil, nil, errors.New("landing: invalid route settings")
 	}
+	// 3x-ui puts its dedicated API rule first when saving Xray settings.
+	// Canonicalize only that exact rule, never reorder business rules or
+	// discard fields: unrelated configuration changes must still conflict.
+	if api, ok := config["api"].(map[string]any); ok {
+		tag, _ := api["tag"].(string)
+		if routing, ok := config["routing"].(map[string]any); ok && tag != "" {
+			if rules, ok := routing["rules"].([]any); ok {
+				for i, item := range rules {
+					rule, ok := item.(map[string]any)
+					if !ok || len(rule) != 3 || rule["type"] != "field" || rule["outboundTag"] != tag {
+						continue
+					}
+					inbounds, ok := rule["inboundTag"].([]any)
+					if ok && len(inbounds) == 1 && inbounds[0] == tag {
+						copy(rules[1:i+1], rules[:i])
+						rules[0] = item
+						break
+					}
+				}
+			}
+		}
+	}
 	canonical, err := json.Marshal(config)
 	if err != nil {
 		return nil, nil, errors.New("landing: cannot encode route settings")

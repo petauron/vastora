@@ -1,6 +1,47 @@
 package landing
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+type latencyTransport struct{ base string }
+
+func (transport latencyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	request.URL.Scheme = "http"
+	request.URL.Host = strings.TrimPrefix(transport.base, "http://")
+	return http.DefaultTransport.RoundTrip(request)
+}
+
+func TestLinkLatencyUsesDiscoRTTOnlyForDirectPeer(t *testing.T) {
+	for _, relay := range []bool{false, true} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/localapi/v0/ping" {
+				seconds := 0.0285
+				ping := pingResult{IP: "100.64.0.8", NodeIP: "100.64.0.8", Endpoint: "203.0.113.8:41641", LatencySeconds: &seconds}
+				if relay {
+					ping.DERPRegionID = 1
+				}
+				_ = json.NewEncoder(w).Encode(ping)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(localStatus{BackendState: "Running", Peer: map[string]*localPeer{"peer": {ID: "landing", PublicKey: "key", TailscaleIPs: []string{"100.64.0.8"}}}})
+		}))
+		checker := &LinkChecker{HTTPClient: &http.Client{Transport: latencyTransport{server.URL}}}
+		result := checker.Check(context.Background(), PeerIdentity{ID: "landing", PublicKey: "key", Address: "100.64.0.8"})
+		server.Close()
+		if relay && result.LatencyMS != nil {
+			t.Fatal("relay latency presented as direct")
+		}
+		if !relay && (result.State != "direct" || result.LatencyMS == nil || *result.LatencyMS != 28.5) {
+			t.Fatalf("missing disco latency: %+v", result)
+		}
+	}
+}
 
 func TestDiscoPathClassificationNeverUsesHistoricalStatus(t *testing.T) {
 	for _, test := range []struct {

@@ -30,6 +30,8 @@ type Store struct {
 	backgroundCtx                  context.Context
 	backgroundCancel               context.CancelFunc
 	backgroundMu                   sync.Mutex
+	landingLatencyMu               sync.Mutex
+	landingLatencies               map[string]landingLatencySample
 	backgroundClosed               bool
 	backgroundWG                   sync.WaitGroup
 	headscaleAllowedEndpoints      []string
