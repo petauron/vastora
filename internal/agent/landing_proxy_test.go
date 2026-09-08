@@ -16,6 +16,9 @@ func TestLandingBlocksControllerMigrationWithHostBoundRoutes(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
+	if err := store.SaveConnection(ctx, testConnection(t, "node-1", "node", "https://center.example.com", "credential")); err != nil {
+		t.Fatal(err)
+	}
 	peer := landing.PeerIdentity{ID: "peer", PublicKey: "key", Address: "100.64.0.8"}
 	route, err := landing.PrepareRouteChange(json.RawMessage(`{"outbounds":[{"tag":"direct","protocol":"freedom"}],"routing":{"rules":[]}}`), 1, []string{"business"}, peer)
 	if err != nil {
