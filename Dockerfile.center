@@ -5,7 +5,7 @@ ARG TARGETARCH
 FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS dante-source
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     ca-certificates curl make gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
-    libc6-dev-arm64-cross libc6-dev-amd64-cross
+    libc6-dev-arm64-cross libc6-dev-amd64-cross libcrypt-dev-arm64-cross libcrypt-dev-amd64-cross
 COPY scripts/build-landing-dante.sh /build-dante.sh
 FROM dante-source AS dante-amd64
 RUN sh /build-dante.sh amd64 /out

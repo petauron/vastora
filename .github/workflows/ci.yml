@@ -88,6 +88,7 @@ jobs:
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestBridgeGateKernelPolicyAndExpiry$' -test.v
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestNativeServerKernelPolicy$' -test.v
           VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteConfiguration$' -test.v
+          VASTORA_DANTE_TEST_BINARY="$RUNNER_TEMP/dante/danted" "$RUNNER_TEMP/landing.test" -test.run '^TestNativeDanteTransfersTCPAndUDP$' -test.v
       - name: Validate generated Headscale config with pinned binary
         if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         env:

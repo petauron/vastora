@@ -175,13 +175,14 @@ func landingCommand(ctx context.Context, name string, args ...string) (string, e
 
 func ensureLandingPackage(ctx context.Context) error {
 	nftState, _ := landingCommand(ctx, "dpkg-query", "-W", "-f=${Status}", "nftables")
-	if nftState == "install ok installed" {
+	cryptState, _ := landingCommand(ctx, "dpkg-query", "-W", "-f=${Status}", "libcrypt1")
+	if nftState == "install ok installed" && cryptState == "install ok installed" {
 		return nil
 	}
 	if _, err := landingCommand(ctx, "apt-get", "update", "-qq"); err != nil {
 		return err
 	}
-	if _, err := landingCommand(ctx, "apt-get", "install", "-y", "--no-install-recommends", "nftables"); err != nil {
+	if _, err := landingCommand(ctx, "apt-get", "install", "-y", "--no-install-recommends", "nftables", "libcrypt1"); err != nil {
 		return err
 	}
 	return nil
