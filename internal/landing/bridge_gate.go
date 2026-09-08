@@ -215,7 +215,13 @@ func (g *BridgeGate) snapshot(ctx context.Context) (nftDocument, error) {
 }
 
 func (g *BridgeGate) validate(document nftDocument) (bool, error) {
-	wantedBytes, _ := json.Marshal(g.objects())
+	return validateNFTPolicy(document, g.table, g.objects(), true)
+}
+
+// Dynamic lease elements are excluded only for the bridge gate. Native server
+// policies contain no mutable sets, and every policy still owns its full table.
+func validateNFTPolicy(document nftDocument, table string, objects []map[string]nftObject, leaseElements bool) (bool, error) {
+	wantedBytes, _ := json.Marshal(objects)
 	var wanted []map[string]nftObject
 	_ = json.Unmarshal(wantedBytes, &wanted) // Normalize JSON numbers and arrays.
 	actual := map[string][]nftObject{}
@@ -231,11 +237,11 @@ func (g *BridgeGate) validate(document nftDocument) (bool, error) {
 				continue
 			}
 			if kind == "table" {
-				if value["family"] != "inet" || value["name"] != g.table {
+				if value["family"] != "inet" || value["name"] != table {
 					continue
 				}
 				found = true
-			} else if value["family"] != "inet" || value["table"] != g.table {
+			} else if value["family"] != "inet" || value["table"] != table {
 				continue
 			}
 			copy := nftObject{}
@@ -243,7 +249,7 @@ func (g *BridgeGate) validate(document nftDocument) (bool, error) {
 				if key == "handle" {
 					continue
 				}
-				if kind == "set" && (key == "elem" || key == "use" || key == "policy") {
+				if leaseElements && kind == "set" && (key == "elem" || key == "use" || key == "policy") {
 					continue
 				}
 				copy[key] = entry
