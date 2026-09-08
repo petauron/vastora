@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/netip"
+	"reflect"
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
@@ -62,21 +63,30 @@ func TestManagedAttachmentRecoveryRequiresLiveReadBack(t *testing.T) {
 	}
 }
 
-func TestManagedAttachmentRecoveryPreservesEndpointConfiguration(t *testing.T) {
-	value := managedContainer("3x-ui")
-	value.Container.HostConfig = &container.HostConfig{NetworkMode: "test-network"}
-	value.Container.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{
-		"test-network": {Aliases: []string{"retained-alias"}, GwPriority: 42, DriverOpts: map[string]string{"configured-option": "retained"}, Links: []string{"retained-link"}},
-	}}
-	engine := &fakeAttachmentEngine{fakeNetworkEngine: fakeNetworkEngine{
-		inspectResults: []client.NetworkInspectResult{ownedNetwork("component")},
-		containers:     map[string]client.ContainerInspectResult{"immutable-id": value},
-	}, recover: true}
-	if err := RecoverAttachment(context.Background(), engine, "immutable-id", "test-network", "component", "vastora-3x-ui"); err != nil {
-		t.Fatal(err)
-	}
-	actual := engine.containers["immutable-id"].Container.NetworkSettings.Networks["test-network"]
-	if len(actual.Aliases) != 2 || actual.Aliases[0] != "retained-alias" || actual.GwPriority != 42 || actual.DriverOpts["configured-option"] != "retained" || len(actual.Links) != 1 || actual.Links[0] != "retained-link" || engine.disconnects != 1 || engine.connects != 1 {
-		t.Fatalf("endpoint configuration was lost: %#v", actual)
+func TestManagedAttachmentRecoveryDoesNotDetachCustomConfiguration(t *testing.T) {
+	for name, endpoint := range map[string]*network.EndpointSettings{
+		"alias":     {Aliases: []string{"retained-alias"}},
+		"priority":  {GwPriority: 42},
+		"options":   {DriverOpts: map[string]string{"configured-option": "retained"}},
+		"links":     {Links: []string{"retained-link"}},
+		"static IP": {IPAMConfig: &network.EndpointIPAMConfig{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := managedContainer("3x-ui")
+			value.Container.HostConfig = &container.HostConfig{NetworkMode: "test-network"}
+			value.Container.NetworkSettings = &container.NetworkSettings{Networks: map[string]*network.EndpointSettings{"test-network": endpoint}}
+			engine := &fakeAttachmentEngine{fakeNetworkEngine: fakeNetworkEngine{
+				inspectResults: []client.NetworkInspectResult{ownedNetwork("component")},
+				containers:     map[string]client.ContainerInspectResult{"immutable-id": value},
+			}, recover: true}
+			for range 2 {
+				if err := RecoverAttachment(context.Background(), engine, "immutable-id", "test-network", "component", "vastora-3x-ui"); err == nil {
+					t.Fatal("custom endpoint was automatically detached")
+				}
+			}
+			if engine.disconnects != 0 || engine.connects != 0 || !reflect.DeepEqual(engine.containers["immutable-id"], value) {
+				t.Fatal("custom endpoint was changed before recovery refused it")
+			}
+		})
 	}
 }

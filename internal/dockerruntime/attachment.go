@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
@@ -42,18 +42,17 @@ func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID
 		endpoint = current.Container.NetworkSettings.Networks[networkName]
 	}
 	if endpoint != nil {
+		// Disconnect removes endpoint configuration from Docker. A failed
+		// reconnect (or process death) would leave the next retry unable to
+		// recover external settings. Only detach our reproducible defaults;
+		// never temporarily accept custom settings based on an in-memory copy.
+		if !managedEndpointConfiguration(current, endpoint, alias) {
+			return errors.New("docker runtime: refusing to detach a customized network attachment")
+		}
 		aliases = slices.Clone(endpoint.Aliases)
 		if !slices.Contains(aliases, alias) {
 			aliases = append(aliases, alias)
 		}
-		if endpoint.IPAMConfig != nil {
-			return errors.New("docker runtime: refusing to replace a custom static network attachment")
-		}
-		// Preserve configured endpoint behavior, not stale runtime addresses or
-		// IDs. In particular, losing GwPriority can change the container's exit.
-		restored.Links = slices.Clone(endpoint.Links)
-		restored.DriverOpts = maps.Clone(endpoint.DriverOpts)
-		restored.GwPriority = endpoint.GwPriority
 		if _, err := docker.NetworkDisconnect(ctx, networkName, client.NetworkDisconnectOptions{Container: containerID}); err != nil {
 			return fmt.Errorf("docker runtime: disconnect incomplete managed endpoint: %w", err)
 		}
@@ -69,7 +68,7 @@ func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID
 				return false
 			}
 		}
-		return slices.Equal(actual.Links, restored.Links) && maps.Equal(actual.DriverOpts, restored.DriverOpts) && actual.GwPriority == restored.GwPriority
+		return managedEndpointConfiguration(value, actual, alias)
 	}
 	if _, err := docker.NetworkConnect(ctx, networkName, client.NetworkConnectOptions{Container: containerID, EndpointConfig: restored}); err != nil {
 		// A lost response is not proof of failure; read back the immutable ID.
@@ -86,6 +85,22 @@ func RecoverAttachment(ctx context.Context, docker AttachmentEngine, containerID
 		return errors.New("docker runtime: managed network attachment or published ports did not recover")
 	}
 	return nil
+}
+
+func managedEndpointConfiguration(current client.ContainerInspectResult, endpoint *network.EndpointSettings, alias string) bool {
+	if endpoint.IPAMConfig != nil || len(endpoint.Links) != 0 || len(endpoint.DriverOpts) != 0 || endpoint.GwPriority != 0 {
+		return false
+	}
+	known := []string{alias, strings.TrimPrefix(current.Container.Name, "/"), current.Container.ID}
+	if len(current.Container.ID) >= 12 {
+		known = append(known, current.Container.ID[:12])
+	}
+	for _, value := range endpoint.Aliases {
+		if value == "" || !slices.Contains(known, value) {
+			return false
+		}
+	}
+	return true
 }
 
 func AttachmentHealthy(current client.ContainerInspectResult, networkName, alias string) bool {
