@@ -4895,8 +4895,8 @@
         "tags": [
           "Agents"
         ],
-        "summary": "Disable Agent",
-        "operationId": "disableAgent_delete",
+        "summary": "Delete Agent",
+        "operationId": "deleteAgent_delete",
         "x-vastora-audience": "browser-admin",
         "security": [
           {
@@ -4959,6 +4959,58 @@
         "responses": {
           "202": {
             "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/agents/{id}/disable": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Disable Agent",
+        "operationId": "disableAgent_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
             "content": {
               "application/json": {
                 "schema": {}

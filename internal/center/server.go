@@ -188,7 +188,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/reconnect", s.requireAuth(true, s.handleCreateAgentReconnectEnrollment))
 	mux.HandleFunc("PATCH /api/v1/agents/{id}", s.requireAuth(true, s.handleUpdateAgent))
 	mux.HandleFunc("POST /api/v1/agents/{id}/updates", s.requireAuth(true, s.handleQueueAgentUpdate))
-	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.requireAuth(true, s.handleDisableAgent))
+	mux.HandleFunc("POST /api/v1/agents/{id}/disable", s.requireAuth(true, s.handleDisableAgent))
+	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.requireAuth(true, s.handleDeleteAgent))
 	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", s.requireAuth(true, s.handleRevokeAgentCredential))
 	mux.HandleFunc("PUT /api/v1/agents/{id}/network-profile", s.requireAuth(true, s.handleConfirmNetworkProfile))
 	mux.HandleFunc("POST /api/v1/agents/enroll", s.handleEnrollAgent)
@@ -373,6 +374,10 @@ func writeError(writer http.ResponseWriter, status int, err error) {
 // operational diagnostics remain on the authenticated diagnostic/task surfaces.
 func publicErrorMessage(code string) string {
 	switch code {
+	case "node_delete_requires_disabled":
+		return "Disable the node before deleting it."
+	case "node_delete_in_use":
+		return "Remove this node from applications, access entries, and landing services before deleting it. Wait for unfinished tasks to complete."
 	case "authentication_required":
 		return "Sign in to continue."
 	case "already_installed":
@@ -409,6 +414,10 @@ func errorCode(status int, message string) string {
 	}
 	normalized := strings.ToLower(message)
 	switch {
+	case normalized == "center: disable node before deleting":
+		return "node_delete_requires_disabled"
+	case normalized == "center: node still in use" || normalized == "center: node could not be deleted; check remaining dependencies":
+		return "node_delete_in_use"
 	case strings.Contains(normalized, "authentication required"):
 		return "authentication_required"
 	case strings.Contains(normalized, "already installed"):

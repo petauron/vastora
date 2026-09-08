@@ -24,6 +24,8 @@
     --color-ring: var(--ring);
     --color-success-foreground: var(--success-foreground);
     --color-success: var(--success);
+    --color-latency-fast: var(--latency-fast);
+    --color-latency-medium: var(--latency-medium);
     --color-input: var(--input);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
@@ -76,6 +78,8 @@
     --chart-5: oklch(0.269 0 0);
     --radius: 0.75rem;
     --success: oklch(0.62 0.18 145);
+    --latency-fast: oklch(0.45 0.13 145);
+    --latency-medium: oklch(0.48 0.10 85);
     --success-foreground: oklch(0.99 0 0);
     --sidebar: oklch(0.975 0.004 264 / 94%);
     --sidebar-foreground: oklch(0.18 0.01 264);
@@ -120,6 +124,8 @@
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
     --success: oklch(0.72 0.17 145);
+    --latency-fast: oklch(0.78 0.17 145);
+    --latency-medium: oklch(0.85 0.16 90);
     --success-foreground: oklch(0.16 0.03 145);
 }
 

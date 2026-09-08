@@ -75,6 +75,20 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 	if self, err := store.landingLatencyTarget(ctx, owner); err != nil || self != nil {
 		t.Fatalf("landing server must not probe itself: %v", err)
 	}
+	exec(`UPDATE agents SET tailscale_ownership='external' WHERE id=?`, proxy)
+	externalTarget, err := store.landingLatencyTarget(ctx, proxy)
+	if err != nil || externalTarget == nil || *externalTarget != *target {
+		t.Fatalf("external private network must receive the same read-only latency target: %v", err)
+	}
+	exec(`UPDATE agents SET credential_revoked_at=? WHERE id=?`, now, proxy)
+	if revoked, err := store.landingLatencyTarget(ctx, proxy); err != nil || revoked != nil {
+		t.Fatalf("revoked source received latency target: %v", err)
+	}
+	exec(`UPDATE agents SET credential_revoked_at='',status='disabled' WHERE id=?`, proxy)
+	if disabled, err := store.landingLatencyTarget(ctx, proxy); err != nil || disabled != nil {
+		t.Fatalf("disabled source received latency target: %v", err)
+	}
+	exec(`UPDATE agents SET status='active',tailscale_ownership='managed' WHERE id=?`, proxy)
 	if err := store.ConfigureLandingProxy(ctx, "landing-app", LandingProxyInput{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}

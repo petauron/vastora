@@ -24,6 +24,8 @@ type LandingLatencyView struct {
 
 // Targets come only from the selected, ready managed landing server. The
 // authenticated caller cannot supply an arbitrary address to another Agent.
+// Read-only probes do not require ownership of the source's private network;
+// the Agent still verifies the selected peer's identity and direct connection.
 func (s *Store) landingLatencyTarget(ctx context.Context, nodeID string) (*landing.LatencyTarget, error) {
 	var revision uint64
 	var peerJSON []byte
@@ -34,7 +36,7 @@ func (s *Store) landingLatencyTarget(ctx context.Context, nodeID string) (*landi
  JOIN agents source ON source.id=?
  WHERE selection.key=? AND server.node_id<>source.id AND server.status='ready'
  AND target.status='active' AND target.credential_revoked_at=''
- AND source.status='active' AND source.credential_revoked_at='' AND source.tailscale_ownership='managed'
+ AND source.status='active' AND source.credential_revoked_at=''
  AND EXISTS(SELECT 1 FROM applications WHERE node_id=source.id AND app_key='vastora-official/3x-ui' AND runtime='docker')`, nodeID, landingSelectionKey).Scan(&revision, &peerJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
