@@ -51,7 +51,7 @@ func (store *Store) localThreeXUILandingRoutes(ctx context.Context, applicationI
 }
 
 func (routes threeXUILandingRoutes) Read(ctx context.Context) (json.RawMessage, string, error) {
-	payload, err := routes.request(ctx, "/panel/api/xray/", nil)
+	payload, err := routes.request(ctx, http.MethodPost, "/panel/api/xray/", nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -80,7 +80,7 @@ func (routes threeXUILandingRoutes) Apply(ctx context.Context, change landing.Ro
 	if err != nil || !write {
 		return err
 	}
-	_, writeErr := routes.request(ctx, "/panel/api/xray/update", url.Values{
+	_, writeErr := routes.request(ctx, http.MethodPost, "/panel/api/xray/update", url.Values{
 		"xraySetting": {string(desired)}, "outboundTestUrl": {outboundTestURL},
 	})
 	// A successful response is not readback; a failed response may still have
@@ -105,12 +105,15 @@ func (routes threeXUILandingRoutes) Apply(ctx context.Context, change landing.Ro
 	return errors.New("agent: local route settings did not match the requested change")
 }
 
-func (routes threeXUILandingRoutes) request(ctx context.Context, path string, form url.Values) (json.RawMessage, error) {
+func (routes threeXUILandingRoutes) request(ctx context.Context, method, path string, form url.Values) (json.RawMessage, error) {
 	body, contentType := "{}", "application/json"
+	if method == http.MethodGet {
+		body = ""
+	}
 	if form != nil {
 		body, contentType = form.Encode(), "application/x-www-form-urlencoded"
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, routes.baseURL+path, strings.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, method, routes.baseURL+path, strings.NewReader(body))
 	if err != nil {
 		return nil, errors.New("agent: invalid local 3x-ui request")
 	}

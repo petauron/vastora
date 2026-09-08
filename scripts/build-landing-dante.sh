@@ -27,7 +27,7 @@ cd "dante-$version"
 
 # No PAM, Kerberos or libwrap dependency: access control is the generated
 # exact-source configuration plus the Agent-owned network policy.
-CC="$triple-gcc" CFLAGS='-O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2' \
+CC="$triple-gcc" LIBS="/usr/lib/$triple/libcrypt.so" CFLAGS='-O2 -fstack-protector-strong -D_FORTIFY_SOURCE=2' \
   LDFLAGS='-Wl,-z,relro,-z,now' ./configure --host="$triple" \
   --prefix=/usr/local/lib/vastora-landing --disable-client --disable-preload \
   --without-pam --without-gssapi --without-libwrap

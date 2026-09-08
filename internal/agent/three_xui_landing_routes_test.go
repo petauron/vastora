@@ -29,15 +29,15 @@ func TestLandingRouteAPILostWriteResponseReconcilesAndRestores(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		switch r.URL.Path {
-		case "/panel/api/xray/":
+		switch r.Method + " " + r.URL.Path {
+		case "POST /panel/api/xray/":
 			nested, marshalErr := json.Marshal(map[string]any{"xraySetting": current, "outboundTestUrl": "https://example.com/check"})
 			if marshalErr != nil {
 				t.Error(marshalErr)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": string(nested)})
-		case "/panel/api/xray/update":
+		case "POST /panel/api/xray/update":
 			if r.ParseForm() != nil || r.Form.Get("outboundTestUrl") != "https://example.com/check" {
 				t.Error("changed unrelated outbound test URL")
 				w.WriteHeader(http.StatusBadRequest)
@@ -69,6 +69,27 @@ func TestLandingRouteAPILostWriteResponseReconcilesAndRestores(t *testing.T) {
 	gotHash, _ := landing.RouteSettingsHash(current)
 	if wantHash != gotHash {
 		t.Fatal("disable did not restore the exact original settings")
+	}
+}
+
+func TestLandingLocalInboundInventoryUsesGET(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/panel/api/inbounds/list" {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		_, _ = w.Write([]byte(`{"success":true,"obj":[{"tag":"business","protocol":"vless","port":443,"streamSettings":{"security":"reality","network":"tcp"}},{"tag":"remote","nodeId":9,"protocol":"vless","port":443,"streamSettings":{"security":"reality","network":"tcp"}}]}`))
+	}))
+	defer server.Close()
+	routes := threeXUILandingRoutes{baseURL: server.URL, token: "fixture-token"}
+	if err := verifyLocalLandingInbounds(context.Background(), routes, []string{"business"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyLocalLandingInbounds(context.Background(), routes, []string{"missing"}); err == nil {
+		t.Fatal("accepted missing local inbound")
+	}
+	if err := verifyLocalLandingInbounds(context.Background(), routes, []string{"remote"}); err == nil {
+		t.Fatal("accepted a controller's remote inbound as local")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
@@ -85,7 +86,7 @@ func (s *Store) stopLandingMonitor(ctx context.Context) error {
 }
 
 func verifyLocalLandingInbounds(ctx context.Context, routes threeXUILandingRoutes, tags []string) error {
-	raw, err := routes.request(ctx, "/panel/api/inbounds/list", nil)
+	raw, err := routes.request(ctx, http.MethodGet, "/panel/api/inbounds/list", nil)
 	if err != nil {
 		return err
 	}
@@ -103,7 +104,7 @@ func verifyLocalLandingInbounds(ctx context.Context, routes threeXUILandingRoute
 				Security string `json:"security"`
 				Network  string `json:"network"`
 			}
-			if inbound.Protocol != "vless" || inbound.Port != 443 || json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Security != "reality" || (stream.Network != "tcp" && stream.Network != "raw") {
+			if (inbound.NodeID != nil && *inbound.NodeID != 0) || inbound.Protocol != "vless" || inbound.Port != 443 || json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Security != "reality" || (stream.Network != "tcp" && stream.Network != "raw") {
 				return errors.New("agent: landing selection is not a local managed VLESS inbound")
 			}
 			matches++
