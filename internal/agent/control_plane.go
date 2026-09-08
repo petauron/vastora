@@ -1034,6 +1034,10 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			result, err = c.Executor.Deploy(ctx, task)
 		}
 	case "application.command":
+		// Commands may restart the panel or replace its database. Do not let
+		// them race a landing checkpoint, route write, or container restart.
+		store.landingMutationMu.Lock()
+		defer store.landingMutationMu.Unlock()
 		commands := 0
 		if task.ApplicationCommand != nil {
 			commands++
