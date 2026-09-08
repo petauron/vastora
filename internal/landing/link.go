@@ -132,6 +132,9 @@ func (c *LinkChecker) Check(ctx context.Context, expected PeerIdentity) LinkResu
 	if err := c.read(ctx, http.MethodGet, "/localapi/v0/status?peers=true", &after); err != nil || after.BackendState != "Running" || matchPeer(after, expected) == nil {
 		return finish("unknown", "peer_identity_changed")
 	}
+	if peer := matchPeer(after, expected); peer.Online != nil && !*peer.Online {
+		return finish("disconnected", "peer_disconnected")
+	}
 	if time.Since(started) > CheckTimeout || ctx.Err() != nil {
 		return finish("unknown", "probe_expired")
 	}

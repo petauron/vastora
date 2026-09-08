@@ -652,7 +652,7 @@ describe("network and app views", () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
       await Promise.resolve();
     });
-		expect(document.body.textContent).toContain("填写节点名称和套餐即可");
+		expect(document.body.textContent).toContain("填写节点名称和套餐，再选择当前节点可用的连接目标");
     expect(document.querySelector<HTMLInputElement>("#reality-name")?.value).toBe("home-server");
     expect(document.body.textContent).toContain("🇺🇸 美国home-server");
     expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
