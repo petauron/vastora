@@ -83,6 +83,11 @@ jobs:
           fi
           go test -c -tags=integration -o "$RUNNER_TEMP/landing.test" ./internal/landing
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestBridgeGateKernelPolicyAndExpiry$' -test.v
+          curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 \
+            https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-64.zip -o "$RUNNER_TEMP/landing-xray.zip"
+          printf '%s  %s\n' 23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae "$RUNNER_TEMP/landing-xray.zip" | sha256sum -c -
+          unzip -q -j "$RUNNER_TEMP/landing-xray.zip" xray -d "$RUNNER_TEMP/landing-xray"
+          VASTORA_TEST_XRAY_BIN="$RUNNER_TEMP/landing-xray/xray" "$RUNNER_TEMP/landing.test" -test.run '^TestNativePinnedXrayConfiguration$' -test.v
       - name: Validate generated Headscale config with pinned binary
         if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
         env:
