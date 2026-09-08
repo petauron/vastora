@@ -1382,8 +1382,6 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	for _, statement := range []string{
 		`DROP TABLE reality_security_checks`,
 		`DROP TABLE node_listener_states`,
-		`DROP TABLE node_listener_migration_cutovers`,
-		`DROP TABLE tunnel_connector_migration_cutovers`,
 		`DROP TABLE assistant_audit_events`,
 		`DROP TABLE assistant_events`,
 		`DROP TABLE change_approvals`,

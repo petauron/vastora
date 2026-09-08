@@ -148,8 +148,7 @@ func leaseDeadline(gate *BridgeGate, before LinkResult, business BusinessResult,
 		return time.Time{}, false
 	}
 	address, err := netip.ParseAddr(business.ExitIPv4)
-	if err != nil || !address.Is4() || address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() || !address.IsGlobalUnicast() ||
-		netip.MustParsePrefix("100.64.0.0/10").Contains(address) {
+	if err != nil || !publicIPv4(address) {
 		return time.Time{}, false
 	}
 	deadline := before.StartedAt.Add(AllowLifetime)
