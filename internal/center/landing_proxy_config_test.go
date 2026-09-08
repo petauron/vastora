@@ -68,6 +68,13 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 		t.Fatal(err)
 	}
 	completeServer(claim(true))
+	target, err := store.landingLatencyTarget(ctx, proxy)
+	if err != nil || target == nil || target.Peer.Address != "100.64.0.8" {
+		t.Fatalf("disabled proxy must receive the selected latency target: %v", err)
+	}
+	if self, err := store.landingLatencyTarget(ctx, owner); err != nil || self != nil {
+		t.Fatalf("landing server must not probe itself: %v", err)
+	}
 	if err := store.ConfigureLandingProxy(ctx, "landing-app", LandingProxyInput{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +90,20 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 	if enable == nil || enable.LandingProxyState.Proxy == nil || len(enable.LandingProxyState.Proxy.InboundTags) != 1 || enable.LandingProxyState.Proxy.InboundTags[0] != "business" {
 		t.Fatal("missing managed proxy enable task")
 	}
+	if err := store.completeLandingProxy(ctx, proxy, enable.Revision, enable.Attempt, false); err != nil {
+		t.Fatal(err)
+	}
+	if claim(false) != nil {
+		t.Fatal("failed configuration retried without user action")
+	}
+	if err := store.ConfigureLandingProxy(ctx, "landing-app", LandingProxyInput{Enabled: true, Revision: uint64(enable.Revision)}); err != nil {
+		t.Fatal(err)
+	}
+	retry := claim(false)
+	if retry == nil || retry.Revision != enable.Revision || retry.Attempt != enable.Attempt+1 {
+		t.Fatal("explicit retry must preserve revision and advance attempt")
+	}
+	enable = retry
 	if err := store.completeLandingProxy(ctx, proxy, enable.Revision, enable.Attempt, true); err != nil {
 		t.Fatal(err)
 	}

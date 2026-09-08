@@ -45,7 +45,11 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 		return nil
 	}
 	if input.Enabled && previous.Proxy != nil {
-		return nil
+		// An explicit retry keeps the same immutable route checkpoint.
+		if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='pending',last_error='',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND status='failed'`, s.now().UTC().Format(time.RFC3339Nano), nodeID, revision); err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
 	state := landing.DesiredState{NodeID: nodeID, Revision: revision + 1}
 	serverRevision := int64(0)

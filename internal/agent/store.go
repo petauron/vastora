@@ -41,6 +41,8 @@ type Store struct {
 	landingDone       chan struct{}
 	landingStatusMu   sync.RWMutex
 	landingStatus     landing.MonitorStatus
+	landingLatencyMu  sync.Mutex
+	landingLatency    *landing.LatencyObservation
 	gatewayStartupMu  sync.RWMutex
 	gatewayStartupErr error
 	gatewayStartupOK  bool

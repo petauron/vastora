@@ -12,4 +12,5 @@ export type LandingView = {
   status: "disabled" | "pending" | "ready" | "failed";
   candidates: Array<{ nodeId: string; name: string }>;
   proxies: LandingProxyView[];
+  latencies: Array<{ nodeId: string; state: "direct" | "unavailable"; latencyMs?: number }>;
 };

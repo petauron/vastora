@@ -211,7 +211,7 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	}
 	// This also starts a boot-stopped instance under the closed gate so the
 	// node-local management API can reconcile its saved configuration.
-	if err := docker.terminateConnections(ctx); err != nil {
+	if err := docker.startForReconciliation(ctx); err != nil {
 		return err
 	}
 	if err := waitLandingRoutes(ctx, routes); err != nil {
@@ -269,7 +269,7 @@ func (s *Store) disableLandingProxy(ctx context.Context, desired landing.Desired
 	if err := docker.restartPolicy(ctx, "no"); err != nil {
 		return err
 	}
-	if err := docker.terminateConnections(ctx); err != nil {
+	if err := docker.startForReconciliation(ctx); err != nil {
 		return err
 	}
 	routes, err := s.localThreeXUILandingRoutes(ctx, current.ApplicationID)

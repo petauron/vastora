@@ -42,11 +42,11 @@ func TestLandingRoutePreservesUnselectedRulesAndSettings(t *testing.T) {
 	}
 	original := before["routing"].(map[string]any)["rules"].([]any)
 	rules := after["routing"].(map[string]any)["rules"].([]any)
-	if len(rules) != len(original)+3 || !reflect.DeepEqual(rules[3:], original) {
+	if len(rules) != len(original)+3 || !reflect.DeepEqual(rules[0], original[0]) || !reflect.DeepEqual(rules[4:], original[1:]) {
 		t.Fatal("original rule ordering or content was changed")
 	}
 	for i, outbound := range []string{"blocked", "blocked", proxyOutboundTag} {
-		rule := rules[i].(map[string]any)
+		rule := rules[i+1].(map[string]any)
 		if rule["outboundTag"] != outbound || !reflect.DeepEqual(rule["inboundTag"], []any{"business"}) {
 			t.Fatal("new rule escaped selected business scope")
 		}
@@ -54,6 +54,30 @@ func TestLandingRoutePreservesUnselectedRulesAndSettings(t *testing.T) {
 	outbounds := after["outbounds"].([]any)
 	if !reflect.DeepEqual(outbounds[:2], before["outbounds"]) || outbounds[2].(map[string]any)["protocol"] != "socks" {
 		t.Fatal("changed original outbounds or omitted SOCKS")
+	}
+}
+
+func TestLandingRouteAcceptsThreeXUIAPIRuleRelocation(t *testing.T) {
+	change := fixtureRouteChange(t, routeFixture)
+	_, saved, err := decodeRouteSettings(change.After)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, write, err := change.NextWrite(saved, true); err != nil || write {
+		t.Fatalf("3x-ui API rule relocation must not cause a retry: write=%v err=%v", write, err)
+	}
+	if _, write, err := change.NextWrite(saved, false); err != nil || !write {
+		t.Fatalf("normalized configuration must remain restorable: write=%v err=%v", write, err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(saved, &config); err != nil {
+		t.Fatal(err)
+	}
+	rules := config["routing"].(map[string]any)["rules"].([]any)
+	rules[1], rules[3] = rules[3], rules[1]
+	drift, _ := json.Marshal(config)
+	if _, _, err := change.NextWrite(drift, true); err == nil {
+		t.Fatal("business rule reordering must remain a conflict")
 	}
 }
 

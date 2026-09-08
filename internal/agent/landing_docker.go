@@ -100,6 +100,23 @@ func (d *landingDocker) restartPolicy(ctx context.Context, policy string) error 
 	return errors.Join(errors.New("agent: proxy restart policy was not confirmed"), writeErr, readErr)
 }
 
+// Caller must close the gate first. Keep a running management API available
+// during reconciliation; a rejected configuration must not restart it.
+func (d *landingDocker) startForReconciliation(ctx context.Context) error {
+	current, err := d.inspect(ctx)
+	if err != nil {
+		return err
+	}
+	if current.Container.HostConfig.RestartPolicy.Name != "no" {
+		return errors.New("agent: proxy automatic restart is not fenced")
+	}
+	if current.Container.State.Running {
+		return nil
+	}
+	_, err = d.engine.ContainerStart(ctx, d.containerID, client.ContainerStartOptions{})
+	return err
+}
+
 // Caller must install/block the gate before invoking this method. Stop/readback
 // is separate from start so a lost Docker reply never counts as stream closure.
 func (d *landingDocker) terminateConnections(ctx context.Context) error {
