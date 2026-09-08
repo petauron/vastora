@@ -169,6 +169,11 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		return err
 	}
 	if current == nil || current.Route == nil {
+		// Docker alone does not guarantee the nft userspace tool exists. Install
+		// the host prerequisites before persisting or changing any proxy route.
+		if err := ensureLandingPackage(ctx); err != nil {
+			return err
+		}
 		if err := verifyLocalLandingInbounds(ctx, routes, desired.Proxy.InboundTags); err != nil {
 			return err
 		}

@@ -74,6 +74,9 @@ jobs:
           go test ./internal/recovery ./internal/landing ./internal/realitytarget ./internal/dockerruntime -count=1 || ci_test_status=$?
           go test ./internal/agent ./internal/center -run 'Test.*(Landing|Recovery|Recover|Reality|REALITY|HAProxy|AdminRuntimeDirectory|Migration|Migrated|Backup|ExternalVolume|Heartbeat)' -count=1 || ci_test_status=$?
           exit "$ci_test_status"
+      - name: Set up native landing artifact builder
+        if: ${{ !cancelled() }}
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.0.0
       - name: Verify landing kernel lease in an isolated network
         if: ${{ !cancelled() }}
         run: |
@@ -81,8 +84,10 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends nftables
           fi
-          docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64 --output "type=local,dest=$RUNNER_TEMP/dante" .
-          gzip -dc "$RUNNER_TEMP/dante/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"
+          docker buildx build --file deploy/landing/Dockerfile --platform linux/amd64,linux/arm64 --output "type=local,dest=$RUNNER_TEMP/dante" .
+          cp "$RUNNER_TEMP/dante/linux_amd64/"* internal/dantebundle/assets/
+          VASTORA_DANTE_BUNDLE_INTEGRATION=1 go test ./internal/dantebundle -count=1
+          gzip -dc "$RUNNER_TEMP/dante/linux_amd64/danted-linux-amd64.gz" > "$RUNNER_TEMP/dante/danted"
           chmod 0755 "$RUNNER_TEMP/dante/danted"
           go test -c -tags=integration -o "$RUNNER_TEMP/landing.test" ./internal/landing
           sudo -- "$RUNNER_TEMP/landing.test" -test.run '^TestBridgeGateKernelPolicyAndExpiry$' -test.v

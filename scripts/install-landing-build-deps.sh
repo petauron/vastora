@@ -3,8 +3,8 @@
 set -eu
 native=$(dpkg --print-architecture)
 case "$native" in
-  amd64) foreign=arm64; mirror=http://ports.ubuntu.com/ubuntu-ports ;;
-  arm64) foreign=amd64; mirror=http://archive.ubuntu.com/ubuntu ;;
+  amd64) foreign=arm64; cross=aarch64-linux-gnu; mirror=http://ports.ubuntu.com/ubuntu-ports ;;
+  arm64) foreign=amd64; cross=x86_64-linux-gnu; mirror=http://archive.ubuntu.com/ubuntu ;;
   *) echo 'Unsupported build architecture' >&2; exit 1 ;;
 esac
 dpkg --add-architecture "$foreign"
@@ -16,5 +16,5 @@ printf 'deb [arch=%s] %s jammy main universe\ndeb [arch=%s] %s jammy-updates mai
   > /etc/apt/sources.list.d/vastora-cross.list
 apt-get update -qq
 apt-get install -y --no-install-recommends ca-certificates curl make \
-  gcc-aarch64-linux-gnu gcc-x86-64-linux-gnu \
+  "gcc:$native" "binutils:$native" "gcc-$cross:$native" \
   libc6-dev-arm64-cross libc6-dev-amd64-cross libcrypt-dev:amd64 libcrypt-dev:arm64
