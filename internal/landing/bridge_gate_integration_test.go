@@ -5,6 +5,7 @@ package landing
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,7 +44,10 @@ func TestBridgeGateKernelPolicyAndExpiry(t *testing.T) {
 		return output, nil
 	}
 	if err := gate.Install(ctx); err != nil {
-		t.Fatal(err)
+		document, _ := gate.snapshot(ctx)
+		actual, _ := json.Marshal(document)
+		expected, _ := json.Marshal(gate.objects())
+		t.Fatalf("install: %v\nactual: %s\nexpected: %s", err, actual, expected)
 	}
 	until := time.Now().Add(5 * time.Second)
 	if err := gate.renew(ctx, until); err != nil {

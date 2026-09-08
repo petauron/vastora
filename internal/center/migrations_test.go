@@ -298,7 +298,7 @@ func databaseSchemaShape(t *testing.T, db *sql.DB) map[string]schemaTable {
 			t.Fatal(err)
 		}
 		for _, index := range indexes {
-			columnNames, err := db.Query(`SELECT name FROM pragma_index_info(?) ORDER BY seqno`, index.Name)
+			columnNames, err := db.Query(`SELECT COALESCE(name, '<expression>') FROM pragma_index_info(?) ORDER BY seqno`, index.Name)
 			if err != nil {
 				t.Fatal(err)
 			}

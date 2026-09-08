@@ -1,2 +1,5 @@
 f4b353af85ed0c1656f8a9c0f1ebcd37ea19d68f:web/src/api.test.ts:generic-api-key:67
 8571649f7335c5a861a5b42ce2ed575950f49bda:web/src/api.test.ts:generic-api-key:68
+# Synthetic SOCKS credentials used only by an in-process regression fixture.
+8f843e2706fd462329f21858cd62433a57edbca0:internal/landing/probe_test.go:generic-api-key:35
+8f843e2706fd462329f21858cd62433a57edbca0:internal/landing/probe_test.go:generic-api-key:142
