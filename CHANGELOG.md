@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.108](https://github.com/petauron/vastora/compare/v0.1.0-alpha.107...v0.1.0-alpha.108) (2026-09-08)
+
+
+### Features
+
+* add native Dante landing MVP and recovery fixes ([#359](https://github.com/petauron/vastora/issues/359)) ([291c402](https://github.com/petauron/vastora/commit/291c40279827952fc48131787928f6fea6ed3be7))
+
 ## [0.1.0-alpha.107](https://github.com/petauron/vastora/compare/v0.1.0-alpha.106...v0.1.0-alpha.107) (2026-09-07)
 
 
