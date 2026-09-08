@@ -2196,7 +2196,7 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("并发");
     expect(container.textContent).not.toContain("远端");
     expect(container.textContent).toContain("2/4 个 Agent 已是当前版本");
-    expect(container.textContent).toContain("在线的远端 Agent 会同时更新");
+    expect(container.textContent).toContain("请稍候，更新完成后节点会自动连接。");
   });
 
   it("bypasses the official release cache when update checking is requested", async () => {
