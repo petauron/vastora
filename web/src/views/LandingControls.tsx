@@ -8,6 +8,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { copy } from "./shared";
+import { landingLatencyColor } from "./landingLatency";
 
 type LandingContextValue = {
   view: LandingView | null;
@@ -164,7 +165,7 @@ export function LandingSwitch({ applicationId, nodeId, name, locked, language }:
       <Switch id={id} checked={enabled} disabled={disabled} aria-label={copy(language, `${name} 使用落地机`, `Use landing server for ${name}`)} aria-describedby={`${id}-status`} onCheckedChange={(checked) => void state.change((signal) => api.configureLandingProxy(applicationId, checked, proxy?.revision ?? 0, signal))} />
       <FieldLabel htmlFor={id}>{copy(language, "使用落地", "Use landing")}</FieldLabel>
     </Field>
-    <FieldDescription id={`${id}-status`} aria-live="polite">{status}{status && latencyText ? " · " : null}{latencyText}</FieldDescription>
+    <FieldDescription id={`${id}-status`} aria-live="polite">{status}{status && latencyText ? " · " : null}{latencyText ? <span className={landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}>{latencyText}</span> : null}</FieldDescription>
     {configurationFailed ? <Button type="button" variant="outline" size="sm" disabled={locked || busy || failed || !view || (enabled && view.status !== "ready")} aria-label={copy(language, `${name} 重试落地设置`, `Retry landing settings for ${name}`)} onClick={() => void state.change((signal) => api.configureLandingProxy(applicationId, enabled, proxy.revision, signal))}>{copy(language, "重试", "Retry")}</Button> : null}
   </FieldGroup>;
 }
