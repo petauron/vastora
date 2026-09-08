@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/realitytarget"
 )
 
 const (
@@ -30,6 +31,8 @@ const (
 )
 
 type RealityCommandInput struct {
+	VerificationID    string `json:"verificationId"`
+	TargetIP          string `json:"targetIp"`
 	ApplicationID     string `json:"applicationId"`
 	RegionCode        string `json:"regionCode"`
 	Name              string `json:"name"`
@@ -52,61 +55,68 @@ type RealityRenameCommandInput struct {
 }
 
 type RealityTargetVerifyInput struct {
+	Recommend  bool   `json:"recommend"`
 	TargetHost string `json:"targetHost"`
 	ServerName string `json:"serverName"`
 }
 
 type RealityCommandTask struct {
-	Action              string `json:"action"`
-	RegionCode          string `json:"regionCode"`
-	DisplayName         string `json:"displayName"`
-	ClientName          string `json:"clientName,omitempty"`
-	InboundID           int    `json:"inboundId,omitempty"`
-	ConnectHostname     string `json:"connectHostname"`
-	DNSProvider         string `json:"dnsProvider"`
-	TargetHost          string `json:"targetHost,omitempty"`
-	ServerName          string `json:"serverName,omitempty"`
-	TargetApplicationID string `json:"targetApplicationId"`
-	TargetAddress       string `json:"targetAddress"`
-	TargetPublicAddress string `json:"targetPublicAddress"`
-	TargetPanelPort     int    `json:"targetPanelPort"`
-	TargetNodeID        int    `json:"targetNodeId,omitempty"`
-	TargetAPIToken      string `json:"targetApiToken,omitempty"`
-	CreateInitialClient bool   `json:"createInitialClient"`
-	InboundTag          string `json:"inboundTag"`
-	InboundTotalBytes   int64  `json:"inboundTotalBytes"`
-	InboundResetDay     int    `json:"inboundResetDay"`
-	ClientTotalBytes    int64  `json:"clientTotalBytes"`
-	ClientResetDays     int    `json:"clientResetDays"`
-	ClientExpiryTime    int64  `json:"clientExpiryTime"`
-	ServiceID           string `json:"serviceId,omitempty"`
-	GuardRevision       int64  `json:"guardRevision,omitempty"`
+	TargetAgentPublicKey []byte                   `json:"targetAgentPublicKey,omitempty"`
+	Recommend            bool                     `json:"recommend,omitempty"`
+	VerifiedTarget       *realitytarget.Candidate `json:"verifiedTarget,omitempty"`
+	Action               string                   `json:"action"`
+	RegionCode           string                   `json:"regionCode"`
+	DisplayName          string                   `json:"displayName"`
+	ClientName           string                   `json:"clientName,omitempty"`
+	InboundID            int                      `json:"inboundId,omitempty"`
+	ConnectHostname      string                   `json:"connectHostname"`
+	DNSProvider          string                   `json:"dnsProvider"`
+	TargetHost           string                   `json:"targetHost,omitempty"`
+	ServerName           string                   `json:"serverName,omitempty"`
+	TargetApplicationID  string                   `json:"targetApplicationId"`
+	TargetAddress        string                   `json:"targetAddress"`
+	TargetPublicAddress  string                   `json:"targetPublicAddress"`
+	TargetPanelPort      int                      `json:"targetPanelPort"`
+	TargetNodeID         int                      `json:"targetNodeId,omitempty"`
+	TargetAPIToken       string                   `json:"targetApiToken,omitempty"`
+	CreateInitialClient  bool                     `json:"createInitialClient"`
+	InboundTag           string                   `json:"inboundTag"`
+	InboundTotalBytes    int64                    `json:"inboundTotalBytes"`
+	InboundResetDay      int                      `json:"inboundResetDay"`
+	ClientTotalBytes     int64                    `json:"clientTotalBytes"`
+	ClientResetDays      int                      `json:"clientResetDays"`
+	ClientExpiryTime     int64                    `json:"clientExpiryTime"`
+	ServiceID            string                   `json:"serviceId,omitempty"`
+	GuardRevision        int64                    `json:"guardRevision,omitempty"`
 }
 
 type RealityCommandResult struct {
-	Action            string `json:"action"`
-	InboundID         int    `json:"inboundId"`
-	DisplayName       string `json:"displayName"`
-	ClientName        string `json:"clientName,omitempty"`
-	Listen            string `json:"listen"`
-	Port              int    `json:"port"`
-	TargetHost        string `json:"targetHost"`
-	TargetIP          string `json:"targetIp"`
-	ServerName        string `json:"serverName"`
-	NodeASN           int64  `json:"nodeAsn"`
-	TargetASN         int64  `json:"targetAsn"`
-	CDNProvider       string `json:"cdnProvider,omitempty"`
-	TLS13             bool   `json:"tls13"`
-	X25519            bool   `json:"x25519"`
-	HTTP2             bool   `json:"http2"`
-	CertificateValid  bool   `json:"certificateValid"`
-	GuardStatus       string `json:"guardStatus"`
-	ProxyProtocol     bool   `json:"proxyProtocol"`
-	ConnectHostname   string `json:"connectHostname"`
-	ShareURI          string `json:"shareUri"`
-	InboundTag        string `json:"inboundTag"`
-	ClientCreated     bool   `json:"clientCreated"`
-	InboundTotalBytes int64  `json:"inboundTotalBytes"`
+	Candidates        []realitytarget.Candidate `json:"candidates,omitempty"`
+	LatencyMillis     int64                     `json:"latencyMillis,omitempty"`
+	Samples           int                       `json:"samples,omitempty"`
+	Action            string                    `json:"action"`
+	InboundID         int                       `json:"inboundId"`
+	DisplayName       string                    `json:"displayName"`
+	ClientName        string                    `json:"clientName,omitempty"`
+	Listen            string                    `json:"listen"`
+	Port              int                       `json:"port"`
+	TargetHost        string                    `json:"targetHost"`
+	TargetIP          string                    `json:"targetIp"`
+	ServerName        string                    `json:"serverName"`
+	NodeASN           int64                     `json:"nodeAsn"`
+	TargetASN         int64                     `json:"targetAsn"`
+	CDNProvider       string                    `json:"cdnProvider,omitempty"`
+	TLS13             bool                      `json:"tls13"`
+	X25519            bool                      `json:"x25519"`
+	HTTP2             bool                      `json:"http2"`
+	CertificateValid  bool                      `json:"certificateValid"`
+	GuardStatus       string                    `json:"guardStatus"`
+	ProxyProtocol     bool                      `json:"proxyProtocol"`
+	ConnectHostname   string                    `json:"connectHostname"`
+	ShareURI          string                    `json:"shareUri"`
+	InboundTag        string                    `json:"inboundTag"`
+	ClientCreated     bool                      `json:"clientCreated"`
+	InboundTotalBytes int64                     `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandInput struct {
@@ -252,43 +262,46 @@ type ThreeXUIControllerCommandResult struct {
 }
 
 type ApplicationCommandView struct {
-	ID                     string                  `json:"id"`
-	ApplicationID          string                  `json:"applicationId"`
-	GatewayNodeID          string                  `json:"gatewayNodeId"`
-	Kind                   string                  `json:"kind"`
-	State                  string                  `json:"state"`
-	ReconciliationRequired bool                    `json:"reconciliationRequired"`
-	Hostname               string                  `json:"hostname"`
-	DNSProvider            string                  `json:"dnsProvider"`
-	TargetHost             string                  `json:"targetHost,omitempty"`
-	TargetIP               string                  `json:"targetIp,omitempty"`
-	ServerName             string                  `json:"serverName,omitempty"`
-	NodeASN                int64                   `json:"nodeAsn,omitempty"`
-	TargetASN              int64                   `json:"targetAsn,omitempty"`
-	CDNProvider            string                  `json:"cdnProvider,omitempty"`
-	TLS13                  bool                    `json:"tls13,omitempty"`
-	X25519                 bool                    `json:"x25519,omitempty"`
-	HTTP2                  bool                    `json:"h2,omitempty"`
-	CertificateValid       bool                    `json:"certificateValid,omitempty"`
-	GuardStatus            string                  `json:"guardStatus,omitempty"`
-	PublicationID          string                  `json:"publicationId,omitempty"`
-	Action                 string                  `json:"action,omitempty"`
-	RegionCode             string                  `json:"regionCode,omitempty"`
-	DisplayName            string                  `json:"displayName,omitempty"`
-	InboundID              int                     `json:"inboundId,omitempty"`
-	ClientCreated          bool                    `json:"clientCreated,omitempty"`
-	InboundTotalBytes      int64                   `json:"inboundTotalBytes,omitempty"`
-	InboundResetDay        int                     `json:"inboundResetDay,omitempty"`
-	InboundNextResetAt     string                  `json:"inboundNextResetAt,omitempty"`
-	Clients                []ThreeXUIClientView    `json:"clients,omitempty"`
-	ClientsObserved        bool                    `json:"clientsObserved,omitempty"`
-	Inbounds               []ThreeXUIClientInbound `json:"inbounds,omitempty"`
-	InboundsObserved       bool                    `json:"inboundsObserved,omitempty"`
-	SubscriptionAvailable  bool                    `json:"subscriptionAvailable,omitempty"`
-	Error                  string                  `json:"error,omitempty"`
-	ResultAvailable        bool                    `json:"resultAvailable"`
-	CreatedAt              time.Time               `json:"createdAt"`
-	UpdatedAt              time.Time               `json:"updatedAt"`
+	Candidates             []realitytarget.Candidate `json:"candidates,omitempty"`
+	LatencyMillis          int64                     `json:"latencyMillis,omitempty"`
+	Samples                int                       `json:"samples,omitempty"`
+	ID                     string                    `json:"id"`
+	ApplicationID          string                    `json:"applicationId"`
+	GatewayNodeID          string                    `json:"gatewayNodeId"`
+	Kind                   string                    `json:"kind"`
+	State                  string                    `json:"state"`
+	ReconciliationRequired bool                      `json:"reconciliationRequired"`
+	Hostname               string                    `json:"hostname"`
+	DNSProvider            string                    `json:"dnsProvider"`
+	TargetHost             string                    `json:"targetHost,omitempty"`
+	TargetIP               string                    `json:"targetIp,omitempty"`
+	ServerName             string                    `json:"serverName,omitempty"`
+	NodeASN                int64                     `json:"nodeAsn,omitempty"`
+	TargetASN              int64                     `json:"targetAsn,omitempty"`
+	CDNProvider            string                    `json:"cdnProvider,omitempty"`
+	TLS13                  bool                      `json:"tls13,omitempty"`
+	X25519                 bool                      `json:"x25519,omitempty"`
+	HTTP2                  bool                      `json:"h2,omitempty"`
+	CertificateValid       bool                      `json:"certificateValid,omitempty"`
+	GuardStatus            string                    `json:"guardStatus,omitempty"`
+	PublicationID          string                    `json:"publicationId,omitempty"`
+	Action                 string                    `json:"action,omitempty"`
+	RegionCode             string                    `json:"regionCode,omitempty"`
+	DisplayName            string                    `json:"displayName,omitempty"`
+	InboundID              int                       `json:"inboundId,omitempty"`
+	ClientCreated          bool                      `json:"clientCreated,omitempty"`
+	InboundTotalBytes      int64                     `json:"inboundTotalBytes,omitempty"`
+	InboundResetDay        int                       `json:"inboundResetDay,omitempty"`
+	InboundNextResetAt     string                    `json:"inboundNextResetAt,omitempty"`
+	Clients                []ThreeXUIClientView      `json:"clients,omitempty"`
+	ClientsObserved        bool                      `json:"clientsObserved,omitempty"`
+	Inbounds               []ThreeXUIClientInbound   `json:"inbounds,omitempty"`
+	InboundsObserved       bool                      `json:"inboundsObserved,omitempty"`
+	SubscriptionAvailable  bool                      `json:"subscriptionAvailable,omitempty"`
+	Error                  string                    `json:"error,omitempty"`
+	ResultAvailable        bool                      `json:"resultAvailable"`
+	CreatedAt              time.Time                 `json:"createdAt"`
+	UpdatedAt              time.Time                 `json:"updatedAt"`
 }
 
 func normalizeRealityCommandInput(input RealityCommandInput) (RealityCommandInput, string, error) {
@@ -329,7 +342,7 @@ func validRealityTargetHostname(hostname string) bool {
 func validRealityTargetProof(result RealityCommandResult) bool {
 	ip := net.ParseIP(result.TargetIP)
 	return validRealityTargetHostname(result.TargetHost) && validRealityTargetHostname(result.ServerName) &&
-		ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate() &&
+		ip != nil && ip.To4() != nil && networking.Classify("external", ip) == networking.KindPublic &&
 		result.NodeASN >= 0 && result.TargetASN >= 0 && result.CDNProvider == "" &&
 		result.TLS13 && result.X25519 && result.HTTP2 && result.CertificateValid
 }
@@ -342,7 +355,7 @@ func validateRealityCommandResult(input RealityCommandTask, result RealityComman
 	if result.Action != "create" || result.InboundID < 1 || result.DisplayName != input.DisplayName || result.ClientName != input.ClientName || (result.InboundTag != input.InboundTag && result.InboundTag != expectedTag) || net.ParseIP(result.Listen) == nil || result.Listen != input.TargetAddress || result.Port != centerThreeXUIRealityPort || result.ConnectHostname != input.ConnectHostname || !domainSuffixPattern.MatchString(result.ServerName) || result.InboundTotalBytes != input.InboundTotalBytes {
 		return errors.New("center: Agent returned an unsafe REALITY result")
 	}
-	if !validRealityTargetProof(result) || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || result.GuardStatus != "ready" || !result.ProxyProtocol {
+	if input.VerifiedTarget == nil || !validRealityCandidate(*input.VerifiedTarget) || !validRealityTargetProof(result) || result.TargetIP != input.VerifiedTarget.TargetIP || result.TargetHost != input.TargetHost || result.ServerName != input.ServerName || result.GuardStatus != "ready" || !result.ProxyProtocol {
 		return errors.New("center: Agent returned an invalid REALITY target")
 	}
 	if result.ClientCreated != input.CreateInitialClient {
@@ -372,7 +385,7 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 	applicationID = strings.TrimSpace(applicationID)
 	input.TargetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.TargetHost), "."))
 	input.ServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(input.ServerName), "."))
-	if applicationID == "" || !validRealityTargetHostname(input.TargetHost) || !validRealityTargetHostname(input.ServerName) {
+	if applicationID == "" || input.Recommend && (input.TargetHost != "" || input.ServerName != "") || !input.Recommend && (!validRealityTargetHostname(input.TargetHost) || !validRealityTargetHostname(input.ServerName)) {
 		return ApplicationCommandView{}, errors.New("center: application, targetHost, and serverName are required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -395,8 +408,9 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 	if !networking.IsPrivateServiceAddress(targetAddress) || net.ParseIP(targetPublicAddress) == nil {
 		return ApplicationCommandView{}, errors.New("center: target VLESS node needs confirmed private service and public addresses")
 	}
-	agentID, targetNodeID, err := threeXUIDataPlaneController(ctx, tx, applicationID, role)
-	if err != nil {
+	var agentID string
+	var targetKey []byte
+	if err := tx.QueryRowContext(ctx, `SELECT a.node_id, n.x25519_public_key FROM applications a JOIN agents n ON n.id = a.node_id WHERE a.id = ?`, applicationID).Scan(&agentID, &targetKey); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	var active int
@@ -411,8 +425,8 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 		return ApplicationCommandView{}, err
 	}
 	id := "application-command-" + token
-	task := RealityCommandTask{Action: "verify", TargetHost: input.TargetHost, ServerName: input.ServerName,
-		TargetApplicationID: applicationID, TargetAddress: targetAddress, TargetPublicAddress: targetPublicAddress, TargetNodeID: targetNodeID}
+	task := RealityCommandTask{Action: "verify", TargetAgentPublicKey: targetKey, Recommend: input.Recommend, TargetHost: input.TargetHost, ServerName: input.ServerName,
+		TargetApplicationID: applicationID, TargetAddress: targetAddress, TargetPublicAddress: targetPublicAddress}
 	encoded, _ := json.Marshal(task)
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, site_id, display_name, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
@@ -461,6 +475,10 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, errors.New("center: target VLESS node has no confirmed public address for ASN validation")
 	}
 	if _, _, err := validateNodeDirectPublicIngress(ctx, tx, targetAgentID); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	verified, err := s.selectedRealityTarget(ctx, tx, input, targetAgentID, targetAddress, targetPublicAddress)
+	if err != nil {
 		return ApplicationCommandView{}, err
 	}
 	agentID, targetNodeID, err := threeXUIDataPlaneController(ctx, tx, input.ApplicationID, role)
@@ -542,6 +560,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 	}
 	id := "application-command-" + token
 	task := RealityCommandTask{Action: "create", RegionCode: input.RegionCode, DisplayName: displayName, ConnectHostname: input.Hostname, DNSProvider: input.DNSProvider, TargetHost: input.TargetHost, ServerName: input.ServerName,
+		VerifiedTarget:      verified,
 		TargetApplicationID: input.ApplicationID, TargetAddress: targetAddress, TargetPublicAddress: targetPublicAddress, TargetPanelPort: targetSettings.PanelPort, TargetNodeID: targetNodeID,
 		CreateInitialClient: createInitialClient,
 		InboundTag:          realityCommandInboundTag(id),
@@ -694,6 +713,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		}
 		value.Hostname, value.DNSProvider = input.ConnectHostname, input.DNSProvider
 		value.TargetHost, value.TargetIP, value.ServerName = result.TargetHost, result.TargetIP, result.ServerName
+		value.Candidates, value.LatencyMillis, value.Samples = result.Candidates, result.LatencyMillis, result.Samples
 		value.NodeASN, value.TargetASN, value.CDNProvider, value.GuardStatus = result.NodeASN, result.TargetASN, result.CDNProvider, result.GuardStatus
 		value.TLS13, value.X25519, value.HTTP2, value.CertificateValid = result.TLS13, result.X25519, result.HTTP2, result.CertificateValid
 		if value.Kind == realityRenameCommandKind {

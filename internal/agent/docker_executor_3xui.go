@@ -210,10 +210,16 @@ func committedThreeXUIDeploymentToken(ctx context.Context, docker *client.Client
 	if current.Container.Config == nil || current.Container.Config.Labels[threeXUIDeploymentIDLabel] != deploymentID {
 		return "", false, nil
 	}
+	if err := waitForBindAddress(ctx, bindAddress); err != nil {
+		return "", true, err
+	}
 	if current.Container.State == nil || !current.Container.State.Running {
 		if err := startCommittedThreeXUIDeployment(ctx, docker, current); err != nil {
 			return "", true, err
 		}
+	}
+	if err := dockerruntime.RecoverAttachment(ctx, docker, current.Container.ID, dockerruntime.NetworkName, "runtime-network", dockerruntime.ThreeXUIAlias); err != nil {
+		return "", true, err
 	}
 	if err := waitForEndpoint(ctx, bindAddress, panelPort); err != nil {
 		return "", true, fmt.Errorf("agent: committed 3x-ui deployment is not healthy: %w", err)

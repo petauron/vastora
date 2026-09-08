@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 function mockReadyCenter() {
-  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: false, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: false, loginProtection: { captchaRequired: false, maxFailures: 5, lockoutSeconds: 900 }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+  vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: false, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: false, loginProtection: { captchaRequired: false }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
   const status = vi.spyOn(api, "status").mockResolvedValue({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" });
   vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
   vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
@@ -88,7 +88,7 @@ describe("application shell", () => {
   });
 
   it("requires ten characters when creating the administrator", async () => {
-    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, publicNetworkHelperAvailable: false, regionLookupAvailable: false, cloudflareConfigured: false, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: false, loginProtection: { captchaRequired: false, maxFailures: 5, lockoutSeconds: 900 }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: false, onboardingComplete: false, suggestedAgentConnectUrl: "", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: false, publicNetworkHelperAvailable: false, regionLookupAvailable: false, cloudflareConfigured: false, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: false, loginProtection: { captchaRequired: false }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -99,19 +99,19 @@ describe("application shell", () => {
   });
 
   it("requires a Turnstile token on the direct Cloudflare Tunnel login", async () => {
-    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: true, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: true, loginProtection: { captchaRequired: true, turnstileSiteKey: "site-key", maxFailures: 5, lockoutSeconds: 900 }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
+    vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: true, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: true, loginProtection: { captchaRequired: true, turnstileSiteKey: "site-key" }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
     vi.spyOn(api, "status").mockRejectedValue(new APIError("center: authentication required", 401, "authentication_required"));
     const renderTurnstile = vi.fn((_container: HTMLElement, options: Record<string, unknown>) => {
       (options.callback as (token: string) => void)("verified-token");
       return "widget-id";
     });
     window.turnstile = { render: renderTurnstile, remove: vi.fn() };
-    const login = vi.spyOn(api, "login").mockRejectedValue(new APIError("center: sign-in failed", 401, "invalid_credentials", 2, true));
+    const login = vi.spyOn(api, "login").mockRejectedValue(new APIError("center: sign-in failed", 401, "invalid_credentials", true));
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
     act(() => root?.render(<ThemeProvider><App /></ThemeProvider>));
-    await vi.waitFor(() => expect(container.textContent).toContain("protected by Turnstile"));
+    await vi.waitFor(() => expect(container.textContent).toContain("Continue with your administrator account."));
     await vi.waitFor(() => expect(renderTurnstile).toHaveBeenCalled());
     const username = container.querySelector<HTMLInputElement>("#username")!;
     const password = container.querySelector<HTMLInputElement>("#password")!;
@@ -126,7 +126,34 @@ describe("application shell", () => {
       await Promise.resolve();
     });
     expect(login).toHaveBeenCalledWith("admin", "wrong-password", "verified-token");
-    expect(container.textContent).toContain("Wait 2 more seconds");
+    expect(container.textContent).toContain("The username or password is incorrect.");
+    expect(container.querySelector("#credential-error")?.getAttribute("role")).toBe("alert");
+    expect(container.textContent).not.toMatch(/Turnstile|Cloudflare|backoff|lockout|consecutive failures|seconds|Retry in/);
+    expect(renderTurnstile.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it.each([
+    ["en", "login_throttled", 429, "Unable to sign in right now. Try again later."],
+    ["zh-CN", "login_throttled", 429, "暂时无法登录，请稍后再试。"],
+    ["en", "login_protection_unavailable", 403, "Unable to sign in right now. Try again later."],
+    ["zh-CN", "login_protection_unavailable", 403, "暂时无法登录，请稍后再试。"],
+  ] as const)("keeps %s %s login feedback generic", async (language, code, statusCode, message) => {
+    const status = mockReadyCenter();
+    window.localStorage.setItem("vastora.language", language);
+    status.mockRejectedValue(new APIError("Sign in to continue.", 401, "authentication_required"));
+    const login = vi.spyOn(api, "login").mockRejectedValue(new APIError("internal_marker: throttle scope=account remaining=900", statusCode, code));
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(<ThemeProvider><App /></ThemeProvider>));
+    await vi.waitFor(() => expect(container.querySelector("#username")).not.toBeNull());
+    await act(async () => {
+      container.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(login).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("#credential-error")?.textContent).toBe(message);
+    expect(container.textContent).not.toMatch(/internal_marker|remaining|900|Turnstile|Cloudflare|bootstrap|backoff|lockout|consecutive failures|Retry in|秒|锁定/);
+    expect(container.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
   });
 
   it("moves keyboard focus to the main content after navigation", async () => {

@@ -36,6 +36,8 @@ func run(arguments []string) error {
 		return runAgent(arguments[1:])
 	case "deployer":
 		return runDeployer(arguments[1:])
+	case "recovery":
+		return runRecovery(arguments[1:])
 	case "help", "-h", "--help":
 		printUsage(os.Stdout)
 		return nil
@@ -73,6 +75,13 @@ Usage:
   vastora center agent-token create --data-dir DIR --site-id SITE --name NAME --center-url URL [--gateway] [--tunnel] [--headscale]
   vastora center backup --data-dir DIR --output FILE --password-file FILE
   vastora center restore --input FILE --data-dir NEW_DIR --password-file FILE
+  vastora recovery status --data-dir CENTER_DIR
+  vastora recovery export-agent --data-dir AGENT_DIR --tailscale-state FILE --output FILE --password-file FILE
+  vastora recovery export-headscale --data-dir HEADSCALE_DIR --config-dir CONFIG_DIR --output FILE --password-file FILE
+  vastora recovery inspect --input FILE --password-file FILE
+  vastora recovery register --data-dir CENTER_DIR --kind COMPONENT --input FILE --password-file FILE --identity-sha256 HASH
+  vastora recovery register-application --data-dir CENTER_DIR --input FILE --evidence FILE
+  vastora recovery restore --input FILE --data-dir NEW_DIR --password-file FILE --component-id ID --identity-sha256 HASH
   vastora deployer serve --socket /run/vastora-deployer/deployer.sock
   vastora agent init --data-dir DIR
   vastora agent enroll --data-dir DIR --center-url URL --token-file FILE [--ca-certificate FILE]

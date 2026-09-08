@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/system/domain", s.requireAuth(true, s.handleSwitchSystemDomain))
 	mux.HandleFunc("POST /api/v1/system/domain/aliases/{id}/retire", s.requireAuth(true, s.handleRetireSystemEndpointAliases))
 	mux.HandleFunc("POST /api/v1/backups", s.requireAuth(true, s.handleCreateBackup))
+	mux.HandleFunc("GET /api/v1/recovery", s.requireAuth(false, s.handleRecoveryReadiness))
 	mux.HandleFunc("GET /api/v1/deployments", s.requireAuth(false, s.handleListDeployments))
 	mux.HandleFunc("POST /api/v1/deployments", s.requireAuth(true, s.handleCreateDeployment))
 	mux.HandleFunc("POST /api/v1/deployments/{id}/credentials/reveal", s.requireAuth(true, s.handleRevealDeploymentCredentials))
@@ -225,15 +226,15 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleHealth(writer http.ResponseWriter, _ *http.Request) {
-	writeJSON(writer, http.StatusOK, map[string]string{"status": "ok", "version": Version})
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleReady(writer http.ResponseWriter, _ *http.Request) {
 	if !s.startupReady.Load() {
-		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"status": "reconciling", "version": Version})
+		writeJSON(writer, http.StatusServiceUnavailable, map[string]string{"status": "reconciling"})
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]string{"status": "ready", "version": Version})
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "ready"})
 }
 
 func (s *Server) requireAuth(mutation bool, handler http.HandlerFunc) http.HandlerFunc {
@@ -360,10 +361,49 @@ func writeError(writer http.ResponseWriter, status int, err error) {
 	if err != nil {
 		message = err.Error()
 	}
-	writeJSON(writer, status, map[string]string{"code": errorCode(status, message), "error": message})
+	code := errorCode(status, message)
+	writeJSON(writer, status, map[string]string{"code": code, "error": publicErrorMessage(code)})
+}
+
+// HTTP failures can occur before authentication, including database and JSON
+// decoding failures. Only allowlisted text may cross this response boundary;
+// operational diagnostics remain on the authenticated diagnostic/task surfaces.
+func publicErrorMessage(code string) string {
+	switch code {
+	case "authentication_required":
+		return "Sign in to continue."
+	case "already_installed":
+		return "This application is already installed."
+	case "dns_record_conflict":
+		return "This hostname is already in use. Choose another hostname."
+	case "cloudflare_error":
+		return "The domain service could not complete the operation. Try again later."
+	case "gateway_unavailable":
+		return "No access entry is available. Check the node status."
+	case "invalid_request":
+		return "Check your entries and try again."
+	case "forbidden":
+		return "This operation is not available."
+	case "not_found":
+		return "The requested item was not found."
+	case "conflict":
+		return "The current state does not allow this operation. Refresh and try again."
+	default:
+		return "Unable to complete the request. Try again later."
+	}
 }
 
 func errorCode(status int, message string) string {
+	// Authentication failures and server faults must not identify an internal
+	// subsystem based on the underlying error text.
+	switch status {
+	case http.StatusUnauthorized:
+		return "authentication_required"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusInternalServerError:
+		return "internal_error"
+	}
 	normalized := strings.ToLower(message)
 	switch {
 	case strings.Contains(normalized, "authentication required"):

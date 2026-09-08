@@ -5,7 +5,6 @@ export class APIError extends Error {
     message: string,
     readonly status: number,
     readonly code = "request_failed",
-    readonly retryAfterSeconds = 0,
     readonly captchaRequired = false
   ) {
     super(message);
@@ -26,9 +25,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("X-CSRF-Token", csrfToken());
   }
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
-  const body = (await response.json().catch(() => ({}))) as T & { error?: string; code?: string; retryAfterSeconds?: number; captchaRequired?: boolean };
+  const body = (await response.json().catch(() => ({}))) as T & { error?: string; code?: string; captchaRequired?: boolean };
   if (!response.ok) {
-    throw new APIError(body.error ?? "Request failed", response.status, body.code, body.retryAfterSeconds, body.captchaRequired);
+    throw new APIError(body.error ?? "Request failed", response.status, body.code, body.captchaRequired);
   }
   return body;
 }
@@ -119,7 +118,8 @@ export const api = {
 	regions: () => request<{ regions: Region[] }>("/api/v1/regions"),
 	agentRegionSuggestion: (agentId: string) => request<RegionSuggestion>(`/api/v1/agents/${encodeURIComponent(agentId)}/region-suggestion`),
 	verifyRealityTarget: (applicationId: string, targetHost: string, serverName: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/reality-targets/verify`, { method: "POST", body: JSON.stringify({ targetHost, serverName }) }),
-	createRealityCommand: (input: { applicationId: string; regionCode: string; name: string; clientName?: string; hostname?: string; dnsProvider: "manual" | "cloudflare"; targetHost: string; serverName: string; inboundTotalBytes: number; inboundResetDay: number; clientTotalBytes?: number; clientResetDays?: number; clientExpiryTime?: number }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
+	recommendRealityTargets: (applicationId: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/reality-targets/verify`, { method: "POST", body: JSON.stringify({ recommend: true }) }),
+	createRealityCommand: (input: { applicationId: string; verificationId: string; targetIp: string; regionCode: string; name: string; clientName?: string; hostname?: string; dnsProvider: "manual" | "cloudflare"; targetHost: string; serverName: string; inboundTotalBytes: number; inboundResetDay: number; clientTotalBytes?: number; clientResetDays?: number; clientExpiryTime?: number }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
 	renameRealityCommand: (serviceId: string, regionCode: string, name: string) => request<ApplicationCommand>("/api/v1/application-commands/reality/rename", { method: "POST", body: JSON.stringify({ serviceId, regionCode, name }) }),
 	createSubscriptionCommand: (input: { applicationId: string; gatewayNodeId: string; hostname?: string; kind: "public_direct" | "cloudflare_tunnel"; dnsProvider: "manual" | "cloudflare" }) => request<ApplicationCommand>("/api/v1/application-commands/subscription", { method: "POST", body: JSON.stringify(input) }),
 	createThreeXUIClientCommand: (input: ThreeXUIClientCommandInput) => request<ApplicationCommand>("/api/v1/application-commands/clients", { method: "POST", body: JSON.stringify(input) }),

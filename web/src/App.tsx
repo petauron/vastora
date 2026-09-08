@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { AppWindowIcon, BotIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, ShieldCheckIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
+import { AppWindowIcon, BotIcon, CircleAlertIcon, CircleCheckIcon, HistoryIcon, HomeIcon, LanguagesIcon, LogOutIcon, NetworkIcon, RefreshCwIcon, ServerIcon, SettingsIcon, WifiOffIcon, type LucideIcon } from "lucide-react";
 import { APIError, api } from "./api";
 import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import { administratorPasswordMinLength } from "./lib/security";
@@ -348,28 +348,21 @@ function CredentialPage({ language, loginProtection, mode, onLanguage, onSubmit 
   const [turnstileError, setTurnstileError] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
   const [turnstileReset, setTurnstileReset] = useState(0);
-  const [retryAfter, setRetryAfter] = useState(0);
   const captchaRequired = mode === "login" && loginProtection?.captchaRequired === true;
-  useEffect(() => {
-    if (retryAfter <= 0) return;
-    const timer = window.setInterval(() => setRetryAfter((current) => Math.max(0, current - 1)), 1000);
-    return () => window.clearInterval(timer);
-  }, [retryAfter]);
   const reportTurnstileError = useCallback(() => setTurnstileError(copy(language, "安全验证没有加载成功，请检查网络后重试。", "The security check did not load. Check your connection and retry.")), [language]);
   const acceptTurnstileToken = useCallback((token: string) => { setTurnstileToken(token); if (token) setTurnstileError(""); }, []);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (retryAfter > 0 || captchaRequired && !turnstileToken) return;
+    if (busy || captchaRequired && !turnstileToken) return;
     setBusy(true); setError(""); setTurnstileError("");
     try {
       await onSubmit(username, password, turnstileToken);
     } catch (submitError) {
       if (submitError instanceof APIError) {
-        setRetryAfter(Math.max(0, submitError.retryAfterSeconds));
-        if (submitError.code === "captcha_failed" || submitError.code === "login_protection_unavailable") {
+        if (submitError.code === "captcha_failed" && captchaRequired) {
           setTurnstileError(copy(language, "安全验证失败，请完成新的验证后再试。", "The security check failed. Complete a new check and try again."));
-        } else if (submitError.code === "login_throttled") {
-          setError(copy(language, "尝试过于频繁。", "Too many attempts."));
+        } else if (submitError.code === "login_throttled" || submitError.code === "login_protection_unavailable" || submitError.code === "captcha_failed") {
+          setError(copy(language, "暂时无法登录，请稍后再试。", "Unable to sign in right now. Try again later."));
         } else if (submitError.code === "invalid_credentials") {
           setError(copy(language, "账号或密码不正确。", "The username or password is incorrect."));
         } else {
@@ -386,9 +379,9 @@ function CredentialPage({ language, loginProtection, mode, onLanguage, onSubmit 
       <div className="flex w-full max-w-sm flex-col gap-5">
         <div className="flex items-center justify-between"><Brand /><div className="flex items-center gap-1"><ThemeToggle language={language} /><Button aria-label={copy(language, "切换语言", "Change language")} onClick={() => onLanguage(language === "zh-CN" ? "en" : "zh-CN")} size="icon" variant="ghost"><LanguagesIcon /></Button></div></div>
         <Card>
-          <CardHeader><CardTitle>{mode === "setup" ? copy(language, "创建管理员", "Create administrator") : copy(language, "登录 Center", "Sign in to Center")}</CardTitle><CardDescription>{mode === "setup" ? copy(language, "先保护 Center，下一步再配置位置和网络。不需要 bootstrap token。", "Secure Center first, then configure its location and network. No bootstrap token is required.") : captchaRequired ? copy(language, "这是受 Turnstile、失败退避和锁定保护的 Cloudflare Tunnel 入口。", "This Cloudflare Tunnel entry is protected by Turnstile, failure backoff, and lockout.") : copy(language, "使用管理员账号继续。", "Continue with your administrator account.")}</CardDescription></CardHeader>
+          <CardHeader><CardTitle>{mode === "setup" ? copy(language, "创建管理员", "Create administrator") : copy(language, "登录 Center", "Sign in to Center")}</CardTitle><CardDescription>{mode === "setup" ? copy(language, "创建账号后即可继续设置。", "Create an account to continue setup.") : copy(language, "使用管理员账号继续。", "Continue with your administrator account.")}</CardDescription></CardHeader>
           <CardContent>
-            <form onSubmit={(event) => void submit(event)}><FieldGroup><Field data-invalid={Boolean(error)}><FieldLabel htmlFor="username">{copy(language, "账号", "Username")}</FieldLabel><Input aria-invalid={Boolean(error)} autoComplete="username" id="username" minLength={3} onChange={(event) => setUsername(event.target.value)} required value={username} /></Field><Field data-invalid={Boolean(error)}><FieldLabel htmlFor="password">{copy(language, "密码", "Password")}</FieldLabel><Input aria-describedby={error ? "credential-error" : undefined} aria-invalid={Boolean(error)} autoComplete={mode === "setup" ? "new-password" : "current-password"} id="password" minLength={mode === "setup" ? administratorPasswordMinLength : undefined} onChange={(event) => setPassword(event.target.value)} required type="password" value={password} />{mode === "setup" ? <FieldDescription>{copy(language, "至少 10 个字符。", "At least 10 characters.")}</FieldDescription> : null}{error ? <FieldError id="credential-error" role="alert">{error}{retryAfter > 0 ? ` ${copy(language, `还需等待 ${retryAfter} 秒。`, `Wait ${retryAfter} more seconds.`)}` : ""}</FieldError> : null}</Field>{captchaRequired && loginProtection?.turnstileSiteKey ? <Field data-invalid={Boolean(turnstileError)}><FieldLabel htmlFor="center-login-turnstile">{copy(language, "安全验证", "Security check")}</FieldLabel><Turnstile language={language} onError={reportTurnstileError} onToken={acceptTurnstileToken} resetKey={turnstileReset} siteKey={loginProtection.turnstileSiteKey} />{turnstileError ? <><FieldError role="alert">{turnstileError}</FieldError><Button onClick={() => { setTurnstileError(""); setTurnstileReset((current) => current + 1); }} size="sm" type="button" variant="outline">{copy(language, "重新加载验证", "Reload security check")}</Button></> : null}</Field> : null}{mode === "login" ? <div className="flex items-start gap-2 rounded-xl bg-muted/45 p-3 text-xs leading-5 text-muted-foreground"><ShieldCheckIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" /><span>{copy(language, `连续失败 ${loginProtection?.maxFailures ?? 5} 次会锁定 ${Math.round((loginProtection?.lockoutSeconds ?? 900) / 60)} 分钟；每次失败后都会逐步延长重试间隔。`, `${loginProtection?.maxFailures ?? 5} consecutive failures lock sign-in for ${Math.round((loginProtection?.lockoutSeconds ?? 900) / 60)} minutes, with increasing delays after each failure.`)}</span></div> : null}<Button disabled={busy || retryAfter > 0 || captchaRequired && !turnstileToken} size="lg" type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{mode === "setup" ? copy(language, "创建并继续", "Create and continue") : retryAfter > 0 ? copy(language, `${retryAfter} 秒后重试`, `Retry in ${retryAfter}s`) : copy(language, "登录", "Sign in")}</Button></FieldGroup></form>
+            <form onSubmit={(event) => void submit(event)}><FieldGroup><Field data-invalid={Boolean(error)}><FieldLabel htmlFor="username">{copy(language, "账号", "Username")}</FieldLabel><Input aria-invalid={Boolean(error)} autoComplete="username" id="username" minLength={3} onChange={(event) => setUsername(event.target.value)} required value={username} /></Field><Field data-invalid={Boolean(error)}><FieldLabel htmlFor="password">{copy(language, "密码", "Password")}</FieldLabel><Input aria-describedby={error ? "credential-error" : undefined} aria-invalid={Boolean(error)} autoComplete={mode === "setup" ? "new-password" : "current-password"} id="password" minLength={mode === "setup" ? administratorPasswordMinLength : undefined} onChange={(event) => setPassword(event.target.value)} required type="password" value={password} />{mode === "setup" ? <FieldDescription>{copy(language, "至少 10 个字符。", "At least 10 characters.")}</FieldDescription> : null}{error ? <FieldError id="credential-error" role="alert">{error}</FieldError> : null}</Field>{captchaRequired && loginProtection?.turnstileSiteKey ? <Field data-invalid={Boolean(turnstileError)}><FieldLabel htmlFor="center-login-turnstile">{copy(language, "安全验证", "Security check")}</FieldLabel><Turnstile language={language} onError={reportTurnstileError} onToken={acceptTurnstileToken} resetKey={turnstileReset} siteKey={loginProtection.turnstileSiteKey} />{turnstileError ? <><FieldError role="alert">{turnstileError}</FieldError><Button onClick={() => { setTurnstileError(""); setTurnstileReset((current) => current + 1); }} size="sm" type="button" variant="outline">{copy(language, "重新加载验证", "Reload security check")}</Button></> : null}</Field> : null}<Button disabled={busy || captchaRequired && !turnstileToken} size="lg" type="submit">{busy ? <Spinner data-icon="inline-start" /> : null}{mode === "setup" ? copy(language, "创建并继续", "Create and continue") : copy(language, "登录", "Sign in")}</Button></FieldGroup></form>
           </CardContent>
         </Card>
       </div>

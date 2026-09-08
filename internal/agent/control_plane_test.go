@@ -269,12 +269,25 @@ func TestHeartbeatsRestoreGatewayStateOnlyAtStartup(t *testing.T) {
 	}
 }
 
-func TestGatewayControlPlaneFailsClosedBeforeStartupRestore(t *testing.T) {
+func TestGatewayRecoveryKeepsManagementReachableButFencesNewTasks(t *testing.T) {
 	claims := 0
+	heartbeats := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		claims++
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"task":null}`))
+		if strings.HasSuffix(request.URL.Path, "/heartbeat") {
+			var payload struct {
+				GatewayHealthy      bool `json:"gatewayHealthy"`
+				NodeListenerHealthy bool `json:"nodeListenerHealthy"`
+			}
+			if json.NewDecoder(request.Body).Decode(&payload) != nil || payload.GatewayHealthy || payload.NodeListenerHealthy {
+				t.Error("unrestored ingress was reported healthy")
+			}
+			heartbeats++
+			_, _ = response.Write([]byte(`{}`))
+		} else {
+			claims++
+			_, _ = response.Write([]byte(`{"task":null}`))
+		}
 	}))
 	defer server.Close()
 	store, err := Open(t.TempDir())
@@ -285,18 +298,30 @@ func TestGatewayControlPlaneFailsClosedBeforeStartupRestore(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := Client{GatewayDriver: &fakeGatewayDriver{}, Executor: unavailableRestorer{}}
+	if err := client.StartupHeartbeat(ctx, store); err != nil {
+		t.Fatal(err)
+	}
 	var reported error
-	client := Client{GatewayDriver: &fakeGatewayDriver{}}
-	client.RunTasks(context.Background(), store, func(err error) { reported = err })
-	if reported == nil || !strings.Contains(reported.Error(), "has not completed") {
-		t.Fatalf("startup gate error = %v", reported)
+	client.RunTasks(ctx, store, func(err error) { reported = err; cancel() })
+	if reported == nil || !strings.Contains(reported.Error(), "private address is unavailable") {
+		t.Fatalf("recovery error = %v", reported)
 	}
-	if err := client.Heartbeat(context.Background(), store); err == nil || !strings.Contains(err.Error(), "has not completed") {
-		t.Fatalf("heartbeat startup gate error = %v", err)
-	}
-	if claims != 0 {
+	if claims != 0 || heartbeats != 1 {
 		t.Fatalf("task loop contacted Center %d times before Gateway restore", claims)
 	}
+}
+
+type unavailableRestorer struct{}
+
+func (unavailableRestorer) Deploy(context.Context, DeploymentTask) (ApplicationTaskResult, error) {
+	return ApplicationTaskResult{}, errors.New("unexpected new deployment")
+}
+
+func (unavailableRestorer) Restore(context.Context, *Store) error {
+	return errors.New("private address is unavailable")
 }
 
 func TestTaskClaimUsesBoundedLongPoll(t *testing.T) {

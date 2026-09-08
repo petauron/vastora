@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/realitytarget"
 	"github.com/projectdiscovery/cdncheck"
 )
 
@@ -24,18 +26,7 @@ const (
 	legacyRealityGuardBlackholeTag = "vastora-reality-blackhole"
 )
 
-type realityTargetVerification struct {
-	TargetHost       string
-	TargetIP         string
-	ServerName       string
-	NodeASN          int64
-	TargetASN        int64
-	CDNProvider      string
-	TLS13            bool
-	X25519           bool
-	HTTP2            bool
-	CertificateValid bool
-}
+type realityTargetVerification = realitytarget.Candidate
 
 type threeXUIXraySettings struct {
 	XraySetting     map[string]any `json:"xraySetting"`
@@ -67,7 +58,7 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 	unique := map[string]net.IP{}
 	for _, address := range addresses {
 		ip := address.IP
-		if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		if ip == nil || ip.To4() == nil || networking.Classify("external", ip) != networking.KindPublic {
 			continue
 		}
 		unique[ip.String()] = ip
@@ -81,6 +72,11 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 		return realityTargetVerification{}, errors.New("agent: REALITY target resolved only to non-public addresses")
 	}
 	rejections := make([]string, 0, len(ordered))
+	if len(ordered) > 4 {
+		ordered = ordered[:4]
+	}
+	verified := []realityTargetVerification{}
+	nodeASN := realityASNHint(ctx, net.ParseIP(strings.TrimSpace(nodePublicAddress)))
 	for _, value := range ordered {
 		ip := unique[value]
 		if provider, policyErr := checkRealityTargetNetworkPolicy(ip); policyErr != nil {
@@ -93,18 +89,25 @@ func verifyRealityTarget(ctx context.Context, targetHost, serverName, nodePublic
 		verification := realityTargetVerification{
 			TargetHost: targetHost, TargetIP: value, ServerName: serverName,
 		}
+		started := time.Now()
 		if tlsErr := verifyPinnedRealityTLS(ctx, &verification); tlsErr != nil {
 			rejections = append(rejections, value+": "+tlsErr.Error())
 			continue
 		}
 		// ASN describes the network, not the fallback authorization boundary.
 		// Collect it only for a target that already passed the security checks.
-		verification.NodeASN = realityASNHint(ctx, net.ParseIP(strings.TrimSpace(nodePublicAddress)))
+		verification.LatencyMillis = max(1, time.Since(started).Milliseconds())
+		verification.Samples = 1
+		verification.NodeASN = nodeASN
 		verification.TargetASN = realityASNHint(ctx, ip)
 		if err := ctx.Err(); err != nil {
 			return realityTargetVerification{}, err
 		}
-		return verification, nil
+		verified = append(verified, verification)
+	}
+	if len(verified) > 0 {
+		realitytarget.Rank(verified)
+		return verified[0], nil
 	}
 	message := "agent: no REALITY target address passed the security policy"
 	if len(rejections) != 0 {
@@ -333,6 +336,7 @@ func guardedRealityResult(result RealityCommandResult, verification realityTarge
 
 func realityVerificationResult(verification realityTargetVerification) RealityCommandResult {
 	return RealityCommandResult{
+		LatencyMillis: verification.LatencyMillis, Samples: verification.Samples,
 		Action: "verify", TargetHost: verification.TargetHost, TargetIP: verification.TargetIP, ServerName: verification.ServerName,
 		NodeASN: verification.NodeASN, TargetASN: verification.TargetASN, CDNProvider: verification.CDNProvider,
 		TLS13: verification.TLS13, X25519: verification.X25519, HTTP2: verification.HTTP2, CertificateValid: verification.CertificateValid,

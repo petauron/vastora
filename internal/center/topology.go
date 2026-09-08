@@ -43,6 +43,7 @@ type NodeHeartbeat struct {
 	ApplicationEndpoints         []ApplicationEndpointObservation
 	ApplicationEndpointsObserved bool
 	GatewayHealthy               bool
+	RuntimeRecovery              string
 	GatewayRevision              int64
 	GatewayConfigHash            string
 	NodeListenerHealthy          bool

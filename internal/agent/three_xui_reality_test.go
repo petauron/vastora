@@ -32,6 +32,10 @@ func installRealityGuardTestSeams(t *testing.T) {
 	})
 }
 
+func verifiedRealityTestTarget() *realityTargetVerification {
+	return &realityTargetVerification{TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true}
+}
+
 func TestEnsureRealityPortAvailableIsScopedToPhysicalNode(t *testing.T) {
 	localNodeID := 0
 	workerNodeID := 7
@@ -371,7 +375,7 @@ func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
 	defer store.Close()
 
 	_, err = applyRealityCommand(context.Background(), store, commandID, 1, RealityCommandTask{
-		Action: "create", DisplayName: "US node", ClientName: "Phone", ConnectHostname: "reality.example.test",
+		Action: "create", VerifiedTarget: verifiedRealityTestTarget(), DisplayName: "US node", ClientName: "Phone", ConnectHostname: "reality.example.test",
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, TargetNodeID: 7, TargetAPIToken: "remote-token",
 		CreateInitialClient: true, InboundTag: threeXUIRealityTag(commandID),
 	})
@@ -428,7 +432,7 @@ func TestApplyRealityCommandRecoversLostAddResponse(t *testing.T) {
 	defer store.Close()
 
 	result, err := applyRealityCommand(context.Background(), store, commandID, 1, RealityCommandTask{
-		Action: "create", DisplayName: "US node", ConnectHostname: "reality.example.test",
+		Action: "create", VerifiedTarget: verifiedRealityTestTarget(), DisplayName: "US node", ConnectHostname: "reality.example.test",
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, TargetNodeID: 7, TargetAPIToken: "remote-token", InboundTag: tag,
 	})
 	if err != nil {
@@ -504,7 +508,7 @@ func TestApplyRealityCommandRecreatesLostAddHalfStateWithInitialClient(t *testin
 	defer store.Close()
 
 	result, err := applyRealityCommand(context.Background(), store, commandID, 1, RealityCommandTask{
-		Action: "create", DisplayName: "US node", ClientName: "Phone", ConnectHostname: "reality.example.test",
+		Action: "create", VerifiedTarget: verifiedRealityTestTarget(), DisplayName: "US node", ClientName: "Phone", ConnectHostname: "reality.example.test",
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, TargetNodeID: 7, TargetAPIToken: "remote-token",
 		CreateInitialClient: true, InboundTag: tag,
 	})
@@ -558,7 +562,7 @@ func TestApplyRealityCommandRollsBackExpiredExistingInbound(t *testing.T) {
 	store.now = func() time.Time { return time.Date(2026, time.August, 24, 0, 0, 0, 0, time.UTC) }
 
 	_, err = applyRealityCommand(context.Background(), store, commandID, 2, RealityCommandTask{
-		Action: "create", DisplayName: "US node", ClientName: "Phone", ConnectHostname: "reality.example.test",
+		Action: "create", VerifiedTarget: verifiedRealityTestTarget(), DisplayName: "US node", ClientName: "Phone", ConnectHostname: "reality.example.test",
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, CreateInitialClient: true, InboundTag: tag,
 		ClientResetDays: 30, ClientExpiryTime: store.now().Add(-time.Hour).UnixMilli(),
 	})
@@ -609,7 +613,7 @@ func TestApplyRealityCommandRollsBackKnownFailureAtRetryLimit(t *testing.T) {
 	defer store.Close()
 
 	_, err = applyRealityCommand(context.Background(), store, commandID, maxDeferredTaskAttempts, RealityCommandTask{
-		Action: "create", DisplayName: "US node", ConnectHostname: "reality.example.test",
+		Action: "create", VerifiedTarget: verifiedRealityTestTarget(), DisplayName: "US node", ConnectHostname: "reality.example.test",
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, InboundTag: tag,
 	})
 	if err == nil || !strings.Contains(err.Error(), "attach existing clients") {

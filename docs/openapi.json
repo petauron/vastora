@@ -571,16 +571,7 @@
             "$ref": "#/components/responses/Error"
           },
           "429": {
-            "description": "Sign-in is temporarily throttled.",
-            "headers": {
-              "Retry-After": {
-                "schema": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "description": "Seconds until another attempt is allowed."
-              }
-            },
+            "description": "Sign-in is temporarily unavailable. Try again later.",
             "content": {
               "application/json": {
                 "schema": {
@@ -620,7 +611,7 @@
             }
           }
         },
-        "description": "Authenticates the administrator. Server-side account and client throttles add exponential retry delays and lock sign-in for 15 minutes after five consecutive failures. Direct Cloudflare Tunnel login additionally requires a single-use Turnstile token validated by Center."
+        "description": "Authenticates the administrator with server-enforced abuse protection. Public responses do not expose failure thresholds, lockout durations or retry countdowns. Complete the security check when captchaRequired is true."
       }
     },
     "/api/v1/auth/logout": {
@@ -1101,6 +1092,161 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/recovery": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Recovery Readiness",
+        "operationId": "recoveryReadiness_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "formatVersion": {
+                      "type": "integer"
+                    },
+                    "release": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "checkedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "components": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "siteId": {
+                            "type": "string"
+                          },
+                          "nodeId": {
+                            "type": "string"
+                          },
+                          "classification": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "release": {
+                            "type": "string"
+                          },
+                          "schemaVersion": {
+                            "type": "integer"
+                          },
+                          "identityHash": {
+                            "type": "string"
+                          },
+                          "dependencies": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "lastVerifiedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "artifactDigest": {
+                            "type": "string"
+                          },
+                          "backupPolicy": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "version": {
+                                    "type": "integer"
+                                  },
+                                  "consistency": {
+                                    "type": "string"
+                                  },
+                                  "volumes": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Reads the cluster recovery inventory without probing nodes or opening caller-supplied files. Center-only backup never establishes cluster readiness. External application restore evidence is operator-attested; readiness is not proof of an actual cluster recovery drill or off-host storage."
       }
     },
     "/api/v1/deployments": {
@@ -2300,6 +2446,12 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "verificationId": {
+                    "type": "string"
+                  },
+                  "targetIp": {
+                    "type": "string"
+                  },
                   "applicationId": {
                     "type": "string"
                   },
@@ -2346,7 +2498,9 @@
                   "name",
                   "dnsProvider",
                   "targetHost",
-                  "serverName"
+                  "serverName",
+                  "verificationId",
+                  "targetIp"
                 ]
               }
             }
@@ -2413,6 +2567,9 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "recommend": {
+                    "type": "boolean"
+                  },
                   "targetHost": {
                     "type": "string"
                   },
@@ -2420,9 +2577,29 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "targetHost",
-                  "serverName"
+                "required": [],
+                "oneOf": [
+                  {
+                    "required": [
+                      "recommend"
+                    ],
+                    "properties": {
+                      "recommend": {
+                        "const": true
+                      }
+                    }
+                  },
+                  {
+                    "required": [
+                      "targetHost",
+                      "serverName"
+                    ],
+                    "properties": {
+                      "recommend": {
+                        "const": false
+                      }
+                    }
+                  }
                 ]
               }
             }
@@ -5051,6 +5228,9 @@
                   "gatewayHealthy": {
                     "type": "boolean"
                   },
+                  "runtimeRecovery": {
+                    "type": "string"
+                  },
                   "gatewayRevision": {
                     "type": "integer"
                   },
@@ -6967,7 +7147,7 @@
           },
           "error": {
             "type": "string",
-            "example": "center: request is invalid"
+            "example": "Check your entries and try again."
           }
         }
       },
@@ -6977,7 +7157,6 @@
         "required": [
           "code",
           "error",
-          "retryAfterSeconds",
           "captchaRequired"
         ],
         "properties": {
@@ -6992,10 +7171,6 @@
           },
           "error": {
             "type": "string"
-          },
-          "retryAfterSeconds": {
-            "type": "integer",
-            "minimum": 0
           },
           "captchaRequired": {
             "type": "boolean"

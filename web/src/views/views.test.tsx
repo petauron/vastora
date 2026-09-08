@@ -662,11 +662,11 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLInputElement>("#reality-subscription-quota")).not.toBeNull();
 		expect(document.querySelector<HTMLInputElement>("#reality-hostname")?.value).toBe("");
 		expect(document.body.textContent).toContain("home-server");
-		expect(document.body.textContent).toContain("www.intel.com");
+		expect(document.body.textContent).toContain("查找可用目标");
     expect(document.body.textContent).toContain("REALITY 回落目标（必填）");
-		expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.value).toBe("www.intel.com");
-		expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.value).toBe("www.intel.com");
-    expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("校验并创建"))).toBe(true);
+		expect(document.querySelector<HTMLInputElement>("#reality-target-host")?.value).toBe("");
+		expect(document.querySelector<HTMLInputElement>("#reality-server-name")?.value).toBe("");
+    expect([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("创建节点"))?.disabled).toBe(true);
   });
 
   it("offers an approved NAT-mapped node-direct entry for REALITY", async () => {
@@ -1255,12 +1255,17 @@ describe("network and app views", () => {
 			serverName.dispatchEvent(new Event("input", { bubbles: true }));
 		});
 		await act(async () => {
-			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("校验并创建"))?.click();
+			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("检查此目标"))?.click();
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		await act(async () => {
+			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("创建节点"))?.click();
 			await Promise.resolve();
 			await Promise.resolve();
 		});
 		expect(verify).toHaveBeenCalledWith("three-x-ui", "www.example.com", "www.example.com");
-		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", regionCode: "US", name: "Oracle", clientName: "我的设备", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
+		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", verificationId: "verify-reality", targetIp: "203.0.113.20", regionCode: "US", name: "Oracle", clientName: "我的设备", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
 		});
 
   it("keeps subscriber quotas on the controller even when a worker creates the first VLESS node", async () => {
@@ -1292,12 +1297,17 @@ describe("network and app views", () => {
       serverName.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => {
-      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("校验并创建"))?.click();
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("检查此目标"))?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+     });
+     await act(async () => {
+      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("创建节点"))?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(verify).toHaveBeenCalledWith("three-x-ui-worker", "www.example.com", "www.example.com");
-    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", regionCode: "US", name: "oracle-worker", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1 });
+    expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui-worker", verificationId: "verify-worker-reality", targetIp: "203.0.113.30", regionCode: "US", name: "oracle-worker", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1 });
     expect(document.body.textContent).not.toContain("客户端链接只显示一次");
   });
 

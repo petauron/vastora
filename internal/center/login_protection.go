@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 const (
@@ -21,8 +19,6 @@ const (
 type LoginProtectionView struct {
 	CaptchaRequired  bool   `json:"captchaRequired"`
 	TurnstileSiteKey string `json:"turnstileSiteKey,omitempty"`
-	MaxFailures      int    `json:"maxFailures"`
-	LockoutSeconds   int    `json:"lockoutSeconds"`
 }
 
 type loginRequestContext struct {
@@ -32,7 +28,7 @@ type loginRequestContext struct {
 }
 
 func (s *Server) loginContext(ctx context.Context, request *http.Request) (loginRequestContext, error) {
-	result := loginRequestContext{ClientAddress: requestRemoteIP(request), Protection: LoginProtectionView{MaxFailures: loginMaxFailures, LockoutSeconds: int(loginLockoutDuration / time.Second)}}
+	result := loginRequestContext{ClientAddress: requestRemoteIP(request)}
 	record, exists, err := s.store.centerRemoteAccessRecord(ctx)
 	if err != nil {
 		return loginRequestContext{}, err
@@ -142,22 +138,12 @@ func (s *Store) verifyCenterLoginTurnstile(ctx context.Context, token, clientAdd
 	return nil
 }
 
-func writeLoginError(writer http.ResponseWriter, status int, code, message string, retryAfter time.Duration, captchaRequired bool) {
-	retrySeconds := durationSecondsCeil(retryAfter)
-	if retrySeconds > 0 {
-		writer.Header().Set("Retry-After", fmt.Sprintf("%d", retrySeconds))
-	}
+func writeLoginError(writer http.ResponseWriter, status int, code, message string, captchaRequired bool) {
+	// Throttling is enforced server-side. Do not disclose its remaining duration
+	// or account/client lockout policy in the public login response.
 	writeJSON(writer, status, map[string]any{
-		"code":              code,
-		"error":             message,
-		"retryAfterSeconds": retrySeconds,
-		"captchaRequired":   captchaRequired,
+		"code":            code,
+		"error":           message,
+		"captchaRequired": captchaRequired,
 	})
-}
-
-func durationSecondsCeil(value time.Duration) int {
-	if value <= 0 {
-		return 0
-	}
-	return int((value + time.Second - 1) / time.Second)
 }

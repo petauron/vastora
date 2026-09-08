@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Globe2Icon, KeyRoundIcon, RadioTowerIcon, RotateCcwIcon, ShieldCheckIcon, UsersIcon } from "lucide-react";
 import { api } from "../api";
-import type { AppData, Application, ApplicationCommand, AgentView } from "../types";
+import type { AppData, Application, ApplicationCommand, AgentView, RealityTargetCandidate } from "../types";
 import type { Language } from "../translations";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 import { clearSecretOperation, commandSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
@@ -17,7 +17,6 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 
 type RegionMatch = "idle" | "matching" | "matched" | "manual" | "unavailable";
-const defaultRealityTarget = "www.intel.com";
 type RealityDraft = {
   name: string;
   regionCode: string;
@@ -31,6 +30,7 @@ type RealityDraft = {
   dnsProvider: "manual" | "cloudflare";
   targetHost: string;
   serverName: string;
+  targetIp: string;
 };
 
 export function RealitySheet({ application, data, language, onClose, siteTimezone }: { application: Application | null; data: AppData; language: Language; onClose: () => void; siteTimezone?: string }) {
@@ -64,8 +64,9 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
       clientExpiry: "",
       hostname: "",
       dnsProvider: cloudflareReady ? "cloudflare" : "manual",
-      targetHost: defaultRealityTarget,
-      serverName: defaultRealityTarget
+      targetHost: "",
+      serverName: "",
+      targetIp: ""
     };
     regionRequest.current += 1;
     baseline.current = initial;
@@ -120,7 +121,7 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
 
   const setField = <K extends keyof RealityDraft>(field: K, value: RealityDraft[K]) => {
     if (field === "targetHost" || field === "serverName") setVerification(null);
-    setDraft((current) => ({ ...current, [field]: value }));
+    setDraft((current) => ({ ...current, [field]: value, ...(field === "targetHost" || field === "serverName" ? { targetIp: "" } : {}) }));
   };
   const gateway = targetAgent;
   const displayName = regionDisplayName(draft.regionCode, draft.name);
@@ -180,6 +181,31 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
 		}
 	};
 
+  const checkTargets = async (recommend: boolean) => {
+    if (!application || busy) return;
+    setBusy(true);
+    setError("");
+    setVerification(null);
+    setDraft((current) => ({ ...current, targetIp: "" }));
+    try {
+      const checked = await execute(() => recommend ? api.recommendRealityTargets(application.id) : api.verifyRealityTarget(application.id, draft.targetHost, draft.serverName), setVerification);
+      if (!checked) return;
+      if (checked.state !== "succeeded") {
+        setError(recommend ? copy(language, "暂时没有找到可用目标。可以重试，或在高级设置中检查其他 .com 网站。", "No available target was found. Retry, or check another .com website in advanced settings.") : copy(language, "这个目标暂时不可用，请换一个网站后重试。", "This target is unavailable. Try another website."));
+        return;
+      }
+      if (!recommend && checked.targetIp) setDraft((current) => ({ ...current, targetIp: checked.targetIp! }));
+    } catch (checkError) {
+      setError(userError(language, checkError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectTarget = (candidate: RealityTargetCandidate) => {
+    setDraft((current) => ({ ...current, targetHost: candidate.targetHost, serverName: candidate.serverName, targetIp: candidate.targetIp }));
+  };
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!application) return;
@@ -196,15 +222,17 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
       setError(copy(language, "需要同时填写 REALITY 目标域名和精确 SNI。", "Enter both the REALITY target hostname and exact SNI."));
       return;
     }
+    if (!verification || verification.state !== "succeeded" || !draft.targetIp) {
+      setError(copy(language, "请先检查并选择一个可用目标。", "Check and select an available target first."));
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const checked = await execute(() => api.verifyRealityTarget(application.id, draft.targetHost, draft.serverName), setVerification);
-      if (!checked || checked.state !== "succeeded" || !checked.targetIp) {
-        throw new Error(checked?.error || copy(language, "伪装目标未通过节点侧安全校验。", "The camouflage target did not pass node-side security validation."));
-      }
       await execute(() => api.createRealityCommand({
         applicationId: application.id,
+        verificationId: verification.id,
+        targetIp: draft.targetIp,
         regionCode: draft.regionCode,
         name: draft.name,
         hostname: draft.hostname,
@@ -226,15 +254,15 @@ export function RealitySheet({ application, data, language, onClose, siteTimezon
     <SheetContent className="sm:max-w-xl">
       <SheetHeader>
         <SheetTitle>{copy(language, "创建 VLESS REALITY", "Create VLESS REALITY")}</SheetTitle>
-        <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、节点直连 443 和 DNS。", "Vastora is configuring 3x-ui, node-direct port 443, and DNS on the node.") : copy(language, "填写节点名称和套餐即可；入口、地区、连接域名、DNS 与安全目标均有安全默认值。", "Enter the node name and plan; entry, region, connection hostname, DNS, and the secure target all have safe defaults.")}</SheetDescription>
+        <SheetDescription>{command ? copy(language, "Vastora 正在节点内配置 3x-ui、节点直连 443 和 DNS。", "Vastora is configuring 3x-ui, node-direct port 443, and DNS on the node.") : copy(language, "填写节点名称和套餐，再选择当前节点可用的连接目标。", "Enter the node name and plan, then select an available connection target.")}</SheetDescription>
       </SheetHeader>
-      {command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onAcknowledge={() => void acknowledgeShareURI()} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
+      {command ? <RealityResult busy={busy} command={command} displayName={displayName} dnsProvider={draft.dnsProvider} error={error} gateway={gateway} language={language} onAcknowledge={() => void acknowledgeShareURI()} onReveal={() => void reveal()} onRetry={() => { if (command.reconciliationRequired) { void resumeReconciliation(); return; } baseline.current = draft; setCommand(null); setVerification(null); setError(""); }} shareURI={shareURI} /> : <RealityForm busy={busy} cloudflareReady={cloudflareReady} collectInitialClient={collectInitialClient} displayName={displayName} draft={draft} error={error} gateway={gateway} language={language} onCancel={requestClose} onField={setField} onRegion={(code) => { regionRequest.current += 1; setField("regionCode", code); setRegionMatch("manual"); }} onSubmit={submit} onCheckTargets={(recommend) => void checkTargets(recommend)} onSelectTarget={selectTarget} regionMatch={regionMatch} siteTimezone={siteTimezone} targetPublicAddress={targetAgent?.networkProfile?.publicAddress} verification={verification} />}
       {command ? <SheetFooter><Button onClick={requestClose}>{copy(language, shareURI ? "完成" : "关闭", shareURI ? "Done" : "Close")}</Button></SheetFooter> : null}
     </SheetContent>
   </Sheet>;
 }
 
-function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName, draft, error, gateway, language, onCancel, onField, onRegion, onSubmit, regionMatch, siteTimezone, targetPublicAddress, verification }: {
+function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName, draft, error, gateway, language, onCancel, onField, onRegion, onSubmit, onCheckTargets, onSelectTarget, regionMatch, siteTimezone, targetPublicAddress, verification }: {
   busy: boolean;
   cloudflareReady: boolean;
   collectInitialClient: boolean;
@@ -247,6 +275,8 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
   onField: <K extends keyof RealityDraft>(field: K, value: RealityDraft[K]) => void;
   onRegion: (code: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCheckTargets: (recommend: boolean) => void;
+  onSelectTarget: (candidate: RealityTargetCandidate) => void;
   regionMatch: RegionMatch;
   siteTimezone?: string;
   targetPublicAddress?: string;
@@ -268,6 +298,12 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
           </Field>
         </> : null}
         <InboundTrafficPlanFields idPrefix="reality-inbound" language={language} nextResetAt="" onQuotaChange={(value) => onField("inboundQuota", value)} onResetDayChange={(value) => onField("inboundResetDay", value)} quota={draft.inboundQuota} resetDay={draft.inboundResetDay} />
+        <Field data-disabled={busy}>
+          <FieldLabel htmlFor="reality-target-choice">{copy(language, "连接目标", "Connection target")}</FieldLabel>
+          <Button className="w-fit" disabled={busy || !targetPublicAddress} onClick={() => onCheckTargets(true)} type="button" variant="outline">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{copy(language, "查找可用目标", "Find available targets")}</Button>
+          {verification?.candidates?.length ? <SelectControl disabled={busy} id="reality-target-choice" onValueChange={(key) => { const selected = verification.candidates?.find((value) => `${value.targetHost}/${value.targetIp}` === key); if (selected) onSelectTarget(selected); }} options={verification.candidates.map((value, index) => ({ value: `${value.targetHost}/${value.targetIp}`, label: `${value.targetHost} · ${value.latencyMillis} ms${index === 0 ? copy(language, " · 推荐", " · Recommended") : ""}` }))} placeholder={copy(language, "选择一个目标", "Select a target")} value={draft.targetIp ? `${draft.targetHost}/${draft.targetIp}` : ""} /> : null}
+          <FieldDescription aria-live="polite">{busy ? copy(language, "正在当前节点上检查，请稍候。", "Checking from this node. Please wait.") : draft.targetIp ? `${draft.targetHost} → ${draft.targetIp}` : copy(language, "先查找，再选择；也可以在高级设置中填写自己的目标。", "Find and select a target, or enter your own in Advanced settings.")}</FieldDescription>
+        </Field>
         <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "系统配置自动完成", "System configuration is automatic")}</AlertTitle><AlertDescription><dl className="mt-1 grid gap-1 text-xs"><div><dt className="inline text-muted-foreground">{copy(language, "公网入口：", "Public entry: ")}</dt><dd className="inline">{gateway?.name ?? copy(language, "等待可用入口", "Waiting for an available entry")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "订阅名称：", "Subscription name: ")}</dt><dd className="inline">{displayName || copy(language, "正在识别地区", "Detecting region")}</dd></div><div><dt className="inline text-muted-foreground">{copy(language, "安全目标：", "Secure target: ")}</dt><dd className="inline">{draft.targetHost}</dd></div></dl></AlertDescription></Alert>
         <details className="group rounded-xl border p-3">
           <summary className="flex min-h-11 cursor-pointer list-none items-center text-sm font-medium">{copy(language, "高级设置", "Advanced settings")}<span className="ml-auto text-xs font-normal text-muted-foreground">{copy(language, "通常无需修改", "Usually leave unchanged")}</span></summary>
@@ -295,10 +331,11 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
                 <Field>
                   <FieldLabel htmlFor="reality-server-name">Server name (SNI)</FieldLabel>
                   <Input autoCapitalize="none" autoCorrect="off" id="reality-server-name" onChange={(event) => onField("serverName", event.target.value.toLowerCase())} placeholder="www.example.com" required spellCheck={false} value={draft.serverName} />
+                  <Button className="w-fit" disabled={busy || !draft.targetHost || !draft.serverName} onClick={() => onCheckTargets(false)} type="button" variant="outline">{copy(language, "检查此目标", "Check this target")}</Button>
                   <FieldDescription>{copy(language, "HAProxy 只将此 SNI 转入 REALITY。SNI 不是身份认证；未认证连接仍可能访问所选回落网站并消耗流量。", "HAProxy forwards only this SNI to REALITY. SNI is not authentication: unauthenticated connections may still reach the selected fallback site and consume traffic.")}</FieldDescription>
                 </Field>
                 {verification?.state === "pending" || verification?.state === "running" ? <Alert><Spinner /><AlertTitle>{copy(language, "正在节点侧校验", "Validating on the node")}</AlertTitle><AlertDescription>{copy(language, "正在检查 CDN/WAF、DNS、TLS 1.3、X25519、H2 与证书，并读取 ASN 参考信息。", "Checking CDN/WAF, DNS, TLS 1.3, X25519, H2, and the certificate, and collecting optional ASN information.")}</AlertDescription></Alert> : null}
-                {verification?.state === "succeeded" ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "目标校验通过", "Target verified")}</AlertTitle><AlertDescription><code className="break-all">{verification.targetHost} → {verification.targetIp}</code><span className="mt-1 block">TLS 1.3 · X25519 · H2 · {copy(language, "证书有效", "certificate valid")}</span><RealityASNNotice result={verification} language={language} /></AlertDescription></Alert> : null}
+                {verification?.state === "succeeded" && verification.targetIp ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "目标校验通过", "Target verified")}</AlertTitle><AlertDescription><code className="break-all">{verification.targetHost} → {verification.targetIp}</code><span className="mt-1 block">TLS 1.3 · X25519 · H2 · {copy(language, "证书有效", "certificate valid")}</span><RealityASNNotice result={verification} language={language} /></AlertDescription></Alert> : null}
               </FieldGroup>
             </div>
           </FieldGroup>
@@ -308,7 +345,7 @@ function RealityForm({ busy, cloudflareReady, collectInitialClient, displayName,
         {error ? <FieldError role="alert">{error}</FieldError> : null}
       </FieldGroup>
     </div>
-    <SheetFooter><Button onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !draft.regionCode || !draft.name.trim() || collectInitialClient && !draft.clientName.trim() || !draft.targetHost.trim() || !draft.serverName.trim() || !targetPublicAddress} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{copy(language, "校验并创建", "Verify and create")}</Button></SheetFooter>
+    <SheetFooter><Button onClick={onCancel} type="button" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy || !draft.regionCode || !draft.name.trim() || collectInitialClient && !draft.clientName.trim() || !draft.targetHost.trim() || !draft.serverName.trim() || !draft.targetIp || verification?.state !== "succeeded" || !targetPublicAddress} type="submit">{busy ? <Spinner data-icon="inline-start" /> : <ShieldCheckIcon data-icon="inline-start" />}{copy(language, "创建节点", "Create node")}</Button></SheetFooter>
   </form>;
 }
 
@@ -346,7 +383,7 @@ function RealityASNNotice({ result, language }: { result: ApplicationCommand; la
 }
 
 function emptyDraft(): RealityDraft {
-  return { name: "", regionCode: "", clientName: "", inboundQuota: "", inboundResetDay: "1", clientQuota: "", clientResetDays: "0", clientExpiry: "", hostname: "", dnsProvider: "manual", targetHost: defaultRealityTarget, serverName: defaultRealityTarget };
+  return { name: "", regionCode: "", clientName: "", inboundQuota: "", inboundResetDay: "1", clientQuota: "", clientResetDays: "0", clientExpiry: "", hostname: "", dnsProvider: "manual", targetHost: "", serverName: "", targetIp: "" };
 }
 
 function sameDraft(left: RealityDraft, right: RealityDraft) {

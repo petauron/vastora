@@ -20,6 +20,7 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/realitytarget"
 )
 
 var Version = "0.1.0-dev"
@@ -219,56 +220,62 @@ type ApplicationTaskResult struct {
 }
 
 type RealityCommandTask struct {
-	Action              string `json:"action"`
-	RegionCode          string `json:"regionCode"`
-	DisplayName         string `json:"displayName"`
-	ClientName          string `json:"clientName,omitempty"`
-	InboundID           int    `json:"inboundId,omitempty"`
-	ConnectHostname     string `json:"connectHostname"`
-	DNSProvider         string `json:"dnsProvider"`
-	TargetHost          string `json:"targetHost,omitempty"`
-	ServerName          string `json:"serverName,omitempty"`
-	TargetApplicationID string `json:"targetApplicationId"`
-	TargetAddress       string `json:"targetAddress"`
-	TargetPublicAddress string `json:"targetPublicAddress"`
-	TargetPanelPort     int    `json:"targetPanelPort"`
-	TargetNodeID        int    `json:"targetNodeId,omitempty"`
-	TargetAPIToken      string `json:"targetApiToken,omitempty"`
-	CreateInitialClient bool   `json:"createInitialClient"`
-	InboundTag          string `json:"inboundTag"`
-	InboundTotalBytes   int64  `json:"inboundTotalBytes"`
-	InboundResetDay     int    `json:"inboundResetDay"`
-	ClientTotalBytes    int64  `json:"clientTotalBytes"`
-	ClientResetDays     int    `json:"clientResetDays"`
-	ClientExpiryTime    int64  `json:"clientExpiryTime"`
-	ServiceID           string `json:"serviceId,omitempty"`
-	GuardRevision       int64  `json:"guardRevision,omitempty"`
+	TargetAgentPublicKey []byte                   `json:"targetAgentPublicKey,omitempty"`
+	Recommend            bool                     `json:"recommend,omitempty"`
+	VerifiedTarget       *realitytarget.Candidate `json:"verifiedTarget,omitempty"`
+	Action               string                   `json:"action"`
+	RegionCode           string                   `json:"regionCode"`
+	DisplayName          string                   `json:"displayName"`
+	ClientName           string                   `json:"clientName,omitempty"`
+	InboundID            int                      `json:"inboundId,omitempty"`
+	ConnectHostname      string                   `json:"connectHostname"`
+	DNSProvider          string                   `json:"dnsProvider"`
+	TargetHost           string                   `json:"targetHost,omitempty"`
+	ServerName           string                   `json:"serverName,omitempty"`
+	TargetApplicationID  string                   `json:"targetApplicationId"`
+	TargetAddress        string                   `json:"targetAddress"`
+	TargetPublicAddress  string                   `json:"targetPublicAddress"`
+	TargetPanelPort      int                      `json:"targetPanelPort"`
+	TargetNodeID         int                      `json:"targetNodeId,omitempty"`
+	TargetAPIToken       string                   `json:"targetApiToken,omitempty"`
+	CreateInitialClient  bool                     `json:"createInitialClient"`
+	InboundTag           string                   `json:"inboundTag"`
+	InboundTotalBytes    int64                    `json:"inboundTotalBytes"`
+	InboundResetDay      int                      `json:"inboundResetDay"`
+	ClientTotalBytes     int64                    `json:"clientTotalBytes"`
+	ClientResetDays      int                      `json:"clientResetDays"`
+	ClientExpiryTime     int64                    `json:"clientExpiryTime"`
+	ServiceID            string                   `json:"serviceId,omitempty"`
+	GuardRevision        int64                    `json:"guardRevision,omitempty"`
 }
 
 type RealityCommandResult struct {
-	Action            string `json:"action"`
-	InboundID         int    `json:"inboundId"`
-	DisplayName       string `json:"displayName"`
-	ClientName        string `json:"clientName,omitempty"`
-	Listen            string `json:"listen"`
-	Port              int    `json:"port"`
-	TargetHost        string `json:"targetHost"`
-	TargetIP          string `json:"targetIp"`
-	ServerName        string `json:"serverName"`
-	NodeASN           int64  `json:"nodeAsn"`
-	TargetASN         int64  `json:"targetAsn"`
-	CDNProvider       string `json:"cdnProvider,omitempty"`
-	TLS13             bool   `json:"tls13"`
-	X25519            bool   `json:"x25519"`
-	HTTP2             bool   `json:"http2"`
-	CertificateValid  bool   `json:"certificateValid"`
-	GuardStatus       string `json:"guardStatus"`
-	ProxyProtocol     bool   `json:"proxyProtocol"`
-	ConnectHostname   string `json:"connectHostname"`
-	ShareURI          string `json:"shareUri"`
-	InboundTag        string `json:"inboundTag"`
-	ClientCreated     bool   `json:"clientCreated"`
-	InboundTotalBytes int64  `json:"inboundTotalBytes"`
+	Candidates        []realitytarget.Candidate `json:"candidates,omitempty"`
+	LatencyMillis     int64                     `json:"latencyMillis,omitempty"`
+	Samples           int                       `json:"samples,omitempty"`
+	Action            string                    `json:"action"`
+	InboundID         int                       `json:"inboundId"`
+	DisplayName       string                    `json:"displayName"`
+	ClientName        string                    `json:"clientName,omitempty"`
+	Listen            string                    `json:"listen"`
+	Port              int                       `json:"port"`
+	TargetHost        string                    `json:"targetHost"`
+	TargetIP          string                    `json:"targetIp"`
+	ServerName        string                    `json:"serverName"`
+	NodeASN           int64                     `json:"nodeAsn"`
+	TargetASN         int64                     `json:"targetAsn"`
+	CDNProvider       string                    `json:"cdnProvider,omitempty"`
+	TLS13             bool                      `json:"tls13"`
+	X25519            bool                      `json:"x25519"`
+	HTTP2             bool                      `json:"http2"`
+	CertificateValid  bool                      `json:"certificateValid"`
+	GuardStatus       string                    `json:"guardStatus"`
+	ProxyProtocol     bool                      `json:"proxyProtocol"`
+	ConnectHostname   string                    `json:"connectHostname"`
+	ShareURI          string                    `json:"shareUri"`
+	InboundTag        string                    `json:"inboundTag"`
+	ClientCreated     bool                      `json:"clientCreated"`
+	InboundTotalBytes int64                     `json:"inboundTotalBytes"`
 }
 
 type SubscriptionCommandTask struct {
@@ -458,11 +465,6 @@ func (c Client) enroll(ctx context.Context, store *Store, centerURL, enrollmentT
 }
 
 func (c Client) Heartbeat(ctx context.Context, store *Store) error {
-	if c.GatewayDriver != nil {
-		if err := store.requireGatewayStartup(); err != nil {
-			return err
-		}
-	}
 	_, err := c.heartbeat(ctx, store)
 	return err
 }
@@ -470,11 +472,6 @@ func (c Client) Heartbeat(ctx context.Context, store *Store) error {
 // StartupHeartbeat reports a new Agent process before its task loop begins.
 // Center uses this boundary to release work leased to the previous process.
 func (c Client) StartupHeartbeat(ctx context.Context, store *Store) error {
-	if c.GatewayDriver != nil {
-		if err := store.requireGatewayStartup(); err != nil {
-			return err
-		}
-	}
 	_, err := c.heartbeatWithStartup(ctx, store, true)
 	return err
 }
@@ -498,6 +495,9 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	}
 	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver)
 	nodeListenerHealthy, nodeListenerRevision, nodeListenerConfigHash := nodeListenerRuntimeStatus(ctx, store, c.NodeListener)
+	if store.requireGatewayStartup() != nil {
+		gatewayHealthy, nodeListenerHealthy = false, false
+	}
 	now := time.Now()
 	candidates, err := networking.Discover(now)
 	if err != nil {
@@ -526,6 +526,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"gatewayRevision":              gatewayRevision,
+		"runtimeRecovery":              store.runtimeRecoveryCode(),
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
 		"nodeListenerRevision":         nodeListenerRevision,
@@ -779,14 +780,6 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 	if interval < time.Second {
 		interval = 15 * time.Second
 	}
-	if c.GatewayDriver != nil {
-		if err := store.requireGatewayStartup(); err != nil {
-			if report != nil {
-				report(err)
-			}
-			return
-		}
-	}
 	send := func() {
 		requestContext, cancel := context.WithTimeout(ctx, 5*time.Minute)
 		defer cancel()
@@ -812,14 +805,6 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 }
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
-	if c.GatewayDriver != nil {
-		if err := store.requireGatewayStartup(); err != nil {
-			if report != nil {
-				report(err)
-			}
-			return
-		}
-	}
 	var lastMaintenance time.Time
 	var lastRestore time.Time
 	restorePending := true
@@ -883,16 +868,12 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 		}
 		if restorePending && (lastRestore.IsZero() || time.Since(lastRestore) >= time.Minute) {
 			lastRestore = time.Now()
-			if restorer, ok := c.Executor.(executorRestorer); ok {
-				restoreContext, restoreCancel := context.WithTimeout(ctx, 5*time.Minute)
-				restoreErr := restorer.Restore(restoreContext, store)
-				restoreCancel()
-				if restoreErr != nil {
-					if report != nil && ctx.Err() == nil {
-						report(restoreErr)
-					}
-				} else {
-					restorePending = false
+			restoreContext, restoreCancel := context.WithTimeout(ctx, 5*time.Minute)
+			restoreErr := c.RecoverStartupRuntime(restoreContext, store)
+			restoreCancel()
+			if restoreErr != nil {
+				if report != nil && ctx.Err() == nil {
+					report(restoreErr)
 				}
 			} else {
 				restorePending = false

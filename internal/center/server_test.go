@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/backupcrypto"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -173,7 +174,7 @@ func TestDirectTunnelLoginRequiresTurnstileAndUsesCloudflareClientIdentity(t *te
 	request.Header.Set("CF-Connecting-IP", "203.0.113.9")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden || response.Header().Get("Retry-After") != "2" || !strings.Contains(response.Body.String(), `"code":"captcha_failed"`) {
+	if response.Code != http.StatusForbidden || response.Header().Get("Retry-After") != "" || !strings.Contains(response.Body.String(), `"code":"captcha_failed"`) || strings.Contains(response.Body.String(), "retryAfterSeconds") {
 		t.Fatalf("missing Turnstile token response = %d headers=%v body=%q", response.Code, response.Header(), response.Body.String())
 	}
 
@@ -265,6 +266,46 @@ func TestAuthenticationCookiesFollowDirectAndProxiedHTTPS(t *testing.T) {
 	}
 }
 
+func TestLoginKeepsServerThrottleWithoutExposingItsPolicy(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	fixed := time.Date(2026, time.September, 7, 0, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return fixed }
+	if _, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple"); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewServer(store, "", false).Handler()
+	login := func(password string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]string{"username": "admin", "password": password})
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Header().Get("Retry-After") != "" {
+			t.Fatal("login disclosed the remaining retry duration")
+		}
+		for _, field := range []string{"retryAfterSeconds", "maxFailures", "lockoutSeconds", "blockedUntil"} {
+			if strings.Contains(response.Body.String(), field) {
+				t.Fatalf("login disclosed %s", field)
+			}
+		}
+		return response
+	}
+	if response := login("wrong-password"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong credentials returned %d", response.Code)
+	}
+	if response := login("correct-horse-battery-staple"); response.Code != http.StatusTooManyRequests {
+		t.Fatalf("server throttle was bypassed: %d", response.Code)
+	}
+	fixed = fixed.Add(2 * time.Second)
+	if response := login("correct-horse-battery-staple"); response.Code != http.StatusOK {
+		t.Fatalf("login did not recover after server throttle: %d", response.Code)
+	}
+}
+
 func assertAuthenticationCookies(t *testing.T, cookies []*http.Cookie, secure, cleared bool) map[string]*http.Cookie {
 	t.Helper()
 	if len(cookies) != 2 {
@@ -340,7 +381,7 @@ func TestProtectedRoutesRejectInvalidExpiredAndMissingCSRFSessions(t *testing.T)
 	expired.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, expired)
-	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "expired") {
+	if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), `"code":"authentication_required"`) || strings.Contains(response.Body.String(), "expired") {
 		t.Fatalf("expired session status = %d, body = %q", response.Code, response.Body.String())
 	}
 }
@@ -384,7 +425,7 @@ func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status["administratorConfigured"] != false || status["onboardingComplete"] != false || status["suggestedAgentConnectUrl"] != "https://center.example.com" {
+	if status["administratorConfigured"] != false || status["onboardingComplete"] != false || status["suggestedAgentConnectUrl"] != "" {
 		t.Fatalf("unexpected fresh setup status: %#v", status)
 	}
 	session, _, err := store.CreateFirstAdmin(context.Background(), "admin", "correct-horse-battery-staple")
@@ -414,6 +455,13 @@ func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	if status["cloudflareConfigured"] != false || status["cloudflareZone"] != "" {
 		t.Fatalf("unauthenticated setup status exposed Cloudflare configuration: %#v", status)
 	}
+	if status["suggestedAgentConnectUrl"] != "" || status["builtinHeadscaleAvailable"] != false || status["cloudflareOAuthAvailable"] != false || status["publicNetworkHelperAvailable"] != false || status["regionLookupAvailable"] != false {
+		t.Fatalf("unauthenticated setup status exposed infrastructure: %#v", status)
+	}
+	protection, ok := status["loginProtection"].(map[string]any)
+	if !ok || len(protection) != 1 || protection["captchaRequired"] != false {
+		t.Fatalf("public setup status exposed the login policy: %#v", protection)
+	}
 	authorizedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil)
 	authorizedRequest.AddCookie(&http.Cookie{Name: "vastora_session", Value: session})
 	statusResponse = httptest.NewRecorder()
@@ -421,7 +469,7 @@ func TestSetupHTTPStateSeparatesAdministratorFromOnboarding(t *testing.T) {
 	if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status["cloudflareConfigured"] != true || status["cloudflareZone"] != "example.com" {
+	if status["cloudflareConfigured"] != true || status["cloudflareZone"] != "example.com" || status["suggestedAgentConnectUrl"] != "https://center.example.com" {
 		t.Fatalf("authenticated setup status hid Cloudflare configuration: %#v", status)
 	}
 }
@@ -730,7 +778,7 @@ func TestWebBackupDownloadIsEncryptedAndRestorable(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("backup status = %d, body = %q", response.Code, response.Body.String())
 	}
-	if !strings.HasPrefix(response.Body.String(), backupMagic) {
+	if !strings.HasPrefix(response.Body.String(), backupcrypto.Magic) {
 		t.Fatal("download is not a Vastora encrypted backup")
 	}
 	if !strings.Contains(response.Header().Get("Content-Disposition"), ".vastora") {

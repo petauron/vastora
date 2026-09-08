@@ -101,6 +101,14 @@ func applyRealityCommand(ctx context.Context, store *Store, commandID string, at
 }
 
 func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandID string, attempt int64, command RealityCommandTask, recreatedRecoveredHalfState bool) (RealityCommandResult, error) {
+	if command.Action == "verify" {
+		if command.Recommend {
+			candidates, err := suggestRealityTargets(ctx, command.TargetPublicAddress)
+			return RealityCommandResult{Action: "verify", Candidates: candidates}, err
+		}
+		verification, err := realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
+		return realityVerificationResult(verification), err
+	}
 	baseURL, masterToken, err := threeXUIClientAPIConnection(ctx, store)
 	if err != nil {
 		if attempt > 1 {
@@ -120,13 +128,6 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			return RealityCommandResult{}, renameErr
 		}
 		return result, nil
-	}
-	if command.Action == "verify" {
-		verification, verifyErr := realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
-		if verifyErr != nil {
-			return RealityCommandResult{}, verifyErr
-		}
-		return realityVerificationResult(verification), nil
 	}
 	if command.Action == "harden" {
 		if command.InboundID < 1 || strings.TrimSpace(command.InboundTag) == "" || net.ParseIP(command.TargetAddress) == nil {
@@ -186,10 +187,12 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 			return RealityCommandResult{}, errors.New("agent: target VLESS node API connection is unavailable")
 		}
 	}
-	verification, err := realityTargetVerifier(ctx, command.TargetHost, command.ServerName, command.TargetPublicAddress)
-	if err != nil {
-		return RealityCommandResult{}, err
+	if command.VerifiedTarget == nil || command.VerifiedTarget.TargetHost != command.TargetHost || command.VerifiedTarget.ServerName != command.ServerName ||
+		!command.VerifiedTarget.TLS13 || !command.VerifiedTarget.X25519 || !command.VerifiedTarget.HTTP2 || !command.VerifiedTarget.CertificateValid || command.VerifiedTarget.CDNProvider != "" ||
+		networking.Classify("external", net.ParseIP(command.VerifiedTarget.TargetIP)) != networking.KindPublic {
+		return RealityCommandResult{}, errors.New("agent: creation requires the target selected from node-side verification")
 	}
+	verification := *command.VerifiedTarget
 	clientEmail := threeXUIClientEmail(command.ClientName, commandID)
 	inboundTag := command.InboundTag
 	if existing, ok, err := findRealityInbound(ctx, baseURL, masterToken, inboundTag, command.TargetNodeID); err != nil {

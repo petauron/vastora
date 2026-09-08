@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 61
+const centerSchemaVersion = 63
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -31,6 +31,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		`CREATE TABLE recovery_evidence (
+			component_key TEXT PRIMARY KEY,
+			artifact_json BLOB NOT NULL CHECK(json_valid(artifact_json)),
+			verified_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE storage_key_binding (
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed BLOB NOT NULL
@@ -176,6 +181,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			roles_json BLOB NOT NULL DEFAULT '[]',
 			capabilities_json BLOB NOT NULL DEFAULT '{}',
 			gateway_healthy INTEGER NOT NULL DEFAULT 0,
+			runtime_recovery TEXT NOT NULL DEFAULT '',
 			runtime_generation INTEGER NOT NULL DEFAULT 0,
 			tailscale_ownership TEXT NOT NULL DEFAULT '' CHECK(tailscale_ownership IN ('', 'managed', 'external')),
 			public_egress_address TEXT NOT NULL DEFAULT '',
@@ -225,6 +231,11 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			public_verified_at TEXT NOT NULL DEFAULT '',
 			confirmed_at TEXT NOT NULL,
 			candidate_observed_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE agent_network_profile_recovery (
+			agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+			public_key BLOB NOT NULL,
+			profile_json BLOB NOT NULL CHECK(json_valid(profile_json))
 		)`,
 		`CREATE TABLE agent_decommissions (
 			agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
