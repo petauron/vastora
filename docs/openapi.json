@@ -5443,6 +5443,60 @@
                       }
                     ]
                   },
+                  "landingLatency": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "target": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "revision": {
+                                "type": "integer"
+                              },
+                              "peer": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "publicKey": {
+                                    "type": "string"
+                                  },
+                                  "address": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "latencyMs": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "checkedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "nodeListenerRevision": {
                     "type": "integer"
                   },
@@ -7687,6 +7741,31 @@
                 },
                 "connection": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "latencies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "nodeId": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "latencyMs": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               }
             }
