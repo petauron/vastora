@@ -18,8 +18,7 @@ LEFT JOIN three_x_ui_reality_guards g ON g.service_id = s.id
 WHERE a.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality'
 AND p.status <> 'stopped' AND COALESCE(g.status, '') <> 'ready';
 INSERT OR IGNORE INTO reality_quarantine_v64(publication_id)
-SELECT p.id FROM publications p JOIN migration_56_stopped_publications stopped ON stopped.publication_id = p.id
-WHERE p.status <> 'stopped';
+SELECT p.id FROM publications p JOIN migration_56_stopped_publications stopped ON stopped.publication_id = p.id;
 
 -- Remove stale route snapshots too: changing just publication metadata leaves
 -- an old Agent task capable of restoring the forbidden public route.
