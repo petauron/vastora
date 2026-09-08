@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.110](https://github.com/petauron/vastora/compare/v0.1.0-alpha.109...v0.1.0-alpha.110) (2026-09-08)
+
+
+### Features
+
+* 删除已停用节点与落地延迟体验修复 ([#363](https://github.com/petauron/vastora/issues/363)) ([a0661d4](https://github.com/petauron/vastora/commit/a0661d482df79960e4ad89393ffed280d2c258df))
+
 ## [0.1.0-alpha.109](https://github.com/petauron/vastora/compare/v0.1.0-alpha.108...v0.1.0-alpha.109) (2026-09-08)
 
 
