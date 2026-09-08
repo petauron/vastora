@@ -29,6 +29,10 @@ func (s *Store) releaseClaimedTask(ctx context.Context, agentID string, task Age
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	var result sql.Result
 	switch task.Kind {
+	case "landing.proxy.apply":
+		result, err = tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='pending',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND status='applying' AND attempt=?`, now, agentID, task.Revision, task.Attempt)
+	case "landing.server.apply":
+		result, err = tx.ExecContext(ctx, `UPDATE landing_server_states SET status='pending',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND status='applying' AND attempt=?`, now, agentID, task.Revision, task.Attempt)
 	case "application.command":
 		result, err = tx.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', lease_expires_at = '', updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, now, task.ID, agentID, task.Attempt)
 		if err == nil && task.NodeCommand != nil {
@@ -85,6 +89,18 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 	var result sql.Result
 	var err error
 	switch {
+	case func() bool { _, ok := landingProxyTaskRevision(taskID); return ok }():
+		revision, _ := landingProxyTaskRevision(taskID)
+		if taskID != landingProxyTaskID(agentID, revision) {
+			return time.Time{}, errStaleTaskLease
+		}
+		result, err = s.db.ExecContext(ctx, `UPDATE landing_proxy_states SET lease_expires_at=?,updated_at=? WHERE node_id=? AND desired_revision=? AND status='applying' AND attempt=? AND lease_expires_at>?`, append(values, agentID, revision, expectedAttempt, now.Format(time.RFC3339Nano))...)
+	case func() bool { _, ok := landingServerTaskRevision(taskID); return ok }():
+		revision, _ := landingServerTaskRevision(taskID)
+		if taskID != landingServerTaskID(agentID, revision) {
+			return time.Time{}, errStaleTaskLease
+		}
+		result, err = s.db.ExecContext(ctx, `UPDATE landing_server_states SET lease_expires_at=?,updated_at=? WHERE node_id=? AND desired_revision=? AND status='applying' AND attempt=? AND lease_expires_at>?`, append(values, agentID, revision, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case strings.HasPrefix(taskID, "application-command-"):
 		result, err = s.db.ExecContext(ctx, `UPDATE application_commands SET lease_expires_at = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at > ?`, append(values, taskID, agentID, expectedAttempt, now.Format(time.RFC3339Nano))...)
 	case taskID == agentDecommissionTaskID(agentID):
@@ -190,6 +206,8 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		kind  string
 	}{
 		{`SELECT id, 1 FROM deployments WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "application.apply"},
+		{`SELECT 'landing-proxy-' || node_id || '-r' || desired_revision,desired_revision FROM landing_proxy_states WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, "landing.proxy.apply"},
+		{`SELECT 'landing-server-' || node_id || '-r' || desired_revision, desired_revision FROM landing_server_states WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, "landing.server.apply"},
 		{`SELECT id, 1 FROM application_commands WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "application.command"},
 		{`SELECT 'gateway-component-' || gateway_node_id || '-g' || generation, generation FROM gateway_components WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "gateway.component.apply"},
 		{`SELECT 'gateway-route-' || gateway_node_id || '-r' || desired_revision, desired_revision FROM gateway_states WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, "gateway.routes.apply"},
@@ -234,6 +252,12 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='failed',lease_expires_at='',last_error='Configuration interrupted; queued for retry.',updated_at=? WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET status='failed',lease_expires_at='',last_error='Configuration interrupted; queued for retry.',updated_at=? WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE node_listener_states SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {

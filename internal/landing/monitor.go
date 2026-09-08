@@ -8,8 +8,8 @@ import (
 )
 
 // BusinessResult must describe actual authenticated TCP and UDP exchanges
-// through this peer's SOCKS listener. UDPRelay must be the peer's fixed private
-// address and port, not an arbitrary address returned by a SOCKS server.
+// through this peer's SOCKS listener. UDPRelay must be the peer's private
+// address and configured Dante port range, not an arbitrary returned endpoint.
 // Ping alone, a listening port, or successful UDP ASSOCIATE is insufficient.
 type BusinessResult struct {
 	Peer      PeerIdentity
@@ -144,7 +144,7 @@ func leaseDeadline(gate *BridgeGate, before LinkResult, business BusinessResult,
 	}
 	if !validLink(before) || !validLink(after) || business.Peer != gate.peer || business.Revision != gate.revision || !business.TCP || !business.UDP ||
 		business.StartedAt.Before(before.CheckedAt) || business.CheckedAt.Before(business.StartedAt) || business.CheckedAt.Sub(business.StartedAt) > CheckTimeout ||
-		after.StartedAt.Before(business.CheckedAt) || business.UDPRelay != netip.AddrPortFrom(netip.MustParseAddr(gate.peer.Address), SOCKSPort).String() {
+		after.StartedAt.Before(business.CheckedAt) || !validUDPRelay(business.UDPRelay, gate.peer.Address) {
 		return time.Time{}, false
 	}
 	address, err := netip.ParseAddr(business.ExitIPv4)

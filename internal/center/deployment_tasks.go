@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
@@ -37,6 +38,8 @@ type AgentTask struct {
 	ServiceAddress            string                         `json:"serviceAddress,omitempty"`
 	GatewayState              *gateway.DesiredState          `json:"gatewayState,omitempty"`
 	NodeListenerState         *gateway.NodeListenerState     `json:"nodeListenerState,omitempty"`
+	LandingServerState        *landing.ServerState           `json:"landingServerState,omitempty"`
+	LandingProxyState         *landing.DesiredState          `json:"landingProxyState,omitempty"`
 	GatewayCertificates       []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
 	TunnelState               *TunnelTaskState               `json:"tunnelState,omitempty"`
 	ApplicationCommand        *RealityCommandTask            `json:"applicationCommand,omitempty"`
@@ -143,6 +146,26 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 				return nil, err
 			}
 			return commandTask, nil
+		}
+		landingTask, landingErr := s.claimLandingServerTask(ctx, tx, agentID)
+		if landingErr != nil {
+			return nil, landingErr
+		}
+		if landingTask != nil {
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return landingTask, nil
+		}
+		proxyTask, proxyErr := s.claimLandingProxyTask(ctx, tx, agentID)
+		if proxyErr != nil {
+			return nil, proxyErr
+		}
+		if proxyTask != nil {
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return proxyTask, nil
 		}
 		listenerTask, listenerErr := s.claimNodeListenerTask(ctx, tx, agentID)
 		if listenerErr != nil {
@@ -369,6 +392,30 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 			return errInvalidReconciliationDisposition
 		}
 		return s.CompleteGatewayState(ctx, agentID, credential, revision, expectedAttempt, succeeded, taskError)
+	}
+	if revision, ok := landingServerTaskRevision(taskID); ok {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		if taskID != landingServerTaskID(agentID, revision) {
+			return errStaleTaskLease
+		}
+		var result struct {
+			LandingPeer *landing.PeerIdentity `json:"landingPeer"`
+		}
+		if succeeded && len(rawResult) > 0 && json.Unmarshal(rawResult, &result) != nil {
+			return errors.New("center: invalid landing service result")
+		}
+		return s.completeLandingServer(ctx, agentID, revision, expectedAttempt, succeeded, result.LandingPeer)
+	}
+	if revision, ok := landingProxyTaskRevision(taskID); ok {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		if taskID != landingProxyTaskID(agentID, revision) {
+			return errStaleTaskLease
+		}
+		return s.completeLandingProxy(ctx, agentID, revision, expectedAttempt, succeeded)
 	}
 	if revision, listenerTask := nodeListenerTaskRevision(taskID); listenerTask {
 		if reconciliationRequired {

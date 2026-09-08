@@ -45,6 +45,9 @@ func (c Client) RecoverStartupRuntime(ctx context.Context, store *Store) (err er
 	if completion != nil || id != "" {
 		return startupRecoveryError{"reconciliation", errors.New("runtime recovery is waiting for the interrupted task to reconcile")}
 	}
+	if err := store.restoreLandingProxy(ctx); err != nil {
+		return startupRecoveryError{"landing", err}
+	}
 	if restorer, ok := c.Executor.(executorRestorer); ok {
 		if err := restorer.Restore(ctx, store); err != nil {
 			return startupRecoveryError{"application", err}

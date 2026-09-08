@@ -18,6 +18,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/realitytarget"
@@ -46,6 +47,7 @@ type Client struct {
 	TailscaleEnrolled  bool
 	TailscaleOwnership string
 	PublicEgress       PublicEgressObserver
+	LandingServer      LandingServerProvisioner
 }
 
 type TailscaleIsolationDesiredState struct {
@@ -169,6 +171,8 @@ type DeploymentTask struct {
 	ServiceAddress            string                         `json:"serviceAddress,omitempty"`
 	GatewayState              *gateway.DesiredState          `json:"gatewayState,omitempty"`
 	NodeListenerState         *gateway.NodeListenerState     `json:"nodeListenerState,omitempty"`
+	LandingServerState        *landing.ServerState           `json:"landingServerState,omitempty"`
+	LandingProxyState         *landing.DesiredState          `json:"landingProxyState,omitempty"`
 	GatewayCertificates       []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
 	TunnelState               *TunnelDesiredState            `json:"tunnelState,omitempty"`
 	ApplicationCommand        *RealityCommandTask            `json:"applicationCommand,omitempty"`
@@ -210,6 +214,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	LandingPeer         *landing.PeerIdentity            `json:"landingPeer,omitempty"`
 	Services            []ApplicationServiceResult       `json:"services"`
 	GeneratedSecrets    map[string]string                `json:"generatedSecrets,omitempty"`
 	ApplicationCommand  *RealityCommandResult            `json:"applicationCommand,omitempty"`
@@ -529,6 +534,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"runtimeRecovery":              store.runtimeRecoveryCode(),
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
+		"landingHealth":                store.landingHealth(),
 		"nodeListenerRevision":         nodeListenerRevision,
 		"nodeListenerConfigHash":       nodeListenerConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
@@ -1006,11 +1012,19 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	var result ApplicationTaskResult
 	var err error
+	if task.Kind == "application.apply" {
+		// Hold through RecordApplied/RemoveApplied as well as Deploy: landing
+		// must never prepare a route against an installation being replaced.
+		store.landingMutationMu.Lock()
+		defer store.landingMutationMu.Unlock()
+	}
 	decommissionHandedOff := false
 	updateHandedOff := false
 	switch task.Kind {
 	case "application.apply":
-		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+		if landingErr := store.checkLandingApplicationMutation(ctx, task.AppKey); landingErr != nil {
+			err = landingErr
+		} else if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 		} else if c.Executor == nil {
 			err = errors.New("agent: application capability is not configured")
@@ -1094,6 +1108,21 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				err = errors.New("agent: invalid gateway component operation")
 			}
 			store.gatewayMutationMu.Unlock()
+		}
+	case "landing.server.apply":
+		err = c.applyLandingServerTask(ctx, store, task)
+		if err == nil && task.LandingServerState.Plan != nil {
+			var peer landing.PeerIdentity
+			peer, err = landing.NewLinkChecker().SelfIdentity(ctx, task.LandingServerState.Plan.Address)
+			if err == nil {
+				result.LandingPeer = &peer
+			}
+		}
+	case "landing.proxy.apply":
+		if !c.Capabilities.Docker || task.LandingProxyState == nil || task.Revision <= 0 || uint64(task.Revision) != task.LandingProxyState.Revision {
+			err = errors.New("agent: invalid landing proxy task")
+		} else {
+			err = store.applyLandingProxy(ctx, *task.LandingProxyState)
 		}
 	case "node.listener.apply":
 		if task.NodeListenerState == nil || !c.Capabilities.Docker {

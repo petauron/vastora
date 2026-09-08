@@ -77,6 +77,7 @@ function tagFor(routePath) {
     system: "System",
     tasks: "Agents",
     "three-x-ui-migrations": "Applications",
+    "three-x-ui": "Applications",
     actions: "System",
   };
   return tags[segment] || "System";
@@ -286,6 +287,15 @@ const document = {
       PublicationIngress: publicationIngressResponseSchema,
       Publication: publicationResponseSchema,
       RealitySecurityCheck: realitySecurityCheckResponseSchema,
+      LandingView: {
+        type: "object",
+        additionalProperties: false,
+        required: ["nodeId", "revision", "status", "candidates", "proxies"],
+        properties: {
+          ...schemaForGoType("LandingSelection").properties,
+          ...schemaForGoType("LandingView").properties,
+        },
+      },
       ApplicationCredentials: {
         oneOf: [
           {
@@ -379,7 +389,10 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
-  if (route.handler === "handleCreateRealityCommand") {
+  if (["handleLanding", "handleSelectLanding", "handleConfigureLandingProxy"].includes(route.handler)) {
+    operation.description = "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations.";
+    operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/LandingView" };
+  } else if (route.handler === "handleCreateRealityCommand") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName", "verificationId", "targetIp",

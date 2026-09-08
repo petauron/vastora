@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -193,6 +194,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		GatewayRevision              int64                            `json:"gatewayRevision"`
 		GatewayConfigHash            string                           `json:"gatewayConfigHash"`
 		NodeListenerHealthy          bool                             `json:"nodeListenerHealthy"`
+		LandingHealth                *landing.Health                  `json:"landingHealth"`
 		NodeListenerRevision         int64                            `json:"nodeListenerRevision"`
 		NodeListenerConfigHash       string                           `json:"nodeListenerConfigHash"`
 		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
@@ -210,7 +212,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
@@ -274,6 +276,15 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 	if task == nil {
 		writeJSON(writer, http.StatusOK, map[string]any{"task": nil})
 		return
+	}
+	if task.Kind == "landing.server.apply" || task.Kind == "landing.proxy.apply" && task.LandingProxyState != nil && task.LandingProxyState.Proxy != nil {
+		if err := s.syncLandingAccess(request.Context()); err != nil {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 10*time.Second)
+			releaseErr := s.store.releaseClaimedTask(releaseCtx, request.PathValue("id"), *task)
+			cancel()
+			writeError(writer, http.StatusServiceUnavailable, errors.Join(err, releaseErr))
+			return
+		}
 	}
 	encrypted, err := s.store.EncryptAgentTask(request.Context(), request.PathValue("id"), *task)
 	if err != nil {

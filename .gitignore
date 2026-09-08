@@ -21,3 +21,7 @@
 .DS_Store
 .idea/
 .vscode/
+/internal/dantebundle/assets/*.gz
+/internal/dantebundle/assets/*.sha256
+/internal/dantebundle/assets/Dante-LICENSE
+/internal/dantebundle/assets/Dante-NOTICE

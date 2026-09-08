@@ -31,20 +31,19 @@ type socksExchange struct {
 
 func (e *socksExchange) Write(value []byte) (int, error) { return e.written.Write(value) }
 
-func TestSOCKSAuthenticationRejectsDowngradeAndFailure(t *testing.T) {
-	credentials := Credentials{Username: "probe-user-123456", Password: "probe-secret-123456"}
-	for _, response := range [][]byte{{5, 0}, {5, 255}, {4, 2}, {5, 2, 1, 1}, {5, 2, 0, 0}, {5}, {5, 2, 1}} {
+func TestSOCKSNegotiationRequiresConfiguredNoPasswordMode(t *testing.T) {
+	for _, response := range [][]byte{{5, 2}, {5, 255}, {4, 0}, {5}} {
 		exchange := &socksExchange{Reader: bytes.NewReader(response)}
-		if err := authenticateSOCKS(exchange, credentials); err == nil {
-			t.Fatalf("accepted authentication response %v", response)
+		if err := negotiateSOCKS(exchange); err == nil {
+			t.Fatalf("accepted %v", response)
 		}
 	}
-	exchange := &socksExchange{Reader: bytes.NewReader([]byte{5, 2, 1, 0})}
-	if err := authenticateSOCKS(exchange, credentials); err != nil {
+	exchange := &socksExchange{Reader: bytes.NewReader([]byte{5, 0})}
+	if err := negotiateSOCKS(exchange); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(exchange.written.Bytes(), []byte{5, 1, 2, 1, byte(len(credentials.Username))}) {
-		t.Fatal("authentication request offered an unauthenticated method")
+	if !bytes.Equal(exchange.written.Bytes(), []byte{5, 1, 0}) {
+		t.Fatal("offered unexpected authentication")
 	}
 }
 
@@ -57,7 +56,13 @@ func TestProbeRequiresActualUDPDataAndExactRelay(t *testing.T) {
 			}
 			defer listener.Close()
 			endpoint := netip.MustParseAddrPort(listener.Addr().String())
-			udp, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(endpoint))
+			var udp *net.UDPConn
+			for port := UDPRelayFirst; port <= UDPRelayLast; port++ {
+				udp, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port})
+				if err == nil {
+					break
+				}
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,28 +79,15 @@ func TestProbeRequiresActualUDPDataAndExactRelay(t *testing.T) {
 				defer connection.Close()
 				_ = connection.SetDeadline(deadline)
 				var greeting [3]byte
-				if _, err := io.ReadFull(connection, greeting[:]); err != nil || greeting != [3]byte{5, 1, 2} {
+				if _, err := io.ReadFull(connection, greeting[:]); err != nil || greeting != [3]byte{5, 1, 0} {
 					return
 				}
-				_, _ = connection.Write([]byte{5, 2})
-				var auth [2]byte
-				if _, err := io.ReadFull(connection, auth[:]); err != nil || auth[0] != 1 {
-					return
-				}
-				user := make([]byte, int(auth[1])+1)
-				if _, err := io.ReadFull(connection, user); err != nil {
-					return
-				}
-				password := make([]byte, int(user[len(user)-1]))
-				if _, err := io.ReadFull(connection, password); err != nil || string(user[:len(user)-1]) != "probe-user-123456" || string(password) != "probe-secret-123456" {
-					return
-				}
-				_, _ = connection.Write([]byte{1, 0})
+				_, _ = connection.Write([]byte{5, 0})
 				var associate [10]byte
 				if _, err := io.ReadFull(connection, associate[:]); err != nil || associate != [10]byte{5, 3, 0, 1} {
 					return
 				}
-				relay := endpoint
+				relay := udp.LocalAddr().(*net.UDPAddr).AddrPort()
 				if scenario == "wrong relay" {
 					relay = netip.MustParseAddrPort("127.0.0.2:1080")
 				}
@@ -139,8 +131,8 @@ func TestProbeRequiresActualUDPDataAndExactRelay(t *testing.T) {
 			}()
 			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 			defer cancel()
-			probe := Probe{Credentials: Credentials{Username: "probe-user-123456", Password: "probe-secret-123456"}}
-			err = probe.udp(ctx, endpoint.String())
+			probe := Probe{}
+			_, err = probe.udp(ctx, endpoint.String())
 			if (err == nil) != (scenario == "healthy") {
 				t.Fatalf("UDP exchange: %v", err)
 			}

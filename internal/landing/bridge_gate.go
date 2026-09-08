@@ -83,8 +83,12 @@ func (g *BridgeGate) objects() []map[string]nftObject {
 	// dependencies. Its JSON read-back omits redundant explicit meta checks;
 	// emit the canonical form instead of weakening ownership comparison.
 	for _, protocol := range []string{"tcp", "udp"} {
-		rule("forward", match(meta("iifname"), g.bridge), match(payload("ip", "daddr"), g.peer.Address), match(payload(protocol, "dport"), SOCKSPort), nftObject{"jump": nftObject{"target": "outbound"}})
-		rule("forward", match(meta("oifname"), g.bridge), match(payload("ip", "saddr"), g.peer.Address), match(payload(protocol, "sport"), SOCKSPort), nftObject{"jump": nftObject{"target": "inbound"}})
+		var port any = SOCKSPort
+		if protocol == "udp" {
+			port = nftObject{"range": []int{UDPRelayFirst, UDPRelayLast}}
+		}
+		rule("forward", match(meta("iifname"), g.bridge), match(payload("ip", "daddr"), g.peer.Address), match(payload(protocol, "dport"), port), nftObject{"jump": nftObject{"target": "outbound"}})
+		rule("forward", match(meta("oifname"), g.bridge), match(payload("ip", "saddr"), g.peer.Address), match(payload(protocol, "sport"), port), nftObject{"jump": nftObject{"target": "inbound"}})
 	}
 	rule("outbound", match(payload("ip", "daddr"), "@allowed"), nftObject{"return": nil})
 	rule("outbound", nftObject{"drop": nil})
@@ -136,6 +140,34 @@ func (g *BridgeGate) Block(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.block(ctx)
+}
+
+// Remove is used only after restoring the direct configuration or replacing
+// this revision with another closed gate. Refuse foreign or still-open rules.
+func (g *BridgeGate) Remove(ctx context.Context) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	document, err := g.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	found, err := g.validate(document)
+	if err != nil || !found {
+		return err
+	}
+	if len(g.elements(document)) != 0 {
+		return errors.New("landing: close the gate before removal")
+	}
+	removeErr := g.apply(ctx, []any{nftObject{"delete": nftObject{"table": nftObject{"family": "inet", "name": g.table}}}})
+	document, err = g.snapshot(ctx)
+	if err != nil {
+		return errors.Join(removeErr, err)
+	}
+	found, err = g.validate(document)
+	if err != nil || found {
+		return errors.Join(removeErr, err, errors.New("landing: gate removal was not confirmed"))
+	}
+	return nil
 }
 
 func (g *BridgeGate) block(ctx context.Context) error {

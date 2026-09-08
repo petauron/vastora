@@ -14,6 +14,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -33,6 +34,7 @@ type NodeCapabilities struct {
 }
 
 type NodeHeartbeat struct {
+	LandingHealth                *landing.Health
 	PublicKey                    []byte
 	Version                      string
 	AppliedInstallations         int

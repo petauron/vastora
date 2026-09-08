@@ -239,12 +239,25 @@ func (e ApplicationExecutor) Maintain(ctx context.Context) error {
 // offline recovery is limited to digest-pinned images and managed host files
 // that are already present on this machine.
 func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
+	store.landingMutationMu.Lock()
+	defer store.landingMutationMu.Unlock()
 	installations, err := store.RestorableInstallations(ctx)
 	if err != nil {
 		return err
 	}
 	var failures []error
 	for _, installation := range installations {
+		if installation.AppKey == threeXUIKey {
+			state, err := store.landingRuntime(ctx)
+			if err != nil {
+				failures = append(failures, err)
+				continue
+			}
+			if state != nil && state.Route != nil {
+				// restoreLandingProxy owns this instance and its boot fence.
+				continue
+			}
+		}
 		task := DeploymentTask{
 			Kind: "application.apply", ID: installation.InstanceID, Attempt: 1,
 			ApplicationID: installation.ApplicationID,

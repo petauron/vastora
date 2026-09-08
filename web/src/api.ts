@@ -1,5 +1,7 @@
 import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
+import type { LandingView } from "./landing-types";
+
 export class APIError extends Error {
   constructor(
     message: string,
@@ -56,6 +58,13 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  landing: (signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", { signal }),
+  selectLanding: (nodeId: string, revision: number, signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", {
+    method: "PUT", body: JSON.stringify({ nodeId, revision }), signal
+  }),
+  configureLandingProxy: (applicationId: string, enabled: boolean, revision: number, signal?: AbortSignal) => request<LandingView>(`/api/v1/applications/${encodeURIComponent(applicationId)}/landing`, {
+    method: "PUT", body: JSON.stringify({ enabled, revision }), signal
+  }),
   setupStatus: () => request<SetupStatus>("/api/v1/setup/status"),
   setupAdmin: (username: string, password: string) =>
     request<{ administratorConfigured: boolean }>("/api/v1/setup/admin", {

@@ -733,6 +733,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	if heartbeat.Capabilities.Docker {
+		if err := recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now); err != nil {
+			return err
+		}
 		if err := s.queueMismatchedNodeListenerReconcile(ctx, tx, id, heartbeat.NodeListenerHealthy, heartbeat.NodeListenerRevision, heartbeat.NodeListenerConfigHash, now); err != nil {
 			return err
 		}
@@ -781,6 +784,8 @@ func expireAgentProcessTaskLeases(ctx context.Context, tx *sql.Tx, agentID strin
 		{`UPDATE gateway_components SET lease_expires_at = ? WHERE gateway_node_id = ? AND status = 'applying'`, "gateway component task"},
 		{`UPDATE gateway_states SET lease_expires_at = ? WHERE gateway_node_id = ? AND status = 'applying'`, "gateway route task"},
 		{`UPDATE node_listener_states SET lease_expires_at = ? WHERE node_id = ? AND status = 'applying'`, "node listener task"},
+		{`UPDATE landing_server_states SET lease_expires_at = ? WHERE node_id = ? AND status = 'applying'`, "landing service task"},
+		{`UPDATE landing_proxy_states SET lease_expires_at = ? WHERE node_id = ? AND status = 'applying'`, "landing proxy task"},
 		{`UPDATE cloudflare_tunnels SET lease_expires_at = ? WHERE agent_id = ? AND status = 'applying'`, "Tunnel task"},
 	}
 	for _, statement := range statements {

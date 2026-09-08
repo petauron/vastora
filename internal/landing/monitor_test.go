@@ -13,7 +13,7 @@ func TestLandingLeaseRequiresCurrentDirectAndActualBusinessProof(t *testing.T) {
 	}
 	before := link(now.Add(-4*time.Second), now.Add(-3*time.Second))
 	after := link(now.Add(-time.Second), now)
-	health := BusinessResult{Peer: gate.peer, Revision: gate.revision, TCP: true, UDP: true, UDPRelay: "100.64.0.8:1080", ExitIPv4: "1.1.1.1", StartedAt: now.Add(-3 * time.Second), CheckedAt: now.Add(-time.Second)}
+	health := BusinessResult{Peer: gate.peer, Revision: gate.revision, TCP: true, UDP: true, UDPRelay: "100.64.0.8:1081", ExitIPv4: "1.1.1.1", StartedAt: now.Add(-3 * time.Second), CheckedAt: now.Add(-time.Second)}
 	for _, test := range []struct {
 		name   string
 		change func(*LinkResult, *BusinessResult, *LinkResult)

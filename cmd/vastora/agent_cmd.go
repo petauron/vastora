@@ -30,6 +30,11 @@ func runAgent(arguments []string) error {
 		return errors.New("agent command is required")
 	}
 	switch arguments[0] {
+	case "landing-firewall":
+		if len(arguments) != 1 {
+			return errors.New("landing-firewall takes no arguments")
+		}
+		return agent.RestoreLandingFirewall(context.Background())
 	case "install":
 		flags := flag.NewFlagSet("agent install", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -577,6 +582,7 @@ func runAgent(arguments []string) error {
 		client.Decommissioner = systemHostDecommissioner{dataDir: *dataDir, executable: executable}
 		if runtime.GOOS == "linux" && os.Geteuid() == 0 {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
+			client.LandingServer = agent.NativeLandingServer{}
 		}
 		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
 		if capabilities.Docker {

@@ -26,7 +26,7 @@ type ServerFirewall struct {
 }
 
 func (policy ServerFirewall) validate() error {
-	if policy.Revision == 0 || !tailnetIPv4(policy.Address) || policy.UID == 0 || policy.UID == 65534 || !bridgeNamePattern.MatchString(policy.Interface) || len(policy.Sources) == 0 || len(policy.Sources) > 128 {
+	if policy.Revision == 0 || !tailnetIPv4(policy.Address) || policy.UID == 0 || policy.UID == 65534 || !bridgeNamePattern.MatchString(policy.Interface) || len(policy.Sources) > 128 {
 		return errors.New("landing: invalid native firewall identity")
 	}
 	seen := map[string]bool{}
@@ -67,7 +67,11 @@ func (policy ServerFirewall) objects() []map[string]nftObject {
 		objects = append(objects, map[string]nftObject{"rule": {"family": "inet", "table": table, "chain": chain, "expr": expr}})
 	}
 	for _, protocol := range []string{"tcp", "udp"} {
-		rule("input", match(payload("ip", "daddr"), policy.Address), match(payload(protocol, "dport"), SOCKSPort), nftObject{"jump": nftObject{"target": "sources"}})
+		var port any = SOCKSPort
+		if protocol == "udp" {
+			port = nftObject{"range": []int{UDPRelayFirst, UDPRelayLast}}
+		}
+		rule("input", match(payload("ip", "daddr"), policy.Address), match(payload(protocol, "dport"), port), nftObject{"jump": nftObject{"target": "sources"}})
 	}
 	sources := slices.Clone(policy.Sources)
 	slices.Sort(sources)
@@ -80,7 +84,11 @@ func (policy ServerFirewall) objects() []map[string]nftObject {
 	// the private network. There is no general established/related bypass.
 	for _, source := range sources {
 		for _, protocol := range []string{"tcp", "udp"} {
-			rule("destinations", match(meta("oifname"), policy.Interface), match(payload("ip", "saddr"), policy.Address), match(payload("ip", "daddr"), source), match(payload(protocol, "sport"), SOCKSPort), match(nftObject{"ct": nftObject{"key": "direction"}}, "reply"), nftObject{"return": nil})
+			var port any = SOCKSPort
+			if protocol == "udp" {
+				port = nftObject{"range": []int{UDPRelayFirst, UDPRelayLast}}
+			}
+			rule("destinations", match(meta("oifname"), policy.Interface), match(payload("ip", "saddr"), policy.Address), match(payload("ip", "daddr"), source), match(payload(protocol, "sport"), port), match(nftObject{"ct": nftObject{"key": "direction"}}, "reply"), nftObject{"return": nil})
 		}
 	}
 	for _, cidr := range blockedIPv4 {
@@ -105,6 +113,35 @@ func (policy ServerFirewall) objects() []map[string]nftObject {
 // stopped-service transition; removing old rules requires the exact old plan.
 func (policy ServerFirewall) Install(ctx context.Context) error {
 	return policy.install(ctx, runNFT)
+}
+
+// Remove is used only while the owned native service is stopped. A changed
+// or foreign table is never deleted to make a configuration update succeed.
+func (policy ServerFirewall) Remove(ctx context.Context) error {
+	if err := policy.validate(); err != nil {
+		return err
+	}
+	table, _ := policy.identity()
+	data, err := runNFT(ctx, nil, "--json", "list", "ruleset")
+	var document nftDocument
+	if err != nil || len(data) > nftOutputLimit || json.Unmarshal(data, &document) != nil {
+		return errors.New("landing: cannot inspect native firewall before removal")
+	}
+	found, err := validateNFTPolicy(document, table, policy.objects(), false)
+	if err != nil || !found {
+		return err
+	}
+	command, _ := json.Marshal(nftObject{"nftables": []any{nftObject{"delete": nftObject{"table": nftObject{"family": "inet", "name": table}}}}})
+	_, removeErr := runNFT(ctx, command, "--json", "--file", "-")
+	data, err = runNFT(ctx, nil, "--json", "list", "ruleset")
+	if err != nil || len(data) > nftOutputLimit || json.Unmarshal(data, &document) != nil {
+		return errors.New("landing: cannot confirm native firewall removal")
+	}
+	found, err = validateNFTPolicy(document, table, policy.objects(), false)
+	if err != nil || found {
+		return errors.Join(removeErr, err, errors.New("landing: native firewall removal was not confirmed"))
+	}
+	return nil
 }
 
 func (policy ServerFirewall) install(ctx context.Context, run func(context.Context, []byte, ...string) ([]byte, error)) error {

@@ -231,7 +231,7 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 }
 
 func taskReconcilesCompleteDesiredState(kind string) bool {
-	return kind == "gateway.routes.apply" || kind == "gateway.component.apply" || kind == "node.listener.apply" || kind == "tunnel.state.apply"
+	return kind == "gateway.routes.apply" || kind == "gateway.component.apply" || kind == "node.listener.apply" || kind == "tunnel.state.apply" || kind == "landing.server.apply" || kind == "landing.proxy.apply"
 }
 
 func (s *Store) RecordTaskCompletion(ctx context.Context, completion TaskCompletion) error {

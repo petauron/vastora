@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { LandingProvider, LandingSelector, LandingSwitch } from "./LandingControls";
 import { AppWindowIcon, ChevronRightIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { Mutate } from "../App";
@@ -26,9 +27,9 @@ type InstalledAppsProps = {
 
 export function InstalledApps({ groups, ...props }: InstalledAppsProps) {
   const showSite = new Set(groups.flatMap((group) => group.instances.map((instance) => instance.application.siteId))).size > 1;
-  return <div className="flex min-w-0 flex-col gap-6">
+  return <LandingProvider enabled={groups.some((group) => group.appKey === threeXUIAppKey)}><div className="flex min-w-0 flex-col gap-6">
     {groups.map((group) => <InstalledApplicationGroup group={group} key={group.id} showSite={showSite} {...props} />)}
-  </div>;
+  </div></LandingProvider>;
 }
 
 function InstalledApplicationGroup({ group, language, mutate, onManage, onClients, onReality, showSite }: Omit<InstalledAppsProps, "groups"> & { group: InstalledAppGroup; showSite: boolean }) {
@@ -60,6 +61,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onClient
     <CardContent className="flex min-w-0 flex-col gap-4">
       {threeXUI && group.legacyControllers.length > 0 ? <ControllerConvergence group={group} language={language} onManage={onManage} /> : null}
       {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} /> : null}
+      {threeXUI ? <LandingSelector language={language} /> : null}
       {threeXUI ? <h3 className="text-sm font-medium">{copy(language, "VLESS 节点", "VLESS nodes")}</h3> : null}
       <Table aria-label={threeXUI ? copy(language, `${name} VLESS 节点`, `${name} VLESS nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="block md:table md:table-fixed">
         <TableHeader className="hidden md:table-header-group">
@@ -196,6 +198,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onReality,
     <TableCell className="min-w-0 p-0 whitespace-normal md:px-2 md:py-4">
       <p className="mb-1.5 text-xs text-muted-foreground md:hidden">{copy(language, "应用状态", "Application")}</p>
       <ApplicationStatus instance={instance} language={language} />
+      {threeXUI && instance.realityServices.length > 0 ? <LandingSwitch applicationId={application.id} nodeId={application.nodeId} name={name} locked={locked} language={language} /> : null}
     </TableCell>
     <TableCell className="min-w-0 p-0 whitespace-normal md:px-2 md:py-4">
       <p className="mb-1.5 text-xs text-muted-foreground md:hidden">{threeXUI ? copy(language, "公网入口", "Public access") : copy(language, "访问入口", "Access")}</p>
