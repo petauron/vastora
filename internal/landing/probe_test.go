@@ -43,7 +43,7 @@ func TestSOCKSAuthenticationRejectsDowngradeAndFailure(t *testing.T) {
 	if err := authenticateSOCKS(exchange, credentials); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(exchange.written.Bytes(), []byte{5, 1, 2, 1, 16}) {
+	if !bytes.HasPrefix(exchange.written.Bytes(), []byte{5, 1, 2, 1, byte(len(credentials.Username))}) {
 		t.Fatal("authentication request offered an unauthenticated method")
 	}
 }
