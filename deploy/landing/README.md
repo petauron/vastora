@@ -19,6 +19,9 @@ files, and tracks their hashes in the host journal. Source-only Go builds do not
 include the artifact and explicitly refuse landing provisioning. They do not
 silently install a different system package.
 
-CI's Dante configuration check uses this release-built executable. No local
-build or runtime verification has been performed; platform runtime verification
-and release CI evidence are still required before calling support complete.
+CI uses this release-built executable for configuration and TCP/UDP roundtrips,
+then installs and removes the native service under real systemd on its disposable
+Linux runner. These passed for commit `fef5bca` in
+[run 34216052874](https://github.com/petauron/vastora/actions/runs/34216052874).
+No local or production verification has been performed. The CI host lifecycle
+check is not a runtime matrix across every supported distribution and architecture.
