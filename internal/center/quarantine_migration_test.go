@@ -18,8 +18,15 @@ func TestMigrationPreservesExplicitlyStoppedEntriesAcrossVersion56(t *testing.T)
 func testMigrationPreservesStoppedEntry(t *testing.T, originalAction int) {
 	directory := t.TempDir()
 	store := legacyMigrationStore(t, directory, 55)
-	if _, err := store.db.Exec(`UPDATE publications SET kind='cloudflare_tunnel', dns_provider='cloudflare', status='stopped', last_error='retained stop reason', action_required=? WHERE id='publication-v3'`, originalAction); err != nil {
+	if _, err := store.db.Exec(`UPDATE publications SET kind='cloudflare_tunnel', dns_provider='cloudflare', status='stopped', last_error='retained stop reason' WHERE id='publication-v3'`); err != nil {
 		t.Fatal(err)
+	}
+	// Version 55 has no action_required column. Migration 56 derives it from
+	// the old topology; exercise an actual legacy condition, not a new field.
+	if originalAction == 1 {
+		if _, err := store.db.Exec(`UPDATE publications SET gateway_node_id=NULL WHERE id='publication-v3'`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)

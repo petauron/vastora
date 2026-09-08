@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -64,6 +65,32 @@ func TestNativeServerKernelPolicy(t *testing.T) {
 			t.Fatalf("install: %v\nactual: %s\nexpected: %s", err, actual, expected)
 		}
 	}
+	// The runner's checkout/temporary ancestors need not be traversable by a
+	// dedicated system UID. Copy only this non-sensitive fixture executable
+	// into a new public-traversal temporary directory; never chmod the runner.
+	directory, err := os.MkdirTemp("/tmp", "vastora-landing-kernel-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	if err := os.Chmod(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(directory, "landing.test")
+	input, err := os.Open(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	output, err := os.OpenFile(executable, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, copyErr := io.Copy(output, input)
+	closeErr := output.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		t.Fatal(err)
+	}
 	// Actual sockets under the dedicated UID exercise the installed kernel
 	// rules, not a second Go implementation of the same filtering policy.
 	// All addresses live on loopback in this isolated network namespace.
@@ -94,7 +121,7 @@ func TestNativeServerKernelPolicy(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			endpoint := firewallEchoFixture(t, scenario.protocol, scenario.address)
 			dial := func(uid uint32) ([]byte, error) {
-				command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNativeServerKernelPolicy$", "-test.v")
+				command := exec.CommandContext(ctx, executable, "-test.run=^TestNativeServerKernelPolicy$", "-test.v")
 				command.Env = append(os.Environ(), "VASTORA_LANDING_FIREWALL_DIAL="+endpoint, "VASTORA_LANDING_FIREWALL_PROTOCOL="+scenario.protocol)
 				command.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uid, Gid: uid}}
 				return command.CombinedOutput()
