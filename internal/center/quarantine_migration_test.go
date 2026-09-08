@@ -6,6 +6,36 @@ import (
 	"testing"
 )
 
+func TestMigrationPreservesExplicitlyStoppedEntriesAcrossVersion56(t *testing.T) {
+	directory := t.TempDir()
+	store := legacyMigrationStore(t, directory, 55)
+	if _, err := store.db.Exec(`UPDATE publications SET kind='cloudflare_tunnel', dns_provider='cloudflare', status='stopped', last_error='user stopped' WHERE id='publication-v3'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var state, reason string
+	var action, routes, staging int
+	if err := migrated.db.QueryRow(`SELECT status,last_error,action_required FROM publications WHERE id='publication-v3'`).Scan(&state, &reason, &action); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM routes WHERE publication_id='publication-v3'`).Scan(&routes); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='migration_56_stopped_publications'`).Scan(&staging); err != nil {
+		t.Fatal(err)
+	}
+	if state != "stopped" || reason != "user stopped" || action != 0 || routes != 0 || staging != 0 {
+		t.Fatalf("explicit stop changed: state=%s reason=%s action=%d routes=%d staging=%d", state, reason, action, routes, staging)
+	}
+}
+
 func TestVersion64MigrationWithdrawsOnlyUnsafeRealitySnapshots(t *testing.T) {
 	store := legacyMigrationStore(t, t.TempDir(), 63)
 	defer store.Close()
