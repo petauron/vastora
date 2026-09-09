@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 65
+const centerSchemaVersion = 66
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -31,6 +31,8 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		cloudflareAccessSettingsSchema,
+		`INSERT INTO cloudflare_access_settings(id) VALUES(1)`,
 		landingServerSchema,
 		landingProxySchema,
 		`CREATE TABLE recovery_evidence (

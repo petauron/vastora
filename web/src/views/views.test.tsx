@@ -15,6 +15,7 @@ import { SettingsView } from "./SettingsView";
 import { SetupWizard } from "./SetupWizard";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { CenterUpdateCard } from "./CenterUpdateCard";
+import { CenterRemoteAccessSheet } from "./CenterRemoteAccessSheet";
 import { ThemeProvider } from "../components/theme";
 import { defaultPublicationHostname } from "./appAccess";
 import { CopyButton, userError } from "./shared";
@@ -280,6 +281,61 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("需要补充 Cloudflare 授权");
     expect(document.body.textContent).toContain("创建专用 Turnstile 组件");
     expect([...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存并启用"))?.disabled).toBe(true);
+  });
+
+  it("saves Access duration and leaves partial synchronization visible for retry", async () => {
+    const data = dashboard();
+    data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
+    const access = { available: true, enabled: true, hostname: "center-vastora.example.com", protectionMode: "access" as const, audienceKind: "email" as const, audienceValue: "admin@example.com", status: "configured" as const, accessSessionDuration: "6h" };
+    data.centerRemoteAccess = access;
+    const configure = vi.spyOn(api, "configureCenterRemoteAccess")
+      .mockResolvedValueOnce({ ...access, accessSessionSync: { status: "partial", total: 2, updated: 1, failedHosts: ["panel.example.com"], policyOverrideHosts: ["panel.example.com"] } })
+      .mockResolvedValueOnce({ ...access, accessSessionSync: { status: "synced", total: 2, updated: 2, policyOverrideHosts: ["panel.example.com"] } });
+    const container = render(<NetworkView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} />);
+    const card = [...container.querySelectorAll<HTMLElement>('[data-slot="card"]')].find((item) => item.textContent?.includes("Center 远程备用入口"));
+    act(() => card?.querySelector<HTMLButtonElement>("button")?.click());
+    expect(document.querySelector("#center-access-session-duration")).not.toBeNull();
+    expect(document.body.textContent).toContain("6 小时");
+    const save = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("保存并同步"))!;
+    await act(async () => { save.click(); });
+    expect(configure).toHaveBeenLastCalledWith({ enabled: true, protectionMode: "access", audienceKind: "email", audienceValue: "admin@example.com", accessSessionDuration: "6h" });
+    expect(document.body.textContent).toContain("部分入口尚未同步");
+    expect(document.body.textContent).toContain("panel.example.com");
+    expect(document.body.textContent).toContain("未被覆盖");
+    expect(document.body.textContent).toContain("到期不一定需要重新输入邮箱验证码");
+    expect(document.querySelector("#center-access-session-duration")).not.toBeNull();
+    await act(async () => { save.click(); });
+    expect(document.body.textContent).toContain("2/2 个入口已同步");
+    expect(document.body.textContent).not.toContain("部分入口尚未同步");
+  });
+
+  it("defaults Access duration to 24h and hides it in native mode", async () => {
+    const base = { available: true, enabled: true, protectionMode: "access" as const, audienceKind: "email" as const, audienceValue: "admin@example.com", status: "configured" as const };
+    const cloudflare = { kind: "cloudflare" as const, mode: "oauth" as const, secretSet: true, accessManagement: true, turnstileManagement: true, status: "configured" as const };
+    const save = vi.fn(async () => undefined);
+    const props = { cloudflare, language: "zh-CN" as const, open: true, onClose: vi.fn(), onCloudflareConnected: async () => undefined, onSave: save };
+    render(<CenterRemoteAccessSheet {...props} access={base} />);
+    expect(document.body.textContent).toContain("24 小时（默认）");
+    await act(async () => { document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ accessSessionDuration: "24h" }));
+    act(() => root!.render(<ThemeProvider><CenterRemoteAccessSheet {...props} access={{ ...base, protectionMode: "native" }} /></ThemeProvider>));
+    expect(document.querySelector("#center-access-session-duration")).toBeNull();
+    await act(async () => { document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(save).toHaveBeenLastCalledWith({ enabled: true, protectionMode: "native" });
+  });
+
+  it("blocks unsupported Access duration and keeps request errors in the sheet", async () => {
+    const access = { available: true, enabled: true, protectionMode: "access" as const, audienceKind: "email" as const, audienceValue: "admin@example.com", status: "configured" as const, accessSessionDuration: "-1h" };
+    const props = { access, cloudflare: { kind: "cloudflare" as const, mode: "oauth" as const, secretSet: true, accessManagement: true, status: "configured" as const }, language: "zh-CN" as const, open: true, onClose: vi.fn(), onCloudflareConnected: async () => undefined, onSave: vi.fn(async () => { throw new Error("request failed"); }) };
+    render(<CenterRemoteAccessSheet {...props} />);
+    await act(async () => { document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(props.onSave).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("请选择支持的会话时长");
+    act(() => root!.render(<ThemeProvider><CenterRemoteAccessSheet {...props} access={{ ...access, accessSessionDuration: "24h" }} /></ThemeProvider>));
+    await act(async () => { document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(props.onSave).toHaveBeenCalledOnce();
+    expect(props.onClose).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
   it("shows only successful applications and marks host-privileged packages", () => {

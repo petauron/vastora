@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import { CableIcon, CloudIcon, Globe2Icon, KeyRoundIcon, NetworkIcon, RouterIcon, ServerIcon, ShieldCheckIcon, TerminalIcon } from "lucide-react";
 import { api } from "../api";
 import type { AppData, Mutate } from "../App";
-import type { AgentView, HeadscaleJoin, Integration, NetworkKind, NetworkProfile, TailscaleFixedEndpoint, TailscaleFixedEndpointInput } from "../types";
+import type { AgentView, CenterRemoteAccess, HeadscaleJoin, Integration, NetworkKind, NetworkProfile, TailscaleFixedEndpoint, TailscaleFixedEndpointInput } from "../types";
 
 import type { Language } from "../translations";
 import { CopyButton, PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { CloudflareOAuthConnect } from "./CloudflareOAuthConnect";
 import { CenterRemoteAccessSheet } from "./CenterRemoteAccessSheet";
+import { AccessSessionStatus } from "./AccessSessionStatus";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,7 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
         {centerRemoteAccess ? <Card>
           <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "Center 远程备用入口", "Center remote fallback")}</CardTitle><CardDescription>{copy(language, "安全私网不可用时，通过 Cloudflare Tunnel 登录专用的一层 HTTPS 域名。", "Sign in through a dedicated first-level HTTPS hostname over Cloudflare Tunnel when the secure private network is unavailable.")}</CardDescription><CardAction><StateBadge value={centerRemoteAccess.status} /></CardAction></CardHeader>
           <CardContent><p className="text-sm text-muted-foreground">{centerRemoteAccess.enabled ? centerRemoteAccess.protectionMode === "native" ? copy(language, `${centerRemoteAccess.hostname} 直达 Center 登录，并由 Turnstile、失败退避和锁定保护。`, `${centerRemoteAccess.hostname} opens Center sign-in directly with Turnstile, failure backoff, and lockout.`) : copy(language, `已保护 ${centerRemoteAccess.hostname}，允许 ${centerRemoteAccess.audienceKind === "email" ? "邮箱" : "邮箱域"} ${centerRemoteAccess.audienceValue}。`, `${centerRemoteAccess.hostname} is protected for ${centerRemoteAccess.audienceKind === "email" ? "email" : "email domain"} ${centerRemoteAccess.audienceValue}.`) : copy(language, "当前关闭，Center 仅通过已配置的私网或本地入口访问。", "Currently off. Center is reachable only through its configured private or local entry.")}</p>{centerRemoteAccess.status === "failed" && centerRemoteAccess.lastError ? <Alert className="mt-3" variant="destructive"><AlertTitle>{copy(language, "需要处理", "Action required")}</AlertTitle><AlertDescription className="break-words">{centerRemoteAccess.lastError}</AlertDescription></Alert> : null}</CardContent>
+          {centerRemoteAccess.protectionMode === "access" ? <CardContent><AccessSessionStatus language={language} sync={centerRemoteAccess.accessSessionSync} /></CardContent> : null}
           <CardFooter className="justify-end"><Button disabled={!centerRemoteAccess.available} onClick={() => setEditor("center-remote-access")} size="sm" variant="outline">{centerRemoteAccess.enabled ? copy(language, "修改", "Edit") : copy(language, "设置", "Set up")}</Button></CardFooter>
         </Card> : null}
         <Card>
@@ -102,7 +104,13 @@ export function NetworkView({ data, language, mutate }: { data: AppData; languag
       <HeadscaleSheet integration={headscale} language={language} open={editor === "headscale"} onClose={() => setEditor(null)} onSave={async (input) => { await mutate(() => api.configureHeadscale(input), copy(language, "Headscale 已连接。", "Headscale connected.")); setEditor(null); }} />
       {tailscaleFixedEndpoint?.available ? <TailscaleFixedEndpointSheet endpoint={tailscaleFixedEndpoint} language={language} open={editor === "tailscale-endpoint"} onClose={() => setEditor(null)} onSave={async (input) => { await mutate(() => api.configureTailscaleFixedEndpoint(input), copy(language, "固定直连端点配置已保存。", "Fixed direct endpoint settings saved.")); setEditor(null); }} /> : null}
       <CloudflareSheet integration={cloudflare} language={language} open={editor === "cloudflare"} onClose={() => setEditor(null)} onConnected={async () => { await mutate(async () => undefined, copy(language, "Cloudflare 已连接。", "Cloudflare connected.")); setEditor(null); }} />
-      {centerRemoteAccess ? <CenterRemoteAccessSheet access={centerRemoteAccess} cloudflare={cloudflare} language={language} open={editor === "center-remote-access"} onClose={() => setEditor(null)} onCloudflareConnected={async () => { await mutate(async () => undefined, copy(language, "Cloudflare 已重新授权。", "Cloudflare reauthorized.")); }} onSave={async (input) => { await mutate(() => api.configureCenterRemoteAccess(input), input.enabled ? copy(language, "Center 远程备用入口已启用。", "Center remote fallback enabled.") : copy(language, "Center 远程备用入口已关闭。", "Center remote fallback disabled.")); setEditor(null); }} /> : null}
+      {centerRemoteAccess ? <CenterRemoteAccessSheet access={centerRemoteAccess} cloudflare={cloudflare} language={language} open={editor === "center-remote-access"} onClose={() => setEditor(null)} onCloudflareConnected={async () => { await mutate(async () => undefined, copy(language, "Cloudflare 已重新授权。", "Cloudflare reauthorized.")); }} onSave={async (input) => {
+        let saved: CenterRemoteAccess | undefined;
+        const accessMode = input.enabled && input.protectionMode === "access";
+        await mutate(async () => { saved = await api.configureCenterRemoteAccess(input); }, accessMode ? undefined : input.enabled ? copy(language, "Center 远程备用入口已启用。", "Center remote fallback enabled.") : copy(language, "Center 远程备用入口已关闭。", "Center remote fallback disabled."), { reportError: false });
+        if (!accessMode) setEditor(null);
+        return saved;
+      }} /> : null}
     </section>
   );
 }

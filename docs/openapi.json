@@ -508,6 +508,9 @@
                           },
                           "audienceValue": {
                             "type": "string"
+                          },
+                          "accessSessionDuration": {
+                            "type": "string"
                           }
                         }
                       },
@@ -4383,6 +4386,9 @@
                   },
                   "audienceValue": {
                     "type": "string"
+                  },
+                  "accessSessionDuration": {
+                    "type": "string"
                   }
                 }
               }
@@ -4447,6 +4453,9 @@
                     "type": "string"
                   },
                   "audienceValue": {
+                    "type": "string"
+                  },
+                  "accessSessionDuration": {
                     "type": "string"
                   }
                 }
