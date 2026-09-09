@@ -311,7 +311,7 @@ describe("network and app views", () => {
 
   it("defaults Access duration to 24h and hides it in native mode", async () => {
     const base = { available: true, enabled: true, protectionMode: "access" as const, audienceKind: "email" as const, audienceValue: "admin@example.com", status: "configured" as const };
-    const cloudflare = { kind: "cloudflare" as const, mode: "oauth" as const, secretSet: true, accessManagement: true, turnstileManagement: true, status: "configured" };
+    const cloudflare = { kind: "cloudflare" as const, mode: "oauth" as const, secretSet: true, accessManagement: true, turnstileManagement: true, status: "configured" as const };
     const save = vi.fn(async () => undefined);
     const props = { cloudflare, language: "zh-CN" as const, open: true, onClose: vi.fn(), onCloudflareConnected: async () => undefined, onSave: save };
     render(<CenterRemoteAccessSheet {...props} access={base} />);
@@ -326,7 +326,7 @@ describe("network and app views", () => {
 
   it("blocks unsupported Access duration and keeps request errors in the sheet", async () => {
     const access = { available: true, enabled: true, protectionMode: "access" as const, audienceKind: "email" as const, audienceValue: "admin@example.com", status: "configured" as const, accessSessionDuration: "-1h" };
-    const props = { access, cloudflare: { kind: "cloudflare" as const, mode: "oauth" as const, secretSet: true, accessManagement: true, status: "configured" }, language: "zh-CN" as const, open: true, onClose: vi.fn(), onCloudflareConnected: async () => undefined, onSave: vi.fn(async () => { throw new Error("request failed"); }) };
+    const props = { access, cloudflare: { kind: "cloudflare" as const, mode: "oauth" as const, secretSet: true, accessManagement: true, status: "configured" as const }, language: "zh-CN" as const, open: true, onClose: vi.fn(), onCloudflareConnected: async () => undefined, onSave: vi.fn(async () => { throw new Error("request failed"); }) };
     render(<CenterRemoteAccessSheet {...props} />);
     await act(async () => { document.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     expect(props.onSave).not.toHaveBeenCalled();
