@@ -20,23 +20,26 @@ var cloudflareTurnstileScopes = []string{"turnstile.write"}
 const centerRemoteAccessLabel = "center-vastora"
 
 type CenterRemoteAccessInput struct {
-	Enabled        bool   `json:"enabled"`
-	ProtectionMode string `json:"protectionMode,omitempty"`
-	AudienceKind   string `json:"audienceKind,omitempty"`
-	AudienceValue  string `json:"audienceValue,omitempty"`
+	Enabled               bool   `json:"enabled"`
+	ProtectionMode        string `json:"protectionMode,omitempty"`
+	AudienceKind          string `json:"audienceKind,omitempty"`
+	AudienceValue         string `json:"audienceValue,omitempty"`
+	AccessSessionDuration string `json:"accessSessionDuration,omitempty"`
 }
 
 type CenterRemoteAccessView struct {
-	Available        bool      `json:"available"`
-	Enabled          bool      `json:"enabled"`
-	Hostname         string    `json:"hostname,omitempty"`
-	ProtectionMode   string    `json:"protectionMode,omitempty"`
-	TurnstileSiteKey string    `json:"turnstileSiteKey,omitempty"`
-	AudienceKind     string    `json:"audienceKind,omitempty"`
-	AudienceValue    string    `json:"audienceValue,omitempty"`
-	Status           string    `json:"status"`
-	LastError        string    `json:"lastError,omitempty"`
-	UpdatedAt        time.Time `json:"updatedAt,omitempty"`
+	Available             bool              `json:"available"`
+	Enabled               bool              `json:"enabled"`
+	Hostname              string            `json:"hostname,omitempty"`
+	ProtectionMode        string            `json:"protectionMode,omitempty"`
+	TurnstileSiteKey      string            `json:"turnstileSiteKey,omitempty"`
+	AudienceKind          string            `json:"audienceKind,omitempty"`
+	AudienceValue         string            `json:"audienceValue,omitempty"`
+	Status                string            `json:"status"`
+	LastError             string            `json:"lastError,omitempty"`
+	UpdatedAt             time.Time         `json:"updatedAt,omitempty"`
+	AccessSessionDuration string            `json:"accessSessionDuration"`
+	AccessSessionSync     AccessSessionSync `json:"accessSessionSync"`
 }
 
 type centerRemoteAccessRecord struct {
@@ -55,7 +58,11 @@ func (s *Store) CenterRemoteAccess(ctx context.Context, available bool) (CenterR
 		return CenterRemoteAccessView{}, err
 	}
 	if !exists {
-		return CenterRemoteAccessView{Available: available, Status: "disabled"}, nil
+		record.CenterRemoteAccessView = CenterRemoteAccessView{Status: "disabled"}
+	}
+	record.AccessSessionDuration, record.AccessSessionSync, err = s.accessSessionSettings(ctx)
+	if err != nil {
+		return CenterRemoteAccessView{}, err
 	}
 	record.Available = available
 	record.Enabled = record.Status == "configured"
@@ -87,6 +94,10 @@ func (s *Store) centerRemoteAccessRecord(ctx context.Context) (centerRemoteAcces
 }
 
 func normalizeCenterRemoteAccess(input CenterRemoteAccessInput, centerURL, zoneName string) (CenterRemoteAccessInput, string, error) {
+	if err := validateAccessSessionInput(input); err != nil {
+		return CenterRemoteAccessInput{}, "", err
+	}
+	input.AccessSessionDuration = strings.TrimSpace(input.AccessSessionDuration)
 	if !input.Enabled {
 		return CenterRemoteAccessInput{}, "", nil
 	}
@@ -138,6 +149,11 @@ func (s *Server) ConfigureCenterRemoteAccess(ctx context.Context, input CenterRe
 	defer s.store.domainSwitchMu.Unlock()
 	s.store.remoteAccessMu.Lock()
 	defer s.store.remoteAccessMu.Unlock()
+	input.AccessSessionDuration = strings.TrimSpace(input.AccessSessionDuration)
+	input.ProtectionMode = strings.TrimSpace(input.ProtectionMode)
+	if err := validateAccessSessionInput(input); err != nil {
+		return CenterRemoteAccessView{}, err
+	}
 	if !input.Enabled {
 		_, exists, err := s.store.centerRemoteAccessRecord(ctx)
 		if err != nil {
@@ -183,12 +199,29 @@ func (s *Server) ConfigureCenterRemoteAccess(ctx context.Context, input CenterRe
 		return CenterRemoteAccessView{}, err
 	}
 	audienceMatches := normalized.ProtectionMode == "native" || current.AudienceKind == normalized.AudienceKind && current.AudienceValue == normalized.AudienceValue
+	duration, _, err := s.store.accessSessionSettings(ctx)
+	if err != nil {
+		return CenterRemoteAccessView{}, err
+	}
+	if normalized.AccessSessionDuration != "" {
+		duration = normalized.AccessSessionDuration
+	}
 	if exists && current.Status == "configured" && current.Hostname == hostname && current.ProtectionMode == normalized.ProtectionMode && audienceMatches && (normalized.ProtectionMode != "native" || (current.TurnstileSiteKey != "" && current.TurnstileSecretID != "")) {
+		if normalized.ProtectionMode == "access" {
+			if err := s.store.syncAccessSessions(ctx, client, duration, ""); err != nil {
+				return CenterRemoteAccessView{}, err
+			}
+		}
 		return s.store.CenterRemoteAccess(ctx, s.infrastructure != nil)
 	}
 	if exists {
 		if err := s.disableCenterRemoteAccess(ctx); err != nil {
 			return CenterRemoteAccessView{}, fmt.Errorf("center: remove the previous remote access configuration: %w", err)
+		}
+	}
+	if normalized.ProtectionMode == "access" {
+		if err := s.store.saveAccessSessionSettings(ctx, duration, AccessSessionSync{Status: "pending"}); err != nil {
+			return CenterRemoteAccessView{}, err
 		}
 	}
 	now := s.store.now().UTC().Format(time.RFC3339Nano)
@@ -206,6 +239,15 @@ func (s *Server) ConfigureCenterRemoteAccess(ctx context.Context, input CenterRe
 		message := failure.Error()
 		_, statusErr := s.store.db.ExecContext(context.WithoutCancel(ctx), `UPDATE center_remote_access SET status = 'failed', last_error = ?, updated_at = ? WHERE id = 1`, message, s.store.now().UTC().Format(time.RFC3339Nano))
 		return CenterRemoteAccessView{}, errors.Join(failure, statusErr)
+	}
+	if normalized.ProtectionMode == "access" {
+		created, _, err := s.store.centerRemoteAccessRecord(ctx)
+		if err != nil {
+			return CenterRemoteAccessView{}, err
+		}
+		if err := s.store.syncAccessSessions(ctx, client, duration, created.ApplicationID); err != nil {
+			return CenterRemoteAccessView{}, err
+		}
 	}
 	return s.store.CenterRemoteAccess(ctx, s.infrastructure != nil)
 }
@@ -234,7 +276,11 @@ func (s *Server) applyCenterRemoteAccess(ctx context.Context, client cloudflareC
 		if err := s.store.updateCenterRemoteAccessResource(ctx, "otp_identity_provider_id", identityProviderID); err != nil {
 			return err
 		}
-		applicationID, err := client.createAccessApplication(ctx, "Vastora Center", record.Hostname, record.AudienceKind, record.AudienceValue, identityProviderID)
+		duration, _, err := s.store.accessSessionSettings(ctx)
+		if err != nil {
+			return err
+		}
+		applicationID, err := client.createAccessApplication(ctx, "Vastora Center", record.Hostname, record.AudienceKind, record.AudienceValue, identityProviderID, duration)
 		if err != nil {
 			return err
 		}

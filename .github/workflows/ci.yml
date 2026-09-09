@@ -68,6 +68,8 @@ jobs:
       - run: make go-format-check go-static-check
       - name: Verify Agent update recovery invariants
         run: go test ./cmd/vastora ./internal/agent ./internal/center -run '^(TestHostUpdate|TestAgentUpdate|TestUninstall.*Updater|TestCancelledUpdater)' -count=1
+      - name: Verify Cloudflare Access session configuration
+        run: go test ./internal/center -run 'Test.*(AccessSession|CenterRemoteAccess|CloudflareIntegration)' -count=1
       - name: Verify recovery and REALITY invariants
         run: |
           ci_test_status=0

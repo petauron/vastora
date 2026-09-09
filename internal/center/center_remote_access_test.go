@@ -31,7 +31,7 @@ func TestCenterRemoteAccessCreatesAccessBeforePublishingDNS(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["domain"] != "center-vastora.example.com" || !strings.Contains(mustJSONString(t, body["policies"]), `"email_domain":{"domain":"example.org"}`) {
+			if body["session_duration"] != "24h" || body["domain"] != "center-vastora.example.com" || !strings.Contains(mustJSONString(t, body["policies"]), `"email_domain":{"domain":"example.org"}`) {
 				t.Fatalf("unexpected Access application: %#v", body)
 			}
 			_, _ = writer.Write([]byte(`{"success":true,"errors":[],"result":{"id":"access-app"}}`))

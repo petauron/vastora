@@ -367,6 +367,8 @@ func (s *Store) reusePublicationDNSRecord(ctx context.Context, publicationID, ki
 }
 
 func (s *Store) ensureCloudflareServiceAccess(ctx context.Context, publicationID string, revision int64, hostname string) error {
+	s.remoteAccessMu.Lock()
+	defer s.remoteAccessMu.Unlock()
 	record, exists, err := s.centerRemoteAccessRecord(ctx)
 	if err != nil {
 		return err
@@ -378,7 +380,11 @@ func (s *Store) ensureCloudflareServiceAccess(ctx context.Context, publicationID
 	if err != nil {
 		return err
 	}
-	applicationID, err := client.createAccessApplication(ctx, "Vastora "+hostname, hostname, record.AudienceKind, record.AudienceValue, record.IdentityProviderID)
+	duration, _, err := s.accessSessionSettings(ctx)
+	if err != nil {
+		return err
+	}
+	applicationID, err := client.createAccessApplication(ctx, "Vastora "+hostname, hostname, record.AudienceKind, record.AudienceValue, record.IdentityProviderID, duration)
 	if err != nil {
 		return err
 	}
@@ -664,7 +670,10 @@ func (client cloudflareClient) ensureOneTimePINIdentityProvider(ctx context.Cont
 	return created.ID, nil
 }
 
-func (client cloudflareClient) createAccessApplication(ctx context.Context, name, domain, audienceKind, audienceValue, identityProviderID string) (string, error) {
+func (client cloudflareClient) createAccessApplication(ctx context.Context, name, domain, audienceKind, audienceValue, identityProviderID, duration string) (string, error) {
+	if !validAccessSessionDuration(duration) {
+		return "", errors.New("center: select a supported Access session duration")
+	}
 	selector := map[string]any{}
 	switch audienceKind {
 	case "email":
@@ -678,7 +687,7 @@ func (client cloudflareClient) createAccessApplication(ctx context.Context, name
 		"name":                      name,
 		"domain":                    domain,
 		"type":                      "self_hosted",
-		"session_duration":          "24h",
+		"session_duration":          duration,
 		"auto_redirect_to_identity": true,
 		"allowed_idps":              []string{identityProviderID},
 		"policies": []map[string]any{{

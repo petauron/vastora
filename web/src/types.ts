@@ -217,6 +217,15 @@ export type CenterRemoteAccessInput = {
   protectionMode?: "access" | "native";
   audienceKind?: "email" | "email_domain";
   audienceValue?: string;
+  accessSessionDuration?: string;
+};
+
+export type AccessSessionSync = {
+  status: "not_synced" | "pending" | "synced" | "partial" | "failed";
+  total: number;
+  updated: number;
+  failedHosts?: string[];
+  policyOverrideHosts?: string[];
 };
 
 export type CenterRemoteAccess = {
@@ -230,6 +239,8 @@ export type CenterRemoteAccess = {
   status: "disabled" | "pending" | "configured" | "failed";
   lastError?: string;
   updatedAt?: string;
+  accessSessionDuration?: string;
+  accessSessionSync?: AccessSessionSync;
 };
 
 export type TailscaleFixedEndpointInput = {
