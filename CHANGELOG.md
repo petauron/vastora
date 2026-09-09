@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.114](https://github.com/petauron/vastora/compare/v0.1.0-alpha.113...v0.1.0-alpha.114) (2026-09-09)
+
+
+### Bug Fixes
+
+* **landing:** stream per-target latency results immediately ([#372](https://github.com/petauron/vastora/issues/372)) ([e73d934](https://github.com/petauron/vastora/commit/e73d9348d17b0f2f1d7c55e9880f3653186d7557))
+
 ## [0.1.0-alpha.113](https://github.com/petauron/vastora/compare/v0.1.0-alpha.112...v0.1.0-alpha.113) (2026-09-09)
 
 
