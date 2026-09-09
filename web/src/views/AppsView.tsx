@@ -22,6 +22,7 @@ import { ThreeXUIClientsSheet } from "./ThreeXUIClientsSheet";
 import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
 import { ThreeXUIInboundTrafficSheet } from "./ThreeXUIInboundTrafficSheet";
 import { RealitySheet } from "./RealitySheet";
+import { RealityRemoveDialog } from "./RealityRemoveDialog";
 import { RegionCombobox, regionBaseName, regionDisplayName } from "./RegionCombobox";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 import { clearSecretOperation, deploymentSecretScope, readSecretOperation, secretOperation } from "../secret-delivery";
@@ -43,6 +44,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	const [credentialApplication, setCredentialApplication] = useState<Application | null>(null);
 	const [realityApplication, setRealityApplication] = useState<Application | null>(null);
 	const [realityRenameService, setRealityRenameService] = useState<Service | null>(null);
+  const [realityRemoveService, setRealityRemoveService] = useState<Service | null>(null);
   const [trafficService, setTrafficService] = useState<Service | null>(null);
   const [subscriptionApplication, setSubscriptionApplication] = useState<Application | null>(null);
   const [clientsApplication, setClientsApplication] = useState<Application | null>(null);
@@ -160,6 +162,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
           onPublish={(service) => openFromDetails(() => setPublicationService(service))}
           onReality={() => openFromDetails(() => setRealityApplication(managedInstance.application))}
           onRenameReality={(service) => openFromDetails(() => setRealityRenameService(service))}
+          onRemoveReality={(service) => openFromDetails(() => setRealityRemoveService(service))}
           onSubscription={() => openFromDetails(() => setSubscriptionApplication(managedInstance.application))}
           onTraffic={(service) => openFromDetails(() => setTrafficService(service))}
           onUninstall={() => openFromDetails(() => setUninstallApplication(managedInstance.application))}
@@ -182,6 +185,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	}} service={publicationService} />
 		<RealitySheet application={realityApplication} data={data} language={language} onClose={() => setRealityApplication(null)} siteTimezone={realityApplication ? data.sites.find((site) => site.id === realityApplication.siteId)?.timezone : undefined} />
 		<RealityRenameSheet data={data} language={language} mutate={mutate} onClose={() => setRealityRenameService(null)} service={realityRenameService} />
+      {realityRemoveService ? <RealityRemoveDialog key={realityRemoveService.id} service={realityRemoveService} language={language} mutate={mutate} onClose={() => setRealityRemoveService(null)} /> : null}
       <ThreeXUIInboundTrafficSheet controller={trafficController ?? null} language={language} onClose={() => setTrafficService(null)} service={trafficService} siteTimezone={trafficService ? data.sites.find((site) => site.id === trafficService.siteId)?.timezone : undefined} />
       <SubscriptionSheet application={subscriptionApplication} data={data} language={language} mutate={mutate} onClose={() => setSubscriptionApplication(null)} />
 	      <ThreeXUIClientsSheet advancedURL={clientsApplication ? data.deployments.find((value) => value.applicationId === clientsApplication.id && value.state === "succeeded" && value.operation !== "uninstall")?.accessUrl : undefined} application={clientsApplication} language={language} onClose={() => setClientsApplication(null)} siteTimezone={clientsApplication ? data.sites.find((site) => site.id === clientsApplication.siteId)?.timezone : undefined} />
@@ -192,7 +196,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
   );
 }
 
-function InstalledAppDetails({ instance, data, language, onClients, onConfigure, onCredentials, onMigrate, onPublish, onReality, onRenameReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { instance: InstalledAppInstance; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
+function InstalledAppDetails({ instance, data, language, onClients, onConfigure, onCredentials, onMigrate, onPublish, onReality, onRenameReality, onRemoveReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { instance: InstalledAppInstance; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onRemoveReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const [syncingNode, setSyncingNode] = useState(false);
   const { application, app, agent, services, deployment, activeChange, locked: serviceAccessLocked } = instance;
   const subscriptionService = services.find((service) => service.name === "subscription");
@@ -241,7 +245,7 @@ function InstalledAppDetails({ instance, data, language, onClients, onConfigure,
 			{isCPA ? <Button disabled={Boolean(activeChange)} onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "凭据", "Credentials")}</Button> : null}
       {!isWorker && !isLegacyController && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && !isLegacyController && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
       {!isWorker && !isLegacyController && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
-			{visibleServices.map((service) => <ServiceRow data={data} key={service.id} language={language} locked={serviceAccessLocked} onPublish={() => onPublish(service)} onRename={() => onRenameReality(service)} onTraffic={() => onTraffic(service)} service={service} mutate={mutate} />)}
+			{visibleServices.map((service) => <ServiceRow data={data} key={service.id} language={language} locked={serviceAccessLocked} onPublish={() => onPublish(service)} onRename={() => onRenameReality(service)} onRemove={isController && service.appProtocol === "vless/tcp/reality" ? () => onRemoveReality(service) : undefined} onTraffic={() => onTraffic(service)} service={service} mutate={mutate} />)}
       {isController && activeWorkers.length > 0 ? <p className="text-xs text-muted-foreground">{copy(language, "移除所有 VLESS 节点后才能卸载订阅主机。", "Remove all VLESS nodes before uninstalling the subscription controller.")}</p> : null}
     </div>
     <SheetFooter className="flex-row flex-wrap justify-end gap-2 border-t">{isLegacyController ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} size="sm" variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "查看转换进度", "View conversion")}</Button> : isController && activeWorkers.some((worker) => worker.nodeSyncStatus === "ready") ? <Button disabled={Boolean(activeChange) || application.restorePointState === "pending"} onClick={onMigrate} size="sm" variant="outline"><ArrowRightLeftIcon data-icon="inline-start" />{copy(language, "迁移订阅主机", "Move subscription host")}</Button> : null}{application.updateAvailable ? <Button disabled={Boolean(activeChange) || isLegacyController} onClick={onUpgrade} size="sm"><ArrowUpCircleIcon data-icon="inline-start" />{copy(language, `升级到 v${application.availableVersion}`, `Upgrade to v${application.availableVersion}`)}</Button> : app ? <Badge variant="secondary">{copy(language, "版本已是最新", "Version up to date")}</Badge> : null}{app && app.app.config.length > 0 && !application.updateAvailable ? <Button disabled={Boolean(activeChange) || isLegacyController} onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "修改配置", "Change settings")}</Button> : null}<Button disabled={Boolean(activeChange) || isLegacyController || activeWorkers.length > 0} onClick={onUninstall} size="sm" variant="ghost"><Trash2Icon data-icon="inline-start" />{copy(language, "卸载", "Uninstall")}</Button></SheetFooter>
@@ -382,7 +386,7 @@ function ApplicationCredentialsSheet({ application, language, onClose }: { appli
 	</Sheet>;
 }
 
-function ServiceRow({ data, language, service, locked, onPublish, onRename, onTraffic, mutate }: { data: AppData; language: Language; service: Service; locked: boolean; onPublish: () => void; onRename: () => void; onTraffic: () => void; mutate: Mutate }) {
+function ServiceRow({ data, language, service, locked, onPublish, onRename, onRemove, onTraffic, mutate }: { data: AppData; language: Language; service: Service; locked: boolean; onPublish: () => void; onRename: () => void; onRemove?: () => void; onTraffic: () => void; mutate: Mutate }) {
 	const publications = data.publications.filter((value) => value.serviceId === service.id && (value.status !== "stopped" || value.actionRequired));
 	const activePublication = publications.find((value) => value.status !== "stopped");
 	const cloudflareReady = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
@@ -406,6 +410,7 @@ function ServiceRow({ data, language, service, locked, onPublish, onRename, onTr
 				<p className="mt-1 text-xs text-muted-foreground">{summary}</p>
 			</div>
 			{isReality ? <><Button aria-describedby={!trafficControllerAvailable ? trafficHintID : undefined} disabled={locked || !trafficControllerAvailable} onClick={onTraffic} size="sm" variant="outline">{copy(language, "节点套餐", "Node plan")}</Button><Button disabled={locked} onClick={onRename} size="icon-sm" title={copy(language, "重命名", "Rename")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "重命名", "Rename")}</span></Button></> : null}
+			{onRemove ? <Button disabled={locked} onClick={onRemove} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "移除本机节点", "Remove local node")}</Button> : null}
 			{!managedSubscription ? <Button disabled={locked || Boolean(cpaClientAPI && activePublication)} onClick={onPublish} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{cpaClientAPI ? activePublication ? copy(language, "API 已开启", "API enabled") : copy(language, "开启公网 API", "Enable public API") : copy(language, "添加入口", "Add access")}</Button> : null}
 		</div>
 		{isReality && !trafficControllerAvailable ? <p className="mt-2 text-xs text-destructive" id={trafficHintID}>{copy(language, "订阅主机当前不可用，暂时不能修改节点套餐。", "The subscription controller is unavailable, so this node plan cannot be changed yet.")}</p> : null}

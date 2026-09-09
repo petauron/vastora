@@ -77,8 +77,8 @@ function render(element: ReactNode) {
 function openAppDetails(container: HTMLElement, applicationID?: string) {
   const row = applicationID
     ? [...container.querySelectorAll<HTMLElement>("[data-application-id]")].find((element) => element.dataset.applicationId === applicationID)
-    : container.querySelector<HTMLElement>("[data-application-id]");
-  const manage = [...(row?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.getAttribute("aria-label")?.startsWith("管理 ") && button.getAttribute("aria-label")?.endsWith(" 应用"));
+    : container.querySelector<HTMLElement>('[data-slot="subscription-controller"]') ?? container.querySelector<HTMLElement>("[data-application-id]");
+  const manage = [...(row?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.getAttribute("aria-label")?.startsWith("管理 ") && (button.getAttribute("aria-label")?.endsWith(" 应用") || button.getAttribute("aria-label")?.endsWith(" 订阅主机")));
   if (!manage) throw new Error("Application management action was not rendered");
   act(() => manage.click());
   return document.body;
@@ -86,6 +86,16 @@ function openAppDetails(container: HTMLElement, applicationID?: string) {
 
 function renderAppDetails(element: ReactNode) {
   return openAppDetails(render(element));
+}
+
+async function openRealityCreation(container: HTMLElement, applicationID?: string) {
+  const details = openAppDetails(container, applicationID);
+  const create = [...details.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("创建 VLESS"));
+  if (!create) throw new Error("Subscription controller did not offer local node creation");
+  await act(async () => {
+    create.click();
+    await Promise.resolve();
+  });
 }
 
 function mockCommandEvent(command: ApplicationCommand) {
@@ -719,16 +729,39 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("ARM64");
   });
 
+  it.each([false, true])("requires confirmation before removing the controller local node: %s", async (confirmed) => {
+    const data = realityDashboard();
+    data.services = [{ id: "local-node", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "Local VLESS", protocol: "tcp", containerPort: 443, hostPort: 443, endpoint: "10.0.0.10:443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
+    const remove = vi.spyOn(api, "removeRealityCommand").mockResolvedValue({ id: "remove-local", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.remove", action: "remove", state: "succeeded", hostname: "", dnsProvider: "manual", resultAvailable: false, createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" });
+    const mutate = vi.fn(async () => undefined);
+    const details = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+    const open = [...details.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("移除本机节点"));
+    expect(open).toBeDefined();
+    act(() => open!.click());
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+    expect(dialog?.textContent).toContain("订阅地址、用户和其他节点保留");
+    expect(remove).not.toHaveBeenCalled();
+    await act(async () => {
+      const action = [...dialog!.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === (confirmed ? "移除节点" : "取消"));
+      expect(action).toBeDefined();
+      action!.click();
+      await Promise.resolve();
+    });
+    if (confirmed) {
+      expect(remove).toHaveBeenCalledExactlyOnceWith("local-node");
+      expect(mutate).toHaveBeenCalled();
+    } else {
+      expect(remove).not.toHaveBeenCalled();
+    }
+  });
+
   it("offers guided REALITY with a hierarchical connection hostname", async () => {
     const data = realityDashboard();
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
     vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-      await Promise.resolve();
-    });
+    await openRealityCreation(container);
 		expect(document.body.textContent).toContain("填写节点名称和套餐，再选择当前节点可用的连接目标");
     expect(document.querySelector<HTMLInputElement>("#reality-name")?.value).toBe("home-server");
     expect(document.body.textContent).toContain("🇺🇸 美国home-server");
@@ -753,10 +786,7 @@ describe("network and app views", () => {
     vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
 
-    await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-      await Promise.resolve();
-    });
+    await openRealityCreation(container);
 
 		expect(document.body.textContent).toContain("home-server");
   });
@@ -1188,10 +1218,7 @@ describe("network and app views", () => {
     const data = realityDashboard();
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "asn-advisory", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.example.com", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", nodeAsn, targetAsn, guardStatus: "ready", resultAvailable: false, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-      await Promise.resolve();
-    });
+    await openRealityCreation(container);
     expect(document.body.textContent).toContain("回落目标限制已启用");
     expect(document.body.textContent).toContain(message);
     expect(document.body.textContent).toContain("未认证连接仍可能访问此回落网站并消耗流量");
@@ -1205,10 +1232,7 @@ describe("network and app views", () => {
 	    const reveal = vi.spyOn(api, "revealApplicationCommand").mockResolvedValue({ shareUri: "vless://one-time-client-link" });
 	    const acknowledge = vi.spyOn(api, "acknowledgeApplicationCommand").mockResolvedValue({ acknowledged: true });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-      await Promise.resolve();
-    });
+    await openRealityCreation(container);
     expect(reveal).not.toHaveBeenCalled();
     const revealButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("显示客户端链接"));
     await act(async () => {
@@ -1231,10 +1255,7 @@ describe("network and app views", () => {
 		const data = realityDashboard();
 		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "application-command-degraded", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "cloudflare", displayName: "🇺🇸 美国Edge", targetHost: "www.example.com", targetIp: "203.0.113.10", serverName: "www.example.com", targetAsn: 64500, guardStatus: "ready", clientCreated: true, error: "center: create REALITY access entry: SNI conflict", resultAvailable: true, createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:01Z" });
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-		await act(async () => {
-			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-			await Promise.resolve();
-		});
+		await openRealityCreation(container);
 		expect(document.body.textContent).toContain("REALITY 已创建，公网入口待处理");
 		expect(document.body.textContent).toContain("客户端凭据已安全保留");
 		expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("显示客户端链接"))).toBe(true);
@@ -1244,10 +1265,7 @@ describe("network and app views", () => {
 		const data = realityDashboard();
 		vi.spyOn(api, "latestApplicationCommand").mockResolvedValue({ id: "failed-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "failed", hostname: "reality.failed.example.test", dnsProvider: "manual", action: "create", error: "node plan rejected", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-		await act(async () => {
-			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-			await Promise.resolve();
-		});
+		await openRealityCreation(container);
 		expect(document.querySelector("#reality-name")).not.toBeNull();
 		expect(document.body.textContent).not.toContain("node plan rejected");
 	});
@@ -1262,10 +1280,7 @@ describe("network and app views", () => {
 		const create = vi.spyOn(api, "createRealityCommand");
 		mockCommandEvent({ ...pending, state: "succeeded" });
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-		await act(async () => {
-			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-			await Promise.resolve();
-		});
+		await openRealityCreation(container);
 		expect(document.body.textContent).toContain("需要继续恢复");
 		await act(async () => {
 			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("继续恢复"))?.click();
@@ -1284,10 +1299,7 @@ describe("network and app views", () => {
 		vi.spyOn(api, "applicationCommand").mockRejectedValue(new APIError("temporary refresh failure", 503, "unavailable"));
 		const create = vi.spyOn(api, "createRealityCommand");
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-		await act(async () => {
-			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-			await Promise.resolve();
-		});
+		await openRealityCreation(container);
 
 		expect(document.body.textContent).toContain("需要继续恢复");
 		await act(async () => {
@@ -1314,10 +1326,7 @@ describe("network and app views", () => {
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
 		mockCommandEvent(pending);
 		const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-		await act(async () => {
-			[...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-			await Promise.resolve();
-		});
+		await openRealityCreation(container);
 		const nodeName = document.querySelector<HTMLInputElement>("#reality-name")!;
 		expect(nodeName.value).toBe("home-server");
 		expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
@@ -1356,10 +1365,7 @@ describe("network and app views", () => {
     const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-worker-reality", applicationId: "three-x-ui-worker", gatewayNodeId: "worker", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.30", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64500, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
     const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue({ id: "worker-reality", applicationId: "three-x-ui-worker", gatewayNodeId: "worker", kind: "3xui.reality.create", state: "succeeded", hostname: "reality.oracle-worker.home.vastora.example.com", dnsProvider: "manual", action: "create", clientCreated: false, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" });
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    await act(async () => {
-      [...container.querySelectorAll("button")].filter((button) => button.textContent?.includes("创建 VLESS"))[1]?.click();
-      await Promise.resolve();
-    });
+    await openRealityCreation(container, "three-x-ui-worker");
     expect(document.body.textContent).toContain("VPS 月流量套餐");
     expect(document.body.textContent).toContain("订阅额度在主订阅机管理");
     expect(document.body.textContent).toContain("如果还没有用户");
@@ -1393,10 +1399,7 @@ describe("network and app views", () => {
     data.services = [{ id: "worker-reality", applicationId: "three-x-ui-worker", siteId: "site", name: "inbound-90", displayName: "🇺🇸 美国Worker", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.20:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
     vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new APIError("not found", 404, "not_found"));
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    await act(async () => {
-      [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("创建 VLESS"))?.click();
-      await Promise.resolve();
-    });
+    await openRealityCreation(container);
     expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
     expect(document.querySelector("#reality-subscription-quota")).not.toBeNull();
   });

@@ -42,6 +42,12 @@ export function canCreateRealityNode(instance: InstalledAppInstance) {
     && (instance.application.id === instance.controller?.id || instance.application.role === "worker" && instance.application.nodeSyncStatus === "ready");
 }
 
+// A subscription-only controller remains in its own band, not the node table.
+export function showInstalledNode(instance: InstalledAppInstance) {
+  return !(instance.application.appKey === threeXUIAppKey && instance.application.role === "master"
+    && instance.application.id === instance.application.controllerApplicationId && instance.realityServices.length === 0);
+}
+
 function indexBy<T>(values: T[], key: (value: T) => string) {
   const index = new Map<string, T[]>();
   for (const value of values) {

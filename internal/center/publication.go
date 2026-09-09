@@ -574,15 +574,19 @@ func (s *Store) Publication(ctx context.Context, id string) (PublicationView, er
 	}
 	value.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 	value.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	value.DNSRecord, err = s.publicationDNSRecord(ctx, value)
+	if errors.Is(err, errPublicationEntryAddressUnavailable) {
+		degradeUnavailablePublicationAddress(&value)
+		return value, nil
+	}
+	if err != nil {
+		return PublicationView{}, err
+	}
 	if value.Status == "ready" {
 		value.AccessURL, err = s.publicationAccessURL(ctx, value)
 		if err != nil {
 			return PublicationView{}, err
 		}
-	}
-	value.DNSRecord, err = s.publicationDNSRecord(ctx, value)
-	if err != nil {
-		return PublicationView{}, err
 	}
 	value.SecurityCheck, err = s.realitySecurityCheck(ctx, value.ID)
 	if err != nil {
@@ -638,6 +642,22 @@ func degradeOfflineNodeListener(value *PublicationView, nodeStatus, lastSeen str
 	if nodeStatus != "active" || err != nil || !seen.After(now.Add(-agentConnectedMaxAge)) {
 		value.Status = "degraded"
 		value.LastError = "application node is offline; node-direct listener health is unavailable"
+	}
+}
+
+// A missing confirmed address is a per-entry availability problem, not a
+// failure to read the whole collection. This projection never repairs a
+// profile, changes desired state, or clears an existing security failure.
+func degradeUnavailablePublicationAddress(value *PublicationView) {
+	value.AccessURL, value.DNSRecord, value.SecurityCheck = "", nil, nil
+	if value.Status == "stopped" {
+		return
+	}
+	if value.Status != "failed" {
+		value.Status = "degraded"
+	}
+	if value.LastError == "" {
+		value.LastError = "Node network is recovering"
 	}
 }
 
@@ -729,15 +749,12 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 			return nil, errors.New("center: stored publication kind is invalid")
 		}
 		if value.Kind != publicationCloudflare {
-			ip := net.ParseIP(address)
-			if ip == nil || ip.To4() == nil {
-				if value.Status == "stopped" {
-					values = append(values, value)
-					continue
-				}
-				return nil, errors.New("center: publication entry address must be IPv4")
+			value.DNSRecord, err = publicationAddressDNSRecord(value.Hostname, address)
+			if errors.Is(err, errPublicationEntryAddressUnavailable) {
+				degradeUnavailablePublicationAddress(&value)
+			} else if err != nil {
+				return nil, err
 			}
-			value.DNSRecord = &DNSRecordInstruction{Type: "A", Name: value.Hostname, Value: ip.String()}
 		}
 		values = append(values, value)
 	}
@@ -752,7 +769,9 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 		return nil, err
 	}
 	for index := range values {
-		values[index].SecurityCheck = securityChecks[values[index].ID]
+		if values[index].Kind == publicationCloudflare || values[index].DNSRecord != nil {
+			values[index].SecurityCheck = securityChecks[values[index].ID]
+		}
 	}
 	return values, nil
 }

@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var errPublicationEntryAddressUnavailable = errors.New("center: publication entry address must be IPv4")
+
 func (s *Store) reconcilePublicationDNS(ctx context.Context, id, gatewayID, provider string, revision int64) (bool, error) {
 	// External publication reconciliation and cleanup share one lifecycle lock.
 	// A stop may commit while an API request is in flight, but its cleanup waits
@@ -61,22 +63,14 @@ func dnsTaskID(publicationID string, revision int64) string {
 func (s *Store) publicationDNSRecord(ctx context.Context, publication PublicationView) (*DNSRecordInstruction, error) {
 	record := &DNSRecordInstruction{Name: publication.Hostname}
 	var address string
+	var err error
 	switch publication.Kind {
 	case publicationLAN:
-		err := s.db.QueryRowContext(ctx, `SELECT n.lan_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
-		if err != nil {
-			return nil, err
-		}
+		err = s.db.QueryRowContext(ctx, `SELECT n.lan_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
 	case publicationHeadscale:
-		err := s.db.QueryRowContext(ctx, `SELECT n.headscale_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
-		if err != nil {
-			return nil, err
-		}
+		err = s.db.QueryRowContext(ctx, `SELECT n.headscale_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
 	case publicationPublic, publicationShared443:
-		err := s.db.QueryRowContext(ctx, `SELECT n.public_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
-		if err != nil {
-			return nil, err
-		}
+		err = s.db.QueryRowContext(ctx, `SELECT n.public_address FROM agent_network_profiles n JOIN publications p ON p.entry_node_id = n.agent_id WHERE p.id = ?`, publication.ID).Scan(&address)
 	case publicationCloudflare:
 		var tunnelID string
 		err := s.db.QueryRowContext(ctx, `SELECT t.tunnel_id FROM cloudflare_tunnels t JOIN publications p ON p.entry_node_id = t.agent_id WHERE p.id = ?`, publication.ID).Scan(&tunnelID)
@@ -91,10 +85,19 @@ func (s *Store) publicationDNSRecord(ctx context.Context, publication Publicatio
 	default:
 		return nil, errors.New("center: stored publication kind is invalid")
 	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, errPublicationEntryAddressUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	return publicationAddressDNSRecord(publication.Hostname, address)
+}
+
+func publicationAddressDNSRecord(hostname, address string) (*DNSRecordInstruction, error) {
 	ip := net.ParseIP(address)
 	if ip == nil || ip.To4() == nil {
-		return nil, errors.New("center: publication entry address must be IPv4")
+		return nil, errPublicationEntryAddressUnavailable
 	}
-	record.Type, record.Value = "A", ip.String()
-	return record, nil
+	return &DNSRecordInstruction{Type: "A", Name: hostname, Value: ip.String()}, nil
 }

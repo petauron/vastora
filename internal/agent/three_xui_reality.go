@@ -129,6 +129,13 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		}
 		return result, nil
 	}
+	if command.Action == "remove" {
+		result, removeErr := removeThreeXUIRealityInbound(ctx, baseURL, masterToken, command)
+		if realityMutationOutcomeUncertain(removeErr) {
+			return RealityCommandResult{}, deferUncertainRealityTask(attempt, removeErr)
+		}
+		return result, removeErr
+	}
 	if command.Action == "harden" {
 		if command.InboundID < 1 || strings.TrimSpace(command.InboundTag) == "" || net.ParseIP(command.TargetAddress) == nil {
 			return RealityCommandResult{}, errors.New("agent: REALITY hardening parameters are invalid")

@@ -2904,6 +2904,330 @@
         }
       }
     },
+    "/api/v1/application-commands/reality/remove": {
+      "post": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Remove Reality Command",
+        "operationId": "removeRealityCommand_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "candidates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "targetHost": {
+                            "type": "string"
+                          },
+                          "targetIp": {
+                            "type": "string"
+                          },
+                          "serverName": {
+                            "type": "string"
+                          },
+                          "nodeAsn": {
+                            "type": "integer"
+                          },
+                          "targetAsn": {
+                            "type": "integer"
+                          },
+                          "cdnProvider": {
+                            "type": "string"
+                          },
+                          "tls13": {
+                            "type": "boolean"
+                          },
+                          "x25519": {
+                            "type": "boolean"
+                          },
+                          "http2": {
+                            "type": "boolean"
+                          },
+                          "certificateValid": {
+                            "type": "boolean"
+                          },
+                          "latencyMillis": {
+                            "type": "integer"
+                          },
+                          "samples": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "latencyMillis": {
+                      "type": "integer"
+                    },
+                    "samples": {
+                      "type": "integer"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "applicationId": {
+                      "type": "string"
+                    },
+                    "gatewayNodeId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "reconciliationRequired": {
+                      "type": "boolean"
+                    },
+                    "hostname": {
+                      "type": "string"
+                    },
+                    "dnsProvider": {
+                      "type": "string"
+                    },
+                    "targetHost": {
+                      "type": "string"
+                    },
+                    "targetIp": {
+                      "type": "string"
+                    },
+                    "serverName": {
+                      "type": "string"
+                    },
+                    "nodeAsn": {
+                      "type": "integer"
+                    },
+                    "targetAsn": {
+                      "type": "integer"
+                    },
+                    "cdnProvider": {
+                      "type": "string"
+                    },
+                    "tls13": {
+                      "type": "boolean"
+                    },
+                    "x25519": {
+                      "type": "boolean"
+                    },
+                    "h2": {
+                      "type": "boolean"
+                    },
+                    "certificateValid": {
+                      "type": "boolean"
+                    },
+                    "guardStatus": {
+                      "type": "string"
+                    },
+                    "publicationId": {
+                      "type": "string"
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "regionCode": {
+                      "type": "string"
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "inboundId": {
+                      "type": "integer"
+                    },
+                    "clientCreated": {
+                      "type": "boolean"
+                    },
+                    "inboundTotalBytes": {
+                      "type": "integer"
+                    },
+                    "inboundResetDay": {
+                      "type": "integer"
+                    },
+                    "inboundNextResetAt": {
+                      "type": "string"
+                    },
+                    "clients": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "email": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "totalBytes": {
+                            "type": "integer"
+                          },
+                          "usedBytes": {
+                            "type": "integer"
+                          },
+                          "resetDays": {
+                            "type": "integer"
+                          },
+                          "expiryTime": {
+                            "type": "integer"
+                          },
+                          "limitIp": {
+                            "type": "integer"
+                          },
+                          "inboundIds": {
+                            "type": "array",
+                            "items": {
+                              "type": "integer"
+                            }
+                          },
+                          "hasSubscription": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "clientsObserved": {
+                      "type": "boolean"
+                    },
+                    "inbounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "serviceId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "applicationId": {
+                            "type": "string"
+                          },
+                          "nodeId": {
+                            "type": "string"
+                          },
+                          "nodeName": {
+                            "type": "string"
+                          },
+                          "connectHostname": {
+                            "type": "string"
+                          },
+                          "sniHostname": {
+                            "type": "string"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "totalBytes": {
+                            "type": "integer"
+                          },
+                          "usedBytes": {
+                            "type": "integer"
+                          },
+                          "resetDay": {
+                            "type": "integer"
+                          },
+                          "nextResetAt": {
+                            "type": "string"
+                          },
+                          "planStatus": {
+                            "type": "string"
+                          },
+                          "planError": {
+                            "type": "string"
+                          },
+                          "inboundTag": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "inboundsObserved": {
+                      "type": "boolean"
+                    },
+                    "subscriptionAvailable": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "resultAvailable": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "serviceId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "serviceId"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Remove only the global subscription controller's local managed VLESS inbound. Retains the controller, global clients, subscription URL and remote nodes. Restores any landing route before deletion. Repeated requests resume an active operation for the same service."
+      }
+    },
     "/api/v1/application-commands/subscription": {
       "post": {
         "tags": [

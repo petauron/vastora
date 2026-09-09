@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { cn } from "@/lib/utils";
 import { localized, operationLabel } from "./appAccess";
 import { copy, HighPrivilegeBadge, StateBadge } from "./shared";
-import { canCreateRealityNode, publicationNeedsAttention, serviceNeedsAttention, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
+import { canCreateRealityNode, publicationNeedsAttention, serviceNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
 
 type InstalledAppsProps = {
   groups: InstalledAppGroup[];
@@ -58,7 +58,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onClient
   const attentionInstance = group.instances.find((instance) => instance.publications.some(publicationNeedsAttention));
   const name = group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
   const search = query.trim().toLocaleLowerCase();
-  const instances = group.instances.filter((instance) => !search || [instance.agent?.name, instance.application.nodeId, instance.siteName, ...instance.realityServices.map((service) => service.displayName)].some((value) => value?.toLocaleLowerCase().includes(search)));
+  const instances = group.instances.filter(showInstalledNode).filter((instance) => !search || [instance.agent?.name, instance.application.nodeId, instance.siteName, ...instance.realityServices.map((service) => service.displayName)].some((value) => value?.toLocaleLowerCase().includes(search)));
 
   return <Card aria-labelledby={headingID} data-app-group={group.id} role="region">
     <CardHeader className="flex flex-row flex-wrap items-center gap-3">
@@ -100,7 +100,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onClient
         </TableHeader>
         <TableBody className="block lg:table-row-group">
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
-          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{copy(language, "没有匹配的节点", "No matching nodes")}</TableCell></TableRow> : null}
+          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 VLESS 节点", "No VLESS nodes configured")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
       {threeXUI ? <p className="text-xs text-muted-foreground">{copy(language, "切换出口时，当前连接会短暂中断。", "Switching exits briefly interrupts current connections.")}</p> : null}

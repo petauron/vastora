@@ -39,7 +39,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	switch kind {
-	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind:
+	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind, realityRemoveCommandKind:
 		var command RealityCommandTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY operation is invalid"))
@@ -58,6 +58,16 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 		}
 		if kind == realityRenameCommandKind && (command.Action != "rename" || command.InboundID < 1) {
 			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored REALITY rename operation is invalid"))
+		}
+		if kind == realityRemoveCommandKind {
+			ready, removeErr := s.realityRemovalReady(ctx, tx, agentID, command)
+			if removeErr != nil {
+				return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, removeErr)
+			}
+			if !ready {
+				// Let the scheduler deliver the prerequisite landing restoration.
+				return nil, nil
+			}
 		}
 		if (kind == realityCommandKind || kind == realityHardenCommandKind) && command.TargetNodeID > 0 {
 			command.TargetAPIToken, err = s.threeXUIAPISecret(ctx, tx, command.TargetApplicationID)
@@ -309,6 +319,9 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	}
 	if kind == realityRenameCommandKind {
 		return s.completeRealityRenameCommand(ctx, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == realityRemoveCommandKind {
+		return s.completeRealityRemoveCommand(ctx, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind != realityCommandKind {
 		return errors.New("center: stored application operation kind is invalid")
