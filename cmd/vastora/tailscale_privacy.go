@@ -17,12 +17,15 @@ import (
 )
 
 const (
-	tailscalePrivacyOverride      = "[Service]\nEnvironment=TS_NO_LOGS_NO_SUPPORT=true\n"
-	tailscalePrivacyPendingMarker = "v3:pending\n"
-	tailscalePrivacyAppliedMarker = "v3:applied\n"
-	tailscaleHostsBeginMarker     = "# BEGIN VASTORA TAILSCALE CONTROL"
-	tailscaleHostsEndMarker       = "# END VASTORA TAILSCALE CONTROL"
+	tailscalePrivacyOverride        = "[Service]\nEnvironment=TS_NO_LOGS_NO_SUPPORT=true\n"
+	tailscalePrivacyPendingMarker   = "v3:pending\n"
+	tailscalePrivacyVerifyingMarker = "v3:verifying\n"
+	tailscalePrivacyAppliedMarker   = "v3:applied\n"
+	tailscaleHostsBeginMarker       = "# BEGIN VASTORA TAILSCALE CONTROL"
+	tailscaleHostsEndMarker         = "# END VASTORA TAILSCALE CONTROL"
 )
+
+var errTailscaleDERPMapNotReady = errors.New("verify Tailscale DERP map: waiting for the managed network map")
 
 type tailscaleIsolationEnvironment struct {
 	overridePath string
@@ -103,6 +106,13 @@ func reconcileTailscaleIsolation(ctx context.Context, desired agent.TailscaleIso
 		return fmt.Errorf("start Tailscale with Vastora isolation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	if err := verifyTailscaleRuntimePrivacy(commandContext, environment.run, desired); err != nil {
+		if errors.Is(err, errTailscaleDERPMapNotReady) {
+			// The restart completed; a later heartbeat must resume verification,
+			// not restart the daemon before it can finish receiving its map.
+			if markerErr := writeAtomicHostFile(tailscalePrivacyAppliedPath(environment.overridePath), tailscalePrivacyVerifyingMarker, 0o644); markerErr != nil {
+				return errors.Join(err, markerErr)
+			}
+		}
 		return err
 	}
 	if err := writeAtomicHostFile(tailscalePrivacyAppliedPath(environment.overridePath), tailscalePrivacyAppliedMarker, 0o644); err != nil {
@@ -132,17 +142,25 @@ func tailscaleIsolationCurrent(ctx context.Context, environment tailscaleIsolati
 	if err != nil {
 		return false, err
 	}
-	diskCurrent := string(override) == tailscalePrivacyOverride && markerErr == nil && string(marker) == tailscalePrivacyAppliedMarker && expectedHosts == string(hosts) && !untrustedCache
+	verifying := string(marker) == tailscalePrivacyVerifyingMarker
+	diskCurrent := string(override) == tailscalePrivacyOverride && markerErr == nil && (string(marker) == tailscalePrivacyAppliedMarker || verifying) && expectedHosts == string(hosts) && !untrustedCache
 	if !diskCurrent {
 		return false, nil
 	}
 	runtimeContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	return tailscaleRuntimePrivacyCurrent(runtimeContext, environment.run, desired), nil
-}
-
-func tailscaleRuntimePrivacyCurrent(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), desired agent.TailscaleIsolationDesiredState) bool {
-	return verifyTailscaleRuntimePrivacy(ctx, run, desired) == nil
+	if err := verifyTailscaleRuntimePrivacy(runtimeContext, environment.run, desired); err != nil {
+		if errors.Is(err, errTailscaleDERPMapNotReady) {
+			return false, err
+		}
+		return false, nil
+	}
+	if verifying {
+		if err := writeAtomicHostFile(tailscalePrivacyAppliedPath(environment.overridePath), tailscalePrivacyAppliedMarker, 0o644); err != nil {
+			return false, fmt.Errorf("record applied Tailscale isolation state: %w", err)
+		}
+	}
+	return true, nil
 }
 
 func verifyTailscaleRuntimePrivacy(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), desired agent.TailscaleIsolationDesiredState) error {
@@ -181,8 +199,11 @@ func verifyTailscaleDERPMap(payload []byte, desired agent.TailscaleIsolationDesi
 			} `json:"Nodes"`
 		} `json:"Regions"`
 	}
-	if json.Unmarshal(payload, &derpMap) != nil || len(derpMap.Regions) == 0 {
+	if json.Unmarshal(payload, &derpMap) != nil {
 		return errors.New("verify Tailscale DERP map: tailscaled returned invalid data")
+	}
+	if len(derpMap.Regions) == 0 {
+		return errTailscaleDERPMapNotReady
 	}
 	allowed := map[int]bool{desired.RelayRegionID: false}
 	for _, regionID := range desired.STUNOnlyRegionIDs {
