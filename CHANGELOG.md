@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.115](https://github.com/petauron/vastora/compare/v0.1.0-alpha.114...v0.1.0-alpha.115) (2026-09-09)
+
+
+### Bug Fixes
+
+* **landing:** distinguish applied exits and confirm route changes ([#374](https://github.com/petauron/vastora/issues/374)) ([2e7c1ae](https://github.com/petauron/vastora/commit/2e7c1ae951fa7964e7a779b0de0a5c82a2922525))
+
 ## [0.1.0-alpha.114](https://github.com/petauron/vastora/compare/v0.1.0-alpha.113...v0.1.0-alpha.114) (2026-09-09)
 
 
