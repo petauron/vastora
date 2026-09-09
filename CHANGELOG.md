@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.112](https://github.com/petauron/vastora/compare/v0.1.0-alpha.111...v0.1.0-alpha.112) (2026-09-09)
+
+
+### Bug Fixes
+
+* improve initial landing activation and probe deadlines ([#368](https://github.com/petauron/vastora/issues/368)) ([acedcdd](https://github.com/petauron/vastora/commit/acedcddb65cc149cdf5d4c905dc1d8734c8c763d))
+
 ## [0.1.0-alpha.111](https://github.com/petauron/vastora/compare/v0.1.0-alpha.110...v0.1.0-alpha.111) (2026-09-09)
 
 
