@@ -34,7 +34,7 @@ func TestPublicationAddressFailureIsIsolatedToOneEntry(t *testing.T) {
 				t.Fatal(err)
 			}
 			if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
-				SELECT 'healthy-publication', service_id, 'lan_gateway', 'application_node', ?, 'healthy.example.test', 'manual', 1, 1, 'ready', created_at, updated_at FROM publications WHERE id = 'verification-publication'`, healthy.ID); err != nil {
+				SELECT 'healthy-publication', service_id, 'lan_gateway', 'site_gateway', ?, 'healthy.example.test', 'manual', 1, 1, 'ready', created_at, updated_at FROM publications WHERE id = 'verification-publication'`, healthy.ID); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := store.db.ExecContext(ctx, `UPDATE publications SET last_error = ?, action_required = ? WHERE id = 'verification-publication'`, test.lastError, test.actionRequired); err != nil {

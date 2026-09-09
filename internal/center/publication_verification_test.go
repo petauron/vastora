@@ -660,8 +660,14 @@ func seedVerificationPublication(t *testing.T, store *Store, kind, dnsProvider s
 		VALUES('verification-service', 'verification-app', ?, 'tcp', 'tcp', 443, 443, '203.0.113.40:443', 'observed', 'tcp', '203.0.113.40', 'ready', ?, ?)`, testSiteID(t, store), now, now); err != nil {
 		t.Fatal(err)
 	}
+	ingressOwner := ingressApplicationNode
+	if kind == publicationLAN || kind == publicationHeadscale {
+		ingressOwner = ingressSiteGateway
+	} else if kind == publicationCloudflare {
+		ingressOwner = ingressTunnelConnector
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO publications(id, service_id, kind, ingress_owner, entry_node_id, hostname, dns_provider, desired_revision, applied_revision, status, created_at, updated_at)
-		VALUES('verification-publication', 'verification-service', ?, 'application_node', ?, 'verification.example.test', ?, ?, ?, ?, ?, ?)`, kind, node.ID, dnsProvider, desiredRevision, appliedRevision, status, now, now); err != nil {
+		VALUES('verification-publication', 'verification-service', ?, ?, ?, 'verification.example.test', ?, ?, ?, ?, ?, ?)`, kind, ingressOwner, node.ID, dnsProvider, desiredRevision, appliedRevision, status, now, now); err != nil {
 		t.Fatal(err)
 	}
 	return node
