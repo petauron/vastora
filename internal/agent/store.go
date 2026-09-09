@@ -31,21 +31,22 @@ var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener state")
 
 type Store struct {
-	db                *sql.DB
-	key               []byte
-	dataDir           string
-	now               func() time.Time
-	gatewayMutationMu sync.Mutex
-	landingMutationMu sync.Mutex
-	landingCancel     context.CancelFunc
-	landingDone       chan struct{}
-	landingStatusMu   sync.RWMutex
-	landingStatus     landing.MonitorStatus
-	landingLatencyMu  sync.Mutex
-	landingLatencies  []landing.LatencyObservation
-	gatewayStartupMu  sync.RWMutex
-	gatewayStartupErr error
-	gatewayStartupOK  bool
+	db                    *sql.DB
+	key                   []byte
+	dataDir               string
+	now                   func() time.Time
+	gatewayMutationMu     sync.Mutex
+	landingMutationMu     sync.Mutex
+	landingCancel         context.CancelFunc
+	landingDone           chan struct{}
+	landingStatusMu       sync.RWMutex
+	landingStatus         landing.MonitorStatus
+	landingLatencyMu      sync.Mutex
+	landingLatencyTargets []landing.LatencyTarget
+	landingLatencyChanged chan struct{}
+	gatewayStartupMu      sync.RWMutex
+	gatewayStartupErr     error
+	gatewayStartupOK      bool
 }
 
 type AppliedInstallation struct {

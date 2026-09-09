@@ -528,9 +528,8 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	}
 	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
 	payload := map[string]any{
-		"landingLatencies": store.readLandingLatencies(),
-		"publicKey":        publicKey,
-		"version":          Version, "appliedInstallations": len(states), "roles": c.Roles,
+		"publicKey": publicKey,
+		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"gatewayRevision":              gatewayRevision,
 		"runtimeRecovery":              store.runtimeRecoveryCode(),
@@ -553,7 +552,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err := c.applyDesiredCenterURL(ctx, store, connection, response.CenterURL); err != nil {
 		return observeErr, err
 	}
-	store.observeLandingLatencies(ctx, response.LandingLatencyTargets)
+	store.setLandingLatencyTargets(response.LandingLatencyTargets)
 	if response.TailscaleIsolation != nil && c.TailscaleIsolation != nil {
 		if err := c.TailscaleIsolation(ctx, *response.TailscaleIsolation); err != nil {
 			return observeErr, fmt.Errorf("agent: apply Tailscale isolation: %w", err)

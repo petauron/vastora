@@ -203,7 +203,6 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		GatewayConfigHash            string                           `json:"gatewayConfigHash"`
 		NodeListenerHealthy          bool                             `json:"nodeListenerHealthy"`
 		LandingHealth                *landing.Health                  `json:"landingHealth"`
-		LandingLatencies             []landing.LatencyObservation     `json:"landingLatencies"`
 		NodeListenerRevision         int64                            `json:"nodeListenerRevision"`
 		NodeListenerConfigHash       string                           `json:"nodeListenerConfigHash"`
 		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
@@ -230,7 +229,6 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	s.store.recordLandingLatencies(request.PathValue("id"), targets, input.LandingLatencies)
 	network, err := s.store.CenterNetworkConfig(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, err)

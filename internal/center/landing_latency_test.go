@@ -14,7 +14,7 @@ func TestLandingLatencyFreshnessAndSelection(t *testing.T) {
 	target := landing.LatencyTarget{NodeID: "landing", Revision: 3, Peer: landing.PeerIdentity{ID: "peer", PublicKey: "key", Address: "100.64.0.8"}}
 	ms := 28.5
 	observation := landing.LatencyObservation{Target: target, State: "direct", LatencyMS: &ms, CheckedAt: now}
-	s.recordLandingLatencies("proxy", []landing.LatencyTarget{target}, []landing.LatencyObservation{observation})
+	s.recordLandingLatency("proxy", []landing.LatencyTarget{target}, &observation)
 	selection := LandingSelection{NodeIDs: []string{"landing"}, Revision: 3}
 	views := s.landingLatencyViews(selection)
 	if len(views) != 1 || views[0].LatencyMS == nil || *views[0].LatencyMS != ms {
@@ -25,7 +25,7 @@ func TestLandingLatencyFreshnessAndSelection(t *testing.T) {
 	}
 	now = now.Add(time.Second)
 	observation.CheckedAt, observation.State = now, "derp"
-	s.recordLandingLatencies("proxy", []landing.LatencyTarget{target}, []landing.LatencyObservation{observation})
+	s.recordLandingLatency("proxy", []landing.LatencyTarget{target}, &observation)
 	views = s.landingLatencyViews(selection)
 	if len(views) != 1 || views[0].State != "unavailable" || views[0].LatencyMS != nil {
 		t.Fatal("relay result exposed a direct latency")
@@ -34,7 +34,7 @@ func TestLandingLatencyFreshnessAndSelection(t *testing.T) {
 	if len(s.landingLatencyViews(selection)) != 0 {
 		t.Fatal("stale latency remained visible")
 	}
-	s.recordLandingLatencies("proxy", nil, []landing.LatencyObservation{observation})
+	s.recordLandingLatency("proxy", nil, &observation)
 	if len(s.landingLatencies) != 0 {
 		t.Fatal("removed target retained telemetry")
 	}
@@ -49,8 +49,9 @@ func TestLandingLatenciesRemainScopedToEachSourceAndServer(t *testing.T) {
 	fast, slow := 12.0, 130.0
 	first := landing.LatencyObservation{Target: a, State: "direct", LatencyMS: &fast, CheckedAt: now}
 	second := landing.LatencyObservation{Target: b, State: "direct", LatencyMS: &slow, CheckedAt: now}
-	store.recordLandingLatencies("source-one", targets, []landing.LatencyObservation{first, second})
-	store.recordLandingLatencies("source-two", targets, []landing.LatencyObservation{second})
+	store.recordLandingLatency("source-one", targets, &first)
+	store.recordLandingLatency("source-one", targets, &second)
+	store.recordLandingLatency("source-two", targets, &second)
 	selection := LandingSelection{NodeIDs: []string{"a", "b"}, Revision: 4}
 	views := store.landingLatencyViews(selection)
 	if len(views) != 3 || views[0].NodeID != "source-one" || views[0].LandingNodeID != "a" || *views[0].LatencyMS != fast || views[1].LandingNodeID != "b" || *views[1].LatencyMS != slow || views[2].NodeID != "source-two" {
@@ -59,24 +60,24 @@ func TestLandingLatenciesRemainScopedToEachSourceAndServer(t *testing.T) {
 	now = now.Add(time.Second)
 	replay := first
 	replay.LatencyMS = &slow
-	store.recordLandingLatencies("source-one", targets, []landing.LatencyObservation{replay})
+	store.recordLandingLatency("source-one", targets, &replay)
 	if got := store.landingLatencyViews(selection); *got[0].LatencyMS != fast {
 		t.Fatal("replayed sample overwrote current latency")
 	}
 	invalid := second
 	invalid.Target.Peer.PublicKey = "another-key"
 	invalid.CheckedAt = now
-	store.recordLandingLatencies("source-one", targets, []landing.LatencyObservation{invalid})
+	store.recordLandingLatency("source-one", targets, &invalid)
 	if got := store.landingLatencyViews(selection); len(got) != 3 {
 		t.Fatal("one invalid sample discarded unrelated targets")
 	}
 	nan := math.NaN()
 	second.CheckedAt, second.LatencyMS = now, &nan
-	store.recordLandingLatencies("source-one", targets, []landing.LatencyObservation{second})
+	store.recordLandingLatency("source-one", targets, &second)
 	if got := store.landingLatencyViews(selection); got[1].LatencyMS != nil {
 		t.Fatal("invalid numeric latency exposed")
 	}
-	store.recordLandingLatencies("source-one", []landing.LatencyTarget{b}, nil)
+	store.recordLandingLatency("source-one", []landing.LatencyTarget{b}, nil)
 	views = store.landingLatencyViews(selection)
 	if len(views) != 2 || views[0].LandingNodeID != "b" || views[1].NodeID != "source-two" {
 		t.Fatal("target removal crossed source ownership")

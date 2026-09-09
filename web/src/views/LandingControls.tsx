@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
-import type { LandingView } from "../landing-types";
+import type { LandingLatencyEvent, LandingLatencySnapshot, LandingView } from "../landing-types";
 import type { Language } from "../translations";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { ServerIcon } from "lucide-react";
 import { copy } from "./shared";
 import { landingLatencyColor, landingLatencyPreview } from "./landingLatency";
+import { applyLandingLatencyEvent, freshLandingLatencies } from "./landingLatencyEvents";
 
 type LandingContextValue = {
   view: LandingView | null;
@@ -21,7 +22,8 @@ type LandingContextValue = {
 
 const LandingContext = createContext<LandingContextValue | null>(null);
 
-// One request stream for the installed-app list, not one poll per node.
+// One shared stream delivers per-pair changes. The overview poll only keeps
+// configuration/status current; it must not overwrite newer streamed latency.
 export function LandingProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
   const [view, setView] = useState<LandingView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,6 +32,12 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
   const writing = useRef(false);
   const reading = useRef<AbortController | null>(null);
   const mounted = useRef(false);
+  const liveLatencies = useRef<LandingLatencySnapshot | null>(null);
+
+  const adoptView = useCallback((next: LandingView) => {
+    const live = liveLatencies.current;
+    setView({ ...next, latencies: freshLandingLatencies(live?.revision === next.revision ? live.samples : next.latencies) });
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!mounted.current || writing.current || reading.current) return;
@@ -40,7 +48,7 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
     try {
       const next = await api.landing(controller.signal);
       if (mounted.current && generation.current === current) {
-        setView(next);
+        adoptView(next);
         setFailed(false);
       }
     } catch {
@@ -49,18 +57,43 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
       window.clearTimeout(timeout);
       if (reading.current === controller) reading.current = null;
     }
-  }, []);
+  }, [adoptView]);
 
   useEffect(() => {
     if (!enabled) return;
     mounted.current = true;
+    liveLatencies.current = null;
     void refresh();
+    const source = new EventSource("/api/v1/three-x-ui/landing/latencies/events", { withCredentials: true });
+    source.onmessage = (message) => {
+      if (!mounted.current) return;
+      try {
+        const next = applyLandingLatencyEvent(liveLatencies.current, JSON.parse(message.data) as LandingLatencyEvent);
+        if (!next) return;
+        liveLatencies.current = next;
+        setView((current) => current?.revision === next.revision ? { ...current, latencies: freshLandingLatencies(next.samples) } : current);
+      } catch {
+        // Ignore an incomplete event. Reconnection begins with a fresh snapshot.
+      }
+    };
+    // EventSource owns reconnection. Retain fresh values while disconnected.
+    const expiryTimer = window.setInterval(() => {
+      setView((current) => {
+        if (!current) return current;
+        const latencies = freshLandingLatencies(current.latencies);
+        return latencies === current.latencies ? current : { ...current, latencies };
+      });
+    }, 1000);
     const timer = window.setInterval(() => void refresh(), 15000);
     return () => {
       mounted.current = false;
       generation.current++;
       reading.current?.abort();
       reading.current = null;
+      source.onmessage = null;
+      source.close();
+      liveLatencies.current = null;
+      window.clearInterval(expiryTimer);
       window.clearInterval(timer);
     };
   }, [enabled, refresh]);
@@ -77,7 +110,7 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
     const timeout = window.setTimeout(() => controller.abort(), 15000);
     try {
       const next = await operation(controller.signal);
-      if (mounted.current && generation.current === current) setView(next);
+      if (mounted.current && generation.current === current) adoptView(next);
     } catch {
       // The server may have accepted a request whose reply was lost. Require
       // a new overview before allowing another revision-sensitive mutation.
