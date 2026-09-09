@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -42,7 +43,7 @@ func TestMultipleLandingMigrationPreservesSelectionAndBacksUp(t *testing.T) {
 			if err != nil || selection.Revision != 9 || !slices.Equal(selection.NodeIDs, expected) {
 				t.Fatalf("selection not preserved: %+v %v", selection, err)
 			}
-			backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v66-before-v67-*.db"))
+			backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v66-before-v%d-*.db", centerSchemaVersion)))
 			if err != nil || len(backups) != 1 {
 				t.Fatalf("missing pre-migration backup: %v %v", backups, err)
 			}
@@ -183,6 +184,26 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if err := store.ConfigureLandingProxy(ctx, "multi-proxy", LandingProxyInput{Enabled: true, LandingNodeID: b, Revision: 1}); err != nil {
 		t.Fatal(err)
 	}
+	assertApplied := func(revision uint64, nodeID string) {
+		t.Helper()
+		view, err := store.Landing(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, proxy := range view.Proxies {
+			if proxy.ApplicationID == "multi-proxy" {
+				if proxy.Applied == nil || proxy.Applied.Revision != revision || proxy.Applied.LandingNodeID != nodeID {
+					t.Fatalf("incorrect confirmed exit: %+v", proxy.Applied)
+				}
+				if proxy.Connection == "healthy" {
+					t.Fatal("configuration receipt alone was reported as healthy")
+				}
+				return
+			}
+		}
+		t.Fatal("missing proxy view")
+	}
+	assertApplied(1, a)
 	if grants(a) != 1 || grants(b) != 2 {
 		t.Fatal("switch revoked old grant before acknowledgement")
 	}
@@ -200,6 +221,7 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if err := store.completeLandingProxy(ctx, source, task.Revision, task.Attempt, false); err != nil {
 		t.Fatal(err)
 	}
+	assertApplied(1, a)
 	if grants(a) != 1 || grants(b) != 2 {
 		t.Fatal("failed switch removed a grant")
 	}
@@ -216,12 +238,14 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if err := store.completeLandingProxy(ctx, source, task.Revision, task.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
+	assertApplied(1, a)
 	if grants(a) != 1 {
 		t.Fatal("stale attempt revoked source")
 	}
 	if err := store.completeLandingProxy(ctx, source, retry.Revision, retry.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
+	assertApplied(2, b)
 	if grants(a) != 0 || grants(b) != 2 {
 		t.Fatal("successful switch did not retire exactly the old source")
 	}
@@ -235,6 +259,11 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if err := store.completeLandingProxy(ctx, source, stop.Revision, stop.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
+	assertApplied(3, "")
+	if err := store.completeLandingProxy(ctx, source, retry.Revision, retry.Attempt, true); err != nil {
+		t.Fatal(err)
+	}
+	assertApplied(3, "")
 	if grants(b) != 1 {
 		t.Fatal("restoration removed another node's source")
 	}

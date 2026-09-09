@@ -5,6 +5,7 @@ export type LandingProxyView = {
   enabled: boolean;
   status: "pending" | "applying" | "ready" | "failed" | "stopped";
   connection: "disabled" | "pending" | "healthy" | "unhealthy";
+  applied?: { revision: number; landingNodeId: string };
 };
 
 export type LandingLatencyView = {

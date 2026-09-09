@@ -107,6 +107,10 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 	if err := store.completeLandingProxy(ctx, proxy, enable.Revision, enable.Attempt, false); err != nil {
 		t.Fatal(err)
 	}
+	view, err := store.Landing(ctx)
+	if err != nil || len(view.Proxies) != 1 || view.Proxies[0].Applied != nil {
+		t.Fatalf("failed first enable must not invent an applied exit: %+v %v", view.Proxies, err)
+	}
 	if claim(false) != nil {
 		t.Fatal("failed configuration retried without user action")
 	}
