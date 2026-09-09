@@ -392,6 +392,10 @@ for (const route of routes) {
   if (["handleLanding", "handleSelectLanding", "handleConfigureLandingProxy"].includes(route.handler)) {
     operation.description = "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations.";
     operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/LandingView" };
+  } else if (route.handler === "handleLandingLatencyEvents") {
+    operation.description = "Administrator-only live latency stream. The first event and each reconnect send a reset snapshot; subsequent events contain only changed or expired source/landing pairs. Each sample includes its measurement time. The stream renews periodically to revalidate the session.";
+  } else if (route.handler === "handleAgentLandingLatency") {
+    operation.description = "Immediately report one completed latency observation. Agent bearer authentication owns the source node; Center revalidates the configured target identity, revision and freshness. Invalid or replayed observations return 409. This endpoint cannot change routes or authorize business traffic.";
   } else if (route.handler === "handleCreateRealityCommand") {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "regionCode", "name",

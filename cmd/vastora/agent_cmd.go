@@ -634,6 +634,9 @@ func runAgent(arguments []string) error {
 				}
 				time.Sleep(time.Second)
 			}
+			go client.RunLandingLatencyChecks(context.Background(), store, func(err error) {
+				controlLogger.Error("Landing latency report failed", "event", "landing.latency", "error", controlplane.SafeError(err.Error()))
+			})
 			go client.RunHeartbeats(context.Background(), store, *heartbeatInterval, func(err error) {
 				controlLogger.Error("Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
 			})

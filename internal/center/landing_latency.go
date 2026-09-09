@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -17,10 +18,11 @@ type landingLatencySample struct {
 }
 type landingLatencyKey struct{ NodeID, LandingNodeID string }
 type LandingLatencyView struct {
-	NodeID        string   `json:"nodeId"`
-	LandingNodeID string   `json:"landingNodeId"`
-	State         string   `json:"state"`
-	LatencyMS     *float64 `json:"latencyMs,omitempty"`
+	NodeID        string    `json:"nodeId"`
+	LandingNodeID string    `json:"landingNodeId"`
+	State         string    `json:"state"`
+	LatencyMS     *float64  `json:"latencyMs,omitempty"`
+	CheckedAt     time.Time `json:"checkedAt"`
 }
 
 // Only configured managed peers are advertised, never caller-provided hosts.
@@ -54,7 +56,7 @@ func (s *Store) landingLatencyTargets(ctx context.Context, nodeID string) ([]lan
 	return targets, rows.Err()
 }
 
-func (s *Store) recordLandingLatencies(nodeID string, targets []landing.LatencyTarget, observations []landing.LatencyObservation) {
+func (s *Store) recordLandingLatency(nodeID string, targets []landing.LatencyTarget, observation *landing.LatencyObservation) bool {
 	now := s.now().UTC()
 	allowed := make(map[string]landing.LatencyTarget, len(targets))
 	for _, target := range targets {
@@ -71,22 +73,26 @@ func (s *Store) recordLandingLatencies(nodeID string, targets []landing.LatencyT
 	if s.landingLatencies == nil {
 		s.landingLatencies = make(map[landingLatencyKey]landingLatencySample)
 	}
-	for _, value := range observations {
-		target, ok := allowed[value.Target.NodeID]
-		if !ok || value.Target != target || value.CheckedAt.Before(now.Add(-landingHealthFreshness)) || value.CheckedAt.After(now.Add(5*time.Second)) {
-			continue
-		}
-		if value.State != "direct" {
-			value.State, value.LatencyMS = "unavailable", nil
-		} else if value.LatencyMS == nil || math.IsNaN(*value.LatencyMS) || math.IsInf(*value.LatencyMS, 0) || *value.LatencyMS <= 0 || *value.LatencyMS > landing.CheckTimeout.Seconds()*1000 {
-			value.LatencyMS = nil
-		}
-		key := landingLatencyKey{nodeID, target.NodeID}
-		if previous, ok := s.landingLatencies[key]; ok && previous.Observation.Target == target && !value.CheckedAt.After(previous.Observation.CheckedAt) {
-			continue
-		}
-		s.landingLatencies[key] = landingLatencySample{Observation: value, ReceivedAt: now}
+	if observation == nil {
+		return false
 	}
+	value := *observation
+	target, ok := allowed[value.Target.NodeID]
+	if !ok || value.Target != target || value.CheckedAt.Before(now.Add(-landingHealthFreshness)) || value.CheckedAt.After(now.Add(5*time.Second)) {
+		return false
+	}
+	if value.State != "direct" {
+		value.State, value.LatencyMS = "unavailable", nil
+	} else if value.LatencyMS == nil || math.IsNaN(*value.LatencyMS) || math.IsInf(*value.LatencyMS, 0) || *value.LatencyMS <= 0 || *value.LatencyMS > landing.CheckTimeout.Seconds()*1000 {
+		value.LatencyMS = nil
+	}
+	key := landingLatencyKey{nodeID, target.NodeID}
+	if previous, ok := s.landingLatencies[key]; ok && previous.Observation.Target == target && !value.CheckedAt.After(previous.Observation.CheckedAt) {
+		return false
+	}
+	s.landingLatencies[key] = landingLatencySample{Observation: value, ReceivedAt: now}
+	s.taskChanges.notify(landingLatencyWakeKey)
+	return true
 }
 
 func (s *Store) landingLatencyViews(selection LandingSelection) []LandingLatencyView {
@@ -99,7 +105,7 @@ func (s *Store) landingLatencyViews(selection LandingSelection) []LandingLatency
 		if value.Target.Revision != selection.Revision || !slices.Contains(selection.NodeIDs, key.LandingNodeID) || now.Sub(value.CheckedAt) > landingHealthFreshness || now.Sub(sample.ReceivedAt) > landingHealthFreshness {
 			continue
 		}
-		views = append(views, LandingLatencyView{NodeID: key.NodeID, LandingNodeID: key.LandingNodeID, State: value.State, LatencyMS: value.LatencyMS})
+		views = append(views, LandingLatencyView{NodeID: key.NodeID, LandingNodeID: key.LandingNodeID, State: value.State, LatencyMS: value.LatencyMS, CheckedAt: value.CheckedAt})
 	}
 	slices.SortFunc(views, func(a, b LandingLatencyView) int {
 		if order := strings.Compare(a.NodeID, b.NodeID); order != 0 {
@@ -108,4 +114,30 @@ func (s *Store) landingLatencyViews(selection LandingSelection) []LandingLatency
 		return strings.Compare(a.LandingNodeID, b.LandingNodeID)
 	})
 	return views
+}
+
+// Results are owned by the authenticated source, not an ID in the request
+// body. Re-resolve allowed peers so a removed or replaced target cannot report.
+func (s *Server) handleAgentLandingLatency(writer http.ResponseWriter, request *http.Request) {
+	credential, ok := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+	nodeID := request.PathValue("id")
+	if !ok || s.store.authenticateAgent(request.Context(), nodeID, strings.TrimSpace(credential)) != nil {
+		writeError(writer, http.StatusUnauthorized, nil)
+		return
+	}
+	var input landing.LatencyObservation
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	targets, err := s.store.landingLatencyTargets(request.Context(), nodeID)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	if !s.store.recordLandingLatency(nodeID, targets, &input) {
+		writeError(writer, http.StatusConflict, nil)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }

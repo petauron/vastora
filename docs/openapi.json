@@ -1916,6 +1916,50 @@
         "description": "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations."
       }
     },
+    "/api/v1/three-x-ui/landing/latencies/events": {
+      "get": {
+        "tags": [
+          "Applications"
+        ],
+        "summary": "Landing Latency Events",
+        "operationId": "landingLatencyEvents_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Administrator-only live latency stream. The first event and each reconnect send a reset snapshot; subsequent events contain only changed or expired source/landing pairs. Each sample includes its measurement time. The stream renews periodically to revalidate the session."
+      }
+    },
     "/api/v1/applications/{id}/landing": {
       "put": {
         "tags": [
@@ -5510,59 +5554,6 @@
                       }
                     ]
                   },
-                  "landingLatencies": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "target": {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "properties": {
-                            "nodeId": {
-                              "type": "string"
-                            },
-                            "revision": {
-                              "type": "integer"
-                            },
-                            "peer": {
-                              "type": "object",
-                              "additionalProperties": false,
-                              "properties": {
-                                "id": {
-                                  "type": "string"
-                                },
-                                "publicKey": {
-                                  "type": "string"
-                                },
-                                "address": {
-                                  "type": "string"
-                                }
-                              }
-                            }
-                          }
-                        },
-                        "state": {
-                          "type": "string"
-                        },
-                        "latencyMs": {
-                          "anyOf": [
-                            {
-                              "type": "number"
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
-                        "checkedAt": {
-                          "type": "string",
-                          "format": "date-time"
-                        }
-                      }
-                    }
-                  },
                   "nodeListenerRevision": {
                     "type": "integer"
                   },
@@ -5589,6 +5580,111 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/agents/{id}/landing-latencies": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent Landing Latency",
+        "operationId": "agentLandingLatency_post",
+        "x-vastora-audience": "agent",
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content."
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "target": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "nodeId": {
+                        "type": "string"
+                      },
+                      "revision": {
+                        "type": "integer"
+                      },
+                      "peer": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "publicKey": {
+                            "type": "string"
+                          },
+                          "address": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "latencyMs": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "checkedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Immediately report one completed latency observation. Agent bearer authentication owns the source node; Center revalidates the configured target identity, revision and freshness. Invalid or replayed observations return 409. This endpoint cannot change routes or authorize business traffic."
       }
     },
     "/api/v1/agents/{id}/tasks/next": {
@@ -7860,6 +7956,10 @@
                       "type": "null"
                     }
                   ]
+                },
+                "checkedAt": {
+                  "type": "string",
+                  "format": "date-time"
                 }
               }
             }

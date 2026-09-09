@@ -2,7 +2,7 @@
 
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppData } from "../App";
 import type { ApplicationCommand, Publication } from "../types";
 import { APIError, api } from "../api";
@@ -24,6 +24,12 @@ import { commandSecretScope, secretOperation } from "../secret-delivery";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | undefined;
+beforeEach(() => {
+  vi.stubGlobal("EventSource", class {
+    onmessage: ((event: MessageEvent<string>) => void) | null = null;
+    close() {}
+  });
+});
 afterEach(() => {
   if (root) act(() => root?.unmount());
   root = undefined;
