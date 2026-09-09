@@ -146,7 +146,7 @@ func TestLocalRealityRemovalWaitsForLandingRestoration(t *testing.T) {
 	ctx := context.Background()
 	state := landing.DesiredState{NodeID: node.ID, Revision: 1, Proxy: &landing.ProxyPlan{ApplicationID: "controller", InboundTags: []string{"local-node"}, Peer: landing.PeerIdentity{ID: "landing", PublicKey: "key", Address: "100.64.0.8"}}}
 	encoded, _ := json.Marshal(state)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_proxy_states(node_id,application_id,landing_node_id,source_address,desired_revision,applied_revision,desired_json,status,updated_at) VALUES(?,'controller',?,'100.64.0.9',1,1,?,'ready',?)`, node.ID, node.ID, encoded, store.now().UTC().Format(time.RFC3339Nano)); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_proxy_states(node_id,application_id,landing_node_id,server_revision,source_address,desired_revision,applied_revision,desired_json,status,updated_at) VALUES(?,'controller',?,1,'100.64.0.9',1,1,?,'ready',?)`, node.ID, node.ID, encoded, store.now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.CreateRealityRemoveCommand(ctx, RealityRemoveCommandInput{ServiceID: "local"}); err != nil {
