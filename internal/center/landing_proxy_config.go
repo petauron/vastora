@@ -26,6 +26,22 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.configureLandingProxy(ctx, tx, applicationID, input); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicationID string, input LandingProxyInput) error {
+	if input.Enabled {
+		var removing int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, realityRemoveCommandKind).Scan(&removing); err != nil {
+			return err
+		}
+		if removing > 0 {
+			return errors.New("center: wait for local node removal to finish")
+		}
+	}
 	var nodeID, address string
 	if err := tx.QueryRowContext(ctx, `SELECT a.node_id,COALESCE(p.headscale_address,'') FROM applications a JOIN agents n ON n.id=a.node_id LEFT JOIN agent_network_profiles p ON p.agent_id=n.id
  WHERE a.id=? AND a.app_key='vastora-official/3x-ui' AND a.runtime='docker' AND n.status='active' AND n.credential_revoked_at=''`, applicationID).Scan(&nodeID, &address); err != nil {
@@ -34,7 +50,7 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 	var revision uint64
 	var owner, source, status string
 	var encoded []byte
-	err = tx.QueryRowContext(ctx, `SELECT desired_revision,landing_node_id,source_address,status,desired_json FROM landing_proxy_states WHERE node_id=?`, nodeID).Scan(&revision, &owner, &source, &status, &encoded)
+	err := tx.QueryRowContext(ctx, `SELECT desired_revision,landing_node_id,source_address,status,desired_json FROM landing_proxy_states WHERE node_id=?`, nodeID).Scan(&revision, &owner, &source, &status, &encoded)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -53,7 +69,7 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 		if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='pending',last_error='',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND status='failed'`, s.now().UTC().Format(time.RFC3339Nano), nodeID, revision); err != nil {
 			return err
 		}
-		return tx.Commit()
+		return nil
 	}
 	if input.Enabled && revision > 0 && status != "ready" && status != "stopped" {
 		return errors.New("center: finish or restore the current landing change before switching servers")
@@ -153,7 +169,7 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 	if err := s.recordTaskEvent(ctx, tx, landingProxyTaskID(nodeID, int64(state.Revision)), nodeID, "landing.proxy.apply", int64(state.Revision), "queued", "landing settings queued"); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 // Called only after the proxy confirms restoration. Use the stored source

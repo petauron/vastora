@@ -76,6 +76,17 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 	}
 	for _, value := range observations {
 		applicationID := masterApplicationID
+		if value.RemoteNodeID == 0 && value.InboundTag != "" {
+			// A heartbeat sampled before deletion may arrive after its acknowledgement.
+			// Fence only that exact removed identity; a newly created tag is unaffected.
+			var removed int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND state='succeeded' AND json_extract(input_json,'$.inboundTag')=? AND 'inbound-' || json_extract(input_json,'$.inboundId')=?`, applicationID, realityRemoveCommandKind, value.InboundTag, value.Name).Scan(&removed); err != nil {
+				return err
+			}
+			if removed > 0 {
+				continue
+			}
+		}
 		if value.RemoteNodeID > 0 {
 			err := tx.QueryRowContext(ctx, `SELECT worker_application_id FROM three_x_ui_nodes WHERE master_application_id = ? AND remote_node_id = ? AND status = 'ready'`, masterApplicationID, value.RemoteNodeID).Scan(&applicationID)
 			if errors.Is(err, sql.ErrNoRows) {
@@ -166,6 +177,14 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 		}
 	}
 	for _, serviceID := range existing {
+		var removing int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND json_extract(input_json,'$.serviceId')=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, realityRemoveCommandKind, serviceID).Scan(&removing); err != nil {
+			return err
+		}
+		if removing > 0 {
+			// Preserve the command's identity and retry entry until deletion is acknowledged.
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), serviceID); err != nil {
 			return err
 		}

@@ -24,6 +24,7 @@ const (
 	realityVerifyCommandKind  = "3xui.reality.verify"
 	realityHardenCommandKind  = "3xui.reality.harden"
 	realityRenameCommandKind  = "3xui.reality.rename"
+	realityRemoveCommandKind  = "3xui.reality.remove"
 	subscriptionCommandKind   = "3xui.subscription.configure"
 	clientCommandKind         = "3xui.clients.manage"
 	nodeCommandKind           = "3xui.node.reconcile"
@@ -694,7 +695,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		return value, err
 	}
 	switch value.Kind {
-	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind:
+	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind, realityRemoveCommandKind:
 		var input RealityCommandTask
 		var result RealityCommandResult
 		if json.Unmarshal(inputJSON, &input) != nil || json.Unmarshal(resultJSON, &result) != nil {
@@ -772,7 +773,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 }
 
 func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
-	if kind != realityCommandKind && kind != realityVerifyCommandKind && kind != realityHardenCommandKind && kind != realityRenameCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
+	if kind != realityCommandKind && kind != realityVerifyCommandKind && kind != realityHardenCommandKind && kind != realityRenameCommandKind && kind != realityRemoveCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string

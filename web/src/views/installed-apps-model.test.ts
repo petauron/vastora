@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Application, Publication, Service } from "../types";
-import { canCreateRealityNode, installedAppGroups, publicationNeedsAttention, threeXUIAppKey } from "./installed-apps-model";
+import { canCreateRealityNode, installedAppGroups, publicationNeedsAttention, showInstalledNode, threeXUIAppKey } from "./installed-apps-model";
 
 const application = (id: string, overrides: Partial<Application> = {}): Application => ({
   id, name: "3x-ui", nodeId: id, siteId: "site-a", appKey: threeXUIAppKey,
@@ -26,6 +26,17 @@ const publication = (id: string, serviceId: string, overrides: Partial<Publicati
 const data = (): Parameters<typeof installedAppGroups>[0] => ({ applications: [], apps: [], agents: [], sites: [], services: [], publications: [], deployments: [], threeXUIControllerMigrations: [] });
 
 describe("installed application grouping", () => {
+  it("keeps a subscription-only controller manageable without a duplicate node row", () => {
+    const input = data();
+    input.applications = [application("controller", { role: "master", controllerApplicationId: "controller" }), application("worker", { role: "worker", controllerApplicationId: "controller", nodeSyncStatus: "ready" })];
+    input.services = [service("old-local", "controller", { status: "stopped" }), service("panel", "controller", { source: "catalog", protocol: "http", appProtocol: "", management: true })];
+    const group = installedAppGroups(input)[0];
+    expect(group.controller?.services.map((value) => value.id)).toEqual(["panel"]);
+    expect(group.instances.filter(showInstalledNode).map((value) => value.application.id)).toEqual(["worker"]);
+    expect(canCreateRealityNode(group.controller!)).toBe(true);
+    input.services.push(service("new-local", "controller"));
+    expect(installedAppGroups(input)[0].instances.filter(showInstalledNode)).toHaveLength(2);
+  });
   it("puts the actual controller first and counts its local node only once", () => {
     const input = data();
     input.applications = [

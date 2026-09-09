@@ -401,6 +401,10 @@ for (const route of routes) {
       "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName", "verificationId", "targetIp",
     ];
+  } else if (route.handler === "handleRemoveRealityCommand") {
+    operation.description = "Remove only the global subscription controller's local managed VLESS inbound. Retains the controller, global clients, subscription URL and remote nodes. Restores any landing route before deletion. Repeated requests resume an active operation for the same service.";
+    operation.requestBody.content["application/json"].schema.required = ["serviceId"];
+    operation.responses["202"].content["application/json"].schema = schemaForGoType("ApplicationCommandView");
   } else if (route.handler === "handleRecoveryReadiness") {
     operation.description = "Reads the cluster recovery inventory without probing nodes or opening caller-supplied files. Center-only backup never establishes cluster readiness. External application restore evidence is operator-attested; readiness is not proof of an actual cluster recovery drill or off-host storage.";
     operation.responses["200"].headers = noStoreHeaders;
