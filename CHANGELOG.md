@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.116](https://github.com/petauron/vastora/compare/v0.1.0-alpha.115...v0.1.0-alpha.116) (2026-09-09)
+
+
+### Features
+
+* remove local controller VLESS nodes and recover unavailable entries ([#379](https://github.com/petauron/vastora/issues/379)) ([a4fef2e](https://github.com/petauron/vastora/commit/a4fef2e00580547d1620373db55e8ad97a66b3b3))
+
 ## [0.1.0-alpha.115](https://github.com/petauron/vastora/compare/v0.1.0-alpha.114...v0.1.0-alpha.115) (2026-09-09)
 
 
