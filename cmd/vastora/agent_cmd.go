@@ -23,6 +23,7 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/tailscalehost"
+	"github.com/sethvargo/go-retry"
 )
 
 func runAgent(arguments []string) error {
@@ -767,6 +768,20 @@ func updateAgentExecutable(ctx context.Context, client *http.Client, connection 
 }
 
 func downloadAgentUpdateCandidate(ctx context.Context, client *http.Client, connection agent.Connection, directory string) (string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	var candidate, version string
+	err := retry.Do(ctx, retry.WithMaxRetries(3, retry.NewExponential(2*time.Second)), func(ctx context.Context) error {
+		var err error
+		candidate, version, err = downloadAgentUpdateAttempt(ctx, client, connection, directory)
+		return err
+	})
+	return candidate, version, err
+}
+
+// Each attempt creates a new request and temporary file. Partial downloads are
+// removed before retrying; metadata, digest and executable checks stay mandatory.
+func downloadAgentUpdateAttempt(ctx context.Context, client *http.Client, connection agent.Connection, directory string) (string, string, error) {
 	endpoint, err := agentUpdateEndpoint(connection, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		return "", "", err
@@ -778,12 +793,16 @@ func downloadAgentUpdateCandidate(ctx context.Context, client *http.Client, conn
 	request.Header.Set("Authorization", "Bearer "+connection.Credential)
 	response, err := client.Do(request)
 	if err != nil {
-		return "", "", fmt.Errorf("download Agent update: %w", err)
+		return "", "", retryAgentDownloadError(fmt.Errorf("download Agent update: %w", err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		return "", "", fmt.Errorf("download Agent update: %s: %s", response.Status, strings.TrimSpace(string(message)))
+		err := fmt.Errorf("download Agent update: %s: %s", response.Status, strings.TrimSpace(string(message)))
+		if response.StatusCode == http.StatusBadGateway || response.StatusCode == http.StatusServiceUnavailable || response.StatusCode == http.StatusGatewayTimeout {
+			err = retry.RetryableError(err)
+		}
+		return "", "", err
 	}
 	expectedVersion := strings.TrimSpace(response.Header.Get("X-Vastora-Version"))
 	expectedDigest := strings.ToLower(strings.TrimSpace(response.Header.Get("X-Vastora-SHA256")))
@@ -814,7 +833,7 @@ func downloadAgentUpdateCandidate(ctx context.Context, client *http.Client, conn
 		copyErr = closeErr
 	}
 	if copyErr != nil {
-		return "", "", fmt.Errorf("store Agent update: %w", copyErr)
+		return "", "", retryAgentDownloadError(fmt.Errorf("store Agent update: %w", copyErr))
 	}
 	if got := fmt.Sprintf("%x", digest.Sum(nil)); got != expectedDigest {
 		return "", "", errors.New("agent update integrity check failed")

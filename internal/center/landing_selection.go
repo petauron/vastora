@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
@@ -14,8 +16,8 @@ import (
 const landingSelectionKey = "three_x_ui_landing_selection"
 
 type LandingSelection struct {
-	NodeID   string `json:"nodeId"`
-	Revision uint64 `json:"revision"`
+	NodeIDs  []string `json:"nodeIds"`
+	Revision uint64   `json:"revision"`
 }
 
 type LandingCandidate struct {
@@ -25,14 +27,22 @@ type LandingCandidate struct {
 
 type LandingView struct {
 	LandingSelection
-	Status     string               `json:"status"`
+	Servers    []LandingServerView  `json:"servers"`
 	Candidates []LandingCandidate   `json:"candidates"`
 	Proxies    []LandingProxyView   `json:"proxies"`
 	Latencies  []LandingLatencyView `json:"latencies"`
 }
 
+type LandingServerView struct {
+	NodeID string `json:"nodeId"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	InUse  bool   `json:"inUse"`
+}
+
 type LandingProxyView struct {
 	ApplicationID string `json:"applicationId"`
+	LandingNodeID string `json:"landingNodeId"`
 	Revision      uint64 `json:"revision"`
 	Enabled       bool   `json:"enabled"`
 	Status        string `json:"status"`
@@ -43,13 +53,13 @@ func readLandingSelection(ctx context.Context, tx *sql.Tx) (LandingSelection, er
 	var encoded string
 	err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=?`, landingSelectionKey).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
-		return LandingSelection{}, nil
+		return LandingSelection{NodeIDs: []string{}}, nil
 	}
 	if err != nil {
 		return LandingSelection{}, err
 	}
 	var value LandingSelection
-	if json.Unmarshal([]byte(encoded), &value) != nil || value.Revision == 0 {
+	if json.Unmarshal([]byte(encoded), &value) != nil || value.Revision == 0 || value.NodeIDs == nil {
 		return value, errors.New("center: invalid landing selection")
 	}
 	return value, nil
@@ -65,21 +75,22 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 	if err != nil {
 		return LandingView{}, err
 	}
-	view := LandingView{LandingSelection: selection, Status: "disabled", Candidates: []LandingCandidate{}, Proxies: []LandingProxyView{}}
+	view := LandingView{LandingSelection: selection, Servers: []LandingServerView{}, Candidates: []LandingCandidate{}, Proxies: []LandingProxyView{}}
 	view.Latencies = s.landingLatencyViews(selection)
-	if selection.NodeID != "" {
-		var status string
-		if err := tx.QueryRowContext(ctx, `SELECT status FROM landing_server_states WHERE node_id=?`, selection.NodeID).Scan(&status); err != nil {
+	for _, nodeID := range selection.NodeIDs {
+		server := LandingServerView{NodeID: nodeID}
+		var active bool
+		var lastSeen string
+		if err := tx.QueryRowContext(ctx, `SELECT a.name,s.status,a.status='active' AND a.credential_revoked_at='',a.last_seen_at,
+ EXISTS(SELECT 1 FROM json_each(s.desired_json,'$.plan.sources'))
+ FROM landing_server_states s JOIN agents a ON a.id=s.node_id WHERE s.node_id=?`, nodeID).Scan(&server.Name, &server.Status, &active, &lastSeen, &server.InUse); err != nil {
 			return view, err
 		}
-		switch status {
-		case "ready":
-			view.Status = "ready"
-		case "failed":
-			view.Status = "failed"
-		default:
-			view.Status = "pending"
+		seen, _ := time.Parse(time.RFC3339Nano, lastSeen)
+		if !active || s.now().Sub(seen) > 2*time.Minute {
+			server.Status = "offline"
 		}
+		view.Servers = append(view.Servers, server)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.name,p.headscale_address FROM agents a JOIN agent_network_profiles p ON p.agent_id=a.id
  WHERE a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed' AND a.last_seen_at>? ORDER BY a.name,a.id`, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano))
@@ -101,7 +112,7 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		return view, err
 	}
 	rows.Close()
-	proxies, err := tx.QueryContext(ctx, `SELECT application_id,desired_revision,json_extract(desired_json,'$.proxy') IS NOT NULL,status,health_revision,health_ok,health_checked_at,health_received_at FROM landing_proxy_states ORDER BY application_id`)
+	proxies, err := tx.QueryContext(ctx, `SELECT application_id,landing_node_id,desired_revision,json_extract(desired_json,'$.proxy') IS NOT NULL,status,health_revision,health_ok,health_checked_at,health_received_at FROM landing_proxy_states ORDER BY application_id`)
 	if err != nil {
 		return view, err
 	}
@@ -111,7 +122,7 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		var healthRevision uint64
 		var healthy bool
 		var checked, received string
-		if err := proxies.Scan(&proxy.ApplicationID, &proxy.Revision, &proxy.Enabled, &proxy.Status, &healthRevision, &healthy, &checked, &received); err != nil {
+		if err := proxies.Scan(&proxy.ApplicationID, &proxy.LandingNodeID, &proxy.Revision, &proxy.Enabled, &proxy.Status, &healthRevision, &healthy, &checked, &received); err != nil {
 			return view, err
 		}
 		proxy.Connection = landingConnectionStatus(proxy.Enabled, proxy.Status, proxy.Revision, healthRevision, healthy, checked, received, s.now().UTC())
@@ -123,6 +134,19 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 // Selection stores only managed node identity. Address resolution and task
 // queueing share one transaction so a concurrent profile edit cannot redirect it.
 func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error {
+	if len(input.NodeIDs) > landing.MaxServers {
+		return errors.New("center: too many landing servers")
+	}
+	input.NodeIDs = slices.Clone(input.NodeIDs)
+	if input.NodeIDs == nil {
+		input.NodeIDs = []string{}
+	}
+	slices.Sort(input.NodeIDs)
+	for i, id := range input.NodeIDs {
+		if strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) || i > 0 && input.NodeIDs[i-1] == id {
+			return errors.New("center: invalid landing server selection")
+		}
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -135,24 +159,32 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 	if current.Revision != input.Revision {
 		return errors.New("center: landing selection changed; refresh and retry")
 	}
-	if current.NodeID == input.NodeID {
+	if slices.Equal(current.NodeIDs, input.NodeIDs) {
 		return nil
 	}
-	var plan *landing.ServerPlan
-	if input.NodeID != "" {
+	for _, nodeID := range input.NodeIDs {
+		if slices.Contains(current.NodeIDs, nodeID) {
+			continue
+		}
 		var address string
 		if err := tx.QueryRowContext(ctx, `SELECT p.headscale_address FROM agents a JOIN agent_network_profiles p ON p.agent_id=a.id
- WHERE a.id=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed' AND a.last_seen_at>?`, input.NodeID, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano)).Scan(&address); err != nil {
+ WHERE a.id=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed' AND a.last_seen_at>?`, nodeID, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano)).Scan(&address); err != nil {
 			return errors.New("center: select an online managed private-network node")
 		}
-		plan = &landing.ServerPlan{Revision: 1, Address: address}
+		plan := &landing.ServerPlan{Revision: 1, Address: address}
 		if plan.Validate() != nil {
 			return errors.New("center: selected node has no usable private address")
 		}
+		if err := s.queueLandingServer(ctx, tx, nodeID, plan); err != nil {
+			return err
+		}
 	}
-	if current.NodeID != "" {
+	for _, nodeID := range current.NodeIDs {
+		if slices.Contains(input.NodeIDs, nodeID) {
+			continue
+		}
 		var encoded []byte
-		if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, current.NodeID).Scan(&encoded); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, nodeID).Scan(&encoded); err != nil {
 			return err
 		}
 		var state landing.ServerState
@@ -160,14 +192,9 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 			return errors.New("center: invalid current landing configuration")
 		}
 		if state.Plan != nil && len(state.Plan.Sources) > 0 {
-			return errors.New("center: disable landing on connected VLESS nodes before changing the landing host")
+			return errors.New("center: move connected nodes before removing this landing server")
 		}
-		if err := s.queueLandingServer(ctx, tx, current.NodeID, nil); err != nil {
-			return err
-		}
-	}
-	if plan != nil {
-		if err := s.queueLandingServer(ctx, tx, input.NodeID, plan); err != nil {
+		if err := s.queueLandingServer(ctx, tx, nodeID, nil); err != nil {
 			return err
 		}
 	}

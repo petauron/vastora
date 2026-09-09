@@ -115,8 +115,8 @@ func (s *Store) completeLandingProxy(ctx context.Context, nodeID string, revisio
 	if err := s.recordTaskEvent(ctx, tx, landingProxyTaskID(nodeID, revision), nodeID, "landing.proxy.apply", revision, event, message); err != nil {
 		return err
 	}
-	if succeeded && state.Proxy == nil {
-		if err := s.removeLandingProxySource(ctx, tx, nodeID); err != nil {
+	if succeeded {
+		if err := s.retireLandingSources(ctx, tx, nodeID, state.Proxy != nil); err != nil {
 			return err
 		}
 	}

@@ -25,14 +25,14 @@ func TestLandingSelectionUsesManagedNodeAndQueuesDisable(t *testing.T) {
  VALUES('agent-v3','100.64.0.8','100.64.0.8','["headscale"]',?,?) ON CONFLICT(agent_id) DO UPDATE SET headscale_address=excluded.headscale_address`, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeID: "100.64.0.9"}); err == nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"100.64.0.9"}}); err == nil {
 		t.Fatal("arbitrary address accepted as node")
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeID: "agent-v3"}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"agent-v3"}}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := store.Landing(ctx)
-	if err != nil || view.NodeID != "agent-v3" || view.Revision != 1 || view.Status != "pending" {
+	if err != nil || len(view.NodeIDs) != 1 || view.NodeIDs[0] != "agent-v3" || view.Revision != 1 || len(view.Servers) != 1 || view.Servers[0].Status != "pending" {
 		t.Fatalf("selection not queued: %+v %v", view, err)
 	}
 	if err := store.SelectLanding(ctx, LandingSelection{}); err == nil {
@@ -42,7 +42,7 @@ func TestLandingSelectionUsesManagedNodeAndQueuesDisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err = store.Landing(ctx)
-	if err != nil || view.NodeID != "" || view.Revision != 2 {
+	if err != nil || len(view.NodeIDs) != 0 || view.Revision != 2 {
 		t.Fatal("selection not disabled")
 	}
 	var state string

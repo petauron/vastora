@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -306,7 +307,7 @@ func TestAccessSessionMigrationFrom65PreservesEntriesAndBacksUp(t *testing.T) {
 	if err != nil || record.ApplicationID != "center-app" || record.IdentityProviderID != "otp" {
 		t.Fatalf("identity lost: %+v %v", record, err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v65-before-v66-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v65-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("backup missing: %v %v", backups, err)
 	}

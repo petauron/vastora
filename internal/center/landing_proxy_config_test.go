@@ -64,32 +64,32 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeID: owner}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner}}); err != nil {
 		t.Fatal(err)
 	}
 	completeServer(claim(true))
-	target, err := store.landingLatencyTarget(ctx, proxy)
-	if err != nil || target == nil || target.Peer.Address != "100.64.0.8" {
+	target, err := store.landingLatencyTargets(ctx, proxy)
+	if err != nil || len(target) != 1 || target[0].Peer.Address != "100.64.0.8" {
 		t.Fatalf("disabled proxy must receive the selected latency target: %v", err)
 	}
-	if self, err := store.landingLatencyTarget(ctx, owner); err != nil || self != nil {
+	if self, err := store.landingLatencyTargets(ctx, owner); err != nil || len(self) != 0 {
 		t.Fatalf("landing server must not probe itself: %v", err)
 	}
 	exec(`UPDATE agents SET tailscale_ownership='external' WHERE id=?`, proxy)
-	externalTarget, err := store.landingLatencyTarget(ctx, proxy)
-	if err != nil || externalTarget == nil || *externalTarget != *target {
+	externalTarget, err := store.landingLatencyTargets(ctx, proxy)
+	if err != nil || len(externalTarget) != 1 || externalTarget[0] != target[0] {
 		t.Fatalf("external private network must receive the same read-only latency target: %v", err)
 	}
 	exec(`UPDATE agents SET credential_revoked_at=? WHERE id=?`, now, proxy)
-	if revoked, err := store.landingLatencyTarget(ctx, proxy); err != nil || revoked != nil {
+	if revoked, err := store.landingLatencyTargets(ctx, proxy); err != nil || len(revoked) != 0 {
 		t.Fatalf("revoked source received latency target: %v", err)
 	}
 	exec(`UPDATE agents SET credential_revoked_at='',status='disabled' WHERE id=?`, proxy)
-	if disabled, err := store.landingLatencyTarget(ctx, proxy); err != nil || disabled != nil {
+	if disabled, err := store.landingLatencyTargets(ctx, proxy); err != nil || len(disabled) != 0 {
 		t.Fatalf("disabled source received latency target: %v", err)
 	}
 	exec(`UPDATE agents SET status='active',tailscale_ownership='managed' WHERE id=?`, proxy)
-	if err := store.ConfigureLandingProxy(ctx, "landing-app", LandingProxyInput{Enabled: true}); err != nil {
+	if err := store.ConfigureLandingProxy(ctx, "landing-app", LandingProxyInput{Enabled: true, LandingNodeID: owner}); err != nil {
 		t.Fatal(err)
 	}
 	if claim(false) != nil {
@@ -110,7 +110,7 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 	if claim(false) != nil {
 		t.Fatal("failed configuration retried without user action")
 	}
-	if err := store.ConfigureLandingProxy(ctx, "landing-app", LandingProxyInput{Enabled: true, Revision: uint64(enable.Revision)}); err != nil {
+	if err := store.ConfigureLandingProxy(ctx, "landing-app", LandingProxyInput{Enabled: true, LandingNodeID: owner, Revision: uint64(enable.Revision)}); err != nil {
 		t.Fatal(err)
 	}
 	retry := claim(false)

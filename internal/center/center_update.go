@@ -197,10 +197,10 @@ func (s *Server) RunAgentUpdateRollout(ctx context.Context, interval time.Durati
 		interval = 5 * time.Second
 	}
 	reconcile := func() {
-		if !s.startupReady.Load() || strings.TrimSpace(s.agentBinariesDir) == "" {
-			return
+		ready, err := s.agentUpdateRolloutReady(ctx)
+		if err == nil && ready {
+			_, err = s.store.QueueAgentUpdates(ctx, Version)
 		}
-		_, err := s.store.QueueAgentUpdates(ctx, Version)
 		if err != nil && ctx.Err() == nil && report != nil {
 			report(err)
 		}

@@ -150,6 +150,67 @@
     }
 }
 
+/* The application work area shares one restrained desktop palette, including
+   portalled selectors and sheets. Other product pages keep their own theme. */
+.apps-workspace {
+  --background: #f5f5f7;
+  --foreground: #24262b;
+  --card: #ffffff;
+  --card-foreground: var(--foreground);
+  --popover: #ffffff;
+  --popover-foreground: var(--foreground);
+  --muted: #ebecf0;
+  --muted-foreground: #626671;
+  --secondary: #f0f1f4;
+  --secondary-foreground: var(--foreground);
+  --border: #dedee3;
+  --input: #d0d2d9;
+  --primary: #1764d9;
+  --primary-foreground: #ffffff;
+  --accent: #e7effd;
+  --accent-foreground: #174f9f;
+  --ring: #1764d9;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  color: var(--foreground);
+}
+
+.dark .apps-workspace {
+  --background: #191c21;
+  --foreground: #f3f4f6;
+  --card: #232830;
+  --popover: #292e36;
+  --muted: #2d333d;
+  --muted-foreground: #b0b6c0;
+  --secondary: #2b313a;
+  --border: #3b414b;
+  --input: #4b5360;
+  --primary: #1764d9;
+  --accent: #293e59;
+  --accent-foreground: #d2e5ff;
+  --ring: #80b7ff;
+}
+
+.apps-workspace :is(h1, h2, h3, [data-slot="sheet-title"]) { font-family: inherit; }
+.apps-workspace [data-slot="tabs-trigger"] { padding-inline: 12px; }
+.apps-workspace [data-slot="tabs-trigger"][data-active] { background: var(--card); }
+.apps-chooser [data-slot="tabs-list"] { height: auto; min-height: 40px; justify-content: flex-start; }
+.apps-chooser [data-slot="tabs-trigger"] { min-height: 34px; flex: none; }
+.apps-status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.apps-instance-table th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.apps-instance-table td { font-size: 13px; }
+.apps-landing-sheet[data-side="right"] { width: min(100%, 440px); max-width: 440px; }
+.apps-landing-sheet [data-slot="sheet-header"] { padding: 24px 40px 8px 20px; gap: 8px; }
+
+@media (min-width: 1024px) {
+  .apps-instance-table td { padding-block: 10px; }
+}
+@media (pointer: coarse) {
+  .apps-workspace [data-slot="tabs-trigger"] { min-height: 44px; }
+  .apps-workspace [data-slot="tabs-list"] { height: auto; }
+  .apps-workspace [data-slot="input-group"] { height: auto; min-height: 44px; }
+  .apps-workspace [data-slot="input-group-control"] { min-height: 44px; }
+}
+
 @keyframes progress-indeterminate {
   from {
     transform: translateX(-100%);

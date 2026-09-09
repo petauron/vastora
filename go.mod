@@ -13,6 +13,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/projectdiscovery/cdncheck v1.2.51
+	github.com/sethvargo/go-retry v0.4.0
 	golang.org/x/crypto v0.56.0
 	golang.org/x/mod v0.40.0
 	golang.org/x/net v0.58.0
@@ -53,7 +54,6 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
-	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

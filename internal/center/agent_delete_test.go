@@ -41,7 +41,7 @@ func TestDeleteAgentProtectsLandingSelection(t *testing.T) {
 	if err := store.DisableAgent(ctx, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`INSERT INTO settings(key,value) VALUES(?,json_object('nodeId',?,'revision',1)) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, landingSelectionKey, node.ID); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO settings(key,value) VALUES(?,json_object('nodeIds',json_array(?),'revision',1)) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, landingSelectionKey, node.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.DeleteAgent(ctx, node.ID); err == nil {

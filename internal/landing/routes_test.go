@@ -31,6 +31,50 @@ func fixtureRouteChange(t *testing.T, raw string) RouteChange {
 	return change
 }
 
+func TestLandingRouteReplacementPreservesOriginalExitAndRetryBoundaries(t *testing.T) {
+	first := fixtureRouteChange(t, routeFixture)
+	peer := PeerIdentity{ID: "second-exit", PublicKey: "second-key", Address: "100.64.0.9"}
+	second, err := PrepareRouteReplacement(first, first.After, 8, []string{"business"}, peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(second.Before) != string(first.Before) || string(second.Replaces) != string(first.After) {
+		t.Fatal("replacement lost the original restore point")
+	}
+	for _, test := range []struct {
+		current        json.RawMessage
+		enabled, write bool
+		want           json.RawMessage
+	}{
+		{first.After, true, true, second.After},
+		{second.After, true, false, second.After},
+		{first.After, false, true, first.Before},
+		{second.After, false, true, first.Before},
+	} {
+		result, write, err := second.NextWrite(test.current, test.enabled)
+		if err != nil || write != test.write || string(result) != string(test.want) {
+			t.Fatalf("unsafe replacement decision: %v %v", write, err)
+		}
+	}
+	changed := json.RawMessage(strings.Replace(string(first.After), "\"stats\":{}", "\"stats\":{\"edited\":true}", 1))
+	if _, _, err := second.NextWrite(changed, true); err == nil {
+		t.Fatal("replacement overwrote independent route changes")
+	}
+	if _, err := PrepareRouteReplacement(first, first.After, 7, []string{"business"}, peer); err == nil {
+		t.Fatal("stale replacement revision accepted")
+	}
+	if _, err := PrepareRouteReplacement(first, first.Before, 8, []string{"business"}, peer); err == nil {
+		t.Fatal("replaced an unapplied checkpoint")
+	}
+	third, err := PrepareRouteReplacement(second, second.After, 9, []string{"business"}, PeerIdentity{ID: "third-exit", PublicKey: "third-key", Address: "100.64.0.10"})
+	if err != nil || string(third.Before) != string(first.Before) {
+		t.Fatal("repeated switching lost the original exit")
+	}
+	if _, _, err := third.NextWrite(first.After, true); err == nil {
+		t.Fatal("replacement accepted an obsolete earlier exit")
+	}
+}
+
 func TestLandingRoutePreservesUnselectedRulesAndSettings(t *testing.T) {
 	change := fixtureRouteChange(t, routeFixture)
 	before, _, _ := decodeRouteSettings(change.Before)
