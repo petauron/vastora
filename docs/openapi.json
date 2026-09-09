@@ -7928,6 +7928,25 @@
                 },
                 "connection": {
                   "type": "string"
+                },
+                "applied": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "revision": {
+                          "type": "integer"
+                        },
+                        "landingNodeId": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               }
             }

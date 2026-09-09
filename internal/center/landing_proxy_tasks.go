@@ -25,6 +25,7 @@ const landingProxySchema = `CREATE TABLE landing_proxy_states (
  health_received_at TEXT NOT NULL DEFAULT '',
  desired_revision INTEGER NOT NULL CHECK(desired_revision > 0),
  applied_revision INTEGER NOT NULL DEFAULT 0,
+ applied_landing_node_id TEXT,
  desired_json BLOB NOT NULL CHECK(json_valid(desired_json)),
  status TEXT NOT NULL CHECK(status IN ('pending','applying','ready','failed','stopped')),
  attempt INTEGER NOT NULL DEFAULT 0,
@@ -109,7 +110,12 @@ func (s *Store) completeLandingProxy(ctx context.Context, nodeID string, revisio
 			status = "stopped"
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET applied_revision=?,status=?,lease_expires_at='',last_error=?,updated_at=? WHERE node_id=?`, applied, status, message, s.now().UTC().Format(time.RFC3339Nano), nodeID); err != nil {
+	// Keep the last confirmed exit on failure. NULL means no confirmed record;
+	// an empty ID means the original routing was explicitly restored. This is
+	// historical display data, not authorization or proof of live connectivity.
+	if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET applied_revision=?,
+ applied_landing_node_id=CASE WHEN ? THEN CASE WHEN json_extract(desired_json,'$.proxy') IS NULL THEN '' ELSE landing_node_id END ELSE applied_landing_node_id END,
+ status=?,lease_expires_at='',last_error=?,updated_at=? WHERE node_id=?`, applied, succeeded, status, message, s.now().UTC().Format(time.RFC3339Nano), nodeID); err != nil {
 		return err
 	}
 	if err := s.recordTaskEvent(ctx, tx, landingProxyTaskID(nodeID, revision), nodeID, "landing.proxy.apply", revision, event, message); err != nil {

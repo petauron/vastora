@@ -34,7 +34,7 @@ function overview(): LandingView {
     nodeIds: ["a", "b"], revision: 4,
     servers: [{ nodeId: "a", name: "落地 A", status: "ready", inUse: true }, { nodeId: "b", name: "落地 B", status: "ready", inUse: false }],
     candidates: [{ nodeId: "a", name: "落地 A" }, { nodeId: "b", name: "落地 B" }, { nodeId: "c", name: "落地 C" }],
-    proxies: [{ applicationId: "app-one", landingNodeId: "a", enabled: false, revision: 2, status: "stopped", connection: "disabled" }],
+    proxies: [{ applicationId: "app-one", landingNodeId: "a", enabled: false, revision: 2, status: "stopped", connection: "disabled", applied: { revision: 2, landingNodeId: "" } }],
     latencies: [{ nodeId: "source-one", landingNodeId: "a", state: "direct", latencyMs: 12, checkedAt: new Date().toISOString() }, { nodeId: "source-one", landingNodeId: "b", state: "direct", latencyMs: 88, checkedAt: new Date().toISOString() }, { nodeId: "source-two", landingNodeId: "b", state: "direct", latencyMs: 1, checkedAt: new Date().toISOString() }],
   };
 }
@@ -68,9 +68,51 @@ it("shares one overview and sends a specific exit with the observed revision", a
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("落地 B"));
   expect(option).toBeDefined();
   await act(async () => { option?.click(); });
+  expect(update).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("代理连接会短暂中断");
+  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "确认切换")?.click(); });
   expect(update).toHaveBeenCalledWith("app-one", "b", 2, expect.any(AbortSignal));
   expect(container.textContent).toContain("正在切换");
+  expect(container.textContent).toContain("上次应用：原出口规则");
   expect(container.querySelector<HTMLButtonElement>('[role="combobox"]')?.disabled).toBe(true);
+});
+
+it("keeps a failed desired exit separate from the last applied exit and cancels restoration without writing", async () => {
+  const view = overview();
+  view.proxies[0] = { ...view.proxies[0], enabled: true, landingNodeId: "b", status: "failed", connection: "unhealthy", revision: 3, applied: { revision: 2, landingNodeId: "a" } };
+  vi.spyOn(api, "landing").mockResolvedValue(view);
+  const update = vi.spyOn(api, "configureLandingProxy").mockResolvedValue(view);
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="Node one" locked={false} language="en" /></LandingProvider>); });
+  expect(container.textContent).toContain("Change failed");
+  expect(container.textContent).toContain("Last applied: 落地 A");
+  expect(container.textContent).not.toContain("Connected");
+  await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
+  await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("Own exit"))?.click(); });
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("including any existing custom proxy");
+  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "Cancel")?.click(); });
+  expect(update).not.toHaveBeenCalled();
+  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("落地 B");
+});
+
+it("requires a fresh selection if the configuration revision changes while confirmation is open", async () => {
+  vi.useFakeTimers();
+  const view = overview();
+  vi.spyOn(api, "landing").mockResolvedValueOnce(view).mockResolvedValue({ ...view, proxies: [{ ...view.proxies[0], revision: 3 }] });
+  const update = vi.spyOn(api, "configureLandingProxy").mockResolvedValue(view);
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
+  await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
+  await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("落地 B"))?.click(); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("节点状态已变化");
+  const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "确认切换");
+  expect(confirm?.disabled).toBe(true);
+  expect(update).not.toHaveBeenCalled();
 });
 
 it("protects in-use servers while letting an unused server be removed", async () => {

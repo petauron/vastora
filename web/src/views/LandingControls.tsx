@@ -209,6 +209,7 @@ function latencyLabel(language: Language, latency: LandingView["latencies"][numb
 export function LandingExitSelect({ applicationId, nodeId, name, locked, language }: { applicationId: string; nodeId: string; name: string; locked: boolean; language: Language }) {
   const state = useContext(LandingContext);
   const id = useId();
+  const [confirmation, setConfirmation] = useState<{ target: string; revision: number } | null>(null);
   if (!state) return null;
   const { view, busy, failed } = state;
   const proxy = view?.proxies.find((item) => item.applicationId === applicationId);
@@ -219,15 +220,23 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
   const items = [{ value: "", label: copy(language, "本机出口", "Own exit") }, ...servers.map((server) => ({ value: server.nodeId, label: server.name }))];
   if (selected && !items.some((item) => item.value === selected)) items.push({ value: selected, label: copy(language, "当前落地机（不可用）", "Current exit (unavailable)") });
   const disabled = locked || busy || failed || !view || pending;
+  const applied = proxy?.applied;
+  const exitName = (target: string) => target
+    ? view?.servers.find((server) => server.nodeId === target)?.name ?? copy(language, "原落地机", "Previous landing server")
+    : copy(language, "原出口规则", "Original exit rules");
+  const showApplied = pending || configurationFailed || Boolean(proxy?.enabled && proxy.connection !== "healthy");
+  const confirmationStale = confirmation !== null && confirmation.revision !== (proxy?.revision ?? 0);
+  const targetReady = !confirmation?.target || servers.some((server) => server.nodeId === confirmation.target && server.status === "ready");
+  const confirmDisabled = disabled || confirmationStale || !targetReady;
   const status = pending ? copy(language, "正在切换…", "Switching…")
     : configurationFailed ? copy(language, "切换失败", "Change failed")
     : proxy?.enabled ? proxy.connection === "healthy" ? copy(language, "已连接", "Connected") : copy(language, "连接不可用", "Unavailable")
     : null;
-  return <FieldGroup className="gap-1">
+  return <><FieldGroup className="gap-1">
     <Field className="gap-1">
       <FieldLabel className="sr-only" htmlFor={id}>{copy(language, `${name} 的出口`, `Exit for ${name}`)}</FieldLabel>
       <Select items={items} value={view ? selected : null} disabled={disabled} onValueChange={(value) => {
-        if (typeof value === "string" && value !== selected) void state.change((signal) => api.configureLandingProxy(applicationId, value, proxy?.revision ?? 0, signal));
+        if (typeof value === "string" && value !== selected) setConfirmation({ target: value, revision: proxy?.revision ?? 0 });
       }}>
         <SelectTrigger id={id} className="w-full" aria-describedby={status ? `${id}-status` : undefined}><SelectValue placeholder={failed ? copy(language, "状态未知", "Unknown") : copy(language, "正在读取…", "Loading…")} /></SelectTrigger>
         <SelectContent className="apps-workspace">
@@ -243,9 +252,35 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
         </SelectContent>
       </Select>
       {status ? <FieldDescription id={`${id}-status`} aria-live="polite" className={configurationFailed || proxy?.connection === "unhealthy" ? "text-destructive" : undefined}>{status}</FieldDescription> : null}
+      {showApplied ? <FieldDescription>{applied
+        ? copy(language, `上次应用：${exitName(applied.landingNodeId)}`, `Last applied: ${exitName(applied.landingNodeId)}`)
+        : copy(language, "尚无已应用记录", "No confirmed configuration yet")}</FieldDescription> : null}
     </Field>
-    {configurationFailed ? <Button type="button" variant="outline" size="sm" disabled={disabled} aria-label={copy(language, `重试 ${name} 的出口设置`, `Retry exit settings for ${name}`)} onClick={() => void state.change((signal) => api.configureLandingProxy(applicationId, selected, proxy.revision, signal))}>{copy(language, "重试", "Retry")}</Button> : null}
-  </FieldGroup>;
+    {configurationFailed ? <Button type="button" variant="outline" size="sm" disabled={disabled} aria-label={copy(language, `重试 ${name} 的出口设置`, `Retry exit settings for ${name}`)} onClick={() => setConfirmation({ target: selected, revision: proxy.revision })}>{copy(language, "重试", "Retry")}</Button> : null}
+  </FieldGroup>
+    <Sheet open={confirmation !== null} onOpenChange={(open) => { if (!open) setConfirmation(null); }}>
+      <SheetContent finalFocus={() => document.getElementById(id)}>
+        <SheetHeader>
+          <SheetTitle>{copy(language, `切换 ${name} 的出口`, `Change the exit for ${name}`)}</SheetTitle>
+          <SheetDescription>{copy(language, "此节点现有的代理连接会短暂中断，订阅地址保持不变。", "Existing proxy connections on this node will briefly disconnect. Subscription addresses stay unchanged.")}</SheetDescription>
+        </SheetHeader>
+        <FieldGroup className="px-4">
+          <Field><FieldLabel>{copy(language, "切换到", "Change to")}</FieldLabel><FieldDescription>{exitName(confirmation?.target ?? "")}</FieldDescription></Field>
+          {!confirmation?.target ? <FieldDescription>{copy(language, "将恢复启用落地前的出口规则；原有的自定义代理仍会保留。", "Restores the exit rules from before landing was enabled, including any existing custom proxy.")}</FieldDescription> : null}
+          {confirmationStale || !targetReady ? <FieldDescription role="alert">{copy(language, "节点状态已变化，请取消后重新选择。", "The node state changed. Cancel and select again.")}</FieldDescription> : null}
+        </FieldGroup>
+        <SheetFooter>
+          <Button variant="outline" onClick={() => setConfirmation(null)}>{copy(language, "取消", "Cancel")}</Button>
+          <Button disabled={confirmDisabled} onClick={() => {
+            if (!confirmation || confirmDisabled) return;
+            const { target, revision } = confirmation;
+            setConfirmation(null);
+            void state.change((signal) => api.configureLandingProxy(applicationId, target, revision, signal));
+          }}>{copy(language, "确认切换", "Confirm change")}</Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  </>;
 }
 
 // Keep a useful preview when a node still uses its own exit. Never mistake a

@@ -41,12 +41,20 @@ type LandingServerView struct {
 }
 
 type LandingProxyView struct {
-	ApplicationID string `json:"applicationId"`
-	LandingNodeID string `json:"landingNodeId"`
+	ApplicationID string              `json:"applicationId"`
+	LandingNodeID string              `json:"landingNodeId"`
+	Revision      uint64              `json:"revision"`
+	Enabled       bool                `json:"enabled"`
+	Status        string              `json:"status"`
+	Connection    string              `json:"connection"`
+	Applied       *LandingAppliedExit `json:"applied,omitempty"`
+}
+
+// Applied is the last acknowledged configuration, not a live health result.
+// An empty LandingNodeID denotes the original routing, not necessarily direct.
+type LandingAppliedExit struct {
 	Revision      uint64 `json:"revision"`
-	Enabled       bool   `json:"enabled"`
-	Status        string `json:"status"`
-	Connection    string `json:"connection"`
+	LandingNodeID string `json:"landingNodeId"`
 }
 
 func readLandingSelection(ctx context.Context, tx *sql.Tx) (LandingSelection, error) {
@@ -112,7 +120,7 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		return view, err
 	}
 	rows.Close()
-	proxies, err := tx.QueryContext(ctx, `SELECT application_id,landing_node_id,desired_revision,json_extract(desired_json,'$.proxy') IS NOT NULL,status,health_revision,health_ok,health_checked_at,health_received_at FROM landing_proxy_states ORDER BY application_id`)
+	proxies, err := tx.QueryContext(ctx, `SELECT application_id,landing_node_id,desired_revision,json_extract(desired_json,'$.proxy') IS NOT NULL,status,health_revision,health_ok,health_checked_at,health_received_at,applied_revision,applied_landing_node_id FROM landing_proxy_states ORDER BY application_id`)
 	if err != nil {
 		return view, err
 	}
@@ -122,8 +130,13 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		var healthRevision uint64
 		var healthy bool
 		var checked, received string
-		if err := proxies.Scan(&proxy.ApplicationID, &proxy.LandingNodeID, &proxy.Revision, &proxy.Enabled, &proxy.Status, &healthRevision, &healthy, &checked, &received); err != nil {
+		var appliedRevision uint64
+		var appliedNode sql.NullString
+		if err := proxies.Scan(&proxy.ApplicationID, &proxy.LandingNodeID, &proxy.Revision, &proxy.Enabled, &proxy.Status, &healthRevision, &healthy, &checked, &received, &appliedRevision, &appliedNode); err != nil {
 			return view, err
+		}
+		if appliedRevision > 0 && appliedNode.Valid {
+			proxy.Applied = &LandingAppliedExit{Revision: appliedRevision, LandingNodeID: appliedNode.String}
 		}
 		proxy.Connection = landingConnectionStatus(proxy.Enabled, proxy.Status, proxy.Revision, healthRevision, healthy, checked, received, s.now().UTC())
 		view.Proxies = append(view.Proxies, proxy)
