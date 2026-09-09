@@ -80,6 +80,10 @@ func (api *accessSessionAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer api.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	respond := func(result any) { _ = json.NewEncoder(w).Encode(map[string]any{"success": true, "result": result}) }
+	if r.Method == "GET" && r.URL.Path == "/accounts/account/cfd_tunnel" && r.URL.Query().Get("per_page") == "1" {
+		respond([]any{})
+		return
+	}
 	if r.Method == "GET" && r.URL.Path == "/zones/zone" {
 		respond(map[string]string{"name": "example.com"})
 		return
