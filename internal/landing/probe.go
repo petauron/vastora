@@ -3,13 +3,17 @@ package landing
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/netip"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -22,31 +26,54 @@ import (
 type Probe struct{}
 
 func (p Probe) Check(ctx context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, CheckTimeout)
+	defer cancel()
+	return p.check(ctx, peer, revision)
+}
+
+func (p Probe) check(ctx context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
 	result := BusinessResult{Peer: peer, Revision: revision, StartedAt: time.Now().UTC()}
 	address, err := netip.ParseAddr(peer.Address)
 	if err != nil || !netip.MustParsePrefix("100.64.0.0/10").Contains(address) || peer.ID == "" || peer.PublicKey == "" || revision == 0 {
 		return result, errors.New("landing: invalid business probe identity")
 	}
-	ctx, cancel := context.WithTimeout(ctx, CheckTimeout)
-	defer cancel()
 	endpoint := net.JoinHostPort(peer.Address, "1080")
 	exit, err := p.tcp(ctx, endpoint)
 	if err != nil {
-		return result, errors.New("landing: TCP exchange failed")
+		return result, err
 	}
 	result.TCP, result.ExitIPv4 = true, exit
 	relay, err := p.udp(ctx, endpoint)
 	if err != nil {
-		return result, errors.New("landing: UDP exchange failed")
+		return result, err
 	}
 	result.UDP, result.UDPRelay, result.CheckedAt = true, relay, time.Now().UTC()
 	return result, nil
 }
 
-func (p Probe) tcp(ctx context.Context, endpoint string) (string, error) {
-	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+func (p Probe) tcp(ctx context.Context, endpoint string) (exit string, err error) {
+	var stage atomic.Value
+	stage.Store("socks_connect")
+	defer func() {
+		if err != nil {
+			err = probeFailure(stage.Load().(string), err)
+		}
+	}()
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		TLSHandshakeStart: func() { stage.Store("tls_handshake") },
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			if err == nil {
+				stage.Store("http_response")
+			}
+		},
+	})
+	// This transport handles one request only. Use the bounded request context
+	// explicitly: net/http detaches the context passed to DialContext from the
+	// request deadline so a connection can normally be reused by other requests.
+	// A pending SOCKS handshake must not outlive this probe's 3s/8s budget.
+	transport := &http.Transport{DialContext: func(_ context.Context, network, address string) (net.Conn, error) {
 		return p.dialTCP(ctx, endpoint, network, address)
-	}, DisableKeepAlives: true, TLSHandshakeTimeout: CheckTimeout, ResponseHeaderTimeout: CheckTimeout}
+	}, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	// The domain is passed unchanged to SOCKS. TLS certificate verification is
@@ -60,13 +87,19 @@ func (p Probe) tcp(ctx context.Context, endpoint string) (string, error) {
 		return "", err
 	}
 	defer response.Body.Close()
+	stage.Store("http_response")
 	if response.StatusCode != http.StatusOK {
-		return "", errors.New("landing: exit probe rejected")
+		return "", &probeError{stage: "http_response", reason: "status_" + strconv.Itoa(response.StatusCode)}
 	}
+	stage.Store("http_body")
 	body, err := io.ReadAll(io.LimitReader(response.Body, 4097))
-	if err != nil || len(body) > 4096 {
+	if err != nil {
+		return "", err
+	}
+	if len(body) > 4096 {
 		return "", errors.New("landing: invalid exit probe response")
 	}
+	stage.Store("exit_address")
 	return traceExit(body)
 }
 
@@ -76,7 +109,7 @@ func (p Probe) dialTCP(ctx context.Context, endpoint, network, address string) (
 	if network != "tcp" || address != "www.cloudflare.com:443" {
 		return nil, errors.New("landing: invalid TCP probe destination")
 	}
-	dialer, err := proxy.SOCKS5("tcp", endpoint, nil, &net.Dialer{Timeout: CheckTimeout})
+	dialer, err := proxy.SOCKS5("tcp", endpoint, nil, &net.Dialer{})
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +140,13 @@ func traceExit(body []byte) (string, error) {
 // x/net/proxy implements SOCKS CONNECT but not UDP ASSOCIATE. This bounded
 // RFC 1928 exchange covers only the configured private IPv4 relay range; it is
 // not a general-purpose SOCKS client and cannot follow arbitrary relay hosts.
-func (p Probe) udp(ctx context.Context, endpoint string) (string, error) {
+func (p Probe) udp(ctx context.Context, endpoint string) (relay string, err error) {
+	stage := "udp_control_connect"
+	defer func() {
+		if err != nil {
+			err = probeFailure(stage, err)
+		}
+	}()
 	control, err := (&net.Dialer{}).DialContext(ctx, "tcp", endpoint)
 	if err != nil {
 		return "", err
@@ -122,9 +161,11 @@ func (p Probe) udp(ctx context.Context, endpoint string) (string, error) {
 	if err := control.SetDeadline(deadline); err != nil {
 		return "", err
 	}
+	stage = "udp_socks_negotiate"
 	if err := negotiateSOCKS(control); err != nil {
 		return "", err
 	}
+	stage = "udp_associate"
 	if err := writeSOCKS(control, []byte{5, 3, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
 		return "", err
 	}
@@ -139,10 +180,12 @@ func (p Probe) udp(ctx context.Context, endpoint string) (string, error) {
 		return "", err
 	}
 	bound := netip.AddrPortFrom(netip.AddrFrom4([4]byte(reply[4:8])), binary.BigEndian.Uint16(reply[8:]))
+	stage = "udp_relay_validation"
 	host, _, splitErr := net.SplitHostPort(endpoint)
 	if splitErr != nil || !validUDPRelay(bound.String(), host) {
 		return "", errors.New("landing: unexpected UDP relay")
 	}
+	stage = "udp_connect"
 	connection, err := (&net.Dialer{}).DialContext(ctx, "udp4", bound.String())
 	if err != nil {
 		return "", err
@@ -164,12 +207,17 @@ func (p Probe) udp(ctx context.Context, endpoint string) (string, error) {
 		return "", err
 	}
 	header := []byte{0, 0, 0, 1, 1, 1, 1, 1, 0, 53}
+	stage = "udp_dns_exchange"
 	if err := writeSOCKS(connection, append(header, packet...)); err != nil {
 		return "", err
 	}
 	buffer := make([]byte, 4097)
 	n, err := connection.Read(buffer)
-	if err != nil || n > 4096 || n <= len(header) || string(buffer[:len(header)]) != string(header) {
+	if err != nil {
+		return "", err
+	}
+	stage = "udp_dns_response"
+	if n > 4096 || n <= len(header) || string(buffer[:len(header)]) != string(header) {
 		return "", errors.New("landing: invalid UDP payload")
 	}
 	var answer dnsmessage.Message

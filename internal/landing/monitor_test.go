@@ -1,9 +1,53 @@
 package landing
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestMonitorDoesNotRepeatCallerCutoverAndStillStopsOnExit(t *testing.T) {
+	gate := fixtureGate(t)
+	document, err := json.Marshal(fixtureNFT(t, gate))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	gate.run = func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+		if input != nil {
+			writes++
+			return nil, nil
+		}
+		return document, nil
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stops, reports := 0, 0
+	monitor := Monitor{Gate: gate, Links: &LinkChecker{HTTPClient: &http.Client{Transport: latencyTransport{server.URL}}},
+		CheckBusiness: func(context.Context, PeerIdentity, uint64) (BusinessResult, error) {
+			t.Fatal("business check ran without a direct peer")
+			return BusinessResult{}, nil
+		},
+		StopConnections: func(context.Context) error { stops++; return nil },
+		Report: func(status MonitorStatus) {
+			reports++
+			if stops != 0 || status.State != "blocked" || writes == 0 {
+				t.Fatalf("repeated initial cutover or opened gate: stops=%d writes=%d status=%+v", stops, writes, status)
+			}
+			cancel()
+		},
+	}
+	if err := monitor.Run(ctx); err != context.Canceled || stops != 1 || reports != 1 {
+		t.Fatalf("shutdown cleanup changed: stops=%d reports=%d err=%v", stops, reports, err)
+	}
+}
 
 func TestLandingLeaseRequiresCurrentDirectAndActualBusinessProof(t *testing.T) {
 	gate := fixtureGate(t)
