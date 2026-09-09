@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.113](https://github.com/petauron/vastora/compare/v0.1.0-alpha.112...v0.1.0-alpha.113) (2026-09-09)
+
+
+### Features
+
+* support multiple landing servers and redesign app workspace ([#370](https://github.com/petauron/vastora/issues/370)) ([b20fc8f](https://github.com/petauron/vastora/commit/b20fc8fbe92e9caef29ce0e4a4d35b00d8db46c7))
+
 ## [0.1.0-alpha.112](https://github.com/petauron/vastora/compare/v0.1.0-alpha.111...v0.1.0-alpha.112) (2026-09-09)
 
 
