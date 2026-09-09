@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.111](https://github.com/petauron/vastora/compare/v0.1.0-alpha.110...v0.1.0-alpha.111) (2026-09-09)
+
+
+### Features
+
+* configurable Cloudflare Access session duration ([#366](https://github.com/petauron/vastora/issues/366)) ([cd4be28](https://github.com/petauron/vastora/commit/cd4be28117d5cda9a8b158cdda50d431f7c37c29))
+
 ## [0.1.0-alpha.110](https://github.com/petauron/vastora/compare/v0.1.0-alpha.109...v0.1.0-alpha.110) (2026-09-08)
 
 
