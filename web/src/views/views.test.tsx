@@ -72,7 +72,7 @@ function openAppDetails(container: HTMLElement, applicationID?: string) {
   const row = applicationID
     ? [...container.querySelectorAll<HTMLElement>("[data-application-id]")].find((element) => element.dataset.applicationId === applicationID)
     : container.querySelector<HTMLElement>("[data-application-id]");
-  const manage = [...(row?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.trim() === "管理");
+  const manage = [...(row?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.getAttribute("aria-label")?.startsWith("管理 ") && button.getAttribute("aria-label")?.endsWith(" 应用"));
   if (!manage) throw new Error("Application management action was not rendered");
   act(() => manage.click());
   return document.body;
@@ -346,12 +346,27 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("管理应用、订阅与各节点的访问入口");
     const installed = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("已安装"));
     const store = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"));
-    expect(installed?.querySelector('[data-slot="app-section-count"]')?.getAttribute("data-active")).toBe("true");
+    expect(installed?.getAttribute("aria-selected")).toBe("true");
     act(() => store?.click());
-    expect(store?.getAttribute("aria-pressed")).toBe("true");
-    expect(store?.querySelector('[data-slot="app-section-count"]')?.getAttribute("data-active")).toBe("true");
-    expect(store?.querySelector('[data-slot="app-section-count"]')?.textContent).toBe("1");
+    expect(store?.getAttribute("aria-selected")).toBe("true");
+    expect(store?.textContent).toContain("1");
     expect(container.textContent).toContain("所有可用节点都已安装或正在安装此应用");
+  });
+
+  it("shows one application workspace at a time and switches using named tabs", () => {
+    const data = dashboard();
+    data.apps.push({ ...data.apps[0], key: "vastora-official/z-app", app: { ...data.apps[0].app, id: "z-app", name: { en: "Second app", "zh-CN": "第二个应用" } } });
+    data.applications.push({ ...data.applications[0], id: "second-app", appKey: "vastora-official/z-app", name: "第二个应用" });
+    const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
+    expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
+    expect(container.querySelector('[data-application-id="running"]')).not.toBeNull();
+    const tab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((item) => item.textContent?.includes("第二个应用"));
+    expect(tab).toBeDefined();
+    act(() => tab?.click());
+    expect(tab?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
+    expect(container.querySelector('[data-application-id="second-app"]')).not.toBeNull();
+    expect(container.querySelector('[data-application-id="running"]')).toBeNull();
   });
 
   it("keeps CPA installation one-click and protects reveal and rotation", async () => {
@@ -849,7 +864,7 @@ describe("network and app views", () => {
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("订阅主机");
     expect(container.textContent).toContain("VLESS 节点");
-    expect(container.textContent).toContain("1 个订阅主机 · 2 个节点");
+    expect(container.textContent).toContain("2 个 VLESS 节点");
     expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
     expect(container.querySelectorAll("[data-application-id]")).toHaveLength(2);
     expect(container.querySelector("[data-application-id]")?.getAttribute("data-application-id")).toBe("three-x-ui");
@@ -858,7 +873,7 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("修改配置");
     expect(container.textContent).not.toContain("卸载");
     expect(container.textContent).not.toContain("10.0.0.20:31443");
-    expect(container.textContent).toContain("客户端与订阅统一在这里管理");
+    expect(container.querySelector('[data-slot="subscription-controller"]')?.textContent).toContain("客户端与订阅");
 
     openAppDetails(container, "three-x-ui-worker");
     const details = document.querySelector('[data-slot="sheet-content"]');
@@ -931,7 +946,7 @@ describe("network and app views", () => {
     const nextData = { ...data, publications: [{ ...publication, status: "failed" as const, lastError: "Origin unavailable" }] };
     act(() => root?.render(<ThemeProvider><AppsView data={nextData} language="zh-CN" mutate={async () => undefined} /></ThemeProvider>));
     expect(container.querySelector('[data-slot="subscription-controller"] a')).toBeNull();
-    expect(container.textContent).toContain("面板或订阅入口需要处理");
+    expect(container.querySelector('[data-slot="subscription-controller"]')?.textContent).toContain("入口待处理");
   });
 
   it("refreshes an open management sheet by application ID and closes it after uninstall", () => {

@@ -16,6 +16,7 @@ import (
 type landingRuntimeState struct {
 	Desired       landing.DesiredState  `json:"desired"`
 	Applied       *landing.DesiredState `json:"applied,omitempty"`
+	Retiring      *landing.DesiredState `json:"retiring,omitempty"`
 	ApplicationID string                `json:"applicationId,omitempty"`
 	ContainerID   string                `json:"containerId,omitempty"`
 	Bridge        string                `json:"bridge,omitempty"`
@@ -27,6 +28,11 @@ type landingRuntimeState struct {
 func (state landingRuntimeState) validate() error {
 	if err := state.Desired.Validate(); err != nil {
 		return err
+	}
+	if state.Retiring != nil {
+		if state.Retiring.Validate() != nil || state.Retiring.NodeID != state.Desired.NodeID || state.Retiring.Proxy == nil || state.Retiring.Proxy.ApplicationID != state.ApplicationID || state.Route == nil || state.Retiring.Revision >= state.Route.Revision || len(state.Route.Replaces) == 0 {
+			return errors.New("agent: invalid retiring landing checkpoint")
+		}
 	}
 	if state.Applied != nil {
 		if err := state.Applied.Validate(); err != nil || state.Applied.NodeID != state.Desired.NodeID || state.Applied.Revision > state.Desired.Revision {

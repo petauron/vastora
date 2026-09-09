@@ -1899,8 +1899,11 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "nodeId": {
-                    "type": "string"
+                  "nodeIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "revision": {
                     "type": "integer"
@@ -1976,6 +1979,9 @@
                 "properties": {
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "landingNodeId": {
+                    "type": "string"
                   },
                   "revision": {
                     "type": "integer"
@@ -5504,59 +5510,58 @@
                       }
                     ]
                   },
-                  "landingLatency": {
-                    "anyOf": [
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "target": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {
-                              "revision": {
-                                "type": "integer"
-                              },
-                              "peer": {
-                                "type": "object",
-                                "additionalProperties": false,
-                                "properties": {
-                                  "id": {
-                                    "type": "string"
-                                  },
-                                  "publicKey": {
-                                    "type": "string"
-                                  },
-                                  "address": {
-                                    "type": "string"
-                                  }
+                  "landingLatencies": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "target": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "nodeId": {
+                              "type": "string"
+                            },
+                            "revision": {
+                              "type": "integer"
+                            },
+                            "peer": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "publicKey": {
+                                  "type": "string"
+                                },
+                                "address": {
+                                  "type": "string"
                                 }
                               }
                             }
-                          },
-                          "state": {
-                            "type": "string"
-                          },
-                          "latencyMs": {
-                            "anyOf": [
-                              {
-                                "type": "number"
-                              },
-                              {
-                                "type": "null"
-                              }
-                            ]
-                          },
-                          "checkedAt": {
-                            "type": "string",
-                            "format": "date-time"
                           }
+                        },
+                        "state": {
+                          "type": "string"
+                        },
+                        "latencyMs": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "checkedAt": {
+                          "type": "string",
+                          "format": "date-time"
                         }
-                      },
-                      {
-                        "type": "null"
                       }
-                    ]
+                    }
                   },
                   "nodeListenerRevision": {
                     "type": "integer"
@@ -7751,21 +7756,43 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "nodeId",
+          "nodeIds",
           "revision",
-          "status",
+          "servers",
           "candidates",
-          "proxies"
+          "proxies",
+          "latencies"
         ],
         "properties": {
-          "nodeId": {
-            "type": "string"
+          "nodeIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "revision": {
             "type": "integer"
           },
-          "status": {
-            "type": "string"
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "nodeId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "inUse": {
+                  "type": "boolean"
+                }
+              }
+            }
           },
           "candidates": {
             "type": "array",
@@ -7791,6 +7818,9 @@
                 "applicationId": {
                   "type": "string"
                 },
+                "landingNodeId": {
+                  "type": "string"
+                },
                 "revision": {
                   "type": "integer"
                 },
@@ -7813,6 +7843,9 @@
               "additionalProperties": false,
               "properties": {
                 "nodeId": {
+                  "type": "string"
+                },
+                "landingNodeId": {
                   "type": "string"
                 },
                 "state": {

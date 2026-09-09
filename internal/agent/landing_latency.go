@@ -2,27 +2,42 @@ package agent
 
 import (
 	"context"
+	"slices"
+	"sync"
 
 	"github.com/petauron/vastora/internal/landing"
 )
 
-func (s *Store) readLandingLatency() *landing.LatencyObservation {
+func (s *Store) readLandingLatencies() []landing.LatencyObservation {
 	s.landingLatencyMu.Lock()
 	defer s.landingLatencyMu.Unlock()
-	return s.landingLatency
+	if s.landingLatencies == nil {
+		return []landing.LatencyObservation{}
+	}
+	return slices.Clone(s.landingLatencies)
 }
 
-// One bounded measurement per heartbeat, including when landing is disabled.
-// This does not install Dante, change routes, or open a business firewall lease.
-func (s *Store) observeLandingLatency(ctx context.Context, target *landing.LatencyTarget) {
-	var observation *landing.LatencyObservation
-	if target != nil {
-		checker := landing.NewLinkChecker()
-		defer checker.HTTPClient.CloseIdleConnections()
-		result := checker.Check(ctx, target.Peer)
-		observation = &landing.LatencyObservation{Target: *target, State: result.State, LatencyMS: result.LatencyMS, CheckedAt: result.CheckedAt}
+// A bounded read-only batch. It never installs services, changes routes or
+// creates a firewall lease, including when no landing route is enabled.
+func (s *Store) observeLandingLatencies(ctx context.Context, targets []landing.LatencyTarget) {
+	if len(targets) > landing.MaxServers {
+		targets = nil
 	}
+	observations := make([]landing.LatencyObservation, len(targets))
+	var workers sync.WaitGroup
+	slots := make(chan struct{}, 4)
+	for index, target := range targets {
+		slots <- struct{}{}
+		workers.Go(func() {
+			defer func() { <-slots }()
+			checker := landing.NewLinkChecker()
+			defer checker.HTTPClient.CloseIdleConnections()
+			result := checker.Check(ctx, target.Peer)
+			observations[index] = landing.LatencyObservation{Target: target, State: result.State, LatencyMS: result.LatencyMS, CheckedAt: result.CheckedAt}
+		})
+	}
+	workers.Wait()
 	s.landingLatencyMu.Lock()
-	s.landingLatency = observation
+	s.landingLatencies = observations
 	s.landingLatencyMu.Unlock()
 }

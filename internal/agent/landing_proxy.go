@@ -142,7 +142,13 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 			}
 		}
 		if current.Route != nil && desired.Proxy != nil && desired.Revision != current.Desired.Revision {
-			return errors.New("agent: disable the current landing route before replacing it")
+			if current.Phase != "applied" || current.Applied == nil || current.Applied.Revision != current.Desired.Revision || current.ApplicationID != desired.Proxy.ApplicationID {
+				return errors.New("agent: finish or restore the current landing change before switching")
+			}
+			// Do not stop a working exit while the replacement is unreachable.
+			if err := landing.WaitReady(ctx, desired.Proxy.Peer, desired.Revision); err != nil {
+				return err
+			}
 		}
 	}
 	if err := s.stopLandingMonitor(ctx); err != nil {
@@ -167,6 +173,33 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	gate, err := landing.NewBridgeGate(desired.Proxy.Peer, bridge, desired.Revision)
 	if err != nil {
 		return err
+	}
+	if current != nil && current.Route != nil && desired.Revision > current.Desired.Revision {
+		if bridge != current.Bridge {
+			return errors.New("agent: landing proxy bridge changed")
+		}
+		// Stopping the previous monitor terminates connections and restarts
+		// this instance. Wait for its management API before taking the new
+		// checkpoint; a running container alone is not readiness evidence.
+		if err := waitLandingRoutes(ctx, routes); err != nil {
+			return err
+		}
+		if err := verifyLocalLandingInbounds(ctx, routes, desired.Proxy.InboundTags); err != nil {
+			return err
+		}
+		raw, _, err := routes.Read(ctx)
+		if err != nil {
+			return err
+		}
+		change, err := landing.PrepareRouteReplacement(*current.Route, raw, desired.Revision, desired.Proxy.InboundTags, desired.Proxy.Peer)
+		if err != nil {
+			return err
+		}
+		previous := current.Desired
+		current.Desired, current.Retiring, current.Route, current.Phase = desired, &previous, &change, "prepared"
+		if err := s.saveLandingRuntime(ctx, *current); err != nil {
+			return err
+		}
 	}
 	if current == nil || current.Route == nil {
 		// Docker alone does not guarantee the nft userspace tool exists. Install
@@ -199,6 +232,9 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if err := gate.Install(ctx); err != nil {
 		return err
 	}
+	if err := removeRetiringLandingGate(ctx, current); err != nil {
+		return err
+	}
 	if err := docker.restartPolicy(ctx, "no"); err != nil {
 		return err
 	}
@@ -220,6 +256,7 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	// restart. Monitor must not repeat the same container restart on entry.
 	current.Desired = desired
 	current.Applied = &desired
+	current.Retiring = nil
 	current.Phase = "applied"
 	if err := s.saveLandingRuntime(ctx, *current); err != nil {
 		return err
@@ -283,10 +320,31 @@ func (s *Store) disableLandingProxy(ctx context.Context, desired landing.Desired
 	if err := docker.restartPolicy(ctx, current.RestartPolicy); err != nil {
 		return err
 	}
+	if err := removeRetiringLandingGate(ctx, current); err != nil {
+		return err
+	}
 	if err := gate.Remove(ctx); err != nil {
 		return err
 	}
 	return s.saveLandingRuntime(ctx, landingRuntimeState{Desired: desired, Applied: &desired, Phase: "applied"})
+}
+
+// A replacement gate is already installed and closed before its predecessor
+// is removed. The encrypted checkpoint keeps cleanup retryable after a crash.
+func removeRetiringLandingGate(ctx context.Context, state *landingRuntimeState) error {
+	if state.Retiring == nil {
+		return nil
+	}
+	gate, err := landing.NewBridgeGate(state.Retiring.Proxy.Peer, state.Bridge, state.Retiring.Revision)
+	if err != nil {
+		return err
+	}
+	// Install also closes an existing lease. It makes cleanup idempotent
+	// when an earlier attempt already removed this table before crashing.
+	if err := gate.Install(ctx); err != nil {
+		return err
+	}
+	return gate.Remove(ctx)
 }
 
 func (s *Store) startLandingMonitor(state landingRuntimeState) error {

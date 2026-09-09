@@ -516,7 +516,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		observeErr = fmt.Errorf("agent: observe 3x-ui: %w", observeErr)
 	}
 	var response struct {
-		LandingLatencyTarget     *landing.LatencyTarget          `json:"landingLatencyTarget"`
+		LandingLatencyTargets    []landing.LatencyTarget         `json:"landingLatencyTargets"`
 		CenterURL                string                          `json:"centerUrl"`
 		TailscaleIsolation       *TailscaleIsolationDesiredState `json:"tailscaleIsolation,omitempty"`
 		PublicAddressLookupURL   string                          `json:"publicAddressLookupUrl"`
@@ -528,9 +528,9 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	}
 	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
 	payload := map[string]any{
-		"landingLatency": store.readLandingLatency(),
-		"publicKey":      publicKey,
-		"version":        Version, "appliedInstallations": len(states), "roles": c.Roles,
+		"landingLatencies": store.readLandingLatencies(),
+		"publicKey":        publicKey,
+		"version":          Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"gatewayRevision":              gatewayRevision,
 		"runtimeRecovery":              store.runtimeRecoveryCode(),
@@ -553,7 +553,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err := c.applyDesiredCenterURL(ctx, store, connection, response.CenterURL); err != nil {
 		return observeErr, err
 	}
-	store.observeLandingLatency(ctx, response.LandingLatencyTarget)
+	store.observeLandingLatencies(ctx, response.LandingLatencyTargets)
 	if response.TailscaleIsolation != nil && c.TailscaleIsolation != nil {
 		if err := c.TailscaleIsolation(ctx, *response.TailscaleIsolation); err != nil {
 			return observeErr, fmt.Errorf("agent: apply Tailscale isolation: %w", err)

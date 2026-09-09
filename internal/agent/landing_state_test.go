@@ -2,11 +2,55 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/petauron/vastora/internal/landing"
 )
+
+func TestLandingReplacementJournalRetainsRecoverableGateOwnership(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if err := store.SaveConnection(ctx, testConnection(t, "node-1", "node", "https://center.example.com", "credential")); err != nil {
+		t.Fatal(err)
+	}
+	previous := landing.DesiredState{NodeID: "node-1", Revision: 1, Proxy: &landing.ProxyPlan{ApplicationID: "app-1", InboundTags: []string{"business"}, Peer: landing.PeerIdentity{ID: "peer-a", PublicKey: "key-a", Address: "100.64.0.8"}}}
+	next := landing.DesiredState{NodeID: "node-1", Revision: 2, Proxy: &landing.ProxyPlan{ApplicationID: "app-1", InboundTags: []string{"business"}, Peer: landing.PeerIdentity{ID: "peer-b", PublicKey: "key-b", Address: "100.64.0.9"}}}
+	raw := json.RawMessage(`{"outbounds":[{"tag":"direct","protocol":"freedom"}],"routing":{"rules":[]}}`)
+	first, err := landing.PrepareRouteChange(raw, 1, previous.Proxy.InboundTags, previous.Proxy.Peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	change, err := landing.PrepareRouteReplacement(first, first.After, 2, next.Proxy.InboundTags, next.Proxy.Peer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := landingRuntimeState{Desired: next, Applied: &previous, Retiring: &previous, ApplicationID: "app-1", ContainerID: "owned-container", Bridge: "br-owned", RestartPolicy: "unless-stopped", Route: &change, Phase: "prepared"}
+	if err := store.saveLandingRuntime(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.landingRuntime(ctx)
+	if err != nil || restored == nil || restored.Retiring == nil || restored.Retiring.Proxy.Peer != previous.Proxy.Peer {
+		t.Fatal("crash recovery lost previous gate ownership")
+	}
+	// Explicit restoration during an interrupted switch still knows both gates.
+	state.Desired = landing.DesiredState{NodeID: "node-1", Revision: 3}
+	state.Applied = &next
+	state.Phase = "restoring"
+	if err := store.saveLandingRuntime(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	invalid := state
+	invalid.Retiring = &next
+	if err := invalid.validate(); err == nil {
+		t.Fatal("current gate accepted as the retiring gate")
+	}
+}
 
 func TestLandingRuntimePersistsEncryptedAndRejectsRevisionRewrite(t *testing.T) {
 	store, err := Open(t.TempDir())

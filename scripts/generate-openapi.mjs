@@ -290,7 +290,7 @@ const document = {
       LandingView: {
         type: "object",
         additionalProperties: false,
-        required: ["nodeId", "revision", "status", "candidates", "proxies"],
+        required: ["nodeIds", "revision", "servers", "candidates", "proxies", "latencies"],
         properties: {
           ...schemaForGoType("LandingSelection").properties,
           ...schemaForGoType("LandingView").properties,

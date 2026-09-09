@@ -1,5 +1,6 @@
 export type LandingProxyView = {
   applicationId: string;
+  landingNodeId: string;
   revision: number;
   enabled: boolean;
   status: "pending" | "applying" | "ready" | "failed" | "stopped";
@@ -7,10 +8,10 @@ export type LandingProxyView = {
 };
 
 export type LandingView = {
-  nodeId: string;
+  nodeIds: string[];
   revision: number;
-  status: "disabled" | "pending" | "ready" | "failed";
+  servers: Array<{ nodeId: string; name: string; status: "pending" | "applying" | "ready" | "failed" | "stopped" | "offline"; inUse: boolean }>;
   candidates: Array<{ nodeId: string; name: string }>;
   proxies: LandingProxyView[];
-  latencies: Array<{ nodeId: string; state: "direct" | "unavailable"; latencyMs?: number }>;
+  latencies: Array<{ nodeId: string; landingNodeId: string; state: "direct" | "unavailable"; latencyMs?: number }>;
 };

@@ -12,11 +12,15 @@ import (
 )
 
 type LandingProxyInput struct {
-	Enabled  bool   `json:"enabled"`
-	Revision uint64 `json:"revision"`
+	Enabled       bool   `json:"enabled"`
+	LandingNodeID string `json:"landingNodeId"`
+	Revision      uint64 `json:"revision"`
 }
 
 func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string, input LandingProxyInput) error {
+	if input.Enabled != (input.LandingNodeID != "") {
+		return errors.New("center: choose a landing server or use the node's own exit")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -28,9 +32,9 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 		return errors.New("center: managed VLESS node is unavailable")
 	}
 	var revision uint64
-	var owner, source string
+	var owner, source, status string
 	var encoded []byte
-	err = tx.QueryRowContext(ctx, `SELECT desired_revision,landing_node_id,source_address,desired_json FROM landing_proxy_states WHERE node_id=?`, nodeID).Scan(&revision, &owner, &source, &encoded)
+	err = tx.QueryRowContext(ctx, `SELECT desired_revision,landing_node_id,source_address,status,desired_json FROM landing_proxy_states WHERE node_id=?`, nodeID).Scan(&revision, &owner, &source, &status, &encoded)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -44,13 +48,17 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 	if !input.Enabled && revision == 0 {
 		return nil
 	}
-	if input.Enabled && previous.Proxy != nil {
+	if input.Enabled && previous.Proxy != nil && owner == input.LandingNodeID {
 		// An explicit retry keeps the same immutable route checkpoint.
 		if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='pending',last_error='',lease_expires_at='',updated_at=? WHERE node_id=? AND desired_revision=? AND status='failed'`, s.now().UTC().Format(time.RFC3339Nano), nodeID, revision); err != nil {
 			return err
 		}
 		return tx.Commit()
 	}
+	if input.Enabled && revision > 0 && status != "ready" && status != "stopped" {
+		return errors.New("center: finish or restore the current landing change before switching servers")
+	}
+	previousOwner, previousSource := owner, source
 	state := landing.DesiredState{NodeID: nodeID, Revision: revision + 1}
 	serverRevision := int64(0)
 	if input.Enabled {
@@ -64,12 +72,13 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 		if err != nil {
 			return err
 		}
-		if selection.NodeID == "" || selection.NodeID == nodeID {
+		if !slices.Contains(selection.NodeIDs, input.LandingNodeID) || input.LandingNodeID == nodeID {
 			return errors.New("center: choose a different landing node first")
 		}
-		owner, source = selection.NodeID, address
+		owner, source = input.LandingNodeID, address
 		var serverJSON, peerJSON []byte
-		if err := tx.QueryRowContext(ctx, `SELECT desired_revision,desired_json,peer_json FROM landing_server_states WHERE node_id=? AND status='ready' AND desired_revision=applied_revision`, owner).Scan(&serverRevision, &serverJSON, &peerJSON); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT s.desired_revision,s.desired_json,s.peer_json FROM landing_server_states s JOIN agents a ON a.id=s.node_id
+ WHERE s.node_id=? AND s.status='ready' AND s.desired_revision=s.applied_revision AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed' AND a.last_seen_at>?`, owner, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano)).Scan(&serverRevision, &serverJSON, &peerJSON); err != nil {
 			return errors.New("center: wait for the landing node to finish configuration")
 		}
 		var server landing.ServerState
@@ -129,6 +138,13 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 	if err != nil {
 		return err
 	}
+	if revision > 0 && input.Enabled && (previousOwner != owner || previousSource != source) {
+		// A failed switch may still be using its old route. Retain all grants
+		// until a newer route (or direct routing) is positively acknowledged.
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO landing_proxy_retirements(node_id,landing_node_id,source_address) VALUES(?,?,?)`, nodeID, previousOwner, previousSource); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_proxy_states(node_id,application_id,landing_node_id,server_revision,source_address,desired_revision,desired_json,status,updated_at)
  VALUES(?,?,?,?,?,?,?,'pending',?) ON CONFLICT(node_id) DO UPDATE SET application_id=excluded.application_id,landing_node_id=excluded.landing_node_id,
  server_revision=excluded.server_revision,source_address=excluded.source_address,desired_revision=excluded.desired_revision,desired_json=excluded.desired_json,status='pending',lease_expires_at='',last_error='',updated_at=excluded.updated_at`, nodeID, applicationID, owner, serverRevision, source, state.Revision, encoded, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
@@ -142,11 +158,7 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 
 // Called only after the proxy confirms restoration. Use the stored source
 // snapshot, not the node's possibly changed network profile.
-func (s *Store) removeLandingProxySource(ctx context.Context, tx *sql.Tx, nodeID string) error {
-	var owner, source string
-	if err := tx.QueryRowContext(ctx, `SELECT landing_node_id,source_address FROM landing_proxy_states WHERE node_id=?`, nodeID).Scan(&owner, &source); err != nil {
-		return err
-	}
+func (s *Store) removeLandingSource(ctx context.Context, tx *sql.Tx, owner, source string) error {
 	var encoded []byte
 	if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, owner).Scan(&encoded); err != nil {
 		return err

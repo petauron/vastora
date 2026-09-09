@@ -19,6 +19,25 @@ type RouteChange struct {
 	Revision uint64          `json:"revision"`
 	Before   json.RawMessage `json:"before"`
 	After    json.RawMessage `json:"after"`
+	Replaces json.RawMessage `json:"replaces,omitempty"`
+}
+
+// Preserve the original direct-route checkpoint through an exit change. The
+// exact old managed configuration is the only additional accepted source.
+func PrepareRouteReplacement(previous RouteChange, current json.RawMessage, revision uint64, tags []string, peer PeerIdentity) (RouteChange, error) {
+	if revision <= previous.Revision {
+		return RouteChange{}, errors.New("landing: stale route replacement")
+	}
+	_, write, err := previous.NextWrite(current, true)
+	if err != nil || write {
+		return RouteChange{}, errors.New("landing: current route is not the applied landing configuration")
+	}
+	next, err := PrepareRouteChange(previous.Before, revision, tags, peer)
+	if err != nil {
+		return RouteChange{}, err
+	}
+	next.Replaces = slices.Clone(previous.After)
+	return next, nil
 }
 
 // PrepareRouteChange changes only the routing of explicitly supplied managed
@@ -175,6 +194,12 @@ func (change RouteChange) NextWrite(current json.RawMessage, enable bool) (json.
 		return slices.Clone(want), false, nil
 	}
 	if currentHash != otherHash {
+		if len(change.Replaces) > 0 {
+			replacedHash, err := RouteSettingsHash(change.Replaces)
+			if err == nil && currentHash == replacedHash {
+				return slices.Clone(want), true, nil
+			}
+		}
 		return nil, false, errors.New("landing: local routing changed outside the pending operation")
 	}
 	return slices.Clone(want), true, nil

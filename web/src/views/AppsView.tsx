@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { SelectControl } from "@/components/SelectControl";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import { ThreeXUIClientsSheet } from "./ThreeXUIClientsSheet";
 import { ThreeXUIControllerMigrationSheet } from "./ThreeXUIControllerMigrationSheet";
@@ -31,10 +32,6 @@ import { canCreateRealityNode, installedAppGroups, type InstalledAppInstance } f
 
 type DeploymentEditor = { app: AppView; agent?: AgentView; operation: "install" | "upgrade" | "configure" } | null;
 type CredentialDelivery = NonNullable<Deployment["oneTimeCredentials"]> & { deploymentId: string; operationKey: string; scope: string };
-
-function AppSectionCount({ active, value }: { active: boolean; value: number }) {
-  return <span className={active ? "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-foreground/10 px-1.5 text-xs font-semibold text-primary-foreground tabular-nums ring-1 ring-primary-foreground/20 ring-inset" : "inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-secondary px-1.5 text-xs font-semibold text-secondary-foreground tabular-nums ring-1 ring-border ring-inset"} data-active={active} data-slot="app-section-count">{value}</span>;
-}
 
 export function AppsView({ data, language, mutate }: { data: AppData; language: Language; mutate: Mutate }) {
   const [deploymentEditor, setDeploymentEditor] = useState<DeploymentEditor>(null);
@@ -109,7 +106,7 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	};
 
   return (
-    <section className="flex flex-col gap-7">
+    <section className="apps-workspace flex min-w-0 flex-col gap-5">
       <PageHeading title={copy(language, "应用", "Apps")} description={copy(language, "管理应用、订阅与各节点的访问入口。", "Manage apps, subscriptions, and access on every node.")} />
 
       {credentials ? <Alert><KeyRoundIcon /><AlertTitle>{copy(language, "请保存 3x-ui 管理账号", "Save the 3x-ui administrator account")}</AlertTitle><AlertDescription><p>{copy(language, "确认保存前可在断线或刷新后重新领取；确认后 Center 会永久关闭再次显示。", "Until you acknowledge it, the same browser can recover these credentials after a disconnect or refresh. Acknowledgement permanently disables disclosure.")}</p><dl className="mt-3 grid gap-2 rounded-lg bg-muted p-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "账号", "Username")}</dt><dd className="mt-1 flex items-center gap-2 font-mono">{credentials.username}<CopyButton language={language} value={credentials.username} /></dd></div><div><dt className="text-muted-foreground">{copy(language, "密码", "Password")}</dt><dd className="mt-1 flex items-center gap-2 break-all font-mono">{credentials.password}<CopyButton language={language} value={credentials.password} /></dd></div></dl><Button className="mt-3" disabled={credentialAckBusy} onClick={() => void acknowledgeCredentials()} size="sm" variant="outline">{credentialAckBusy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "我已保存并关闭再次显示", "Saved — disable further disclosure")}</Button></AlertDescription></Alert> : null}
@@ -128,16 +125,17 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
 	        return <Card key={deployment.id} size="sm"><CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center"><StateBadge language={language} value={deployment.reconciliationRequired ? "recovery" : deployment.state} /><div className="min-w-0 flex-1"><p className="font-medium">{operationLabel(language, deployment.operation)} · {app ? localized(app, language, "name") : deployment.appKey}</p><p className="mt-1 text-xs text-muted-foreground">{agent?.name ?? deployment.agentId}</p>{deployment.reconciliationRequired ? <p className="mt-2 text-sm text-amber-700 dark:text-amber-300">{copy(language, "节点状态未能完全确认。系统已锁定这项应用，继续恢复会复用原任务，不会重复安装。", "The node state could not be fully confirmed. This app is locked; continuing recovery reuses the original task and will not install a duplicate.")}</p> : null}{deployment.error ? <div className="mt-2"><TechnicalError error={deployment.error} language={language} /></div> : null}</div>{deployment.reconciliationRequired ? <Button disabled={recoveringTask === deployment.id} onClick={() => void recover()} size="sm" variant="outline">{recoveringTask === deployment.id ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "继续恢复", "Continue recovery")}</Button> : deployment.state === "failed" && app && agent ? <Button onClick={retry} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重试", "Retry")}</Button> : null}</CardContent></Card>;
       })}</div> : null}
 
-      <div aria-label={copy(language, "应用内容", "App content")} className="inline-flex w-fit rounded-xl bg-muted p-1" role="group">
-        <Button aria-pressed={section === "installed"} onClick={() => setSection("installed")} size="sm" type="button" variant={section === "installed" ? "default" : "ghost"}>{copy(language, "已安装", "Installed")}<AppSectionCount active={section === "installed"} value={installedApplications.length} /></Button>
-        <Button aria-pressed={section === "store"} onClick={() => setSection("store")} size="sm" type="button" variant={section === "store" ? "default" : "ghost"}>{copy(language, "应用商店", "App Store")}<AppSectionCount active={section === "store"} value={data.apps.length} /></Button>
-      </div>
+      <Tabs value={section} onValueChange={(value) => { if (value === "installed" || value === "store") setSection(value); }} className="gap-5">
+        <TabsList aria-label={copy(language, "应用内容", "App content")}>
+          <TabsTrigger value="installed">{copy(language, "已安装", "Installed")}<span className="text-xs text-muted-foreground tabular-nums">{installedApplications.length}</span></TabsTrigger>
+          <TabsTrigger value="store">{copy(language, "应用商店", "App Store")}<span className="text-xs text-muted-foreground tabular-nums">{data.apps.length}</span></TabsTrigger>
+        </TabsList>
 
-      {section === "installed" ? <div className="flex flex-col gap-4">
+      <TabsContent value="installed" className="flex flex-col gap-4">
 	        {installedApplications.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><AppWindowIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有安装应用", "No apps installed yet")}</EmptyTitle><EmptyDescription>{copy(language, "从应用商店选择一个应用开始；失败任务只保留在活动记录中。", "Choose an app from the store to get started. Failed tasks remain only in Activity.")}</EmptyDescription><Button className="mt-3" onClick={() => setSection("store")} size="sm">{copy(language, "打开应用商店", "Open App Store")}</Button></EmptyHeader></Empty> : <InstalledApps groups={installedGroups} language={language} mutate={mutate} onClients={setClientsApplication} onManage={(application) => setManagedApplicationID(application.id)} onReality={setRealityApplication} />}
-      </div> : null}
+      </TabsContent>
 
-      {section === "store" ? <div className="flex flex-col gap-4">
+      <TabsContent value="store" className="flex flex-col gap-4">
         <div><h2 className="text-lg font-semibold">{copy(language, "应用商店", "App Store")}</h2><p className="mt-1 text-sm text-muted-foreground">{copy(language, "应用默认只在节点的私有地址上运行。", "Apps run on the node's private address by default.")}</p></div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{data.apps.map((app) => {
           const installed = installedApplications.filter((application) => application.appKey === app.key);
@@ -145,7 +143,8 @@ export function AppsView({ data, language, mutate }: { data: AppData; language: 
           const blocker = eligible.length === 0 ? installBlocker(data, app.key, language) : "";
           return <Card key={app.key}><CardHeader><CardTitle>{localized(app, language, "name")}</CardTitle><CardDescription>{localized(app, language, "description")}</CardDescription><CardAction>{app.app.hostAccess ? <HighPrivilegeBadge language={language} /> : <Badge variant="outline">Docker</Badge>}</CardAction></CardHeader><CardContent><div className="flex flex-wrap gap-2"><Badge variant="secondary">v{app.app.version}</Badge>{app.app.services?.map((service) => <Badge key={service.name} variant="outline">{service.name}</Badge>)}</div>{app.app.hostAccess ? <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-destructive"><ShieldAlertIcon className="mt-0.5 size-3.5 shrink-0" />{copy(language, "此应用需要主机级权限，请确认来源与用途。", "This app needs host-level access. Confirm its source and purpose.")}</p> : null}{blocker ? <p className="mt-3 text-xs leading-5 text-muted-foreground" id={`install-blocker-${app.app.id}`}>{blocker}</p> : null}</CardContent><CardFooter className="justify-between"><span className="text-xs text-muted-foreground">{installed.length ? copy(language, `已安装到 ${installed.length} 个节点`, `Installed on ${installed.length} node(s)`) : copy(language, "尚未安装", "Not installed")}</span><Button aria-describedby={blocker ? `install-blocker-${app.app.id}` : undefined} disabled={eligible.length === 0} onClick={() => setDeploymentEditor({ app, operation: "install" })} size="sm"><PackagePlusIcon data-icon="inline-start" />{copy(language, "安装", "Install")}</Button></CardFooter></Card>;
         })}</div>
-      </div> : null}
+      </TabsContent>
+      </Tabs>
 
       <Sheet onOpenChange={(open) => { if (!open) setManagedApplicationID(null); }} open={Boolean(managedInstance)}>
         {managedInstance ? <InstalledAppDetails
@@ -218,7 +217,7 @@ function InstalledAppDetails({ instance, data, language, onClients, onConfigure,
       setSyncingNode(false);
     }
   };
-  return <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
+  return <SheetContent className="apps-workspace data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
     <SheetHeader className="pr-12">
       <SheetTitle className="flex flex-wrap items-center gap-2">{app ? localized(app, language, "name") : application.name}{app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}{isController ? <Badge>{copy(language, "全局订阅主机", "Global subscription controller")}</Badge> : null}{isLegacyController ? <Badge variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}{isWorker ? <Badge variant="outline">{copy(language, "VLESS 节点", "VLESS node")}</Badge> : null}</SheetTitle>
       <SheetDescription>{agent?.name ?? application.nodeId} · {application.runtime}{application.installedVersion ? ` · v${application.installedVersion}` : ""}</SheetDescription>

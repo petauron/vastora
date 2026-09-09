@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 )
 
 // DeleteAgent only forgets an unused, disabled node. It never dispatches remote
@@ -28,7 +29,7 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if selection.NodeID == id {
+	if slices.Contains(selection.NodeIDs, id) {
 		return errors.New("center: node still in use")
 	}
 	for _, query := range []string{

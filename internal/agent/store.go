@@ -42,7 +42,7 @@ type Store struct {
 	landingStatusMu   sync.RWMutex
 	landingStatus     landing.MonitorStatus
 	landingLatencyMu  sync.Mutex
-	landingLatency    *landing.LatencyObservation
+	landingLatencies  []landing.LatencyObservation
 	gatewayStartupMu  sync.RWMutex
 	gatewayStartupErr error
 	gatewayStartupOK  bool
