@@ -177,15 +177,8 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		if err := verifyLocalLandingInbounds(ctx, routes, desired.Proxy.InboundTags); err != nil {
 			return err
 		}
-		links := landing.NewLinkChecker()
-		if links.Check(ctx, desired.Proxy.Peer).State != "direct" {
-			return errors.New("agent: landing peer is not directly connected")
-		}
-		if _, err := (landing.Probe{}).Check(ctx, desired.Proxy.Peer, desired.Revision); err != nil {
+		if err := landing.WaitReady(ctx, desired.Proxy.Peer, desired.Revision); err != nil {
 			return err
-		}
-		if links.Check(ctx, desired.Proxy.Peer).State != "direct" {
-			return errors.New("agent: landing peer direct connection changed")
 		}
 		raw, _, err := routes.Read(ctx)
 		if err != nil {
@@ -223,6 +216,8 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if err := docker.terminateConnections(ctx); err != nil {
 		return err
 	}
+	// This synchronous cutover also fences restored checkpoints after Agent
+	// restart. Monitor must not repeat the same container restart on entry.
 	current.Desired = desired
 	current.Applied = &desired
 	current.Phase = "applied"

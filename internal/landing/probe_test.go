@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -12,6 +13,62 @@ import (
 
 	"golang.org/x/net/dns/dnsmessage"
 )
+
+func TestTCPProbeDeadlineCoversSOCKSAndTLSHandshake(t *testing.T) {
+	for _, stage := range []string{"socks_connect", "tls_handshake"} {
+		t.Run(stage, func(t *testing.T) {
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				defer conn.Close()
+				_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+				if stage == "tls_handshake" {
+					var greeting [3]byte
+					if _, err := io.ReadFull(conn, greeting[:]); err != nil {
+						return
+					}
+					if _, err := conn.Write([]byte{5, 0}); err != nil {
+						return
+					}
+					var header [5]byte
+					if _, err := io.ReadFull(conn, header[:]); err != nil || header[3] != 3 {
+						return
+					}
+					if _, err := io.ReadFull(conn, make([]byte, int(header[4])+2)); err != nil {
+						return
+					}
+					if _, err := conn.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 1, 187}); err != nil {
+						return
+					}
+				}
+				// Never answer the selected handshake. The request deadline must
+				// close the dial/connection as well as returning from client.Do.
+				_, _ = io.Copy(io.Discard, conn)
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			defer cancel()
+			_, err = (Probe{}).tcp(ctx, listener.Addr().String())
+			var failure *probeError
+			if !errors.As(err, &failure) || failure.stage != stage || failure.reason != "timeout" {
+				t.Fatalf("missing phase-specific timeout: %v", err)
+			}
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("probe returned but its handshake remained alive")
+			}
+		})
+	}
+}
 
 func TestProbeRejectsInvalidExitResponses(t *testing.T) {
 	for _, body := range []string{"", "ip=127.0.0.1", "ip=100.64.0.8", "ip=10.0.0.1", "ip=169.254.169.254", "ip=::1", "ip=2001:4860:4860::8888", "ip=192.0.2.1", "ip=1.1.1.1\nip=8.8.8.8", "ip=invalid"} {

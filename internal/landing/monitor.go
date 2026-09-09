@@ -39,7 +39,9 @@ type MonitorStatus struct {
 // must check before changing the old direct configuration. StopConnections
 // must terminate old connections in the selected proxy instance (not HAProxy,
 // the controller, or other nodes), and verify that termination before returning.
-// Callers must disclose the resulting instance-wide interruption.
+// The caller must close the gate and terminate old connections synchronously
+// before Run, including checkpoint recovery. Callers must disclose the resulting
+// instance-wide interruption; Run does not repeat this initial cutover.
 type Monitor struct {
 	Gate            *BridgeGate
 	Links           *LinkChecker
@@ -57,14 +59,12 @@ func (m *Monitor) Run(ctx context.Context) error {
 	if err := m.Gate.Install(ctx); err != nil {
 		return errors.Join(err, m.stop())
 	}
-	if err := m.stop(); err != nil {
-		return err
-	}
 	defer func() { _ = m.close(); _ = m.stop() }()
 	ticker := time.NewTicker(CheckInterval)
 	defer ticker.Stop()
 	var lastHealthy time.Time
 	wasAllowed := false
+	lastProbeFailure := ""
 	for {
 		status := MonitorStatus{Revision: m.Gate.revision, State: "blocked", LinkState: "unknown", Reason: "check_failed", LastHealthyAt: lastHealthy}
 		before := m.Links.Check(ctx, m.Gate.peer)
@@ -75,8 +75,16 @@ func (m *Monitor) Run(ctx context.Context) error {
 		if before.State == "direct" {
 			businessCtx, cancel := context.WithTimeout(ctx, CheckTimeout)
 			business, checkErr = m.CheckBusiness(businessCtx, m.Gate.peer, m.Gate.revision)
-			if businessCtx.Err() != nil {
-				checkErr = errors.New("landing: business probe expired")
+			if businessCtx.Err() != nil && checkErr == nil {
+				checkErr = probeFailure("business_check", businessCtx.Err())
+			}
+			if checkErr != nil {
+				if checkErr.Error() != lastProbeFailure {
+					logProbeFailure(ctx, m.Gate.revision, 0, before.CheckedAt, checkErr)
+				}
+				lastProbeFailure = checkErr.Error()
+			} else {
+				lastProbeFailure = ""
 			}
 			cancel()
 			if checkErr == nil {
