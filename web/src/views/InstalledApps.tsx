@@ -15,7 +15,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { localized, operationLabel } from "./appAccess";
-import { copy, HighPrivilegeBadge, StateBadge } from "./shared";
+import { copy, StateBadge } from "./shared";
+import { AppIdentityBadge } from "./AppIdentity";
 import { canCreateRealityNode, publicationNeedsAttention, serviceNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
 
 type InstalledAppsProps = {
@@ -64,7 +65,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onClient
     <CardHeader className="flex flex-row flex-wrap items-center gap-3">
       <div className="min-w-0 flex-1">
         <CardTitle className="flex flex-wrap items-center gap-2">
-          <h2 className="min-w-0 break-words" id={headingID}>{name}</h2>{group.app?.app.hostAccess ? <HighPrivilegeBadge language={language} /> : null}
+          <h2 className="min-w-0 break-words" id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}
         </CardTitle>
         <CardDescription>
           {threeXUI ? copy(language, `${nodeCount} 个 VLESS 节点`, `${nodeCount} VLESS node(s)`)
