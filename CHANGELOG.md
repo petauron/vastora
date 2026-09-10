@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.118](https://github.com/petauron/vastora/compare/v0.1.0-alpha.117...v0.1.0-alpha.118) (2026-09-10)
+
+
+### Features
+
+* integrate Pulse monitoring in the app store ([#386](https://github.com/petauron/vastora/issues/386)) ([3a025c5](https://github.com/petauron/vastora/commit/3a025c5f4d27ca6c8cc086cda834cd8d89d493bf))
+
 ## [0.1.0-alpha.117](https://github.com/petauron/vastora/compare/v0.1.0-alpha.116...v0.1.0-alpha.117) (2026-09-10)
 
 
