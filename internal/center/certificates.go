@@ -392,5 +392,5 @@ func (s *Store) renewPrivateCertificates(ctx context.Context) error {
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	return s.renewSiteCertificates(ctx)
+	return errors.Join(s.renewSiteCertificates(ctx), s.renewNodeProtocolCertificates(ctx))
 }

@@ -193,6 +193,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onReality,
   const { application, agent, locked } = instance;
   const services = threeXUI ? instance.realityServices : instance.services;
   const publications = threeXUI ? instance.realityPublications : instance.publications;
+  const hy2Only = threeXUI && instance.realityServices[0]?.protocols?.includes("hy2") && !instance.realityServices[0]?.protocols?.includes("vless");
   const pendingPublication = publications.find((publication) => publication.status !== "ready" && publication.status !== "stopped");
   const name = agent?.name ?? application.nodeId;
   const displayName = instance.realityServices[0]?.displayName;
@@ -210,6 +211,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onReality,
   return <TableRow className="grid grid-cols-2 gap-x-4 gap-y-3 py-4 lg:table-row lg:py-0" data-application-id={application.id}>
     <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <p className="break-words font-medium">{name}</p>
+      {threeXUI && instance.realityServices[0] ? <div className="mt-1 flex flex-wrap gap-1">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => <Badge key={protocol} variant="outline">{protocol.toUpperCase()}</Badge>)}</div> : null}
       {threeXUI && application.role === "master" && application.id !== instance.controller?.id ? <Badge className="mt-1" variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}
       {showSite || displayName ? <p className="mt-1 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}
     </TableCell>
@@ -229,14 +231,14 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onReality,
     </> : null}
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{threeXUI ? copy(language, "公网入口", "Public access") : copy(language, "访问入口", "Access")}</p>
-      <AccessStatus language={language} publications={publications} services={services} threeXUI={threeXUI} />
+      {hy2Only ? <Badge variant="outline">{copy(language, "HY2 已配置", "HY2 configured")}</Badge> : <AccessStatus language={language} publications={publications} services={services} threeXUI={threeXUI} />}
     </TableCell>
     <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <div className="flex flex-wrap items-center justify-end gap-2">
         {!threeXUI && instance.deployment?.accessUrl ? <a aria-label={copy(language, `打开 ${name} 的应用主页`, `Open the app homepage on ${name}`)} className={cn(buttonVariants({ size: "icon-sm", variant: "outline" }), "max-md:min-h-11 max-md:min-w-11")} href={instance.deployment.accessUrl} rel="noreferrer" target="_blank">
           <ExternalLinkIcon aria-hidden="true" />
         </a> : null}
-        {pendingPublication ? <Button aria-label={copy(language, `检查 ${name} 的入口`, `Check ${name} access`)} className="max-md:min-h-11" disabled={locked || checking} onClick={() => void check()} size="sm" variant="outline">
+        {pendingPublication && !hy2Only ? <Button aria-label={copy(language, `检查 ${name} 的入口`, `Check ${name} access`)} className="max-md:min-h-11" disabled={locked || checking} onClick={() => void check()} size="sm" variant="outline">
           {checking ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{copy(language, "检查", "Check")}
         </Button> : null}
         {needsVLESS ? <Button className="max-md:min-h-11" disabled={!canCreateRealityNode(instance)} onClick={() => onReality(application)} size="sm" variant="outline">

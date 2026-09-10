@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"time"
 )
@@ -129,6 +130,9 @@ func (s *Store) runPublicationVerificationCycle(id string, job *publicationVerif
 		verifyCtx, cancel := context.WithTimeout(s.backgroundCtx, publicationVerificationTimeout)
 		publication, err := s.verifyPublication(verifyCtx, id, revision)
 		cancel()
+		if errors.Is(err, errVLESSVerificationNotApplicable) {
+			return true
+		}
 		if err != nil {
 			lastMessage = strings.TrimSpace(err.Error())
 			terminalStatus = "failed"

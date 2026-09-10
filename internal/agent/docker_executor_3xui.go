@@ -80,6 +80,9 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 	if err != nil {
 		return "", err
 	}
+	if err := preserveThreeXUIHY2Port(ctx, docker, exposedPorts, portBindings); err != nil {
+		return "", err
+	}
 	createOptions := client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:        imageRef,

@@ -206,6 +206,9 @@ function latencyLabel(language: Language, latency: LandingView["latencies"][numb
   return latency?.state === "unavailable" ? copy(language, "无法直连", "Unavailable") : copy(language, "待检测", "Pending");
 }
 
+// Select treats an empty value as unselected; keep the API's empty exit value at the boundary.
+const ownExitValue = "__own_exit__";
+
 export function LandingExitSelect({ applicationId, nodeId, name, locked, language }: { applicationId: string; nodeId: string; name: string; locked: boolean; language: Language }) {
   const state = useContext(LandingContext);
   const id = useId();
@@ -217,7 +220,7 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
   const pending = proxy?.status === "pending" || proxy?.status === "applying";
   const configurationFailed = proxy?.status === "failed";
   const servers = view?.servers.filter((server) => server.nodeId !== nodeId) ?? [];
-  const items = [{ value: "", label: copy(language, "本机出口", "Own exit") }, ...servers.map((server) => ({ value: server.nodeId, label: server.name }))];
+  const items = [{ value: ownExitValue, label: copy(language, "本机出口", "Own exit") }, ...servers.map((server) => ({ value: server.nodeId, label: server.name }))];
   if (selected && !items.some((item) => item.value === selected)) items.push({ value: selected, label: copy(language, "当前落地机（不可用）", "Current exit (unavailable)") });
   const disabled = locked || busy || failed || !view || pending;
   const applied = proxy?.applied;
@@ -235,17 +238,20 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
   return <><FieldGroup className="gap-1">
     <Field className="gap-1">
       <FieldLabel className="sr-only" htmlFor={id}>{copy(language, `${name} 的出口`, `Exit for ${name}`)}</FieldLabel>
-      <Select items={items} value={view ? selected : null} disabled={disabled} onValueChange={(value) => {
-        if (typeof value === "string" && value !== selected) setConfirmation({ target: value, revision: proxy?.revision ?? 0 });
+      <Select items={items} value={view ? selected || ownExitValue : null} disabled={disabled} onValueChange={(value) => {
+        if (typeof value !== "string") return;
+        const target = value === ownExitValue ? "" : value;
+        if (target !== selected) setConfirmation({ target, revision: proxy?.revision ?? 0 });
       }}>
         <SelectTrigger id={id} className="w-full" aria-describedby={status ? `${id}-status` : undefined}><SelectValue placeholder={failed ? copy(language, "状态未知", "Unknown") : copy(language, "正在读取…", "Loading…")} /></SelectTrigger>
         <SelectContent className="apps-workspace">
           <SelectGroup>{items.map((item) => {
+            const ownExit = item.value === ownExitValue;
             const server = servers.find((server) => server.nodeId === item.value);
             const latency = view?.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === item.value);
-            return <SelectItem key={item.value} value={item.value} disabled={Boolean(item.value) && (server?.status !== "ready" || configurationFailed)}>
+            return <SelectItem key={item.value} value={item.value} disabled={!ownExit && (server?.status !== "ready" || configurationFailed)}>
               <span className="flex w-full items-center gap-6"><span className="min-w-0 flex-1 truncate">{item.label}</span>
-                {item.value ? <span className={`shrink-0 text-xs tabular-nums ${landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}`}>{server?.status === "ready" ? latencyLabel(language, latency) : copy(language, "未就绪", "Not ready")}</span> : null}
+                {!ownExit ? <span className={`shrink-0 text-xs tabular-nums ${landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}`}>{server?.status === "ready" ? latencyLabel(language, latency) : copy(language, "未就绪", "Not ready")}</span> : null}
               </span>
             </SelectItem>;
           })}</SelectGroup>

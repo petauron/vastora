@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/realitytarget"
 )
 
@@ -89,6 +90,8 @@ type RealityCommandTask struct {
 	ClientExpiryTime     int64                    `json:"clientExpiryTime"`
 	ServiceID            string                   `json:"serviceId,omitempty"`
 	GuardRevision        int64                    `json:"guardRevision,omitempty"`
+	RemoveHY2            bool                     `json:"removeHY2,omitempty"`
+	HY2InboundID         int                      `json:"hy2InboundId,omitempty"`
 }
 
 type RealityCommandResult struct {
@@ -157,6 +160,8 @@ type ThreeXUIClientCommandInput struct {
 }
 
 type ThreeXUIClientInbound struct {
+	HY2InboundID    int    `json:"hy2InboundId,omitempty"`
+	VLESSDisabled   bool   `json:"vlessDisabled,omitempty"`
 	ID              int    `json:"id"`
 	ServiceID       string `json:"serviceId"`
 	Name            string `json:"name"`
@@ -415,7 +420,7 @@ func (s *Store) VerifyRealityTarget(ctx context.Context, applicationID string, i
 		return ApplicationCommandView{}, err
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE (agent_id = ? OR kind='3xui.protocols.configure') AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
@@ -546,7 +551,7 @@ func (s *Store) CreateRealityCommand(ctx context.Context, input RealityCommandIn
 		return ApplicationCommandView{}, errors.New("center: the first REALITY node requires a valid subscription client name")
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE (agent_id = ? OR kind='3xui.protocols.configure') AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
@@ -640,13 +645,16 @@ func (s *Store) CreateRealityRenameCommand(ctx context.Context, input RealityRen
 		return ApplicationCommandView{}, err
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE (agent_id = ? OR kind='3xui.protocols.configure') AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
 		return ApplicationCommandView{}, errors.New("center: this 3x-ui controller already has an operation in progress")
 	}
 	task := RealityCommandTask{Action: "rename", RegionCode: input.RegionCode, DisplayName: displayName, InboundID: inboundID, ConnectHostname: connectHostname, ServerName: sniHostname, TargetApplicationID: applicationID, TargetNodeID: targetNodeID}
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT hy2_inbound_id FROM three_x_ui_node_protocols WHERE service_id=?),0)`, input.ServiceID).Scan(&task.HY2InboundID); err != nil {
+		return ApplicationCommandView{}, err
+	}
 	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)
 	if err != nil {
@@ -695,6 +703,17 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		return value, err
 	}
 	switch value.Kind {
+	case nodeprotocol.CommandKind:
+		var next struct {
+			NextCommandID string `json:"nextCommandId"`
+		}
+		if json.Unmarshal(resultJSON, &next) != nil {
+			return value, errors.New("center: invalid node protocol result")
+		}
+		if next.NextCommandID != "" {
+			return s.ApplicationCommand(ctx, next.NextCommandID)
+		}
+		value.Action = "protocols"
 	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind, realityRemoveCommandKind:
 		var input RealityCommandTask
 		var result RealityCommandResult
@@ -773,7 +792,7 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 }
 
 func (s *Store) LatestApplicationCommand(ctx context.Context, applicationID, kind string) (ApplicationCommandView, error) {
-	if kind != realityCommandKind && kind != realityVerifyCommandKind && kind != realityHardenCommandKind && kind != realityRenameCommandKind && kind != realityRemoveCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
+	if kind != nodeprotocol.CommandKind && kind != realityCommandKind && kind != realityVerifyCommandKind && kind != realityHardenCommandKind && kind != realityRenameCommandKind && kind != realityRemoveCommandKind && kind != subscriptionCommandKind && kind != clientCommandKind && kind != nodeCommandKind && kind != controllerCommandKind {
 		return ApplicationCommandView{}, errors.New("center: unsupported application operation kind")
 	}
 	var id string

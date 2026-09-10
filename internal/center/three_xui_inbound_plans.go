@@ -219,7 +219,7 @@ func (s *Store) queueThreeXUIInboundPlanReset(ctx context.Context, serviceID str
 		return failThreeXUIInboundPlanBeforeDispatch(ctx, tx, plan, err, now)
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE (agent_id = ? OR kind='3xui.protocols.configure') AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return err
 	}
 	operationKey := threeXUIInboundResetOperationKey(serviceID, plan.NextResetAt)

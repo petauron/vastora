@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
 var (
@@ -38,7 +39,24 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var client *ThreeXUIClientCommandTask
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
+	var protocols *nodeprotocol.Task
 	switch kind {
+	case nodeprotocol.CommandKind:
+		var command nodeprotocol.Task
+		if json.Unmarshal(inputJSON, &command) != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: invalid node protocol task"))
+		}
+		recipient := command.TargetAgentID
+		if command.Phase == "apply" {
+			recipient = command.ControllerAgentID
+		}
+		if recipient != agentID {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: node protocol recipient changed"))
+		}
+		if err := s.hydrateNodeProtocolTask(ctx, tx, &command); err != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, err)
+		}
+		protocols = &command
 	case realityCommandKind, realityVerifyCommandKind, realityHardenCommandKind, realityRenameCommandKind, realityRemoveCommandKind:
 		var command RealityCommandTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.TargetApplicationID == "" {
@@ -161,7 +179,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, Reconcile: reconciliationRequested == 1}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -301,6 +319,9 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == nodeprotocol.CommandKind {
+		return s.completeNodeProtocolCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == clientCommandKind {
 		return s.completeThreeXUIClientCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)

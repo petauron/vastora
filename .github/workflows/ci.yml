@@ -78,6 +78,10 @@ jobs:
           go test ./internal/recovery ./internal/landing ./internal/realitytarget ./internal/dockerruntime ./internal/tailscalehost -count=1 || ci_test_status=$?
           go test ./internal/agent ./internal/center -run 'Test.*(Landing|Recovery|Recover|Reality|REALITY|HAProxy|AdminRuntimeDirectory|Migration|Migrated|Backup|ExternalVolume|Heartbeat)' -count=1 || ci_test_status=$?
           exit "$ci_test_status"
+      - name: Verify node protocols and HY2 subscriptions
+        run: |
+          go test ./internal/nodeprotocol -count=1
+          go test ./internal/agent ./internal/center -run 'Test.*(Protocol|HY2)' -count=1
       - name: Set up native landing artifact builder
         if: ${{ !cancelled() }}
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.0.0

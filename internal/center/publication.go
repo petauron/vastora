@@ -488,6 +488,13 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 		return err
 	}
 	defer tx.Rollback()
+	var protected int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications pub WHERE pub.id=? AND pub.kind='public_shared_443' AND (EXISTS(SELECT 1 FROM three_x_ui_node_protocols p WHERE p.service_id=pub.service_id AND p.hy2_enabled=1) OR EXISTS(SELECT 1 FROM application_commands c WHERE json_extract(c.input_json,'$.serviceId')=pub.service_id AND c.kind='3xui.protocols.configure' AND (c.state IN ('pending','running') OR c.reconciliation_required=1)))`, id).Scan(&protected); err != nil {
+		return err
+	}
+	if protected > 0 {
+		return errors.New("center: disable HY2 before removing its public domain")
+	}
 	var kind, ingressOwner, dnsProvider, dnsRecordID, status string
 	var revision int64
 	var gatewayID sql.NullString

@@ -89,6 +89,9 @@ func (s *Store) CreateRealityRemoveCommand(ctx context.Context, input RealityRem
 		}
 	}
 	task := RealityCommandTask{Action: "remove", ServiceID: input.ServiceID, TargetApplicationID: applicationID, InboundID: inboundID, InboundTag: tag, DisplayName: displayName}
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM three_x_ui_node_protocols WHERE service_id=? AND hy2_inbound_id>0)`, input.ServiceID).Scan(&task.RemoveHY2); err != nil {
+		return ApplicationCommandView{}, err
+	}
 	encoded, err := json.Marshal(task)
 	if err != nil {
 		return ApplicationCommandView{}, err
@@ -177,6 +180,9 @@ func (s *Store) completeRealityRemoveCommand(ctx context.Context, tx *sql.Tx, ta
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_inbound_plans WHERE service_id=?`, input.ServiceID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_node_protocols WHERE service_id=?`, input.ServiceID); err != nil {
 			return err
 		}
 		if err := s.queueNodeListenerState(ctx, tx, agentID, now); err != nil {

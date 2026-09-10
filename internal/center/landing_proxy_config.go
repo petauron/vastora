@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
 type LandingProxyInput struct {
@@ -33,6 +34,13 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 }
 
 func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicationID string, input LandingProxyInput) error {
+	var protocolsBusy int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, nodeprotocol.CommandKind).Scan(&protocolsBusy); err != nil {
+		return err
+	}
+	if protocolsBusy > 0 {
+		return errors.New("center: another node operation is in progress")
+	}
 	if input.Enabled {
 		var removing int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, realityRemoveCommandKind).Scan(&removing); err != nil {
@@ -102,18 +110,22 @@ func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicati
 		if json.Unmarshal(serverJSON, &server) != nil || server.Validate() != nil || server.Plan == nil || json.Unmarshal(peerJSON, &peer) != nil || peer.Address != server.Plan.Address || peer.ID == "" || peer.PublicKey == "" {
 			return errors.New("center: landing private identity is unavailable")
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT p.inbound_tag FROM three_x_ui_inbound_plans p JOIN services service ON service.id=p.service_id WHERE service.application_id=? AND service.app_protocol='vless/tcp/reality' AND service.status<>'stopped' ORDER BY p.inbound_tag`, applicationID)
+		rows, err := tx.QueryContext(ctx, `SELECT p.inbound_tag,COALESCE(protocols.hy2_inbound_id,0) FROM three_x_ui_inbound_plans p JOIN services service ON service.id=p.service_id LEFT JOIN three_x_ui_node_protocols protocols ON protocols.service_id=service.id WHERE service.application_id=? AND service.app_protocol='vless/tcp/reality' AND service.status<>'stopped' ORDER BY p.inbound_tag`, applicationID)
 		if err != nil {
 			return err
 		}
 		var tags []string
 		for rows.Next() {
 			var tag string
-			if err := rows.Scan(&tag); err != nil {
+			var hy2ID int
+			if err := rows.Scan(&tag, &hy2ID); err != nil {
 				rows.Close()
 				return err
 			}
 			tags = append(tags, tag)
+			if hy2ID > 0 {
+				tags = append(tags, nodeprotocol.HY2Tag(tag))
+			}
 		}
 		err = rows.Err()
 		rows.Close()
