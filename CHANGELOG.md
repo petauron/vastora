@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.119](https://github.com/petauron/vastora/compare/v0.1.0-alpha.118...v0.1.0-alpha.119) (2026-09-10)
+
+
+### Bug Fixes
+
+* **web:** refine app store and identify official Pulse apps ([#388](https://github.com/petauron/vastora/issues/388)) ([5c633c5](https://github.com/petauron/vastora/commit/5c633c5cc0e14a9dba22055040cc31632467e259))
+
 ## [0.1.0-alpha.118](https://github.com/petauron/vastora/compare/v0.1.0-alpha.117...v0.1.0-alpha.118) (2026-09-10)
 
 
