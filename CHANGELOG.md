@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.120](https://github.com/petauron/vastora/compare/v0.1.0-alpha.119...v0.1.0-alpha.120) (2026-09-10)
+
+
+### Bug Fixes
+
+* repair Pulse enrollment and preserve retry node ([#390](https://github.com/petauron/vastora/issues/390)) ([bbec6f4](https://github.com/petauron/vastora/commit/bbec6f4a5889b80ff5034ef048e9dbd636ca7ce2))
+
 ## [0.1.0-alpha.119](https://github.com/petauron/vastora/compare/v0.1.0-alpha.118...v0.1.0-alpha.119) (2026-09-10)
 
 
