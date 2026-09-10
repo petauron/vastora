@@ -12,6 +12,7 @@ import (
 
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
+	"github.com/petauron/vastora/internal/pulse"
 )
 
 var (
@@ -40,7 +41,14 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var node *ThreeXUINodeCommandTask
 	var controller *ThreeXUIControllerCommandTask
 	var protocols *nodeprotocol.Task
+	var pulseEnrollment *pulse.EnrollmentTask
 	switch kind {
+	case pulse.EnrollmentKind:
+		var command pulse.EnrollmentTask
+		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || command.DeploymentID == "" {
+			return nil, errors.New("center: invalid Pulse enrollment task")
+		}
+		pulseEnrollment = &command
 	case nodeprotocol.CommandKind:
 		var command nodeprotocol.Task
 		if json.Unmarshal(inputJSON, &command) != nil {
@@ -179,7 +187,7 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, Reconcile: reconciliationRequested == 1}, nil
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -319,6 +327,9 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == pulse.EnrollmentKind {
+		return s.completePulseEnrollment(ctx, tx, taskID, agentID, inputJSON, succeeded, rawResult)
 	}
 	if kind == nodeprotocol.CommandKind {
 		return s.completeNodeProtocolCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)

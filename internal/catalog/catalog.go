@@ -59,7 +59,7 @@ type Image struct {
 	Reference string `json:"reference"`
 }
 
-// Artifact is a signed-catalog native executable. Official typed executors
+// Artifact is a signed-catalog native package. Official typed executors
 // select one exact artifact for the Agent host platform and verify it before
 // installation; the catalog never carries an executable command line.
 type Artifact struct {
