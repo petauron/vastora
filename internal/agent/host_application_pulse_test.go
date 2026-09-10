@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,6 +97,68 @@ func TestPulseSupportedHostReleases(t *testing.T) {
 	}
 }
 
+func TestPulseUnitStagesOwnerOnlyEnrollmentCredential(t *testing.T) {
+	unit := string(pulseUnit("collector"))
+	for _, directive := range []string{
+		"User=vastora-pulse\n", "Group=vastora-pulse\n",
+		"LoadCredential=pulse-enrollment:" + pulseToken + "\n",
+		"RuntimeDirectory=vastora-pulse-agent\n", "RuntimeDirectoryMode=0700\n",
+		"Environment=PULSE_ENROLLMENT_TOKEN_FILE=" + pulseRuntimeToken + "\n",
+		"StateDirectoryMode=0700\n", "UMask=0077\n", "NoNewPrivileges=yes\n",
+	} {
+		if !strings.Contains(unit, directive) {
+			t.Fatalf("missing private credential directive: %s", directive)
+		}
+	}
+	var command []string
+	for _, line := range strings.Split(unit, "\n") {
+		if value, ok := strings.CutPrefix(line, "ExecStartPre="); ok {
+			command = strings.Fields(value)
+		}
+	}
+	if len(command) != 5 || command[0] != "/usr/bin/install" || command[1] != "-m" || command[2] != "0600" || command[3] != "%d/pulse-enrollment" || command[4] != pulseRuntimeToken {
+		t.Fatalf("unexpected credential preparation: %v", command)
+	}
+	for _, mode := range []os.FileMode{0o400, 0o440, 0o600} {
+		t.Run(mode.String(), func(t *testing.T) {
+			root := t.TempDir()
+			source := filepath.Join(root, "systemd credential")
+			destination := filepath.Join(root, "private credential")
+			token := []byte("test-enrollment-token")
+			if err := os.WriteFile(source, token, mode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(source, mode); err != nil {
+				t.Fatal(err)
+			}
+			// Exercise the exact unit command, replacing only its runtime paths.
+			// The source mode models systemd's ACL-backed 0440 credential file.
+			if err := exec.Command(command[0], command[1], command[2], source, destination).Run(); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(destination)
+			if err != nil || info.Mode().Perm() != 0o600 {
+				t.Fatalf("prepared credential is not owner-only: %v", err)
+			}
+			got, err := os.ReadFile(destination)
+			if err != nil || !bytes.Equal(got, token) {
+				t.Fatal("credential preparation changed the token")
+			}
+		})
+	}
+}
+
+func TestPulseUnitOwnershipDoesNotDependOnTemplate(t *testing.T) {
+	for _, unit := range [][]byte{pulseUnit("collector"), []byte("# Managed by Vastora\n# Application: collector\n[Service]\nDescription=Earlier unit template\n")} {
+		if !pulseUnitOwnedBy(unit, "collector") || pulseUnitOwnedBy(unit, "other") || pulseUnitOwnedBy(unit, "collect") {
+			t.Fatal("unit ownership must match the exact application, not the unit template")
+		}
+	}
+	if pulseUnitOwnedBy([]byte("[Service]\n# Application: collector\n"), "collector") || pulseUnitOwnedBy(pulseUnit(""), "") {
+		t.Fatal("unmanaged unit accepted")
+	}
+}
+
 func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	archive := testPulseArchive(t, "pulse-v0.1.0-alpha.2-linux-x86_64/pulse-agent", tar.TypeReg, false)
 	digest := sha256.Sum256(archive)
@@ -107,6 +171,9 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	credentials := []byte(`{"protocol_version":2,"service_url":"https://pulse.private.example.com/","node_id":"stable-id","agent_token":"private-agent-token"}`)
 	manager.RunCommand = func(ctx context.Context, command string, args ...string) error {
 		if command == "systemctl" && len(args) > 0 && args[0] == "restart" {
+			if err := writeHostFileAtomic(manager.path(pulseRuntimeToken), []byte("test-runtime-token"), 0o600); err != nil {
+				return err
+			}
 			if _, err := os.Stat(manager.path(pulseCredentialsPath)); errors.Is(err, os.ErrNotExist) {
 				return writeHostFileAtomic(manager.path(pulseCredentialsPath), credentials, 0o600)
 			}
@@ -122,6 +189,13 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	token, err := os.ReadFile(manager.path(pulseToken))
 	if err != nil || len(token) != 0 {
 		t.Fatal("one-time token retained")
+	}
+	if _, err := os.Stat(manager.path(pulseRuntimeToken)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("runtime enrollment token retained")
+	}
+	// An owned unit may be regenerated as the service template evolves.
+	if err := writeHostFileAtomic(manager.path(pulseUnitPath), []byte("# Managed by Vastora\n# Application: collector\n[Service]\nDescription=Earlier unit template\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	task.Operation, task.Secrets = "upgrade", json.RawMessage(`{}`)
 	if _, err := manager.ApplyPulse(context.Background(), task); err != nil {
@@ -170,8 +244,8 @@ func TestPulseInstallBeforeStartupFailureCleansManagedFiles(t *testing.T) {
 	if err := writeHostFileAtomic(manager.path("/etc/os-release"), []byte("ID=debian\nVERSION_ID=12\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.ApplyPulse(context.Background(), task); err == nil {
-		t.Fatal("failed installation reported success")
+	if _, err := manager.ApplyPulse(context.Background(), task); err == nil || !strings.Contains(err.Error(), "reload failed before starting") || strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("failed installation lost its cause or blamed networking: %v", err)
 	}
 	for _, path := range []string{pulseBinary, pulseEnv, pulseUnitPath, pulseDigest, pulseToken, pulseArchive} {
 		if _, err := os.Lstat(manager.path(path)); !errors.Is(err, os.ErrNotExist) {

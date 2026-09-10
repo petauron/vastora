@@ -28,6 +28,7 @@ const (
 	pulseArchive         = "/opt/vastora/pulse-agent/release.tar.gz"
 	pulseEnv             = "/etc/vastora/pulse-agent.env"
 	pulseToken           = "/etc/vastora/pulse-enrollment-token"
+	pulseRuntimeToken    = "/run/vastora-pulse-agent/enrollment-token"
 	pulseUnitPath        = "/etc/systemd/system/vastora-pulse-agent.service"
 	pulseUnitName        = "vastora-pulse-agent.service"
 	pulseState           = "/var/lib/vastora-pulse-agent"
@@ -105,6 +106,9 @@ func pulseEnvironment(config pulse.AgentConfig) []byte {
 }
 
 func pulseUnit(applicationID string) []byte {
+	// systemd credentials may use ACLs with group mode bits set. Pulse requires
+	// owner-only mode bits, so give it a private runtime copy without weakening
+	// its validation or exposing the token in the environment or command line.
 	return []byte("# Managed by Vastora\n# Application: " + applicationID + `
 [Unit]
 Description=Pulse host monitoring
@@ -117,7 +121,10 @@ User=vastora-pulse
 Group=vastora-pulse
 EnvironmentFile=/etc/vastora/pulse-agent.env
 LoadCredential=pulse-enrollment:/etc/vastora/pulse-enrollment-token
-Environment=PULSE_ENROLLMENT_TOKEN_FILE=%d/pulse-enrollment
+RuntimeDirectory=vastora-pulse-agent
+RuntimeDirectoryMode=0700
+ExecStartPre=/usr/bin/install -m 0600 %d/pulse-enrollment /run/vastora-pulse-agent/enrollment-token
+Environment=PULSE_ENROLLMENT_TOKEN_FILE=/run/vastora-pulse-agent/enrollment-token
 ExecStart=/opt/vastora/pulse-agent/pulse-agent
 Restart=on-failure
 RestartSec=10s
@@ -142,6 +149,13 @@ ReadWritePaths=/var/lib/vastora-pulse-agent
 [Install]
 WantedBy=multi-user.target
 `)
+}
+
+// Ownership is independent of the unit template, which may change on upgrade.
+// RestorePulse still checks the full current unit before starting retained files.
+func pulseUnitOwnedBy(unit []byte, applicationID string) bool {
+	return applicationID != "" && !strings.ContainsAny(applicationID, "\r\n") &&
+		bytes.HasPrefix(unit, []byte("# Managed by Vastora\n# Application: "+applicationID+"\n"))
 }
 
 func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
@@ -182,7 +196,7 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 		snapshots = append(snapshots, snapshot)
 	}
 	unit := pulseUnit(task.ApplicationID)
-	if snapshots[2].Exists && !bytes.Equal(snapshots[2].Data, unit) {
+	if snapshots[2].Exists && !pulseUnitOwnedBy(snapshots[2].Data, task.ApplicationID) {
 		return ApplicationTaskResult{}, errors.New("agent: Pulse service is not owned by this application")
 	}
 	if !snapshots[2].Exists && (snapshots[0].Exists || snapshots[1].Exists || snapshots[3].Exists || snapshots[4].Exists || snapshots[5].Exists) {
@@ -257,11 +271,14 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 		if snapshots[2].Exists && restartAttempted && rollbackErr == nil {
 			rollbackErr = errors.Join(rollbackErr, manager.run(rollbackCtx, "systemctl", "restart", pulseUnitName))
 		}
-		return ApplicationTaskResult{}, errors.Join(errors.New("agent: Pulse enrollment or startup failed; check the private HTTPS access and retry"), rollbackErr)
+		return ApplicationTaskResult{}, errors.Join(fmt.Errorf("agent: Pulse installation failed: %w", err), rollbackErr)
 	}
 	// Leave an empty credential source so reboot works without retaining the
 	// one-time token. Existing agent credentials are owned by Pulse itself.
 	if err := writeHostFileAtomic(manager.path(pulseToken), []byte{}, 0o600); err != nil {
+		return ApplicationTaskResult{}, err
+	}
+	if err := removeHostFile(manager.path(pulseRuntimeToken)); err != nil {
 		return ApplicationTaskResult{}, err
 	}
 	return ApplicationTaskResult{}, nil
@@ -367,7 +384,7 @@ func (manager SystemdHostApplicationManager) RemovePulse(ctx context.Context, ap
 	if !unit.Exists {
 		return nil
 	}
-	if !bytes.Equal(unit.Data, pulseUnit(applicationID)) {
+	if !pulseUnitOwnedBy(unit.Data, applicationID) {
 		return errors.New("agent: refusing to remove an unmanaged Pulse service")
 	}
 	if err := manager.run(ctx, "systemctl", "disable", "--now", pulseUnitName); err != nil {
