@@ -10,6 +10,7 @@ export type SelectOption = {
 };
 
 type SelectControlProps = {
+  "aria-describedby"?: string;
   "aria-invalid"?: boolean;
   "aria-label"?: string;
   className?: string;
