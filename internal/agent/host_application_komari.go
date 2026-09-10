@@ -382,7 +382,7 @@ func normalizedKomariEndpoint(value string) (string, error) {
 func (manager SystemdHostApplicationManager) downloadArtifact(ctx context.Context, artifact catalog.Artifact) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, artifact.URL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("agent: create Komari Agent download: %w", err)
+		return nil, fmt.Errorf("agent: create application artifact download: %w", err)
 	}
 	client := manager.HTTPClient
 	if client == nil {
@@ -390,22 +390,22 @@ func (manager SystemdHostApplicationManager) downloadArtifact(ctx context.Contex
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("agent: download Komari Agent: %w", err)
+		return nil, fmt.Errorf("agent: download application artifact: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("agent: download Komari Agent: unexpected HTTP status %d", response.StatusCode)
+		return nil, fmt.Errorf("agent: download application artifact: unexpected HTTP status %d", response.StatusCode)
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, maxArtifactBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("agent: read Komari Agent artifact: %w", err)
+		return nil, fmt.Errorf("agent: read application artifact: %w", err)
 	}
 	if len(content) == 0 || len(content) > maxArtifactBytes {
-		return nil, errors.New("agent: Komari Agent artifact has an invalid size")
+		return nil, errors.New("agent: application artifact has an invalid size")
 	}
 	digest := sha256.Sum256(content)
 	if hex.EncodeToString(digest[:]) != artifact.SHA256 {
-		return nil, errors.New("agent: Komari Agent artifact integrity check failed")
+		return nil, errors.New("agent: application artifact integrity check failed")
 	}
 	return content, nil
 }

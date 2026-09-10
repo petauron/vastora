@@ -13,6 +13,8 @@ import (
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/pulse"
 )
 
 const (
@@ -30,9 +32,10 @@ const (
 )
 
 var applicationVolumes = map[string][]string{
-	threeXUIKey: {threeXUIDatabaseVolume, "vastora-3x-ui-cert", "vastora-3x-ui-acme"},
-	cpaKey:      {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"},
-	keeperKey:   {"vastora-cpa-keeper-data"},
+	threeXUIKey:      {threeXUIDatabaseVolume, "vastora-3x-ui-cert", "vastora-3x-ui-acme"},
+	cpaKey:           {"vastora-cpa-auths", "vastora-cpa-logs", "vastora-cpa-plugins"},
+	keeperKey:        {"vastora-cpa-keeper-data"},
+	pulse.ServiceKey: {"vastora-pulse-data"},
 }
 
 type HostApplicationManager interface {
@@ -52,6 +55,19 @@ type ApplicationExecutor struct {
 func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
 	if err := validateApplicationTask(task); err != nil {
 		return ApplicationTaskResult{}, err
+	}
+	if task.AppKey == pulse.AgentKey {
+		host, ok := e.Host.(interface {
+			ApplyPulse(context.Context, DeploymentTask) (ApplicationTaskResult, error)
+			RemovePulse(context.Context, string, bool) error
+		})
+		if !ok {
+			return ApplicationTaskResult{}, errors.New("agent: Pulse host capability is not configured")
+		}
+		if task.Operation == "uninstall" {
+			return ApplicationTaskResult{}, host.RemovePulse(ctx, task.ApplicationID, task.DeleteData)
+		}
+		return host.ApplyPulse(ctx, task)
 	}
 	if task.AppKey == komariKey {
 		if e.Host == nil {
@@ -100,6 +116,8 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	var deployErr error
 	generatedSecrets := map[string]string{}
 	switch task.AppKey {
+	case pulse.ServiceKey:
+		deployErr = deployPulse(ctx, docker, task, bindAddress)
 	case threeXUIKey:
 		var apiToken string
 		apiToken, deployErr = deployThreeXUI(ctx, docker, task, bindAddress)
@@ -134,7 +152,7 @@ func validateApplicationTask(task DeploymentTask) error {
 	if task.Operation != "install" && task.Operation != "upgrade" && task.Operation != "configure" && task.Operation != "uninstall" {
 		return errors.New("agent: unsupported application operation")
 	}
-	supported := task.AppKey == threeXUIKey || task.AppKey == cpaKey || task.AppKey == keeperKey || task.AppKey == komariKey
+	supported := task.AppKey == threeXUIKey || task.AppKey == cpaKey || task.AppKey == keeperKey || task.AppKey == komariKey || task.AppKey == pulse.ServiceKey || task.AppKey == pulse.AgentKey
 	if !supported {
 		return errors.New("agent: unsupported official app package")
 	}
@@ -178,6 +196,18 @@ func validateApplicationTask(task DeploymentTask) error {
 		bindAddress = task.ServiceAddress
 	}
 	switch task.AppKey {
+	case pulse.AgentKey:
+		var config pulse.AgentConfig
+		if json.Unmarshal(task.Config, &config) != nil {
+			return errors.New("agent: invalid Pulse configuration")
+		}
+		if err := config.Validate(); err != nil {
+			return err
+		}
+	case pulse.ServiceKey:
+		if !networking.IsPrivateServiceAddress(bindAddress) {
+			return errors.New("agent: Pulse must bind only to a private service address")
+		}
 	case threeXUIKey:
 		config, err := decodeThreeXUIConfig(task.Config)
 		if err != nil {
@@ -285,7 +315,20 @@ func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
 			}
 			continue
 		}
-		containerName, ok := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer}[installation.AppKey]
+		if installation.AppKey == pulse.AgentKey {
+			restorer, ok := e.Host.(interface {
+				RestorePulse(context.Context, DeploymentTask) error
+			})
+			if !ok {
+				failures = append(failures, errors.New("agent: Pulse recovery capability is not configured"))
+				continue
+			}
+			if err := restorer.RestorePulse(ctx, task); err != nil {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		containerName, ok := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer, pulse.ServiceKey: pulseContainer}[installation.AppKey]
 		if !ok {
 			failures = append(failures, fmt.Errorf("agent: persisted application %s is unsupported", installation.AppKey))
 			continue
@@ -381,7 +424,7 @@ type appUninstallEngine interface {
 }
 
 func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, applicationID string, deleteData bool) error {
-	containers := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer}
+	containers := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer, pulse.ServiceKey: pulseContainer}
 	name, ok := containers[appKey]
 	if !ok {
 		return errors.New("agent: unsupported app package")

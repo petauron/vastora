@@ -82,6 +82,10 @@ jobs:
         run: |
           go test ./internal/nodeprotocol -count=1
           go test ./internal/agent ./internal/center -run 'Test.*(Protocol|HY2)' -count=1
+      - name: Verify Pulse enrollment and native lifecycle
+        run: |
+          go test ./internal/pulse -count=1
+          go test ./internal/agent ./internal/center -run '^TestPulse' -count=1
       - name: Set up native landing artifact builder
         if: ${{ !cancelled() }}
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.0.0

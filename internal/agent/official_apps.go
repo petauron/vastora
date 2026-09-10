@@ -11,6 +11,8 @@ var officialAppVersions = map[string]string{
 	"cpa":          "7.2.130",
 	"keeper":       "1.14.1",
 	"komari-agent": "1.2.60",
+	"pulse":        "0.1.0-alpha.2",
+	"pulse-agent":  "0.1.0-alpha.2",
 }
 
 // OfficialAppVersion is the single version gate shared by official catalog

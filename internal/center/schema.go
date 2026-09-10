@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 70
+const centerSchemaVersion = 71
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -655,7 +655,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			display_name TEXT NOT NULL DEFAULT '' COLLATE NOCASE,
 			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
-			kind TEXT NOT NULL CHECK(kind IN ('3xui.reality.create', '3xui.reality.verify', '3xui.reality.harden', '3xui.reality.rename', '3xui.reality.remove', '3xui.protocols.configure', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
+			kind TEXT NOT NULL CHECK(kind IN ('pulse.enrollment.create', '3xui.reality.create', '3xui.reality.verify', '3xui.reality.harden', '3xui.reality.rename', '3xui.reality.remove', '3xui.protocols.configure', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
 			input_json BLOB NOT NULL,
 			result_json BLOB NOT NULL DEFAULT '{}',
 			result_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
@@ -672,14 +672,15 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			BEGIN DELETE FROM secret_deliveries WHERE kind = 'deployment_credentials' AND resource_id = OLD.id; END`,
 		`CREATE TRIGGER secret_deliveries_delete_with_application_command AFTER DELETE ON application_commands
 			BEGIN DELETE FROM secret_deliveries WHERE kind = 'application_command_result' AND resource_id = OLD.id; END`,
-		`CREATE UNIQUE INDEX application_commands_one_active_idx ON application_commands(agent_id) WHERE (state IN ('pending', 'running') OR reconciliation_required = 1) AND kind <> '3xui.controller.manage'`,
+		`CREATE UNIQUE INDEX application_commands_one_active_idx ON application_commands(agent_id) WHERE (state IN ('pending', 'running') OR reconciliation_required = 1) AND kind NOT IN ('3xui.controller.manage', 'pulse.enrollment.create')`,
+		`CREATE UNIQUE INDEX pulse_enrollment_deployment_idx ON application_commands(json_extract(input_json, '$.deploymentId')) WHERE kind = 'pulse.enrollment.create' AND state IN ('pending','running')`,
 		`CREATE UNIQUE INDEX application_commands_one_active_controller_idx ON application_commands(application_id) WHERE (state IN ('pending', 'running') OR reconciliation_required = 1) AND kind = '3xui.controller.manage'`,
 		`CREATE UNIQUE INDEX application_commands_one_active_reality_name_idx ON application_commands(site_id, display_name COLLATE NOCASE)
 			WHERE site_id <> '' AND display_name <> '' AND kind IN ('3xui.reality.create', '3xui.reality.rename')
 			AND (state IN ('pending', 'running') OR reconciliation_required = 1)`,
 		`CREATE TRIGGER application_commands_block_during_three_x_ui_migration
 			BEFORE INSERT ON application_commands
-			WHEN NEW.kind <> '3xui.controller.manage'
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', 'pulse.enrollment.create')
 			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
@@ -688,7 +689,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
 		`CREATE TRIGGER application_command_updates_block_during_three_x_ui_migration
 			BEFORE UPDATE OF application_id, kind, input_json, state, reconciliation_required ON application_commands
-			WHEN NEW.kind <> '3xui.controller.manage' AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', 'pulse.enrollment.create') AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
 			AND NOT (NEW.kind = '3xui.node.reconcile' AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE id = json_extract(CASE WHEN json_valid(NEW.input_json) THEN NEW.input_json ELSE '{}' END, '$.migrationId') AND state = 'switching'
@@ -714,7 +715,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			BEGIN SELECT RAISE(ABORT, '3x-ui data-plane operation is in progress'); END`,
 		`CREATE TRIGGER application_commands_block_during_three_x_ui_deployment
 			BEFORE INSERT ON application_commands
-			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile')
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile', 'pulse.enrollment.create')
 			AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1)
 			AND EXISTS (
 				SELECT 1 FROM deployments deployment
@@ -724,7 +725,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			BEGIN SELECT RAISE(ABORT, '3x-ui deployment is in progress'); END`,
 		`CREATE TRIGGER application_command_updates_block_during_three_x_ui_deployment
 			BEFORE UPDATE OF application_id, kind, input_json, state, reconciliation_required ON application_commands
-			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile')
+			WHEN NEW.kind NOT IN ('3xui.controller.manage', '3xui.node.reconcile', 'pulse.enrollment.create')
 			AND (NEW.state IN ('pending', 'running') OR NEW.reconciliation_required = 1) AND EXISTS (
 				SELECT 1 FROM deployments deployment
 				WHERE deployment.app_key = 'vastora-official/3x-ui'

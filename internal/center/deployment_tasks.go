@@ -18,10 +18,12 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
 )
 
 type AgentTask struct {
+	PulseEnrollment           *pulse.EnrollmentTask          `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task             `json:"protocolCommand,omitempty"`
 	Kind                      string                         `json:"kind"`
 	ID                        string                         `json:"id"`
@@ -121,7 +123,8 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 	var attempt int64
 	var reconciliationRequested, requiredRuntimeGeneration int
 	query := `SELECT d.id, d.app_key, d.manifest_json, d.config_json, d.secret_id, d.registry_credential_id, d.operation, d.delete_data, d.application_id, a.role, d.service_address, d.attempt, d.reconciliation_requested, d.runtime_generation
-		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'`
+		FROM deployments d JOIN applications a ON a.id = d.application_id WHERE d.agent_id = ? AND d.state = 'pending'
+		AND NOT (d.app_key = 'vastora-official/pulse-agent' AND d.operation = 'install' AND d.secret_id IS NULL)`
 	queryArgs := []any{agentID}
 	if requiredTaskID != "" {
 		query += ` AND d.id = ?`

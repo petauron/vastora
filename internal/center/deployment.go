@@ -164,6 +164,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation != "install" && request.Operation != "upgrade" && request.Operation != "configure" && request.Operation != "uninstall" {
 		return DeploymentView{}, errors.New("center: invalid deployment operation")
 	}
+	if err := s.validatePulseDeployment(ctx, request); err != nil {
+		return DeploymentView{}, err
+	}
 	var exists int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id = ? AND status = 'active'`, request.AgentID).Scan(&exists); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: read agent: %w", err)
@@ -279,7 +282,21 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 				}
 			}
 		}
-		config, secrets, err = normalizeDeploymentConfig(manifest, deploymentConfig)
+		if request.AppKey == pulseAgentAppKey {
+			// Collector identity and endpoint are managed by Center, never form
+			// fields. Upgrades keep the established endpoint and node identity.
+			if _, _, err = normalizeDeploymentConfig(manifest, request.Config); err != nil {
+				return DeploymentView{}, err
+			}
+			if request.Operation == "install" {
+				config, err = s.pulseAgentConfig(ctx, request.AgentID)
+			} else {
+				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token")
+			}
+			secrets = []byte(`{}`)
+		} else {
+			config, secrets, err = normalizeDeploymentConfig(manifest, deploymentConfig)
+		}
 		if err != nil {
 			return DeploymentView{}, err
 		}
@@ -360,6 +377,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, errors.New("center: generated 3x-ui credentials are unavailable")
 		}
 		if err := insertSecretDelivery(ctx, tx, deploymentCredentialsDelivery, secretOwner, operationKeyHash, secretRequestHash, deployment.ID, now); err != nil {
+			return DeploymentView{}, err
+		}
+	}
+	if request.AppKey == pulseAgentAppKey && request.Operation == "install" {
+		if err := s.queuePulseEnrollment(ctx, tx, deployment, config, now); err != nil {
 			return DeploymentView{}, err
 		}
 	}

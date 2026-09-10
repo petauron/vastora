@@ -41,7 +41,7 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		return "", errors.New("center: target node not found")
 	}
 	var capabilities NodeCapabilities
-	if json.Unmarshal(capabilitiesJSON, &capabilities) != nil || (request.AppKey != komariAppKey && !capabilities.Docker) {
+	if json.Unmarshal(capabilitiesJSON, &capabilities) != nil || (!nativeApplication(request.AppKey) && !capabilities.Docker) {
 		return "", errors.New("center: target node does not report Docker capability")
 	}
 	var applicationID string
@@ -57,7 +57,7 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 			image = manifest.Images[0].Reference
 		}
 		runtime := "docker"
-		if request.AppKey == komariAppKey {
+		if nativeApplication(request.AppKey) {
 			runtime = "host"
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, created_at, updated_at)
@@ -66,7 +66,7 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 		}
 	} else if err != nil {
 		return "", fmt.Errorf("center: read application: %w", err)
-	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, komariAppKey, request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	} else if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', site_id = ?, runtime = CASE WHEN app_key IN (?, ?) THEN 'host' ELSE runtime END, role = CASE WHEN ? = 'install' THEN ? ELSE role END, updated_at = ? WHERE id = ?`, siteID, komariAppKey, pulseAgentAppKey, request.Operation, request.Role, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return "", fmt.Errorf("center: update application: %w", err)
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role == threeXUIRoleMaster {
@@ -127,7 +127,7 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', runtime_generation = ?, runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, executedRuntimeGeneration, komariAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', runtime_generation = ?, runtime = CASE WHEN app_key IN (?, ?) THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, executedRuntimeGeneration, komariAppKey, pulseAgentAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
 	}
 	var manifest catalog.AppManifest

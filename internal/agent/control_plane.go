@@ -22,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/realitytarget"
 )
 
@@ -155,6 +156,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	PulseEnrollment           *pulse.EnrollmentTask          `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task             `json:"protocolCommand,omitempty"`
 	Kind                      string                         `json:"kind"`
 	ID                        string                         `json:"id"`
@@ -216,6 +218,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	PulseEnrollment     *pulse.EnrollmentResult          `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand     *nodeprotocol.Result             `json:"protocolCommand,omitempty"`
 	LandingPeer         *landing.PeerIdentity            `json:"landingPeer,omitempty"`
 	Services            []ApplicationServiceResult       `json:"services"`
@@ -1041,7 +1044,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 		} else if c.Executor == nil {
 			err = errors.New("agent: application capability is not configured")
-		} else if task.AppKey != komariKey && !c.Capabilities.Docker {
+		} else if task.AppKey != komariKey && task.AppKey != pulse.AgentKey && !c.Capabilities.Docker {
 			err = errors.New("agent: Docker capability is not configured")
 		} else {
 			result, err = c.Executor.Deploy(ctx, task)
@@ -1052,6 +1055,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		store.landingMutationMu.Lock()
 		defer store.landingMutationMu.Unlock()
 		commands := 0
+		if task.PulseEnrollment != nil {
+			commands++
+		}
 		if task.ProtocolCommand != nil {
 			commands++
 		}
@@ -1072,6 +1078,19 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		}
 		if !c.Capabilities.Docker || commands != 1 {
 			err = errors.New("agent: application command received without Docker capability")
+		} else if task.PulseEnrollment != nil {
+			executor, ok := c.Executor.(interface {
+				EnrollPulse(context.Context, pulse.EnrollmentTask) (pulse.EnrollmentResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: Pulse enrollment capability is not configured")
+			} else {
+				var enrollment pulse.EnrollmentResult
+				enrollment, err = executor.EnrollPulse(ctx, *task.PulseEnrollment)
+				if err == nil {
+					result.PulseEnrollment = &enrollment
+				}
+			}
 		} else if task.ProtocolCommand != nil {
 			var commandResult nodeprotocol.Result
 			commandResult, err = c.applyNodeProtocols(ctx, store, *task.ProtocolCommand)

@@ -158,6 +158,30 @@
           "default": false
         }
       ]
+    },
+    {
+      "id": "pulse",
+      "version": "0.1.0-alpha.2",
+      "name": {"en": "Pulse", "zh-CN": "Pulse 监控主机"},
+      "description": {"en": "One monitoring dashboard for nodes in every region. Add a private HTTPS access point before installing collectors.", "zh-CN": "统一查看所有地区的节点监控。安装后先添加私网 HTTPS 入口，再安装探针。"},
+      "license": "Apache-2.0",
+      "images": [{"name":"pulse","reference":"ghcr.io/petauron/pulse:v0.1.0-alpha.2@sha256:4548948f4052d4f3b28b7ec3acf28b901809dc1eb8b866f6a9ac858fbdd2bc40"}],
+      "services": [{"name":"dashboard","protocol":"http","containerPort":8080,"defaultHostPort":18080,"healthPath":"/healthz","management":true}],
+      "homepage": {"service":"dashboard","path":"/"},
+      "config": []
+    },
+    {
+      "id": "pulse-agent",
+      "version": "0.1.0-alpha.2",
+      "name": {"en": "Pulse Agent", "zh-CN": "Pulse 探针"},
+      "description": {"en": "Native host monitoring, automatically enrolled with the global Pulse service. Requires Debian 12/13 or Ubuntu 24.04/26.04; no Docker required.", "zh-CN": "自动接入全局 Pulse 监控主机，采集主机指标。支持 Debian 12/13、Ubuntu 24.04/26.04，无需 Docker。"},
+      "license": "Apache-2.0",
+      "hostAccess": true,
+      "artifacts": [
+        {"name":"pulse-agent","operatingSystem":"linux","architecture":"amd64","url":"https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.2/pulse-v0.1.0-alpha.2-linux-x86_64.tar.gz","sha256":"b3c610de88b86e8a2c2736906d433a35eb4337bde856ef3aa8e9a3f429f92241"},
+        {"name":"pulse-agent","operatingSystem":"linux","architecture":"arm64","url":"https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.2/pulse-v0.1.0-alpha.2-linux-aarch64.tar.gz","sha256":"a4a6472ab781d6eec2af1e3efe52f094f79cb55c1d8341e132ae3dbd552a28ac"}
+      ],
+      "config": []
     }
   ]
 }

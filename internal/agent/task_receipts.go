@@ -221,6 +221,11 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		Error:                  "agent: previous task outcome is unknown; operator reconciliation is required",
 		ReconciliationRequired: task.Kind == "application.apply" || task.Kind == "application.command",
 	}
+	if task.PulseEnrollment != nil || task.AppKey == "vastora-official/pulse-agent" || task.AppKey == "vastora-official/pulse" {
+		// A fresh explicit installation is the recovery path for Pulse; the
+		// 3x-ui reconciliation workflow cannot replay an enrollment token.
+		completion.ReconciliationRequired = false
+	}
 	if task.Kind == "application.apply" {
 		completion.ApplicationRuntimeGeneration = executorRuntimeGeneration
 	}

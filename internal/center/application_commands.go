@@ -703,6 +703,8 @@ func (s *Store) ApplicationCommand(ctx context.Context, id string) (ApplicationC
 		return value, err
 	}
 	switch value.Kind {
+	case "pulse.enrollment.create":
+		value.Action = "enroll"
 	case nodeprotocol.CommandKind:
 		var next struct {
 			NextCommandID string `json:"nextCommandId"`
