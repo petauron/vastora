@@ -35,8 +35,8 @@ it("defaults to VLESS and adds HY2 without AnyTLS", async () => {
   const save = vi.spyOn(api, "configureNodeProtocols").mockResolvedValue(completed);
   const updated = vi.fn(async () => undefined);
   const container = await renderControls(updated);
-  expect(container.querySelector("#node-service-vless")?.getAttribute("aria-checked")).toBe("true");
-  expect(container.querySelector("#node-service-hy2")?.getAttribute("aria-checked")).toBe("false");
+  expect(container.querySelector<HTMLInputElement>("input#node-service-vless")?.checked).toBe(true);
+  expect(container.querySelector<HTMLInputElement>("input#node-service-hy2")?.checked).toBe(false);
   expect(container.textContent).not.toContain("AnyTLS");
   expect(button(container, "保存协议").disabled).toBe(true);
   await act(async () => { container.querySelector<HTMLElement>("#node-service-hy2")?.click(); });

@@ -156,7 +156,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/application-commands/reality/rename", s.requireAuth(true, s.handleRenameRealityCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/reality/remove", s.requireAuth(true, s.handleRemoveRealityCommand))
 	mux.HandleFunc("GET /api/v1/services/{id}/protocols", s.requireAuth(false, s.handleNodeProtocols))
-	mux.HandleFunc("PUT /api/v1/services/{id}/protocols", s.requireAuth(true, s.handleNodeProtocols))
+	mux.HandleFunc("PUT /api/v1/services/{id}/protocols", s.requireAuth(true, s.handleConfigureNodeProtocols))
 	mux.HandleFunc("POST /api/v1/application-commands/subscription", s.requireAuth(true, s.handleCreateSubscriptionCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/clients", s.requireAuth(true, s.handleCreateThreeXUIClientCommand))
 	mux.HandleFunc("GET /api/v1/application-commands/{id}", s.requireAuth(false, s.handleApplicationCommand))

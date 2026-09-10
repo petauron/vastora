@@ -16,22 +16,22 @@ import (
 	"github.com/petauron/vastora/internal/secret"
 )
 
-func (s *Server) handleNodeProtocols(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		value, err := s.store.NodeProtocols(r.Context(), r.PathValue("id"))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-		return
-	}
-	var selection nodeprotocol.Selection
-	if err := decodeJSON(r, &selection); err != nil {
+func (s *Server) handleNodeProtocols(w http.ResponseWriter, request *http.Request) {
+	value, err := s.store.NodeProtocols(request.Context(), request.PathValue("id"))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	value, err := s.store.ConfigureNodeProtocols(r.Context(), r.PathValue("id"), selection)
+	writeJSON(w, http.StatusOK, value)
+}
+
+func (s *Server) handleConfigureNodeProtocols(w http.ResponseWriter, request *http.Request) {
+	var input nodeprotocol.Selection
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	value, err := s.store.ConfigureNodeProtocols(request.Context(), request.PathValue("id"), input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
