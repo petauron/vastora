@@ -155,6 +155,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/applications/{id}/reality-targets/verify", s.requireAuth(true, s.handleVerifyRealityTarget))
 	mux.HandleFunc("POST /api/v1/application-commands/reality/rename", s.requireAuth(true, s.handleRenameRealityCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/reality/remove", s.requireAuth(true, s.handleRemoveRealityCommand))
+	mux.HandleFunc("GET /api/v1/services/{id}/protocols", s.requireAuth(false, s.handleNodeProtocols))
+	mux.HandleFunc("PUT /api/v1/services/{id}/protocols", s.requireAuth(true, s.handleConfigureNodeProtocols))
 	mux.HandleFunc("POST /api/v1/application-commands/subscription", s.requireAuth(true, s.handleCreateSubscriptionCommand))
 	mux.HandleFunc("POST /api/v1/application-commands/clients", s.requireAuth(true, s.handleCreateThreeXUIClientCommand))
 	mux.HandleFunc("GET /api/v1/application-commands/{id}", s.requireAuth(false, s.handleApplicationCommand))
@@ -377,6 +379,14 @@ func writeError(writer http.ResponseWriter, status int, err error) {
 // operational diagnostics remain on the authenticated diagnostic/task surfaces.
 func publicErrorMessage(code string) string {
 	switch code {
+	case "protocols_need_own_exit":
+		return "Switch to the node's own exit before adding HY2, then select the landing server again."
+	case "protocols_need_domain":
+		return "Set up the node's public address before changing protocols."
+	case "protocols_domain_in_use":
+		return "Disable HY2 before removing its public address."
+	case "node_operation_busy":
+		return "Wait for the current node operation to finish."
 	case "node_delete_requires_disabled":
 		return "Disable the node before deleting it."
 	case "node_delete_in_use":
@@ -417,6 +427,14 @@ func errorCode(status int, message string) string {
 	}
 	normalized := strings.ToLower(message)
 	switch {
+	case normalized == "center: switch to the node's own exit before adding hy2, then select the landing server again":
+		return "protocols_need_own_exit"
+	case normalized == "center: configure the node public domain before changing protocols":
+		return "protocols_need_domain"
+	case normalized == "center: disable hy2 before removing its public domain":
+		return "protocols_domain_in_use"
+	case normalized == "center: another node operation is in progress":
+		return "node_operation_busy"
 	case normalized == "center: disable node before deleting":
 		return "node_delete_requires_disabled"
 	case normalized == "center: node still in use" || normalized == "center: node could not be deleted; check remaining dependencies":

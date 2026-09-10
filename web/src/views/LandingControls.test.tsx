@@ -51,6 +51,42 @@ it("previews the best exit without selecting it and never borrows another pair's
   expect(landingLatencyPreview(view, "source-one", "app-one").server?.nodeId).toBe("b");
 });
 
+it.each(["zh-CN", "en"] as const)("shows own exit after an empty overview loads (%s)", async (language) => {
+  let resolveRead!: (view: LandingView) => void;
+  vi.spyOn(api, "landing").mockReturnValue(new Promise<LandingView>((resolve) => { resolveRead = resolve; }));
+  const update = vi.spyOn(api, "configureLandingProxy");
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="Node one" locked={false} language={language} /></LandingProvider>); });
+  const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"]');
+  expect(trigger?.textContent).toContain(language === "zh-CN" ? "正在读取…" : "Loading…");
+  expect(trigger?.disabled).toBe(true);
+  await act(async () => { resolveRead({ nodeIds: [], revision: 0, servers: [], candidates: [], proxies: [], latencies: [] }); });
+  expect(trigger?.textContent).toContain(language === "zh-CN" ? "本机出口" : "Own exit");
+  expect(trigger?.hasAttribute("data-placeholder")).toBe(false);
+  expect(trigger?.disabled).toBe(false);
+  await act(async () => { trigger?.click(); });
+  const option = document.querySelector<HTMLElement>('[role="option"]');
+  expect(option?.textContent).toBe(language === "zh-CN" ? "本机出口" : "Own exit");
+  expect(option?.getAttribute("aria-disabled")).not.toBe("true");
+  await act(async () => { option?.click(); });
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(update).not.toHaveBeenCalled();
+});
+
+it("does not mistake a failed initial read for an empty exit configuration", async () => {
+  vi.spyOn(api, "landing").mockRejectedValue(new Error("unavailable"));
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
+  const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"]');
+  expect(trigger?.textContent).toContain("状态未知");
+  expect(trigger?.textContent).not.toContain("本机出口");
+  expect(trigger?.disabled).toBe(true);
+});
+
 it("shares one overview and sends a specific exit with the observed revision", async () => {
   const view = overview();
   const read = vi.spyOn(api, "landing").mockResolvedValue(view);
@@ -63,6 +99,8 @@ it("shares one overview and sends a specific exit with the observed revision", a
   });
   expect(read).toHaveBeenCalledTimes(1);
   expect(container.textContent).toContain("12 ms");
+  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("本机出口");
+  expect(container.querySelector('[role="combobox"]')?.hasAttribute("data-placeholder")).toBe(false);
   await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
   expect(document.body.textContent).toContain("88 ms");
   const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("落地 B"));
@@ -75,6 +113,26 @@ it("shares one overview and sends a specific exit with the observed revision", a
   expect(container.textContent).toContain("正在切换");
   expect(container.textContent).toContain("上次应用：原出口规则");
   expect(container.querySelector<HTMLButtonElement>('[role="combobox"]')?.disabled).toBe(true);
+});
+
+it("sends the API's empty exit value only after confirming restoration", async () => {
+  const view = overview();
+  view.proxies[0] = { ...view.proxies[0], enabled: true, landingNodeId: "b", status: "ready", connection: "healthy" };
+  vi.spyOn(api, "landing").mockResolvedValue(view);
+  const update = vi.spyOn(api, "configureLandingProxy").mockResolvedValue({ ...view, proxies: [{ ...view.proxies[0], enabled: false, landingNodeId: "", revision: 3, status: "stopped", connection: "disabled" }] });
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
+  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("落地 B");
+  await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
+  await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("本机出口"))?.click(); });
+  expect(update).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("将恢复启用落地前的出口规则");
+  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "确认切换")?.click(); });
+  expect(update).toHaveBeenCalledWith("app-one", "", 2, expect.any(AbortSignal));
+  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("本机出口");
+  expect(container.querySelector('[role="combobox"]')?.hasAttribute("data-placeholder")).toBe(false);
 });
 
 it("keeps a failed desired exit separate from the last applied exit and cancels restoration without writing", async () => {

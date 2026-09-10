@@ -1,6 +1,7 @@
 import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 import type { LandingView } from "./landing-types";
+import type { NodeProtocols } from "./types";
 
 export class APIError extends Error {
   constructor(
@@ -132,6 +133,8 @@ export const api = {
 	createRealityCommand: (input: { applicationId: string; verificationId: string; targetIp: string; regionCode: string; name: string; clientName?: string; hostname?: string; dnsProvider: "manual" | "cloudflare"; targetHost: string; serverName: string; inboundTotalBytes: number; inboundResetDay: number; clientTotalBytes?: number; clientResetDays?: number; clientExpiryTime?: number }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
 	renameRealityCommand: (serviceId: string, regionCode: string, name: string) => request<ApplicationCommand>("/api/v1/application-commands/reality/rename", { method: "POST", body: JSON.stringify({ serviceId, regionCode, name }) }),
 	removeRealityCommand: (serviceId: string) => request<ApplicationCommand>("/api/v1/application-commands/reality/remove", { method: "POST", body: JSON.stringify({ serviceId }) }),
+	nodeProtocols: (serviceId: string) => request<NodeProtocols>(`/api/v1/services/${encodeURIComponent(serviceId)}/protocols`),
+	configureNodeProtocols: (serviceId: string, selection: { vless: boolean; hy2: boolean }) => request<ApplicationCommand>(`/api/v1/services/${encodeURIComponent(serviceId)}/protocols`, { method: "PUT", body: JSON.stringify(selection) }),
 	createSubscriptionCommand: (input: { applicationId: string; gatewayNodeId: string; hostname?: string; kind: "public_direct" | "cloudflare_tunnel"; dnsProvider: "manual" | "cloudflare" }) => request<ApplicationCommand>("/api/v1/application-commands/subscription", { method: "POST", body: JSON.stringify(input) }),
 	createThreeXUIClientCommand: (input: ThreeXUIClientCommandInput) => request<ApplicationCommand>("/api/v1/application-commands/clients", { method: "POST", body: JSON.stringify(input) }),
 	latestApplicationCommand: (applicationId: string, kind: ApplicationCommandKind) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/commands/latest?kind=${encodeURIComponent(kind)}`),

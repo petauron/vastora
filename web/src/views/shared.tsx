@@ -10,6 +10,10 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  if (code === "protocols_need_own_exit") return copy(language, "请先切换为“本机出口”，启用 HY2 后再选择落地机。", "Switch to the node's own exit, enable HY2, then select the landing server again.");
+  if (code === "protocols_need_domain") return copy(language, "请先配置节点的公网地址，再修改协议。", "Set up the node's public address before changing protocols.");
+  if (code === "protocols_domain_in_use") return copy(language, "HY2 正在使用这个地址，请先关闭 HY2 再移除。", "Disable HY2 before removing its public address.");
+  if (code === "node_operation_busy") return copy(language, "请等待当前节点操作完成后再试。", "Wait for the current node operation to finish.");
   if (code === "node_delete_requires_disabled") {
     return copy(language, "请先停用节点，再删除。", "Disable the node before deleting it.");
   }

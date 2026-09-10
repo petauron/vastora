@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+
+	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
 // Remove only the pinned local inbound. Inbound deletion detaches its client
@@ -16,8 +18,37 @@ func removeThreeXUIRealityInbound(ctx context.Context, baseURL, token string, co
 	}
 	result := RealityCommandResult{Action: "remove", InboundID: command.InboundID, InboundTag: command.InboundTag}
 	present, err := localRealityRemovalTarget(ctx, baseURL, token, command)
-	if err != nil || !present {
+	if err != nil {
 		return result, err
+	}
+	if command.RemoveHY2 {
+		inbounds, err := listRealityInbounds(ctx, baseURL, token)
+		if err != nil {
+			return result, uncertainRealityMutation(err)
+		}
+		for _, inbound := range inbounds {
+			if inbound.Tag != nodeprotocol.HY2Tag(command.InboundTag) || !threeXUIInboundMatchesNode(inbound, 0) {
+				continue
+			}
+			if inbound.Protocol != "hysteria" {
+				return result, errors.New("agent: refusing to remove a changed HY2 inbound")
+			}
+			if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/del/"+strconv.Itoa(inbound.ID), token, "", nil); err != nil {
+				return result, uncertainRealityMutation(err)
+			}
+		}
+		inbounds, err = listRealityInbounds(ctx, baseURL, token)
+		if err != nil || inbounds == nil {
+			return result, uncertainRealityMutation(errors.New("agent: HY2 removal could not be confirmed"))
+		}
+		for _, inbound := range inbounds {
+			if inbound.Tag == nodeprotocol.HY2Tag(command.InboundTag) && threeXUIInboundMatchesNode(inbound, 0) {
+				return result, uncertainRealityMutation(errors.New("agent: HY2 removal is incomplete"))
+			}
+		}
+	}
+	if !present {
+		return result, nil
 	}
 	_, deleteErr := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/del/"+strconv.Itoa(command.InboundID), token, "", nil)
 	// Even a successful response must be read back. A lost delete response may

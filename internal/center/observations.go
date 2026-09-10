@@ -154,6 +154,22 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 			}
 		}
 		status := observedThreeXUIServiceStatus(value.Enabled, value.AppProtocol, guardStatus)
+		// A deliberately disabled VLESS inbound remains the stable node identity
+		// when HY2 is selected. Keep its domain and subscription associations.
+		var selectedHY2 int
+		var managedProtocols int
+		if serviceID != "" && !value.Enabled && value.AppProtocol == "vless/tcp/reality" {
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(p.hy2_enabled=1 OR EXISTS(SELECT 1 FROM application_commands c WHERE c.kind='3xui.protocols.configure' AND (c.state IN ('pending','running') OR c.reconciliation_required=1) AND json_extract(c.input_json,'$.serviceId')=p.service_id AND json_extract(c.input_json,'$.hy2')=1)),0) FROM three_x_ui_node_protocols p WHERE p.service_id=?`, serviceID).Scan(&managedProtocols, &selectedHY2); err != nil {
+				return err
+			}
+			if selectedHY2 > 0 {
+				status = "ready"
+			} else if managedProtocols > 0 {
+				// Observations do not override an explicit protocol selection or
+				// delete its DNS during a delayed post-update heartbeat.
+				status = "degraded"
+			}
+		}
 		if serviceID == "" {
 			serviceID, err = randomToken(18)
 			if err != nil {
@@ -170,7 +186,7 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 			return err
 		}
 		delete(existing, value.Name)
-		if !value.Enabled {
+		if !value.Enabled && managedProtocols == 0 {
 			if err := s.stopServicePublications(ctx, tx, serviceID, now, cleanups); err != nil {
 				return err
 			}
@@ -178,7 +194,7 @@ func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, ap
 	}
 	for _, serviceID := range existing {
 		var removing int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND json_extract(input_json,'$.serviceId')=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, realityRemoveCommandKind, serviceID).Scan(&removing); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind IN (?, '3xui.protocols.configure') AND json_extract(input_json,'$.serviceId')=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, realityRemoveCommandKind, serviceID).Scan(&removing); err != nil {
 			return err
 		}
 		if removing > 0 {

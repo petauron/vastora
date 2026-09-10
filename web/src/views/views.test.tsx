@@ -457,6 +457,29 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("版本已是最新");
   });
 
+  it.each(["zh-CN", "en"] as const)("separates version status from aligned controller actions: %s", (language) => {
+    const data = realityDashboard();
+    data.apps[0].app.config = [{ key: "port", label: { en: "Port", "zh-CN": "端口" }, description: { en: "Service port", "zh-CN": "服务端口" }, type: "string", required: true, secret: false }];
+    data.applications.push({ ...data.applications[0], id: "worker", role: "worker", controllerApplicationId: "three-x-ui", nodeSyncStatus: "ready" });
+    const container = render(<AppsView data={data} language={language} mutate={async () => undefined} />);
+    const manage = container.querySelector<HTMLButtonElement>('[data-slot="subscription-controller"] button[aria-label]');
+    expect(manage).not.toBeNull();
+    act(() => manage!.click());
+    const footer = document.querySelector<HTMLElement>('[data-slot="sheet-footer"]');
+    const actions = footer?.querySelector<HTMLElement>('[role="group"]');
+    const version = footer?.querySelector<HTMLElement>('[data-slot="badge"]');
+    expect(version?.textContent).toBe(language === "zh-CN" ? "版本已是最新" : "Version up to date");
+    expect(actions?.contains(version!)).toBe(false);
+    expect(version?.parentElement).toBe(actions?.parentElement);
+    expect(version?.parentElement?.classList.contains("items-center")).toBe(true);
+    expect(actions?.classList.contains("items-center")).toBe(true);
+    expect(actions?.classList.contains("flex-wrap")).toBe(true);
+    expect(actions?.getAttribute("aria-label")).toBe(language === "zh-CN" ? "应用操作" : "Application actions");
+    const buttons = [...(actions?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    expect(buttons.map((button) => button.textContent)).toEqual(language === "zh-CN" ? ["迁移订阅主机", "修改配置", "卸载"] : ["Move subscription host", "Change settings", "Uninstall"]);
+    expect(buttons.at(-1)?.disabled).toBe(true);
+  });
+
   it("keeps uninstall available when an installed app leaves the catalog", () => {
     const data = dashboard();
     data.apps = [];
@@ -1006,11 +1029,12 @@ describe("network and app views", () => {
 		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 美国Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		const rename = vi.spyOn(api, "renameRealityCommand").mockResolvedValue(pending);
+		vi.spyOn(api, "nodeProtocols").mockResolvedValue({ vless: true, hy2: false, state: "succeeded" });
 		mockCommandEvent({ ...pending, state: "succeeded", updatedAt: "2026-08-23T00:00:01Z" });
 		const mutate = vi.fn(async (operation: () => Promise<unknown>) => { await operation(); });
 		const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={mutate} />);
 		expect(container.textContent).toContain("🇺🇸 美国Old name");
-		act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("重命名"))?.click());
+		act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("编辑节点"))?.click());
 		const input = document.querySelector<HTMLInputElement>("#reality-rename-name")!;
 		act(() => {
 			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Oracle");

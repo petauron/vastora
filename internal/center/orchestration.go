@@ -509,8 +509,9 @@ func (s *Store) ListApplications(ctx context.Context) ([]ApplicationView, error)
 
 func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.application_id, s.site_id, s.name, s.display_name, s.region_code, s.protocol, s.container_port, s.host_port, s.endpoint, s.source, s.app_protocol, s.management, s.observed_listen, s.status, s.last_error, s.created_at, s.updated_at, a.last_seen_at,
-		COALESCE(guard.status, ''), COALESCE(guard.target_host, ''), COALESCE(guard.target_ip, ''), COALESCE(guard.server_name, ''), COALESCE(guard.target_asn, 0), COALESCE(guard.last_error, '')
+		COALESCE(guard.status, ''), COALESCE(guard.target_host, ''), COALESCE(guard.target_ip, ''), COALESCE(guard.server_name, ''), COALESCE(guard.target_asn, 0), COALESCE(guard.last_error, ''), COALESCE(protocols.vless_enabled,1),COALESCE(protocols.hy2_enabled,0)
 		FROM services s JOIN applications app ON app.id = s.application_id JOIN agents a ON a.id = app.node_id
+		LEFT JOIN three_x_ui_node_protocols protocols ON protocols.service_id=s.id
 		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = s.id ORDER BY s.name, s.id`)
 	if err != nil {
 		return nil, err
@@ -522,9 +523,18 @@ func (s *Store) ListServices(ctx context.Context) ([]ServiceView, error) {
 		var created, updated, lastSeen string
 		var guardTargetHost, guardTargetIP, guardServerName, guardError string
 		var guardTargetASN int64
+		var vlessEnabled, hy2Enabled bool
 		var management int
-		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen, &value.GuardStatus, &guardTargetHost, &guardTargetIP, &guardServerName, &guardTargetASN, &guardError); err != nil {
+		if err := rows.Scan(&value.ID, &value.ApplicationID, &value.SiteID, &value.Name, &value.DisplayName, &value.RegionCode, &value.Protocol, &value.ContainerPort, &value.HostPort, &value.Endpoint, &value.Source, &value.AppProtocol, &management, &value.ObservedListen, &value.Status, &value.LastError, &created, &updated, &lastSeen, &value.GuardStatus, &guardTargetHost, &guardTargetIP, &guardServerName, &guardTargetASN, &guardError, &vlessEnabled, &hy2Enabled); err != nil {
 			return nil, err
+		}
+		if value.AppProtocol == "vless/tcp/reality" {
+			if vlessEnabled {
+				value.Protocols = append(value.Protocols, "vless")
+			}
+			if hy2Enabled {
+				value.Protocols = append(value.Protocols, "hy2")
+			}
 		}
 		if value.GuardStatus != "" {
 			asn := "unknown"

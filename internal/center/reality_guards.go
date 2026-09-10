@@ -38,7 +38,7 @@ func (s *Store) startRealityGuardHardening(ctx context.Context) error {
 	if err := s.queueRealityGuardListenerIsolation(ctx); err != nil {
 		return err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT service_id FROM three_x_ui_reality_guards WHERE status = 'action_required' ORDER BY updated_at, service_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT service_id FROM three_x_ui_reality_guards WHERE status = 'action_required' AND NOT EXISTS(SELECT 1 FROM three_x_ui_node_protocols p WHERE p.service_id=three_x_ui_reality_guards.service_id AND p.vless_enabled=0) ORDER BY updated_at, service_id`)
 	if err != nil {
 		return err
 	}

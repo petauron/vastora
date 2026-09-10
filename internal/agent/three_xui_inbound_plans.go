@@ -55,6 +55,9 @@ func applyThreeXUIInboundPlan(ctx context.Context, store *Store, baseURL, token 
 		}
 		desiredEnabled = workerInbound.Enable
 	}
+	if reference, ok := clientInbound(command.Inbounds, []int{command.InboundID}, command.InboundID); ok && reference.VLESSDisabled {
+		desiredEnabled = false
+	}
 	if err := updateThreeXUIInboundPlanState(ctx, baseURL, token, command.InboundID, centralUpdate, command.InboundTotalBytes, desiredEnabled); err != nil {
 		return err
 	}
@@ -206,6 +209,9 @@ func executeThreeXUIInboundPlanReset(ctx context.Context, store *Store, centralU
 		return err
 	}
 	desiredEnabled := inbound.Enable || (!inbound.Enable && inbound.Total > 0 && usedBytes >= inbound.Total)
+	if reference, ok := clientInbound(command.Inbounds, []int{command.InboundID}, command.InboundID); ok && reference.VLESSDisabled {
+		desiredEnabled = false
+	}
 	journal, _, err := store.beginThreeXUIReset(ctx, command.OperationKey, command.ServiceID, command.ExpectedNextResetAt, command.PlanRevision, targetID, targetTag, usedBytes, desiredEnabled)
 	if err != nil {
 		return err
@@ -639,6 +645,9 @@ func observeThreeXUIClientInbounds(ctx context.Context, baseURL, token string, e
 			return nil, errors.New("agent: managed inbound is not VLESS REALITY")
 		}
 		reference.Enabled = inbound.Enable
+		if reference.VLESSDisabled && reference.HY2InboundID > 0 {
+			reference.Enabled = observed[reference.HY2InboundID].Enable
+		}
 		reference.TotalBytes = inbound.Total
 		reference.UsedBytes = inbound.Up + inbound.Down
 		reference.InboundTag = inbound.Tag

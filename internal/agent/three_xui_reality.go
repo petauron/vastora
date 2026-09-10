@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
 const threeXUIRealityMinClientVersion = "1.8.2"
@@ -445,6 +446,33 @@ func renameThreeXUIRealityInbound(ctx context.Context, baseURL, token string, co
 			return RealityCommandResult{}, uncertainRealityMutation(err)
 		}
 	}
+	if command.HY2InboundID > 0 {
+		all, err := listRealityInbounds(ctx, baseURL, token)
+		if err != nil {
+			return RealityCommandResult{}, uncertainRealityMutation(err)
+		}
+		found := false
+		for _, sibling := range all {
+			if normalizedThreeXUIInboundTag(sibling.Tag, command.TargetNodeID) != nodeprotocol.HY2Tag(normalizedThreeXUIInboundTag(inbound.Tag, command.TargetNodeID)) || !threeXUIInboundMatchesNode(sibling, command.TargetNodeID) {
+				continue
+			}
+			if sibling.Protocol != "hysteria" || sibling.ID != command.HY2InboundID {
+				return RealityCommandResult{}, uncertainRealityMutation(errors.New("agent: HY2 sibling identity changed"))
+			}
+			found = true
+			update, err := readThreeXUIInboundUpdate(ctx, baseURL, token, sibling.ID)
+			if err != nil {
+				return RealityCommandResult{}, uncertainRealityMutation(err)
+			}
+			update["remark"] = command.DisplayName + " · HY2"
+			if err := writeThreeXUIInboundUpdate(ctx, baseURL, token, sibling.ID, update); err != nil {
+				return RealityCommandResult{}, uncertainRealityMutation(errors.New("agent: HY2 name update needs reconciliation"))
+			}
+		}
+		if !found {
+			return RealityCommandResult{}, uncertainRealityMutation(errors.New("agent: HY2 sibling is unavailable"))
+		}
+	}
 	return RealityCommandResult{Action: "rename", InboundID: inbound.ID, DisplayName: inbound.Remark}, nil
 }
 
@@ -578,6 +606,10 @@ func attachThreeXUIClientToAllManagedRealityInbounds(ctx context.Context, baseUR
 	}
 	desired := append([]int(nil), detail.InboundIDs...)
 	for _, inbound := range inbounds {
+		if inbound.ID > 0 && inbound.Protocol == "hysteria" && managedThreeXUIRealityTag(inbound.Tag) && strings.HasSuffix(inbound.Tag, "-hy2") && !containsInt(desired, inbound.ID) {
+			desired = append(desired, inbound.ID)
+			continue
+		}
 		if inbound.ID < 1 || inbound.Protocol != "vless" || !managedThreeXUIRealityTag(inbound.Tag) || containsInt(desired, inbound.ID) {
 			continue
 		}

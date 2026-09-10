@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var errVLESSVerificationNotApplicable = errors.New("center: VLESS is disabled; its TLS check does not apply to HY2")
+
 // VerifyPublication performs an on-demand DNS and reachability check from the
 // Center. A check that has not passed remains pending rather than being marked
 // failed, because DNS and certificate propagation are expected to be eventual.
@@ -35,6 +37,22 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 	}
 	if publication.Status == "stopped" {
 		return PublicationView{}, errors.New("center: stopped publication cannot be verified")
+	}
+	if publication.Kind == publicationShared443 {
+		var hy2Only int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM three_x_ui_node_protocols WHERE service_id=? AND vless_enabled=0 AND hy2_enabled=1`, publication.ServiceID).Scan(&hy2Only); err != nil {
+			return PublicationView{}, err
+		}
+		if hy2Only > 0 {
+			return publication, errVLESSVerificationNotApplicable
+		}
+		var updating int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE kind='3xui.protocols.configure' AND json_extract(input_json,'$.serviceId')=? AND (state IN ('pending','running') OR reconciliation_required=1)`, publication.ServiceID).Scan(&updating); err != nil {
+			return PublicationView{}, err
+		}
+		if updating > 0 {
+			return publication, nil
+		}
 	}
 	if err := s.ensureServicePublicationChangeAllowed(ctx, s.db, publication.ServiceID); err != nil {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, err.Error())

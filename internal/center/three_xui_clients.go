@@ -116,7 +116,7 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 		return ApplicationCommandView{}, errors.New("center: client management is available only on the running global 3x-ui controller")
 	}
 	var active int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE (agent_id = ? OR kind='3xui.protocols.configure') AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if active != 0 {
@@ -219,9 +219,10 @@ func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID strin
 		COALESCE((SELECT p.hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), ''),
 		COALESCE((SELECT p.sni_hostname FROM publications p WHERE p.service_id = s.id AND p.kind = 'public_shared_443' AND p.status = 'ready' ORDER BY p.updated_at DESC LIMIT 1), ''),
 		COALESCE(plan.total_bytes, 0), COALESCE(plan.reset_day, 0), COALESCE(plan.next_reset_at, ''),
-		COALESCE(plan.status, 'active'), COALESCE(plan.last_error, ''), COALESCE(plan.revision, 0), COALESCE(plan.inbound_tag, '')
+		COALESCE(plan.status, 'active'), COALESCE(plan.last_error, ''), COALESCE(plan.revision, 0), COALESCE(plan.inbound_tag, ''),COALESCE(protocols.hy2_inbound_id,0),COALESCE(protocols.vless_enabled,1)=0
 		FROM services s JOIN applications target ON target.id = s.application_id JOIN agents agent ON agent.id = target.node_id
 		LEFT JOIN three_x_ui_inbound_plans plan ON plan.service_id = s.id
+		LEFT JOIN three_x_ui_node_protocols protocols ON protocols.service_id = s.id
 		WHERE target.app_key = ? AND target.status = 'running'
 		AND (target.id = ? OR EXISTS (
 			SELECT 1 FROM three_x_ui_nodes topology
@@ -237,7 +238,7 @@ func threeXUIClientInbounds(ctx context.Context, tx *sql.Tx, applicationID strin
 	values := []ThreeXUIClientInbound{}
 	for rows.Next() {
 		var value ThreeXUIClientInbound
-		if err := rows.Scan(&value.ID, &value.ServiceID, &value.Name, &value.DisplayName, &value.ApplicationID, &value.NodeID, &value.NodeName, &value.ConnectHostname, &value.SNIHostname, &value.TotalBytes, &value.ResetDay, &value.NextResetAt, &value.PlanStatus, &value.PlanError, &value.PlanRevision, &value.InboundTag); err != nil {
+		if err := rows.Scan(&value.ID, &value.ServiceID, &value.Name, &value.DisplayName, &value.ApplicationID, &value.NodeID, &value.NodeName, &value.ConnectHostname, &value.SNIHostname, &value.TotalBytes, &value.ResetDay, &value.NextResetAt, &value.PlanStatus, &value.PlanError, &value.PlanRevision, &value.InboundTag, &value.HY2InboundID, &value.VLESSDisabled); err != nil {
 			return nil, err
 		}
 		if value.ID > 0 {
@@ -374,6 +375,12 @@ func validateThreeXUIClientCommandResult(input ThreeXUIClientCommandTask, result
 		if secret.User != nil {
 			_, hasPassword = secret.User.Password()
 		}
+		if ok && inbound.VLESSDisabled && inbound.HY2InboundID > 0 {
+			if result.SecretKind != "client_link" || secret.Scheme != "hysteria2" || secret.User == nil || secret.User.Username() == "" || hasPassword || secret.Hostname() != inbound.ConnectHostname || secret.Port() != "443" || query.Get("sni") != inbound.ConnectHostname || query.Get("alpn") != "h3" || query.Has("insecure") {
+				return errors.New("center: Agent returned an invalid HY2 client link")
+			}
+			return nil
+		}
 		if !ok || result.SecretKind != "client_link" || secret.Scheme != "vless" || secret.User == nil || secret.User.Username() == "" || hasPassword || secret.Hostname() != inbound.ConnectHostname || secret.Port() != "443" || query.Get("type") != "tcp" || query.Get("security") != "reality" || query.Get("flow") != "xtls-rprx-vision" || query.Get("sni") != inbound.SNIHostname || query.Get("pbk") == "" || query.Get("sid") == "" {
 			return errors.New("center: Agent returned an invalid 3x-ui client link")
 		}
@@ -388,6 +395,9 @@ func validateThreeXUIClientCommandResult(input ThreeXUIClientCommandTask, result
 }
 
 func sameThreeXUIInboundReference(expected, actual ThreeXUIClientInbound) bool {
+	if expected.HY2InboundID != actual.HY2InboundID || expected.VLESSDisabled != actual.VLESSDisabled {
+		return false
+	}
 	return expected.ID == actual.ID && expected.ServiceID == actual.ServiceID && expected.Name == actual.Name && expected.DisplayName == actual.DisplayName && expected.ApplicationID == actual.ApplicationID && expected.NodeID == actual.NodeID && expected.NodeName == actual.NodeName && expected.ConnectHostname == actual.ConnectHostname && expected.SNIHostname == actual.SNIHostname && expected.ResetDay == actual.ResetDay && expected.NextResetAt == actual.NextResetAt && expected.PlanStatus == actual.PlanStatus && expected.PlanError == actual.PlanError
 }
 

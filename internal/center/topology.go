@@ -124,6 +124,7 @@ type ApplicationView struct {
 }
 
 type ServiceView struct {
+	Protocols      []string  `json:"protocols,omitempty"`
 	ID             string    `json:"id"`
 	ApplicationID  string    `json:"applicationId"`
 	SiteID         string    `json:"siteId"`

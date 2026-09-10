@@ -16,11 +16,13 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
 
 type AgentTask struct {
+	ProtocolCommand           *nodeprotocol.Task             `json:"protocolCommand,omitempty"`
 	Kind                      string                         `json:"kind"`
 	ID                        string                         `json:"id"`
 	Attempt                   int64                          `json:"attempt"`

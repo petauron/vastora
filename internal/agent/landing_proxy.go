@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
@@ -104,8 +105,13 @@ func verifyLocalLandingInbounds(ctx context.Context, routes threeXUILandingRoute
 				Security string `json:"security"`
 				Network  string `json:"network"`
 			}
-			if (inbound.NodeID != nil && *inbound.NodeID != 0) || inbound.Protocol != "vless" || inbound.Port != 443 || json.Unmarshal(inbound.StreamSettings, &stream) != nil || stream.Security != "reality" || (stream.Network != "tcp" && stream.Network != "raw") {
-				return errors.New("agent: landing selection is not a local managed VLESS inbound")
+			if json.Unmarshal(inbound.StreamSettings, &stream) != nil {
+				return errors.New("agent: invalid landing inbound transport")
+			}
+			vless := inbound.Protocol == "vless" && stream.Security == "reality" && (stream.Network == "tcp" || stream.Network == "raw")
+			hy2 := inbound.Protocol == "hysteria" && stream.Security == "tls" && stream.Network == "hysteria" && strings.HasSuffix(inbound.Tag, "-hy2")
+			if (inbound.NodeID != nil && *inbound.NodeID != 0) || inbound.Port != 443 || (!vless && !hy2) {
+				return errors.New("agent: landing selection is not a local managed proxy inbound")
 			}
 			matches++
 		}

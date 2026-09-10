@@ -52,6 +52,9 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 		return ThreeXUIClientCommandResult{}, err
 	}
 	result := ThreeXUIClientCommandResult{Inbounds: append([]ThreeXUIClientInbound(nil), command.Inbounds...)}
+	if command.Action == "create" || command.Action == "update" {
+		command.InboundIDs = expandProtocolInboundIDs(command.Inbounds, command.InboundIDs)
+	}
 	switch command.Action {
 	case "list", "list_inbounds":
 	case "create":
@@ -182,6 +185,9 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 				return result, err
 			}
 		} else {
+			for index := range clients {
+				clients[index].InboundIDs = collapseProtocolInboundIDs(command.Inbounds, clients[index].InboundIDs)
+			}
 			result.Clients = clients
 			result.ClientsObserved = true
 		}
@@ -457,6 +463,9 @@ func clientInboundsAvailable(inbounds []ThreeXUIClientInbound, ids []int) bool {
 	available := make(map[int]bool, len(inbounds))
 	for _, inbound := range inbounds {
 		available[inbound.ID] = true
+		if inbound.HY2InboundID > 0 {
+			available[inbound.HY2InboundID] = true
+		}
 	}
 	seen := make(map[int]bool, len(ids))
 	for _, id := range ids {
@@ -523,6 +532,13 @@ func revealThreeXUIClientLink(ctx context.Context, baseURL, token string, comman
 	inboundRef, ok := clientInbound(command.Inbounds, detail.InboundIDs, command.InboundID)
 	if !ok || strings.TrimSpace(inboundRef.ConnectHostname) == "" {
 		return "", errors.New("agent: this client has no ready public REALITY entry")
+	}
+	if inboundRef.VLESSDisabled && inboundRef.HY2InboundID > 0 {
+		inbound, err := getThreeXUIInbound(ctx, baseURL, token, inboundRef.HY2InboundID)
+		if err != nil {
+			return "", err
+		}
+		return hy2ClientLinkFromInbound(inbound, inboundRef.ConnectHostname, command.Email)
 	}
 	inbound, err := ensureThreeXUIRealityRuntimeRequirements(ctx, baseURL, token, inboundRef.ID)
 	if err != nil {

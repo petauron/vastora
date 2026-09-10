@@ -20,6 +20,7 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/realitytarget"
 )
@@ -154,6 +155,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	ProtocolCommand           *nodeprotocol.Task             `json:"protocolCommand,omitempty"`
 	Kind                      string                         `json:"kind"`
 	ID                        string                         `json:"id"`
 	Attempt                   int64                          `json:"attempt"`
@@ -214,6 +216,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	ProtocolCommand     *nodeprotocol.Result             `json:"protocolCommand,omitempty"`
 	LandingPeer         *landing.PeerIdentity            `json:"landingPeer,omitempty"`
 	Services            []ApplicationServiceResult       `json:"services"`
 	GeneratedSecrets    map[string]string                `json:"generatedSecrets,omitempty"`
@@ -252,6 +255,8 @@ type RealityCommandTask struct {
 	ClientExpiryTime     int64                    `json:"clientExpiryTime"`
 	ServiceID            string                   `json:"serviceId,omitempty"`
 	GuardRevision        int64                    `json:"guardRevision,omitempty"`
+	RemoveHY2            bool                     `json:"removeHY2,omitempty"`
+	HY2InboundID         int                      `json:"hy2InboundId,omitempty"`
 }
 
 type RealityCommandResult struct {
@@ -295,6 +300,8 @@ type SubscriptionCommandResult struct {
 }
 
 type ThreeXUIClientInbound struct {
+	HY2InboundID    int    `json:"hy2InboundId,omitempty"`
+	VLESSDisabled   bool   `json:"vlessDisabled,omitempty"`
 	ID              int    `json:"id"`
 	ServiceID       string `json:"serviceId"`
 	Name            string `json:"name"`
@@ -755,6 +762,10 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 	}
 	result := make([]ApplicationEndpointObservation, 0, len(payload.Object))
 	for _, inbound := range payload.Object {
+		// A managed HY2 sibling belongs to the existing subscription-node row.
+		if inbound.Protocol == "hysteria" && strings.HasSuffix(inbound.Tag, "-hy2") && managedThreeXUIRealityTag(inbound.Tag) {
+			continue
+		}
 		if isLegacyRealityGuardInbound(threeXUIRealityInbound{Remark: inbound.Remark, Protocol: inbound.Protocol, Listen: inbound.Listen, Port: inbound.Port, Tag: inbound.Tag}) {
 			continue
 		}
@@ -1041,6 +1052,9 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		store.landingMutationMu.Lock()
 		defer store.landingMutationMu.Unlock()
 		commands := 0
+		if task.ProtocolCommand != nil {
+			commands++
+		}
 		if task.ApplicationCommand != nil {
 			commands++
 		}
@@ -1058,9 +1072,25 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		}
 		if !c.Capabilities.Docker || commands != 1 {
 			err = errors.New("agent: application command received without Docker capability")
+		} else if task.ProtocolCommand != nil {
+			var commandResult nodeprotocol.Result
+			commandResult, err = c.applyNodeProtocols(ctx, store, *task.ProtocolCommand)
+			if err == nil {
+				result.ProtocolCommand = &commandResult
+			}
 		} else if task.ApplicationCommand != nil {
 			var commandResult RealityCommandResult
 			commandResult, err = applyRealityCommand(ctx, store, task.ID, task.Attempt, *task.ApplicationCommand)
+			if err == nil && task.ApplicationCommand.Action == "remove" && task.ApplicationCommand.RemoveHY2 {
+				executor, ok := c.Executor.(interface {
+					ConfigureHY2Port(context.Context, *Store, string, bool) error
+				})
+				if !ok {
+					err = deferTaskUntilReconciled(errors.New("agent: protocol port cleanup is unavailable"))
+				} else {
+					err = executor.ConfigureHY2Port(ctx, store, task.ApplicationCommand.TargetApplicationID, false)
+				}
+			}
 			if err == nil {
 				result.ApplicationCommand = &commandResult
 			}
