@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.117](https://github.com/petauron/vastora/compare/v0.1.0-alpha.116...v0.1.0-alpha.117) (2026-09-10)
+
+
+### Features
+
+* add optional native HY2 node protocols ([#383](https://github.com/petauron/vastora/issues/383)) ([7a3130c](https://github.com/petauron/vastora/commit/7a3130ce04de4826ca0be6d5be8f6bbb26f6e07c))
+
 ## [0.1.0-alpha.116](https://github.com/petauron/vastora/compare/v0.1.0-alpha.115...v0.1.0-alpha.116) (2026-09-09)
 
 
