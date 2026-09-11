@@ -398,6 +398,20 @@ func (e ApplicationExecutor) containerMatchesInstallation(ctx context.Context, c
 	if err := waitForBindAddress(ctx, bindAddress); err != nil {
 		return false, err
 	}
+	if installation.AppKey == pulse.ServiceKey {
+		// Pulse is deployed on Docker's default bridge, not the managed CPA
+		// or Xray bridges. Preserve that topology and its private port binding.
+		mode := string(inspection.Container.HostConfig.NetworkMode)
+		if mode != "default" && mode != "bridge" && mode != "" {
+			return false, errors.New("agent: retained Pulse container has an unexpected network mode")
+		}
+		if inspection.Container.State == nil || !inspection.Container.State.Running {
+			if _, err := docker.ContainerStart(ctx, inspection.Container.ID, client.ContainerStartOptions{}); err != nil && !errdefs.IsNotModified(err) {
+				return false, fmt.Errorf("agent: restart retained Pulse container: %w", err)
+			}
+		}
+		return true, nil
+	}
 	networkName, networkComponent := cpaNetwork, "cpa-network"
 	if installation.AppKey == threeXUIKey {
 		networkName, networkComponent = dockerruntime.NetworkName, "runtime-network"
