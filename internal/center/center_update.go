@@ -182,7 +182,9 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 			return result
 		}
 		result.AgentRollout = &rollout
-		if rollout.Pending != 0 || rollout.Updating != 0 {
+		// Waiting for rollout readiness is not an active update. Keep the
+		// completed Center update available for checks and subsequent upgrades.
+		if rollout.Updating != 0 {
 			result.State = "applying"
 			result.Phase = "agents"
 			result.Progress = 98

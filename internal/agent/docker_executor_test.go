@@ -16,7 +16,38 @@ import (
 	"github.com/moby/moby/api/pkg/authconfig"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/pulse"
 )
+
+func TestPulseRestoreResolvesSignedImageBeforeComparingContainer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/_ping") {
+			w.Header().Set("API-Version", "1.55")
+			return
+		}
+		if !strings.HasSuffix(r.URL.Path, "/containers/"+pulseContainer+"/json") {
+			t.Errorf("unexpected Docker endpoint: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"Id": "pulse-container",
+			"Config": map[string]any{
+				"Image":  "retained-old-image",
+				"Labels": applicationResourceLabels(pulse.ServiceKey, "pulse", "application", "deployment"),
+			},
+		})
+	}))
+	defer server.Close()
+	matched, err := (ApplicationExecutor{DockerSocket: server.URL}).containerMatchesInstallation(context.Background(), pulseContainer, AppliedInstallation{
+		AppKey: pulse.ServiceKey, ApplicationID: "application", InstanceID: "deployment",
+		Manifest: catalog.AppManifest{Images: []catalog.Image{{Name: "pulse", Reference: "ghcr.io/petauron/pulse:v0.1.0-alpha.2"}}},
+	})
+	if err != nil || matched {
+		t.Fatalf("expected an image mismatch, not a missing manifest image: matched=%v err=%v", matched, err)
+	}
+}
 
 func TestDeclaredImagePullOptionsUseOnlyMatchingEphemeralCredential(t *testing.T) {
 	image := "registry.example.test:5443/team/app@sha256:" + strings.Repeat("a", 64)
