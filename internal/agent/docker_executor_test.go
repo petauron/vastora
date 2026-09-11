@@ -49,6 +49,58 @@ func TestPulseRestoreResolvesSignedImageBeforeComparingContainer(t *testing.T) {
 	}
 }
 
+func TestPulseRestorePreservesDefaultNetwork(t *testing.T) {
+	for _, test := range []struct {
+		name, mode, bind   string
+		running, wantError bool
+	}{
+		{name: "running", mode: "default", bind: "127.0.0.1", running: true},
+		{name: "stopped", mode: "bridge", bind: "127.0.0.1"},
+		{name: "foreign network", mode: cpaNetwork, bind: "127.0.0.1", running: true, wantError: true},
+		{name: "public binding", mode: "default", bind: "0.0.0.0", running: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const image = "ghcr.io/petauron/pulse:v0.1.0-alpha.2"
+			var starts atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasSuffix(r.URL.Path, "/_ping"):
+					w.Header().Set("API-Version", "1.55")
+				case strings.HasSuffix(r.URL.Path, "/containers/"+pulseContainer+"/json"):
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"Id":         "pulse-container",
+						"Config":     map[string]any{"Image": image, "Labels": applicationResourceLabels(pulse.ServiceKey, "pulse", "application", "deployment")},
+						"State":      map[string]any{"Running": test.running},
+						"HostConfig": map[string]any{"NetworkMode": test.mode, "PortBindings": map[string]any{"8080/tcp": []map[string]string{{"HostIp": test.bind, "HostPort": "18080"}}}},
+					})
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/containers/pulse-container/start"):
+					starts.Add(1)
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected Docker operation during Pulse restore: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+			matched, err := (ApplicationExecutor{DockerSocket: server.URL}).containerMatchesInstallation(context.Background(), pulseContainer, AppliedInstallation{
+				AppKey: pulse.ServiceKey, ApplicationID: "application", InstanceID: "deployment", ServiceAddress: "127.0.0.1",
+				Manifest: catalog.AppManifest{Images: []catalog.Image{{Name: "pulse", Reference: image}}},
+			})
+			if (err != nil) != test.wantError || matched == test.wantError {
+				t.Fatalf("matched=%v err=%v", matched, err)
+			}
+			wantStarts := int32(0)
+			if !test.running && !test.wantError {
+				wantStarts = 1
+			}
+			if starts.Load() != wantStarts {
+				t.Fatalf("starts=%d want=%d", starts.Load(), wantStarts)
+			}
+		})
+	}
+}
+
 func TestDeclaredImagePullOptionsUseOnlyMatchingEphemeralCredential(t *testing.T) {
 	image := "registry.example.test:5443/team/app@sha256:" + strings.Repeat("a", 64)
 	task := DeploymentTask{RegistryCredential: &RegistryCredential{Host: "registry.example.test:5443", Username: "robot", Password: "private-token"}}
