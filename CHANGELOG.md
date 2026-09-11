@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.122](https://github.com/petauron/vastora/compare/v0.1.0-alpha.121...v0.1.0-alpha.122) (2026-09-11)
+
+
+### Bug Fixes
+
+* preserve Pulse default network during recovery ([#395](https://github.com/petauron/vastora/issues/395)) ([28caeea](https://github.com/petauron/vastora/commit/28caeea64fc509c6564bd975f72af90a26d1e896))
+
 ## [0.1.0-alpha.121](https://github.com/petauron/vastora/compare/v0.1.0-alpha.120...v0.1.0-alpha.121) (2026-09-11)
 
 
