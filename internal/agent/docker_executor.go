@@ -373,7 +373,7 @@ func (e ApplicationExecutor) containerMatchesInstallation(ctx context.Context, c
 	if err != nil {
 		return false, fmt.Errorf("agent: verify %s ownership for offline restore: %w", installation.AppKey, err)
 	}
-	imageName := map[string]string{threeXUIKey: "3x-ui", cpaKey: "cli-proxy-api", keeperKey: "keeper"}[installation.AppKey]
+	imageName := map[string]string{threeXUIKey: "3x-ui", cpaKey: "cli-proxy-api", keeperKey: "keeper", pulse.ServiceKey: "pulse"}[installation.AppKey]
 	expectedImage, err := declaredImage(installation.Manifest, imageName)
 	if err != nil {
 		return false, err

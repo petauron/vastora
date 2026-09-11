@@ -116,7 +116,7 @@ func TestCenterUpdateStatusReportsVerifiedHostProgress(t *testing.T) {
 	}
 }
 
-func TestCenterUpdateWaitsForTheRemoteAgentRollout(t *testing.T) {
+func TestCenterUpdateDoesNotBlockOnUnqueuedRemoteAgents(t *testing.T) {
 	previousVersion := Version
 	Version = "0.1.0-alpha.99"
 	defer func() { Version = previousVersion }()
@@ -130,9 +130,16 @@ func TestCenterUpdateWaitsForTheRemoteAgentRollout(t *testing.T) {
 		TargetVersion: Version,
 		Message:       "Center was updated successfully.",
 	}}
-	server := &Server{store: store, updates: updater, releaseChecker: fixedReleaseChecker{version: Version}}
+	server := &Server{store: store, updates: updater, releaseChecker: fixedReleaseChecker{version: "0.1.0-alpha.100"}}
 	status := server.centerUpdateStatus(context.Background(), false)
-	if status.State != "applying" || status.Phase != "agents" || status.Progress != 98 || status.AgentRollout == nil || status.AgentRollout.Pending != 1 {
+	if status.State != "succeeded" || !status.UpdateAvailable || status.AgentRollout == nil || status.AgentRollout.Pending != 1 {
+		t.Fatalf("unqueued Agents blocked the completed Center update: %#v", status)
+	}
+	if _, err := store.QueueAgentUpdates(context.Background(), Version); err != nil {
+		t.Fatal(err)
+	}
+	status = server.centerUpdateStatus(context.Background(), false)
+	if status.State != "applying" || status.Phase != "agents" || status.Progress != 98 || status.AgentRollout == nil || status.AgentRollout.Updating != 1 {
 		t.Fatalf("unexpected remote Agent rollout status: %#v", status)
 	}
 }
