@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.121](https://github.com/petauron/vastora/compare/v0.1.0-alpha.120...v0.1.0-alpha.121) (2026-09-11)
+
+
+### Bug Fixes
+
+* restore Pulse containers and unblock pending agent updates ([#392](https://github.com/petauron/vastora/issues/392)) ([5ca2c9e](https://github.com/petauron/vastora/commit/5ca2c9e6a7e77cc2976a2e22767316203230c09e))
+
 ## [0.1.0-alpha.120](https://github.com/petauron/vastora/compare/v0.1.0-alpha.119...v0.1.0-alpha.120) (2026-09-10)
 
 
