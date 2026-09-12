@@ -197,8 +197,10 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		t.Fatal("retirement retained active topology references", err)
 	}
 	routes = claimLanding(false)
-	if routes == nil || len(routes.LandingProxyState.Clients.Grants) != 0 {
-		t.Fatal("retired child route was not cleaned up")
+	// The last explicit revocation restores the original routes. There is no
+	// automatic account-stop fence left to keep an empty client plan alive.
+	if routes == nil || routes.LandingProxyState == nil || routes.LandingProxyState.Active() {
+		t.Fatal("retired child route did not restore the original configuration")
 	}
 	if err := store.completeLandingProxy(ctx, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
 		t.Fatal(err)
