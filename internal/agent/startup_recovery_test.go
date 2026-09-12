@@ -25,6 +25,12 @@ func TestRecoveryTaskAllowlistPreservesIdentityAndNegativeIntents(t *testing.T) 
 		task    DeploymentTask
 		allowed bool
 	}{
+		{"self update during application recovery", scope, DeploymentTask{Kind: "agent.update"}, true},
+		{"self update without application identity", controlplane.RecoveryScope{Stage: "application"}, DeploymentTask{Kind: "agent.update"}, true},
+		{"self update during gateway recovery", controlplane.RecoveryScope{Stage: "gateway"}, DeploymentTask{Kind: "agent.update"}, true},
+		{"self update during landing recovery", controlplane.RecoveryScope{Stage: "landing"}, DeploymentTask{Kind: "agent.update"}, true},
+		{"self update during listener recovery", controlplane.RecoveryScope{Stage: "listener"}, DeploymentTask{Kind: "agent.update"}, true},
+		{"self update cannot bypass reconciliation", controlplane.RecoveryScope{Stage: "reconciliation"}, DeploymentTask{Kind: "agent.update"}, false},
 		{"repair", scope, DeploymentTask{Kind: "application.apply", AppKey: cpaKey, ApplicationID: "owned", Operation: "configure"}, true},
 		{"remove", scope, DeploymentTask{Kind: "application.apply", AppKey: cpaKey, ApplicationID: "owned", Operation: "uninstall"}, true},
 		{"foreign owner", scope, DeploymentTask{Kind: "application.apply", AppKey: cpaKey, ApplicationID: "foreign", Operation: "uninstall"}, false},
@@ -49,6 +55,77 @@ func TestRecoveryTaskAllowlistPreservesIdentityAndNegativeIntents(t *testing.T) 
 	scope.Applications[0].ApplicationID = ""
 	if !recoveryTaskAllowed(scope, DeploymentTask{Kind: "application.apply", AppKey: cpaKey, ApplicationID: "center-owned", Operation: "uninstall"}) || recoveryTaskAllowed(scope, DeploymentTask{Kind: "application.apply", AppKey: cpaKey, Operation: "uninstall"}) {
 		t.Fatal("missing local ownership boundary changed")
+	}
+}
+
+func TestStartupRecoveryKeepsSelfUpdateScopeWithoutApplicationIdentity(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, stage := range []string{"application", "landing", "gateway", "listener"} {
+		store.setGatewayStartupResult(startupRecoveryError{stage, errors.New("runtime unavailable")})
+		scope := store.runtimeRecoveryScope()
+		if scope == nil || scope.Stage != stage || !recoveryTaskAllowed(*scope, DeploymentTask{Kind: "agent.update"}) {
+			t.Fatalf("self update unavailable during %s recovery: %#v", stage, scope)
+		}
+		if store.requireGatewayStartup() == nil {
+			t.Fatal("self update scope cleared the runtime safety fence")
+		}
+	}
+}
+
+func TestAgentUpdateRunsWhileApplicationRestoreRemainsBroken(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: "old", ApplicationID: "owned", AppKey: cpaKey, Version: "1", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	executor := &recoveryTestExecutor{t: t, store: store, reason: "restore_failed"}
+	updater := &fakeHostUpdater{}
+	task := DeploymentTask{Kind: "agent.update", ID: "agent-update-repair", Attempt: 1, TargetVersion: "0.1.0-alpha.124"}
+	var publicKey []byte
+	claims := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/tasks/next") || r.URL.Query().Get("recovery") == "" {
+			t.Errorf("self update bypassed recovery scope or acknowledged early: %s", r.URL.Path)
+			cancel()
+			return
+		}
+		claims++
+		if claims > 1 {
+			_, _ = w.Write([]byte(`{"task":null}`))
+			cancel()
+			return
+		}
+		payload, _ := json.Marshal(task)
+		envelope, err := controlplane.Seal(publicKey, payload, controlplane.TaskAdditionalData("agent-1", task.ID, task.Attempt))
+		if err != nil {
+			t.Error(err)
+			cancel()
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"task": map[string]any{"id": task.ID, "attempt": task.Attempt, "envelope": envelope}})
+	}))
+	defer server.Close()
+	connection := testConnection(t, "agent-1", "test", server.URL, "credential")
+	publicKey, err = controlplane.PublicKey(connection.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveConnection(ctx, connection); err != nil {
+		t.Fatal(err)
+	}
+	client := Client{HTTPClient: server.Client(), Updater: updater, Executor: executor}
+	client.RunTasks(ctx, store, func(error) {})
+	if len(updater.requests) != 1 || updater.requests[0].TaskID != task.ID || executor.deployCalls != 0 || store.requireGatewayStartup() == nil {
+		t.Fatalf("self update did not remain independent of application recovery: updates=%d deploys=%d", len(updater.requests), executor.deployCalls)
 	}
 }
 
@@ -247,7 +324,7 @@ func TestStartupRecoverySerializesRepairsAndCompletionReplay(t *testing.T) {
 	}
 }
 
-func TestRecoveryWithoutSafeTypedTargetDoesNotClaimTasks(t *testing.T) {
+func TestRecoveryWithoutSafeTypedTargetDoesNotAuthorizeApplicationChanges(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -263,8 +340,9 @@ func TestRecoveryWithoutSafeTypedTargetDoesNotClaimTasks(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store.setGatewayStartupResult(startupRecoveryError{test.stage, test.cause})
-			if store.runtimeRecoveryScope() != nil || store.requireGatewayStartup() == nil {
-				t.Fatal("unrepairable recovery produced a claim scope or cleared its fence")
+			scope := store.runtimeRecoveryScope()
+			if store.requireGatewayStartup() == nil || scope != nil && recoveryTaskAllowed(*scope, DeploymentTask{Kind: "application.apply", AppKey: cpaKey, ApplicationID: "unproven", Operation: "install"}) {
+				t.Fatal("unrepairable recovery authorized application changes or cleared its fence")
 			}
 		})
 	}

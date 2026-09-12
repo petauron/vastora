@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/petauron/vastora/internal/agent"
@@ -104,7 +105,7 @@ func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.Hos
 	if err := persistHostUpdate(candidate, operation); err != nil {
 		return err
 	}
-	for _, arguments := range [][]string{{"daemon-reload"}, {"enable", "--now", "--no-block", hostUpdateUnitName}} {
+	for _, arguments := range [][]string{{"daemon-reload"}, {"reset-failed", hostUpdateUnitName}, {"enable", "--now", "--no-block", hostUpdateUnitName}} {
 		output, err := exec.CommandContext(ctx, "systemctl", arguments...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("agent: start persistent host update: %s: %w", strings.TrimSpace(string(output)), err)
@@ -122,6 +123,21 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 	if err := validateHostUpdateOperation(operation); err != nil {
 		return err
 	}
+	if existing, err := readHostUpdateOperation(hostUpdateOperationPath); err == nil {
+		// Never overwrite the executable, credentials or recovery ownership of
+		// an unfinished helper. Re-delivery of its exact operation is harmless.
+		if existing != operation {
+			return errors.New("agent: a previous host update still owns the update directory")
+		}
+		staged, stagedErr := hashHostUpdateExecutable(candidate)
+		persisted, persistedErr := hashHostUpdateExecutable(hostUpdateBinary)
+		if stagedErr != nil || persistedErr != nil || staged != persisted {
+			return errors.New("agent: repeated host update candidate changed")
+		}
+		return persistHostUpdateUnit(operation)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	binary, err := os.ReadFile(candidate)
 	if err != nil {
 		return fmt.Errorf("agent: read staged update executable: %w", err)
@@ -133,14 +149,18 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 	if err != nil {
 		return fmt.Errorf("agent: encode persistent update operation: %w", err)
 	}
-	if err := writeRootFileAtomic(hostUpdateOperationPath, append(raw, '\n'), 0o600); err != nil {
-		return fmt.Errorf("agent: persist update operation: %w", err)
-	}
 	for _, path := range []string{hostUpdateResultPath, hostUpdateCompleted} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("agent: clear previous update state: %w", err)
 		}
 	}
+	if err := writeRootFileAtomic(hostUpdateOperationPath, append(raw, '\n'), 0o600); err != nil {
+		return fmt.Errorf("agent: persist update operation: %w", err)
+	}
+	return persistHostUpdateUnit(operation)
+}
+
+func persistHostUpdateUnit(operation hostUpdateOperation) error {
 	unit := hostUpdateServiceUnit()
 	if strings.Contains(unit, operation.Credential) {
 		return errors.New("agent: refusing to expose update credentials in systemd")
@@ -152,7 +172,14 @@ func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
 }
 
 func runPersistentHostUpdate(ctx context.Context, operationPath string) error {
-	return runPersistentHostUpdateWithEnvironment(ctx, operationPath, defaultHostUpdateActivationEnvironment(filepath.Dir(operationPath)), agent.Client{})
+	if cancelled, err := hostUpdateCancelled(operationPath); err != nil || cancelled {
+		return err
+	}
+	operation, err := readHostUpdateOperation(operationPath)
+	if err != nil {
+		return err
+	}
+	return runPersistentHostUpdateWithEnvironment(ctx, operationPath, defaultHostUpdateActivationEnvironment(filepath.Dir(operationPath), operation), agent.Client{})
 }
 
 func runPersistentHostUpdateWithEnvironment(ctx context.Context, operationPath string, environment hostUpdateActivationEnvironment, client agent.Client) error {
@@ -201,7 +228,7 @@ func runPersistentHostUpdateWithEnvironment(ctx context.Context, operationPath s
 		return errors.Join(activationErr, fmt.Errorf("agent: transfer update responsibility to Center: %w", err))
 	}
 	reportRecoveryRequired := func(updateErr error) error {
-		recoveryRequired := fmt.Errorf("agent: recovery required; schema-compatible candidate remains installed and will be retried; expected protected pre-migration recovery at %s: %v", environment.recoveryDirectory, updateErr)
+		recoveryRequired := fmt.Errorf("agent: recovery required; update state and protected pre-migration recovery are retained at %s: %v", environment.recoveryDirectory, updateErr)
 		requestContext, cancel = context.WithTimeout(ctx, 30*time.Second)
 		reportErr := client.CompleteHostUpdate(requestContext, connection, operation.TaskID, operation.Attempt, recoveryRequired, true)
 		cancel()
@@ -260,10 +287,10 @@ func hostUpdateActivationResult(updateErr error) (hostUpdateResult, bool) {
 	return result, true
 }
 
-func defaultHostUpdateActivationEnvironment(directory string) hostUpdateActivationEnvironment {
+func defaultHostUpdateActivationEnvironment(directory string, operation hostUpdateOperation) hostUpdateActivationEnvironment {
 	return hostUpdateActivationEnvironment{
 		candidatePath:     filepath.Join(directory, filepath.Base(hostUpdateBinary)),
-		recoveryDirectory: filepath.Join(directory, hostUpdateRecoveryDirectoryName),
+		recoveryDirectory: hostUpdateRecoveryDirectory(directory, operation),
 		run:               runHostCommand,
 		version:           executableVersion,
 		serviceActive:     agentServiceActive,
@@ -567,10 +594,8 @@ func cleanPersistentHostUpdate(operationPath string) error {
 	if err != nil || !completed {
 		return err
 	}
-	for _, directory := range []string{
-		filepath.Join(filepath.Dir(operationPath), hostUpdateRecoveryDirectoryName),
-		filepath.Join(filepath.Dir(operationPath), hostUpdateRecoveryPartialDirectoryName),
-	} {
+	recoveryDirectory := hostUpdateRecoveryDirectory(filepath.Dir(operationPath), operation)
+	for _, directory := range []string{recoveryDirectory, recoveryDirectory + ".partial"} {
 		if err := removeHostUpdateRecovery(directory); err != nil {
 			return err
 		}
@@ -590,14 +615,16 @@ func cleanPersistentHostUpdate(operationPath string) error {
 			result = errors.Join(result, err)
 		}
 	}
-	if err := os.Remove(hostUpdateDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// Other attempts' protected recovery points may remain for an operator;
+	// they must not make this already acknowledged update restart forever.
+	if err := os.Remove(hostUpdateDir); err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) {
 		result = errors.Join(result, err)
 	}
 	return result
 }
 
 func hostUpdateServiceUnit() string {
-	return "[Unit]\nDescription=Vastora Agent update\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n[Service]\nType=oneshot\nExecStart=" + hostUpdateBinary + " agent finish-update --operation-file " + hostUpdateOperationPath + "\nExecStopPost=" + hostUpdateBinary + " agent cleanup-update --operation-file " + hostUpdateOperationPath + "\nRestart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=multi-user.target\n"
+	return "[Unit]\nDescription=Vastora Agent update\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=infinity\nStartLimitBurst=5\n\n[Service]\nType=oneshot\nExecStart=" + hostUpdateBinary + " agent finish-update --operation-file " + hostUpdateOperationPath + "\nExecStopPost=" + hostUpdateBinary + " agent cleanup-update --operation-file " + hostUpdateOperationPath + "\nRestart=on-failure\nRestartSec=15s\n\n[Install]\nWantedBy=multi-user.target\n"
 }
 
 func hostUpdateCancelled(operationPath string) (bool, error) {

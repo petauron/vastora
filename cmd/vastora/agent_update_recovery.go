@@ -27,6 +27,13 @@ const (
 	hostUpdateRecoveryKeyName              = "agent.key"
 )
 
+// Bind both the completed and partial recovery directories to one attempt.
+// Unreferenced recovery points are never reused as evidence for a new update.
+func hostUpdateRecoveryDirectory(directory string, operation hostUpdateOperation) string {
+	identity := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", operation.TaskID, operation.Attempt, operation.AgentID, operation.TargetVersion)))
+	return filepath.Join(directory, fmt.Sprintf("%s-%x", hostUpdateRecoveryDirectoryName, identity))
+}
+
 type hostUpdateRecoveryFile struct {
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
@@ -58,7 +65,7 @@ func prepareHostUpdateRecovery(ctx context.Context, operation hostUpdateOperatio
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	partialDirectory := filepath.Join(filepath.Dir(directory), hostUpdateRecoveryPartialDirectoryName)
+	partialDirectory := directory + ".partial"
 	if err := removeHostUpdateRecovery(partialDirectory); err != nil {
 		return fmt.Errorf("remove interrupted recovery point: %w", err)
 	}
@@ -372,6 +379,30 @@ func removeHostUpdateRecovery(directory string) error {
 		return err
 	}
 	return syncHostUpdateDirectory(filepath.Dir(directory))
+}
+
+// Explicit Agent uninstall also removes recovery points retained from previous
+// attempts. Ordinary update completion only removes its own recovery point.
+func removeHostUpdateRecoveryPoints(directory string) error {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		identity := strings.TrimSuffix(strings.TrimPrefix(name, hostUpdateRecoveryDirectoryName+"-"), ".partial")
+		_, hashErr := hex.DecodeString(identity)
+		scoped := strings.HasPrefix(name, hostUpdateRecoveryDirectoryName+"-") && len(identity) == sha256.Size*2 && hashErr == nil
+		if scoped || name == hostUpdateRecoveryDirectoryName || name == hostUpdateRecoveryPartialDirectoryName {
+			if err := removeHostUpdateRecovery(filepath.Join(directory, name)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func syncHostUpdateDirectory(path string) error {

@@ -306,10 +306,7 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 			directory: hostUpdateDir, unitName: hostUpdateUnitName, unitPath: hostUpdateUnit, unitContents: hostUpdateServiceUnit(),
 			enabledLink: hostUpdateEnabledLink, operationDataDir: hostUpdateDataDir, run: runHostCommand,
 			cleanupAdditionalState: func() error {
-				return errors.Join(
-					removeHostUpdateRecovery(filepath.Join(hostUpdateDir, hostUpdateRecoveryDirectoryName)),
-					removeHostUpdateRecovery(filepath.Join(hostUpdateDir, hostUpdateRecoveryPartialDirectoryName)),
-				)
+				return removeHostUpdateRecoveryPoints(hostUpdateDir)
 			},
 		},
 		binaryPaths:          []string{"/usr/local/bin/vastora", "/usr/local/bin/vastora.previous"},

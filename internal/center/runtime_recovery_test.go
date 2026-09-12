@@ -82,3 +82,27 @@ func TestRecoveryHeartbeatUsesBoundedReasonsAndClearsDetails(t *testing.T) {
 		t.Fatalf("stale public recovery status=%s err=%v", encoded, err)
 	}
 }
+
+func TestAgentUpdateClaimRemainsAvailableDuringRuntimeRecovery(t *testing.T) {
+	for _, stage := range []string{"application", "landing", "gateway", "listener"} {
+		t.Run(stage, func(t *testing.T) {
+			store := openOrchestrationStore(t)
+			defer store.Close()
+			ctx := context.Background()
+			node := enrollOrchestrationNode(t, store, "self-repair", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.123", true)
+			queued, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.124")
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope := &controlplane.RecoveryScope{Stage: stage}
+			if task, err := store.claimNextTask(ctx, node.ID, node.Credential, "interrupted-application", nil); err != nil || task != nil {
+				t.Fatalf("self update overtook exact task reconciliation: %#v %v", task, err)
+			}
+			task, err := store.claimNextTask(ctx, node.ID, node.Credential, "", scope)
+			if err != nil || task == nil || task.ID != queued.ID || task.Kind != "agent.update" {
+				t.Fatalf("self update blocked by runtime recovery: %#v %v", task, err)
+			}
+		})
+	}
+}
