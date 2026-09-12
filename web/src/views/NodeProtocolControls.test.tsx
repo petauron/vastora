@@ -40,6 +40,8 @@ it("defaults to VLESS and adds HY2 without AnyTLS", async () => {
   expect(container.textContent).not.toContain("AnyTLS");
   expect(button(container, "保存协议").disabled).toBe(true);
   await act(async () => { container.querySelector<HTMLElement>("#node-service-hy2")?.click(); });
+  expect(container.textContent).toContain("TLS 证书由系统自动申请并续期");
+  expect(container.textContent).not.toContain("Cloudflare 签发证书");
   await act(async () => { button(container, "保存协议").click(); });
   expect(save).toHaveBeenCalledWith("node-service", { vless: true, hy2: true });
   expect(updated).toHaveBeenCalledOnce();
