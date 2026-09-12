@@ -13,7 +13,7 @@ import { AppsView } from "./views/AppsView";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const status: CenterStatus = { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" };
-const node = { id: "node", name: "Test node", connected: true, status: "active", siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView;
+const node = { id: "node", name: "Test node", connected: true, credentialRevoked: false, status: "active", siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView;
 const official: CatalogSource = {
   id: "vastora-official", displayName: "Vastora Official", url: "https://downloads.example.com/vastora/catalog",
   publicKey: "", customCASet: false, bearerTokenSet: false, enabled: true, status: "pending", refreshIntervalSeconds: 3600,

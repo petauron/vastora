@@ -554,8 +554,16 @@ func validAgentEnrollmentOperationID(value string) bool {
 // RevokeAgentCredential immediately closes the Agent control channel without
 // changing workload or topology state. It is intentionally independent from
 // DisableAgent, whose business preconditions may require applications to stop.
+// Existing reconnect grants are invalidated in the same transaction. A new
+// administrator-issued reconnect command is required to restore management.
 func (s *Store) RevokeAgentCredential(ctx context.Context, agentID string) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE agents SET credential_revoked_at = ? WHERE id = ? AND status = 'active' AND credential_revoked_at = ''`, s.now().UTC().Format(time.RFC3339Nano), strings.TrimSpace(agentID))
+	agentID = strings.TrimSpace(agentID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET credential_revoked_at = CASE WHEN credential_revoked_at = '' THEN ? ELSE credential_revoked_at END WHERE id = ? AND status = 'active'`, s.now().UTC().Format(time.RFC3339Nano), agentID)
 	if err != nil {
 		return fmt.Errorf("center: revoke Agent credential: %w", err)
 	}
@@ -563,7 +571,21 @@ func (s *Store) RevokeAgentCredential(ctx context.Context, agentID string) error
 	if changed != 1 {
 		return errors.New("center: active Agent credential was not found")
 	}
-	s.taskChanges.notify("agent:" + strings.TrimSpace(agentID))
+	if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id IN (
+		SELECT bootstrap_secret_id FROM agent_enrollment_tokens WHERE target_agent_id = ? AND bootstrap_secret_id IS NOT NULL
+	)`, agentID); err != nil {
+		return fmt.Errorf("center: revoke Agent reconnect bootstrap: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_tokens WHERE target_agent_id = ?`, agentID); err != nil {
+		return fmt.Errorf("center: revoke Agent reconnect command: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_enrollment_operations WHERE agent_id = ?`, agentID); err != nil {
+		return fmt.Errorf("center: revoke Agent enrollment recovery: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.taskChanges.notify("agent:" + agentID)
 	return nil
 }
 

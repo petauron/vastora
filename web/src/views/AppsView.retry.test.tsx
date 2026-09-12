@@ -25,8 +25,8 @@ function fixture(id = "pulse-agent"): AppData {
     registryCredentials: [], sources: [], organizations: [], sites: [], routes: [],
     actions: [], integrations: [], threeXUIControllerMigrations: [],
     agents: [
-      { id: "first", name: "AKKO CN2", connected: true, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.1" } },
-      { id: "failed-node", name: "DataWave CN2", connected: true, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } },
+      { id: "first", name: "AKKO CN2", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.1" } },
+      { id: "failed-node", name: "DataWave CN2", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } },
     ],
     apps: [{ key: appKey, sourceId: "vastora-official", fetchedAt: "2026-09-11T00:00:00Z", app: {
       id, version: "0.1.0-alpha.2", name: { en: "Collector", "zh-CN": "探针" },

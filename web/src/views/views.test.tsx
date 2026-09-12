@@ -46,7 +46,7 @@ const dashboard = (): AppData => ({
   sources: [], organizations: [], routes: [], actions: [], integrations: [], threeXUIControllerMigrations: [],
   systemDomain: { namespace: "vastora.example.com", centerUrl: "https://center.vastora.example.com", headscaleUrl: "https://headscale.vastora.example.com", cloudflareZone: "example.com", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: true, cloudflareOAuthAvailable: true },
   sites: [{ id: "site", organizationId: "org", name: "Home", code: "home", description: "", timezone: "Asia/Singapore", domainSuffix: "home.example", status: "active", gatewayNodes: ["agent"], gatewayStatus: "ready", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }],
-  agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true, remoteUpdateSupported: true }],
+  agents: [{ id: "agent", name: "home-server", version: "test", operatingSystem: "linux", architecture: "amd64", status: "active", appliedInstallations: 1, enrolledAt: "2026-08-18T00:00:00Z", lastSeenAt: "2026-08-18T00:00:00Z", connected: true, credentialRevoked: false, siteId: "site", roles: ["worker", "gateway"], capabilities: { docker: true, gateway: true, tunnel: true, metrics: false, logs: false }, networkCandidates: [{ address: "192.168.1.2", interface: "eth0", kind: "lan", observedAt: "2026-08-18T00:00:00Z" }], networkProfile: { serviceAddress: "192.168.1.2", lanAddress: "192.168.1.2", enabledKinds: ["lan"], directPublic: false }, gatewayHealthy: true, remoteUpdateSupported: true }],
   apps: [{ key: "vastora-official/komari-agent", sourceId: "vastora-official", fetchedAt: "2026-08-18T00:00:00Z", app: { id: "komari-agent", version: "1.2.60", name: { en: "Komari Agent", "zh-CN": "Komari 探针" }, description: { en: "Monitoring", "zh-CN": "监控探针" }, hostAccess: true, config: [] } }],
   registryCredentials: [],
   centerRemoteAccess: { available: true, enabled: false, status: "disabled" },
@@ -2035,6 +2035,98 @@ describe("network and app views", () => {
     });
     await act(async () => confirm?.click());
     expect(remove).toHaveBeenCalledWith(data.agents[0].id);
+  });
+
+  it("stops an offline node's access without requiring its apps or gateway to be removed", async () => {
+    const data = dashboard();
+    data.agents[0].name = "DMIT CN2";
+    data.agents[0].connected = false;
+    const revoke = vi.spyOn(api, "revokeAgentCredential").mockResolvedValue({ revoked: true });
+    const disable = vi.spyOn(api, "disableAgent");
+    const remove = vi.spyOn(api, "deleteAgent");
+    const deploy = vi.spyOn(api, "createDeployment");
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={() => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
+    const input = document.querySelector<HTMLInputElement>("#stop-node-access-name")!;
+    const confirm = () => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入" && button.type === "submit")!;
+    expect(confirm().disabled).toBe(true);
+    expect(document.body.textContent).toContain("无需节点在线");
+    expect(document.body.textContent).toContain("不会卸载应用、删除记录或清理服务器数据");
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "DMIT-CN2");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(confirm().disabled).toBe(true);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, " DMIT CN2 ");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(confirm().disabled).toBe(false);
+    await act(async () => confirm().click());
+    expect(revoke).toHaveBeenCalledExactlyOnceWith(data.agents[0].id);
+    expect(disable).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(deploy).not.toHaveBeenCalled();
+    expect(document.querySelector("#stop-node-access-name")).toBeNull();
+  });
+
+  it("does not offer offline access stop for a connected node", () => {
+    const container = render(<NodesView data={dashboard()} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    expect([...document.querySelectorAll("button")].some((button) => button.textContent === "停止接入")).toBe(false);
+  });
+
+  it("shows stopped access distinctly from offline and preserves reconnect", () => {
+    const data = dashboard();
+    data.agents[0].connected = false;
+    data.agents[0].credentialRevoked = true;
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
+    expect(container.textContent).toContain("已停止接入");
+    expect(container.textContent).not.toContain("离线");
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "重新接入")).toBe(true);
+  });
+
+  it("keeps access-stop failures inline and does nothing on cancellation", async () => {
+    const data = dashboard();
+    data.agents[0].connected = false;
+    const revoke = vi.spyOn(api, "revokeAgentCredential").mockRejectedValue(new Error("Failed to fetch"));
+    const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={() => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
+    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "取消")?.click());
+    expect(revoke).not.toHaveBeenCalled();
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
+    const input = document.querySelector<HTMLInputElement>("#stop-node-access-name")!;
+    expect(input.value).toBe("");
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, data.agents[0].name);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入" && button.type === "submit")?.click());
+    expect(input.value).toBe(data.agents[0].name);
+    expect(document.body.textContent).toContain("无法连接 Center");
+    expect(revoke).toHaveBeenCalledOnce();
+  });
+
+  it("blocks the stale confirmation if the offline node reconnects", () => {
+    const data = dashboard();
+    data.agents[0].connected = false;
+    const mutate = async () => undefined;
+    const container = render(<NodesView data={data} language="zh-CN" mutate={mutate} onNavigate={() => undefined} />);
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
+    const input = document.querySelector<HTMLInputElement>("#stop-node-access-name")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, data.agents[0].name);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const next = { ...data, agents: [{ ...data.agents[0], connected: true }] };
+    act(() => root?.render(<ThemeProvider><NodesView data={next} language="zh-CN" mutate={mutate} onNavigate={() => undefined} /></ThemeProvider>));
+    expect(document.body.textContent).toContain("节点状态已变化");
+    expect([...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入" && button.type === "submit")?.disabled).toBe(true);
   });
 
   it("queues supported Agent updates through Center and keeps purpose changes explicit", async () => {
