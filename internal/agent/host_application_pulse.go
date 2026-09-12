@@ -102,7 +102,61 @@ func pulseSupportedOS(raw []byte) bool {
 }
 
 func pulseEnvironment(config pulse.AgentConfig) []byte {
-	return []byte("PULSE_SERVICE_URL=" + strconv.Quote(config.ServiceURL) + "\nPULSE_NODE_NAME=" + strconv.Quote(config.NodeName) + "\nPULSE_NODE_GROUP=" + strconv.Quote(config.NodeGroup) + "\nPULSE_CREDENTIALS_PATH=" + pulseCredentialsPath + "\nPULSE_INTERVAL_SECONDS=30\n")
+	region, provider := "", pulse.DefaultGeoIPProvider
+	if config.NodeRegion != nil {
+		region = strings.ToUpper(*config.NodeRegion)
+	}
+	if config.GeoIPProvider != nil && *config.GeoIPProvider != "" {
+		provider = *config.GeoIPProvider
+	}
+	return []byte("PULSE_SERVICE_URL=" + strconv.Quote(config.ServiceURL) +
+		"\nPULSE_NODE_NAME=" + strconv.Quote(config.NodeName) +
+		"\nPULSE_NODE_GROUP=" + strconv.Quote(config.NodeGroup) +
+		"\nPULSE_NODE_REGION=" + strconv.Quote(region) +
+		"\nPULSE_GEOIP_PROVIDER=" + strconv.Quote(provider) +
+		"\nPULSE_CREDENTIALS_PATH=" + pulseCredentialsPath + "\n")
+}
+
+// Retain only the two supported local location choices. Never source the file,
+// import credentials, or copy arbitrary environment entries into managed output.
+func pulseRetainLocation(config pulse.AgentConfig, environment []byte) (pulse.AgentConfig, error) {
+	if len(environment) > 16*1024 {
+		return config, errors.New("agent: retained Pulse environment exceeds 16 KiB")
+	}
+	seen := make(map[string]bool, 2)
+	for _, line := range strings.Split(string(environment), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		key = strings.TrimSpace(key)
+		if !ok || key != "PULSE_NODE_REGION" && key != "PULSE_GEOIP_PROVIDER" {
+			continue
+		}
+		if seen[key] {
+			return config, errors.New("agent: retained Pulse location setting is duplicated")
+		}
+		seen[key] = true
+		if key == "PULSE_NODE_REGION" && config.NodeRegion != nil || key == "PULSE_GEOIP_PROVIDER" && config.GeoIPProvider != nil {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if strings.HasPrefix(value, "\"") {
+			decoded, err := strconv.Unquote(value)
+			if err != nil {
+				return config, errors.New("agent: retained Pulse location setting has invalid quoting")
+			}
+			value = decoded
+		} else if strings.HasPrefix(value, "'") {
+			if len(value) < 2 || !strings.HasSuffix(value, "'") || strings.Contains(value[1:len(value)-1], "'") {
+				return config, errors.New("agent: retained Pulse location setting has invalid quoting")
+			}
+			value = value[1 : len(value)-1]
+		}
+		if key == "PULSE_NODE_REGION" {
+			config.NodeRegion = &value
+		} else {
+			config.GeoIPProvider = &value
+		}
+	}
+	return config, config.Validate()
 }
 
 func pulseUnit(applicationID string) []byte {
@@ -204,6 +258,10 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 	}
 	if !snapshots[2].Exists && (snapshots[0].Exists || snapshots[1].Exists || snapshots[3].Exists || snapshots[4].Exists || snapshots[5].Exists) {
 		return ApplicationTaskResult{}, errors.New("agent: refusing to overwrite unmanaged Pulse files")
+	}
+	config, err = pulseRetainLocation(config, snapshots[1].Data)
+	if err != nil {
+		return ApplicationTaskResult{}, err
 	}
 	credentials, err := manager.pulseCredentials(config.ServiceURL)
 	if err != nil {
@@ -358,6 +416,10 @@ func (manager SystemdHostApplicationManager) RestorePulse(ctx context.Context, t
 	}
 	var proof pulsePackageProof
 	digest := sha256.Sum256(contents[pulseBinary])
+	config, err = pulseRetainLocation(config, contents[pulseEnv])
+	if err != nil {
+		return err
+	}
 	if json.Unmarshal(contents[pulseDigest], &proof) != nil || proof.Version != task.Manifest.Version || proof.ArchiveSHA256 != artifact.SHA256 || proof.BinarySHA256 != hex.EncodeToString(digest[:]) || !bytes.Equal(contents[pulseEnv], pulseEnvironment(config)) || !bytes.Equal(contents[pulseUnitPath], pulseUnit(task.ApplicationID)) {
 		return errors.New("agent: retained Pulse installation was modified")
 	}

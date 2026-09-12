@@ -191,6 +191,10 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	if _, err := manager.ApplyPulse(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
+	installedEnvironment, err := os.ReadFile(manager.path(pulseEnv))
+	if err != nil || bytes.Contains(installedEnvironment, []byte("PULSE_INTERVAL_SECONDS=")) {
+		t.Fatal("installation must use the Pulse collector's own metrics interval default")
+	}
 	token, err := os.ReadFile(manager.path(pulseToken))
 	if err != nil || len(token) != 0 {
 		t.Fatal("one-time token retained")
@@ -202,6 +206,12 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	if err := writeHostFileAtomic(manager.path(pulseUnitPath), []byte("# Managed by Vastora\n# Application: collector\n[Service]\nDescription=Earlier unit template\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	legacyEnvironment := strings.ReplaceAll(string(pulseEnvironment(config)), "PULSE_NODE_REGION=\"\"\n", "")
+	legacyEnvironment = strings.ReplaceAll(legacyEnvironment, "PULSE_GEOIP_PROVIDER=\"geojs\"\n", "")
+	legacyEnvironment += "PULSE_NODE_REGION='sg'\nPULSE_GEOIP_PROVIDER=disabled\nPULSE_INTERVAL_SECONDS=30\n"
+	if err := writeHostFileAtomic(manager.path(pulseEnv), []byte(legacyEnvironment), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	task.Operation, task.Secrets = "upgrade", json.RawMessage(`{}`)
 	if _, err := manager.ApplyPulse(context.Background(), task); err != nil {
 		t.Fatal(err)
@@ -209,6 +219,13 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	got, err := os.ReadFile(manager.path(pulseCredentialsPath))
 	if err != nil || !bytes.Equal(got, credentials) {
 		t.Fatal("upgrade changed identity")
+	}
+	environment, err := os.ReadFile(manager.path(pulseEnv))
+	if err != nil || !bytes.Contains(environment, []byte("PULSE_NODE_REGION=\"SG\"\n")) || !bytes.Contains(environment, []byte("PULSE_GEOIP_PROVIDER=\"disabled\"\n")) {
+		t.Fatal("upgrade changed retained location settings")
+	}
+	if bytes.Contains(environment, []byte("PULSE_INTERVAL_SECONDS=")) {
+		t.Fatal("upgrade must not retain or replace the previous metrics interval override")
 	}
 	if err := manager.RestorePulse(context.Background(), task); err != nil {
 		t.Fatal(err)
@@ -222,6 +239,41 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	got, err = os.ReadFile(manager.path(pulseCredentialsPath))
 	if err != nil || !bytes.Equal(got, credentials) {
 		t.Fatal("keep-data uninstall erased identity")
+	}
+}
+
+func TestPulseRetainsOnlySupportedLocationOverrides(t *testing.T) {
+	base := pulse.AgentConfig{ServiceURL: "https://pulse.example.com/", ServiceApplicationID: "monitor", NodeName: "node"}
+	for _, environment := range []string{
+		"PULSE_NODE_REGION=SG\nPULSE_GEOIP_PROVIDER=disabled\n",
+		"PULSE_NODE_REGION=\"SG\"\nPULSE_GEOIP_PROVIDER='disabled'\n",
+	} {
+		retained, err := pulseRetainLocation(base, []byte(environment+"PULSE_ENROLLMENT_TOKEN=must-not-be-copied\nOTHER=ignored\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := string(pulseEnvironment(retained))
+		if !strings.Contains(output, "PULSE_NODE_REGION=\"SG\"\n") || !strings.Contains(output, "PULSE_GEOIP_PROVIDER=\"disabled\"\n") || strings.Contains(output, "must-not-be-copied") || strings.Contains(output, "OTHER=") {
+			t.Fatal("location preservation copied unsupported data or lost explicit settings")
+		}
+	}
+	region, provider := "", "ipinfo"
+	config := base
+	config.NodeRegion, config.GeoIPProvider = &region, &provider
+	retained, err := pulseRetainLocation(config, []byte("PULSE_NODE_REGION=SG\nPULSE_GEOIP_PROVIDER=disabled\n"))
+	if err != nil || retained.NodeRegion == nil || *retained.NodeRegion != "" || retained.GeoIPProvider == nil || *retained.GeoIPProvider != "ipinfo" {
+		t.Fatal("explicit administrator change did not override retained location")
+	}
+	for _, environment := range []string{
+		"PULSE_NODE_REGION=SG\nPULSE_NODE_REGION=US\n",
+		"PULSE_NODE_REGION=\"SG\n",
+		"PULSE_NODE_REGION=$(id)\n",
+		"PULSE_GEOIP_PROVIDER=untrusted\n",
+		strings.Repeat("x", 16*1024+1),
+	} {
+		if _, err := pulseRetainLocation(base, []byte(environment)); err == nil {
+			t.Fatal("invalid retained environment accepted")
+		}
 	}
 }
 

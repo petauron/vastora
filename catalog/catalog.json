@@ -161,27 +161,61 @@
     },
     {
       "id": "pulse",
-      "version": "0.1.0-alpha.2",
+      "version": "0.1.0-alpha.3",
       "name": {"en": "Pulse", "zh-CN": "Pulse 监控主机"},
       "description": {"en": "One monitoring dashboard for nodes in every region. Add a private HTTPS access point before installing collectors.", "zh-CN": "统一查看所有地区的节点监控。安装后先添加私网 HTTPS 入口，再安装探针。"},
       "license": "Apache-2.0",
-      "images": [{"name":"pulse","reference":"ghcr.io/petauron/pulse:v0.1.0-alpha.2@sha256:4548948f4052d4f3b28b7ec3acf28b901809dc1eb8b866f6a9ac858fbdd2bc40"}],
+      "images": [{"name":"pulse","reference":"ghcr.io/petauron/pulse:v0.1.0-alpha.3@sha256:1a885646d1f044593db94e92c9b1292d17698005d3424604ac407ab22765d744"}],
       "services": [{"name":"dashboard","protocol":"http","containerPort":8080,"defaultHostPort":18080,"healthPath":"/healthz","management":true}],
       "homepage": {"service":"dashboard","path":"/"},
-      "config": []
+      "config": [
+        {
+          "key": "public_url",
+          "type": "string",
+          "label": {"en": "Dashboard HTTPS origin", "zh-CN": "面板 HTTPS 地址"},
+          "description": {"en": "The exact HTTPS origin used in your browser, such as https://pulse.example.com. No subpath. It must match the access entry before signing in; it is separate from the collector's private URL.", "zh-CN": "浏览器实际访问的 HTTPS 地址，例如 https://pulse.example.com，不含子路径。登录前需配置匹配的访问入口；它与探针私网地址分别管理。"},
+          "required": true,
+          "secret": false
+        },
+        {
+          "key": "setup_token",
+          "type": "string",
+          "label": {"en": "Administrator setup token", "zh-CN": "管理员初始化令牌"},
+          "description": {"en": "Supply a private random token of 32–4096 bytes and retain it for the first /login setup. Stored encrypted and written only to a private container file, never an environment variable. Omit on later upgrades to retain it.", "zh-CN": "提供 32–4096 字节的私密随机令牌并妥善保存，首次访问 /login 时使用。加密保存，仅写入容器私密文件，不进入环境变量。后续升级留空保留原令牌。"},
+          "required": true,
+          "secret": true
+        }
+      ]
     },
     {
       "id": "pulse-agent",
-      "version": "0.1.0-alpha.2",
+      "version": "0.1.0-alpha.3",
       "name": {"en": "Pulse Agent", "zh-CN": "Pulse 探针"},
       "description": {"en": "Native host monitoring, automatically enrolled with the global Pulse service. Requires Debian 12/13 or Ubuntu 24.04/26.04; no Docker required.", "zh-CN": "自动接入全局 Pulse 监控主机，采集主机指标。支持 Debian 12/13、Ubuntu 24.04/26.04，无需 Docker。"},
       "license": "Apache-2.0",
       "hostAccess": true,
       "artifacts": [
-        {"name":"pulse-agent","operatingSystem":"linux","architecture":"amd64","url":"https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.2/pulse-v0.1.0-alpha.2-linux-x86_64.tar.gz","sha256":"b3c610de88b86e8a2c2736906d433a35eb4337bde856ef3aa8e9a3f429f92241"},
-        {"name":"pulse-agent","operatingSystem":"linux","architecture":"arm64","url":"https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.2/pulse-v0.1.0-alpha.2-linux-aarch64.tar.gz","sha256":"a4a6472ab781d6eec2af1e3efe52f094f79cb55c1d8341e132ae3dbd552a28ac"}
+        {"name":"pulse-agent","operatingSystem":"linux","architecture":"amd64","url":"https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.3/pulse-v0.1.0-alpha.3-linux-x86_64.tar.gz","sha256":"e1f4a6d895df0569413546fddbd688ec4c82df99e502eca7a558e51e3a75a34b"},
+        {"name":"pulse-agent","operatingSystem":"linux","architecture":"arm64","url":"https://github.com/petauron/pulse/releases/download/v0.1.0-alpha.3/pulse-v0.1.0-alpha.3-linux-aarch64.tar.gz","sha256":"129ae613720edee9217c9295e35413616d021ad8de849f4751369c3eb7724050"}
       ],
-      "config": []
+      "config": [
+        {
+          "key": "node_region",
+          "type": "string",
+          "label": {"en": "Country code", "zh-CN": "国家或地区代码"},
+          "description": {"en": "Optional ISO country code such as SG or US. A manual code takes priority over automatic discovery; omitted upgrade fields preserve existing settings.", "zh-CN": "可选 ISO 国家或地区代码，例如 SG、US。手动代码优先于自动查询；升级时未填写的字段保留现有设置。"},
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "geoip_provider",
+          "type": "string",
+          "label": {"en": "Country discovery", "zh-CN": "自动国家或地区查询"},
+          "description": {"en": "geojs (default), ipinfo, or disabled. The provider sees the public egress IP and Agent version, never Pulse credentials or metrics. Omit on upgrade to retain the current choice.", "zh-CN": "填写 geojs（默认）、ipinfo 或 disabled。查询服务会看到出口公网 IP 和探针版本，不会收到 Pulse 凭据或监控指标。升级时留空保留当前选择。"},
+          "required": false,
+          "secret": false
+        }
+      ]
     }
   ]
 }

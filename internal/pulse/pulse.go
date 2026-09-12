@@ -6,12 +6,15 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+
+	"golang.org/x/text/language"
 )
 
 const (
-	ServiceKey     = "vastora-official/pulse"
-	AgentKey       = "vastora-official/pulse-agent"
-	EnrollmentKind = "pulse.enrollment.create"
+	ServiceKey           = "vastora-official/pulse"
+	AgentKey             = "vastora-official/pulse-agent"
+	EnrollmentKind       = "pulse.enrollment.create"
+	DefaultGeoIPProvider = "geojs"
 )
 
 type AgentConfig struct {
@@ -19,6 +22,9 @@ type AgentConfig struct {
 	ServiceApplicationID string `json:"service_application_id"`
 	NodeName             string `json:"node_name"`
 	NodeGroup            string `json:"node_group"`
+	// Nil preserves an existing host override; a supplied empty region selects automatic discovery.
+	NodeRegion    *string `json:"node_region,omitempty"`
+	GeoIPProvider *string `json:"geoip_provider,omitempty"`
 }
 
 type EnrollmentTask struct {
@@ -39,6 +45,20 @@ func (config AgentConfig) Validate() error {
 	}
 	if config.ServiceApplicationID == "" || strings.TrimSpace(config.NodeName) == "" || len(config.NodeName) > 128 || len(config.NodeGroup) > 128 || strings.ContainsAny(config.NodeName+config.NodeGroup, "\r\n\x00") {
 		return errors.New("pulse: invalid monitoring node identity")
+	}
+	if config.NodeRegion != nil && *config.NodeRegion != "" {
+		code := *config.NodeRegion
+		region, err := language.ParseRegion(code)
+		if len(code) != 2 || err != nil || !region.IsCountry() || region.IsPrivateUse() {
+			return errors.New("pulse: node region must be an ISO 3166-1 alpha-2 country code or empty")
+		}
+	}
+	if config.GeoIPProvider != nil {
+		switch *config.GeoIPProvider {
+		case "", "geojs", "ipinfo", "disabled":
+		default:
+			return errors.New("pulse: GeoIP provider must be geojs, ipinfo, or disabled")
+		}
 	}
 	return nil
 }

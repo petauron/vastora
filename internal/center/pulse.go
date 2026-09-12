@@ -58,8 +58,11 @@ func (s *Store) validatePulseDeployment(ctx context.Context, request DeploymentR
 	return nil
 }
 
-func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string) ([]byte, error) {
+func (s *Store) pulseAgentConfig(ctx context.Context, nodeID string, options []byte) ([]byte, error) {
 	var config pulse.AgentConfig
+	if json.Unmarshal(options, &config) != nil {
+		return nil, errors.New("center: invalid Pulse collector options")
+	}
 	var hostname string
 	err := s.db.QueryRowContext(ctx, `SELECT a.id, p.hostname FROM applications a
 		JOIN services sv ON sv.application_id = a.id AND sv.name = 'dashboard'
