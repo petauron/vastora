@@ -273,6 +273,24 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
 	}
+	// Recheck only work that has never reached an Agent. Recovery of an
+	// already-issued operation must remain possible without a live catalog.
+	if attempt == 0 && reconciliationRequested == 0 && strings.HasPrefix(task.AppKey, OfficialCatalogSourceID+"/") && (task.Operation == "install" || task.Operation == "upgrade") {
+		if err := authorizeOfficialManifest(ctx, tx, "stable", task.Manifest, s.now().UTC()); err != nil {
+			now := s.now().UTC().Format(time.RFC3339Nano)
+			const message = "Refresh the app catalog and retry this operation."
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE deployments SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`, message, now, task.ID); updateErr != nil {
+				return nil, updateErr
+			}
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE applications SET status = (SELECT pre_dispatch_application_status FROM deployments WHERE id = ?), updated_at = ? WHERE id = ? AND status = 'pending'`, task.ID, now, task.ApplicationID); updateErr != nil {
+				return nil, updateErr
+			}
+			if eventErr := s.recordTaskEvent(ctx, tx, task.ID, agentID, "application.apply", applicationTaskRevision, "failed", message); eventErr != nil {
+				return nil, eventErr
+			}
+			return nil, tx.Commit()
+		}
+	}
 	task.Kind = "application.apply"
 	task.Attempt = attempt + 1
 	task.Revision = applicationTaskRevision

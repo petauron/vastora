@@ -3,7 +3,9 @@ package center
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,7 +15,16 @@ import (
 )
 
 func (s *Server) handleOfficialCatalog(writer http.ResponseWriter, request *http.Request) {
-	envelope, err := s.store.OfficialCatalogEnvelope(request.Context())
+	state, envelope, err := s.store.OfficialCatalogTrust(request.Context(), "stable")
+	if err == nil && len(envelope) == 0 {
+		err = errors.New("center: no trusted official catalog available")
+	}
+	if err == nil {
+		hash := sha256.Sum256(envelope)
+		if state.Acceptance.Revision == 0 || hex.EncodeToString(hash[:]) != state.Acceptance.SHA256 {
+			err = errors.New("center: official cache integrity mismatch")
+		}
+	}
 	if err != nil {
 		writeError(writer, http.StatusNotFound, err)
 		return
@@ -124,17 +135,14 @@ func (s *Server) RefreshCatalogSource(ctx context.Context, identifier string) (C
 	defer s.catalogRefreshMu.Unlock()
 
 	if identifier == OfficialCatalogSourceID {
-		if len(s.officialCatalog) == 0 {
-			return CatalogRefreshResult{}, errors.New("center: official catalog is unavailable")
-		}
-		value, err := catalog.ParseCatalog(s.officialCatalog)
+		count, err := s.store.RefreshTrustedOfficialCatalog(ctx, s.officialCatalogOrigin, "stable", s.officialCatalogRoot)
 		if err != nil {
-			return CatalogRefreshResult{}, err
+			_, recordErr := s.store.db.ExecContext(ctx, `UPDATE catalog_sources SET last_checked_at = ?, last_error = ? WHERE id = ?`, s.store.now().UTC().Format(time.RFC3339Nano), "Official catalog verification failed; the previous cache is retained.", OfficialCatalogSourceID)
+			if recordErr != nil {
+				err = errors.Join(err, recordErr)
+			}
 		}
-		if err := s.store.SeedOfficialCatalog(ctx, s.officialCatalog); err != nil {
-			return CatalogRefreshResult{}, err
-		}
-		return CatalogRefreshResult{SourceID: identifier, Apps: len(value.Apps)}, nil
+		return CatalogRefreshResult{SourceID: identifier, Apps: count}, err
 	}
 	source, err := s.store.SourceForRefresh(ctx, identifier)
 	if err != nil {

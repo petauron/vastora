@@ -457,6 +457,108 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("版本已是最新");
   });
 
+  it.each(["install", "upgrade"] as const)("blocks an open %s sheet when the catalog expires or disappears", async (operation) => {
+    const data = dashboard();
+    if (operation === "install") data.applications = [];
+    else data.applications[0] = { ...data.applications[0], installedVersion: "1.2.59", availableVersion: "1.2.60", updateAvailable: true };
+    const create = vi.spyOn(api, "createDeployment");
+    const mutate = vi.fn(async () => undefined);
+    const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+    if (operation === "upgrade") openAppDetails(container, "running");
+    act(() => {
+      const button = operation === "install"
+        ? document.querySelector<HTMLButtonElement>('[aria-label="安装 Komari 探针"]')
+        : [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.includes("升级到 v1.2.60"));
+      button?.click();
+    });
+    const submitButton = () => document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
+    expect(submitButton()?.disabled).toBe(false);
+    for (const apps of [[{ ...data.apps[0], installBlocked: true }], []]) {
+      act(() => root?.render(<ThemeProvider><AppsView data={{ ...data, apps }} language="zh-CN" mutate={mutate} /></ThemeProvider>));
+      expect(submitButton()?.disabled).toBe(true);
+      expect(document.getElementById("deployment-catalog-error")?.textContent).toContain("刷新应用目录");
+      await act(async () => document.querySelector('[role="dialog"] form')?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+      expect(mutate).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+    }
+    act(() => root?.render(<ThemeProvider><AppsView data={data} language="zh-CN" mutate={mutate} /></ThemeProvider>));
+    expect(submitButton()?.disabled).toBe(false);
+  });
+
+  it("requires reviewing a newly published version instead of silently upgrading from an open sheet", async () => {
+    const data = dashboard();
+    data.applications[0] = { ...data.applications[0], installedVersion: "1.2.59", availableVersion: "1.2.60", updateAvailable: true };
+    const mutate = vi.fn(async () => undefined);
+    renderAppDetails(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.includes("升级到 v1.2.60"))?.click());
+    const updated = { ...data, apps: [{ ...data.apps[0], app: { ...data.apps[0].app, version: "1.2.61" } }] };
+    act(() => root?.render(<ThemeProvider><AppsView data={updated} language="zh-CN" mutate={mutate} /></ThemeProvider>));
+    expect(document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]')?.disabled).toBe(true);
+    expect(document.getElementById("deployment-catalog-error")?.textContent).toContain("目录中的版本已更新");
+    await act(async () => document.querySelector('[role="dialog"] form')?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("rechecks catalog expiry on submit even before another dashboard refresh", async () => {
+    const data = dashboard();
+    data.applications = [];
+    data.apps[0].catalogExpiresAt = "2030-01-01T00:00:00Z";
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2029-12-31T23:59:59Z"));
+    const mutate = vi.fn(async () => undefined);
+    render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+    act(() => document.querySelector<HTMLButtonElement>('[aria-label="安装 Komari 探针"]')?.click());
+    const submit = document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
+    expect(submit?.disabled).toBe(false);
+    now.mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
+    await act(async () => submit?.click());
+    expect(mutate).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("目录需要重新验证");
+  });
+
+  it("permits recovery and uninstall when no catalog is available", async () => {
+    const data = dashboard();
+    data.apps = [];
+    data.deployments = [{ id: "recover", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "upgrade", deleteData: false, applicationId: "running", reconciliationRequired: true, createdAt: "2026-09-12T00:00:00Z", updatedAt: "2026-09-12T00:00:00Z" }];
+    const recover = vi.spyOn(api, "retryTaskReconciliation").mockResolvedValue({ taskId: "recover", kind: "application.apply", queued: true });
+    const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ ...data.deployments[0], id: "uninstall", operation: "uninstall", state: "pending", reconciliationRequired: false });
+    const mutate = async (action: () => Promise<unknown>) => { await action(); };
+    const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.includes("继续恢复"))?.click());
+    expect(recover).toHaveBeenCalledWith("recover");
+    act(() => root?.render(<ThemeProvider><AppsView data={{ ...data, deployments: [] }} language="zh-CN" mutate={mutate} /></ThemeProvider>));
+    openAppDetails(container, "running");
+    act(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === "卸载")?.click());
+    const uninstall = [...document.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === "卸载并保留数据");
+    expect(uninstall?.disabled).toBe(false);
+    await act(async () => uninstall?.click());
+    expect(create).toHaveBeenCalledWith("agent", "vastora-official/komari-agent", {}, "uninstall", false);
+  });
+
+  it("keeps configure and uninstall available while expired catalog blocks upgrade", async () => {
+    const data = dashboard();
+    data.apps[0].installBlocked = true;
+    data.apps[0].app.config = [{ key: "endpoint", label: { en: "Endpoint", "zh-CN": "地址" }, description: { en: "Service endpoint", "zh-CN": "服务地址" }, type: "string", required: true, secret: false }];
+    data.applications[0] = { ...data.applications[0], installedVersion: "1.2.59", availableVersion: "1.2.60", updateAvailable: true };
+    const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "configure", agentId: "agent", appKey: data.apps[0].key, appVersion: "1.2.59", state: "pending", operation: "configure", deleteData: false, createdAt: "2026-09-12T00:00:00Z", updatedAt: "2026-09-12T00:00:00Z" });
+    const details = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async action => { await action(); }} />);
+    const button = (text: string) => [...details.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.includes(text));
+    expect(button("升级到")?.disabled).toBe(true);
+    expect(button("卸载")?.disabled).toBe(false);
+    expect(button("修改配置")?.disabled).toBe(false);
+    act(() => button("修改配置")?.click());
+    const input = document.querySelector<HTMLInputElement>("#config-endpoint");
+    expect(input).not.toBeNull();
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "https://monitor.example");
+      input?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.getElementById("deployment-catalog-error")).toBeNull();
+    const submit = document.querySelector<HTMLButtonElement>('[role="dialog"] button[type="submit"]');
+    expect(submit?.disabled).toBe(false);
+    await act(async () => submit?.click());
+    expect(create).toHaveBeenCalledWith("agent", data.apps[0].key, { endpoint: "https://monitor.example" }, "configure", false, undefined, undefined, undefined);
+  });
+
   it.each(["zh-CN", "en"] as const)("separates version status from aligned controller actions: %s", (language) => {
     const data = realityDashboard();
     data.apps[0].app.config = [{ key: "port", label: { en: "Port", "zh-CN": "端口" }, description: { en: "Service port", "zh-CN": "服务端口" }, type: "string", required: true, secret: false }];
@@ -2166,9 +2268,26 @@ describe("network and app views", () => {
     const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
     const catalogs = [...container.querySelectorAll("summary")].find((summary) => summary.textContent?.includes("应用目录"));
     act(() => catalogs?.click());
-    for (const expected of ["健康", "使用缓存", "失败", "等待中", "未启用", "正在继续使用最后一次验证通过的缓存", "尚无可用的已验证缓存"]) {
+    for (const expected of ["健康", "使用缓存", "失败", "等待中", "未启用", "正在继续使用最后一次验证通过的缓存", "目录暂不可用于安装"]) {
       expect(container.textContent).toContain(expected);
     }
+  });
+
+  it("shows official catalog revision and refresh requirement without hiding existing apps", () => {
+    const data = dashboard();
+    data.sources = [{ id: "vastora-official", displayName: "Vastora Official", url: "https://downloads.petauron.com/vastora/catalog/", publicKey: "", customCASet: false, bearerTokenSet: false, enabled: true, status: "expired", refreshIntervalSeconds: 3600, catalogRevision: 42, expiresAt: "2026-09-11T00:00:00Z" }];
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    act(() => [...container.querySelectorAll("summary")].find(summary => summary.textContent?.includes("应用目录"))?.click());
+    for (const text of ["Vastora 官方目录", "目录修订", "42", "有效期至", "需刷新", "已安装应用不受影响"]) expect(container.textContent).toContain(text);
+    expect(container.querySelector('[aria-label="目录身份"]')?.textContent).toBe("官方目录");
+  });
+
+  it("labels a private catalog as third-party even when its display name copies the official catalog", () => {
+    const data = dashboard();
+    data.sources = [{ id: "community", displayName: "Vastora 官方目录", url: "https://private.example/catalog", publicKey: "key", customCASet: false, bearerTokenSet: false, enabled: true, status: "healthy", refreshIntervalSeconds: 3600 }];
+    const container = render(<SettingsView data={data} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    act(() => [...container.querySelectorAll("summary")].find(summary => summary.textContent?.includes("应用目录"))?.click());
+    expect(container.querySelector('[aria-label="目录身份"]')?.textContent).toBe("第三方目录");
   });
 
   it("edits, disables, and confirms deletion of a private catalog in English", async () => {

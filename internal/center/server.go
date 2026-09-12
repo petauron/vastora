@@ -28,7 +28,8 @@ type Server struct {
 	setupAgentConnectURL     string
 	coLocatedAgentURL        string
 	secureCookies            bool
-	officialCatalog          []byte
+	officialCatalogOrigin    string
+	officialCatalogRoot      []byte
 	infrastructure           deployapi.InfrastructureManager
 	updates                  deployapi.CenterUpdater
 	releaseChecker           CenterReleaseChecker
@@ -83,8 +84,9 @@ func NewServer(store *Store, staticDir string, secureCookies bool) *Server {
 	return server
 }
 
-func (s *Server) WithOfficialCatalog(payload []byte) *Server {
-	s.officialCatalog = payload
+func (s *Server) WithOfficialCatalogTrust(origin string, root []byte) *Server {
+	s.officialCatalogOrigin = origin
+	s.officialCatalogRoot = append([]byte(nil), root...)
 	return s
 }
 

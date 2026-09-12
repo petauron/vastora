@@ -156,6 +156,9 @@ func Restore(backupPath, destination, password string) error {
 	if err := validateRestoreStaging(staging, metadata); err != nil {
 		return err
 	}
+	if err := expireRestoredOfficialCatalog(staging); err != nil {
+		return err
+	}
 	if err := syncDirectory(staging); err != nil {
 		return fmt.Errorf("center: sync restore staging directory: %w", err)
 	}
@@ -169,6 +172,22 @@ func Restore(backupPath, destination, password string) error {
 		return fmt.Errorf("center: sync restored directory publication: %w", err)
 	}
 	return nil
+}
+
+// A restored snapshot may predate a newer accepted revision. Preserve its
+// replay floor and root chain, but do not authorize installs until a verified
+// online refresh. This changes only local effective freshness, not signed data.
+func expireRestoredOfficialCatalog(directory string) error {
+	dsn := (&url.URL{Scheme: "file", Path: filepath.Join(directory, "center.db"), RawQuery: "mode=rw"}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return fmt.Errorf("center: open restored catalog state: %w", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE official_catalog_trust SET expires_at = '1970-01-01T00:00:00Z'`); err != nil {
+		return fmt.Errorf("center: require restored catalog refresh: %w", err)
+	}
+	return db.Close()
 }
 
 // ValidateBackupPassword applies the single password policy shared by the web,

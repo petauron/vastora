@@ -9,9 +9,82 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/backupcrypto"
+	"github.com/petauron/vastora/internal/catalog"
 )
+
+func TestOfficialCatalogRestoreRequiresRefreshAndPreservesReplayFloor(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	before, target, err := store.OfficialCatalogTrust(ctx, "stable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(t.TempDir(), "center.backup")
+	const password = "catalog-restore-test-password"
+	if err := store.Backup(ctx, backup, password); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "restored")
+	if err := Restore(backup, destination, password); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	after, restoredTarget, err := restored.OfficialCatalogTrust(ctx, "stable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Acceptance.Revision != before.Acceptance.Revision || after.Acceptance.SHA256 != before.Acceptance.SHA256 || string(target) != string(restoredTarget) || string(after.Metadata["root"]) != string(before.Metadata["root"]) {
+		t.Fatal("restore discarded accepted identity or replay state")
+	}
+	if after.Acceptance.ExpiresAt.After(time.Now()) {
+		t.Fatal("restored catalog still authorizes installation")
+	}
+	apps, err := restored.ListApps(ctx)
+	if err != nil || len(apps) == 0 {
+		t.Fatalf("restored cache unavailable for display: %v", err)
+	}
+	for _, app := range apps {
+		if !app.InstallBlocked {
+			t.Fatal("restored catalog permits installation")
+		}
+	}
+	// Exercise the post-verification commit boundary using the original signed
+	// target. Restore must not force publishers to invent a newer revision merely
+	// to revalidate an otherwise current, unexpired publication.
+	value, acceptance, err := catalog.ValidateOfficialTarget(target, "stable", after.Acceptance, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := restored.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	result := catalog.OfficialFetchResult{Catalog: value, Target: target, State: catalog.OfficialFetchState{Acceptance: acceptance, Metadata: before.Metadata}}
+	if err := commitOfficialCatalogTrust(ctx, tx, result, after.Acceptance, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	apps, err = restored.ListApps(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range apps {
+		if app.InstallBlocked {
+			t.Fatal("verified refresh did not reauthorize catalog")
+		}
+	}
+}
 
 func TestBackupPasswordPolicyIsSharedByStoreRestoreAndWeb(t *testing.T) {
 	store, err := Open(t.TempDir())

@@ -186,6 +186,9 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 	if err != nil {
 		return ApplicationTaskResult{}, err
 	}
+	if err := verifyArtifactELF(binary, target.Architecture); err != nil {
+		return ApplicationTaskResult{}, err
+	}
 	paths := []string{pulseBinary, pulseEnv, pulseUnitPath, pulseDigest, pulseToken, pulseArchive}
 	snapshots := make([]hostFileSnapshot, 0, len(paths))
 	for _, path := range paths {

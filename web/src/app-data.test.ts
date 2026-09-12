@@ -42,6 +42,7 @@ describe("screen-scoped data loading", () => {
   it("loads the application workspace in parallel without activity history", async () => {
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "apps").mockResolvedValue({ apps: [] });
+    const sources = vi.spyOn(api, "sources").mockResolvedValue({ sources: [] });
     vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
     vi.spyOn(api, "deployments").mockResolvedValue({ deployments: [] });
     vi.spyOn(api, "applications").mockResolvedValue({ applications: [] });
@@ -57,6 +58,9 @@ describe("screen-scoped data loading", () => {
     const result = await loadScreenData("apps");
 
     expect(result.apps).toEqual([]);
+    expect(result.sources).toEqual([]);
+    expect(result.catalogSourcesError).toBeUndefined();
+    expect(sources).toHaveBeenCalledOnce();
     expect(result.deployments).toEqual([]);
     expect(result.centerRemoteAccess).toEqual({ available: true, enabled: true, status: "configured" });
     expect(centerRemoteAccess).toHaveBeenCalledWith(undefined);
@@ -66,6 +70,7 @@ describe("screen-scoped data loading", () => {
   it("keeps the application workspace fail closed when remote entry status cannot be loaded", async () => {
     vi.spyOn(api, "status").mockResolvedValue(status);
     vi.spyOn(api, "apps").mockResolvedValue({ apps: [] });
+    vi.spyOn(api, "sources").mockResolvedValue({ sources: [] });
     vi.spyOn(api, "registryCredentials").mockResolvedValue({ credentials: [] });
     vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
     vi.spyOn(api, "deployments").mockResolvedValue({ deployments: [] });

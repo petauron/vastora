@@ -8,11 +8,13 @@ export type CatalogSource = {
   customCASet: boolean;
   bearerTokenSet: boolean;
   enabled: boolean;
-  status: "pending" | "healthy" | "stale" | "failed" | "disabled";
+  status: "pending" | "healthy" | "stale" | "failed" | "disabled" | "expired";
   refreshIntervalSeconds: number;
   fetchedAt?: string;
   checkedAt?: string;
   lastError?: string;
+  catalogRevision?: number;
+  expiresAt?: string;
 };
 
 export type CenterStatus = {
@@ -28,6 +30,7 @@ export type AppData = {
   status: CenterStatus;
   centerUpdate: CenterUpdateStatus;
   sources: CatalogSource[];
+  catalogSourcesError?: string;
   apps: AppView[];
   registryCredentials: RegistryCredential[];
   agents: AgentView[];
@@ -329,6 +332,9 @@ export type AppView = {
   key: string;
   sourceId: string;
   fetchedAt: string;
+  catalogRevision?: number;
+  catalogExpiresAt?: string;
+  installBlocked?: boolean;
   app: {
     id: string;
     version: string;

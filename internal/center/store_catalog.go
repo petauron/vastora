@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	"github.com/distribution/reference"
-	"github.com/petauron/vastora/internal/agent"
 	"github.com/petauron/vastora/internal/catalog"
 )
 
@@ -48,18 +46,20 @@ type SourceUpdate struct {
 }
 
 type CatalogSource struct {
-	ID             string     `json:"id"`
-	DisplayName    string     `json:"displayName"`
-	URL            string     `json:"url"`
-	PublicKey      string     `json:"publicKey"`
-	CustomCASet    bool       `json:"customCASet"`
-	BearerTokenSet bool       `json:"bearerTokenSet"`
-	Enabled        bool       `json:"enabled"`
-	Status         string     `json:"status"`
-	RefreshSeconds int        `json:"refreshIntervalSeconds"`
-	FetchedAt      *time.Time `json:"fetchedAt,omitempty"`
-	CheckedAt      *time.Time `json:"checkedAt,omitempty"`
-	LastError      string     `json:"lastError,omitempty"`
+	ID              string     `json:"id"`
+	DisplayName     string     `json:"displayName"`
+	URL             string     `json:"url"`
+	PublicKey       string     `json:"publicKey"`
+	CustomCASet     bool       `json:"customCASet"`
+	BearerTokenSet  bool       `json:"bearerTokenSet"`
+	Enabled         bool       `json:"enabled"`
+	Status          string     `json:"status"`
+	RefreshSeconds  int        `json:"refreshIntervalSeconds"`
+	FetchedAt       *time.Time `json:"fetchedAt,omitempty"`
+	CheckedAt       *time.Time `json:"checkedAt,omitempty"`
+	LastError       string     `json:"lastError,omitempty"`
+	CatalogRevision uint64     `json:"catalogRevision,omitempty"`
+	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
 }
 
 type sourceCredential struct {
@@ -74,10 +74,13 @@ type sourceCredential struct {
 }
 
 type AppView struct {
-	Key       string              `json:"key"`
-	SourceID  string              `json:"sourceId"`
-	App       catalog.AppManifest `json:"app"`
-	FetchedAt time.Time           `json:"fetchedAt"`
+	Key              string              `json:"key"`
+	SourceID         string              `json:"sourceId"`
+	App              catalog.AppManifest `json:"app"`
+	FetchedAt        time.Time           `json:"fetchedAt"`
+	CatalogExpiresAt *time.Time          `json:"catalogExpiresAt,omitempty"`
+	CatalogRevision  uint64              `json:"catalogRevision,omitempty"`
+	InstallBlocked   bool                `json:"installBlocked,omitempty"`
 }
 
 type RegistryCredential struct {
@@ -336,7 +339,45 @@ func (s *Store) ListSources(ctx context.Context) ([]CatalogSource, error) {
 		source.Status = catalogSourceStatus(source, hasCache == 1, s.now().UTC())
 		sources = append(sources, source)
 	}
-	return sources, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	state, _, err := s.OfficialCatalogTrust(ctx, "stable")
+	if err != nil {
+		return nil, err
+	}
+	for i := range sources {
+		if sources[i].ID != OfficialCatalogSourceID {
+			continue
+		}
+		source := &sources[i]
+		source.PublicKey = "" // TUF root roles, not a source-editable signing key.
+		if state.Acceptance.Revision == 0 {
+			source.Status = "pending"
+			if source.LastError != "" {
+				source.Status = "failed"
+			}
+			continue
+		}
+		source.CatalogRevision = state.Acceptance.Revision
+		source.ExpiresAt = &state.Acceptance.ExpiresAt
+		source.FetchedAt = &state.Acceptance.ObservedAt
+		now := s.now().UTC()
+		switch {
+		case now.Before(state.Acceptance.ObservedAt):
+			source.Status = "failed"
+		case !now.Before(state.Acceptance.ExpiresAt):
+			source.Status = "expired"
+		case source.LastError != "":
+			source.Status = "stale"
+		default:
+			source.Status = "healthy"
+		}
+	}
+	return sources, nil
 }
 
 func catalogSourceStatus(source CatalogSource, hasCache bool, now time.Time) string {
@@ -362,9 +403,6 @@ func catalogSourceMetadataURL(value string) string {
 	parsed, err := url.Parse(strings.TrimSpace(value))
 	if err != nil {
 		return ""
-	}
-	if parsed.Scheme == "builtin" && parsed.Host == OfficialCatalogSourceID && parsed.User == nil {
-		return parsed.String()
 	}
 	if parsed.Scheme != "https" || parsed.Host == "" {
 		return ""
@@ -548,9 +586,9 @@ func (s *Store) markCatalogNotModifiedForRevision(ctx context.Context, sourceID,
 
 func (s *Store) DueCatalogSourceIDs(ctx context.Context, now time.Time) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM catalog_sources
-		WHERE id <> ? AND enabled = 1 AND (
+		WHERE enabled = 1 AND (
 			last_checked_at = '' OR datetime(last_checked_at, '+' || refresh_seconds || ' seconds') <= datetime(?)
-		) ORDER BY id`, OfficialCatalogSourceID, now.UTC().Format(time.RFC3339Nano))
+		) ORDER BY id`, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, fmt.Errorf("center: list due catalog sources: %w", err)
 	}
@@ -649,7 +687,7 @@ func (s *Store) BackfillCatalogManifestHistory(ctx context.Context) error {
 
 func (s *Store) ListApps(ctx context.Context) ([]AppView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT s.id, s.public_key, c.envelope, c.fetched_at
-		FROM catalog_sources s JOIN catalog_cache c ON c.source_id=s.id WHERE s.enabled=1 ORDER BY s.id`)
+		FROM catalog_sources s JOIN catalog_cache c ON c.source_id=s.id WHERE s.enabled=1 AND s.id <> ? ORDER BY s.id`, OfficialCatalogSourceID)
 	if err != nil {
 		return nil, fmt.Errorf("center: list apps: %w", err)
 	}
@@ -678,7 +716,27 @@ func (s *Store) ListApps(ctx context.Context) ([]AppView, error) {
 			apps = append(apps, AppView{Key: sourceID + "/" + app.ID, SourceID: sourceID, App: app, FetchedAt: at})
 		}
 	}
-	return apps, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	state, _, err := s.OfficialCatalogTrust(ctx, "stable")
+	if err != nil {
+		return nil, err
+	}
+	if state.Acceptance.Revision != 0 {
+		value, acceptance, err := readAcceptedOfficialCatalog(ctx, s.db, "stable")
+		if err != nil {
+			return nil, err
+		}
+		now := s.now().UTC()
+		for _, app := range value.Apps {
+			apps = append(apps, AppView{Key: OfficialCatalogSourceID + "/" + app.ID, SourceID: OfficialCatalogSourceID, App: app, FetchedAt: acceptance.ObservedAt, CatalogRevision: acceptance.Revision, CatalogExpiresAt: &acceptance.ExpiresAt, InstallBlocked: now.Before(acceptance.ObservedAt) || !now.Before(acceptance.ExpiresAt)})
+		}
+	}
+	return apps, nil
 }
 
 func (s *Store) CreateRegistryCredential(ctx context.Context, host, username, token string) (RegistryCredential, error) {
@@ -800,108 +858,6 @@ func (s *Store) DeleteRegistryCredential(ctx context.Context, id string) error {
 		return fmt.Errorf("center: commit Registry credential deletion: %w", err)
 	}
 	return nil
-}
-
-func (s *Store) SeedOfficialCatalog(ctx context.Context, payload []byte) error {
-	parsed, err := catalog.ParseCatalog(payload)
-	if err != nil {
-		return fmt.Errorf("center: official catalog: %w", err)
-	}
-	if err := agent.ValidateOfficialCatalog(parsed); err != nil {
-		return fmt.Errorf("center: official catalog: %w", err)
-	}
-	var secretID string
-	err = s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'official_catalog_signing_key'`).Scan(&secretID)
-	if errors.Is(err, sql.ErrNoRows) {
-		publicKey, privateKey, keyErr := ed25519.GenerateKey(rand.Reader)
-		if keyErr != nil {
-			return fmt.Errorf("center: generate official catalog key: %w", keyErr)
-		}
-		tx, txErr := s.db.BeginTx(ctx, nil)
-		if txErr != nil {
-			return fmt.Errorf("center: begin official catalog key: %w", txErr)
-		}
-		defer tx.Rollback()
-		secretID, keyErr = s.putSecret(ctx, tx, privateKey, "official-catalog-signing-key")
-		if keyErr != nil {
-			return keyErr
-		}
-		if _, keyErr = tx.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES('official_catalog_signing_key', ?)`, secretID); keyErr != nil {
-			return fmt.Errorf("center: save official catalog key: %w", keyErr)
-		}
-		if keyErr = tx.Commit(); keyErr != nil {
-			return fmt.Errorf("center: commit official catalog key: %w", keyErr)
-		}
-		return s.saveOfficialCatalog(ctx, payload, publicKey, privateKey)
-	}
-	if err != nil {
-		return fmt.Errorf("center: read official catalog key: %w", err)
-	}
-	privateKey, err := s.getSecret(ctx, secretID, "official-catalog-signing-key")
-	if err != nil {
-		return err
-	}
-	if len(privateKey) != ed25519.PrivateKeySize {
-		return errors.New("center: official catalog signing key is invalid")
-	}
-	return s.saveOfficialCatalog(ctx, payload, ed25519.PrivateKey(privateKey).Public().(ed25519.PublicKey), ed25519.PrivateKey(privateKey))
-}
-
-func (s *Store) saveOfficialCatalog(ctx context.Context, payload, publicKey []byte, privateKey ed25519.PrivateKey) error {
-	parsedCatalog, err := catalog.ParseCatalog(payload)
-	if err != nil {
-		return fmt.Errorf("center: parse official catalog: %w", err)
-	}
-	envelope, err := catalog.Sign("vastora-official", privateKey, payload)
-	if err != nil {
-		return fmt.Errorf("center: sign official catalog: %w", err)
-	}
-	rawEnvelope, err := catalog.MarshalEnvelope(envelope)
-	if err != nil {
-		return fmt.Errorf("center: marshal official catalog: %w", err)
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("center: begin official catalog save: %w", err)
-	}
-	defer tx.Rollback()
-	var previousBearerSecretID sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT bearer_secret_id FROM catalog_sources WHERE id = ?`, OfficialCatalogSourceID).Scan(&previousBearerSecretID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("center: inspect official catalog namespace: %w", err)
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO catalog_sources(id, display_name, url, public_key, bearer_secret_id, custom_ca, enabled, refresh_seconds, created_at, last_checked_at, last_error)
-		VALUES(?, 'Vastora Official', 'builtin://vastora-official', ?, NULL, NULL, 1, 86400, ?, ?, '')
-		ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, url=excluded.url, public_key=excluded.public_key,
-		bearer_secret_id=NULL, custom_ca=NULL, enabled=1, refresh_seconds=excluded.refresh_seconds,
-		last_checked_at=excluded.last_checked_at, last_error=''`, OfficialCatalogSourceID, publicKey, now, now); err != nil {
-		return fmt.Errorf("center: save official catalog source: %w", err)
-	}
-	if err := recordCatalogManifestHistory(ctx, tx, OfficialCatalogSourceID, parsedCatalog, now); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO catalog_cache(source_id, envelope, fetched_at) VALUES(?, ?, ?)
-		ON CONFLICT(source_id) DO UPDATE SET envelope=excluded.envelope, fetched_at=excluded.fetched_at`, OfficialCatalogSourceID, rawEnvelope, now); err != nil {
-		return fmt.Errorf("center: cache official catalog: %w", err)
-	}
-	if previousBearerSecretID.Valid {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id = ?`, previousBearerSecretID.String); err != nil {
-			return fmt.Errorf("center: remove credential from reserved official catalog namespace: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("center: commit official catalog: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) OfficialCatalogEnvelope(ctx context.Context) ([]byte, error) {
-	var envelope []byte
-	if err := s.db.QueryRowContext(ctx, `SELECT envelope FROM catalog_cache WHERE source_id = ?`, OfficialCatalogSourceID).Scan(&envelope); err != nil {
-		return nil, fmt.Errorf("center: read official catalog: %w", err)
-	}
-	return envelope, nil
 }
 
 var sourceIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,62}$`)
