@@ -23,4 +23,16 @@ The program release workflow checks the public chain before creating a new
 release. Catalog publication checks it before signing approval. Both reject
 missing or invalid roots; tests use temporary, independently generated test keys.
 Root provisioning and production configuration are operator actions, not
-performed by the development tests. No production root is included yet.
+performed by the development tests.
+
+## Initial production root
+
+`1.root.json` is the existing independently generated Ed25519 public root from
+2026-09-12. It expires at 2027-09-12T05:15:43Z and authorizes distinct root,
+targets, snapshot, and timestamp keys, each with a threshold of one.
+
+Root key ID: `e7892d2fba95f7f7cb9aa9cb62b9b8ebae0b993409d3a5485a2b38d9319ab0e4`.
+This is single-maintainer custody, not a multi-party signing policy. The root
+private key remains outside the repository and GitHub. Only online role keys
+belong in the protected `catalog-signing` environment, restricted to protected
+branches and requiring an approved deployment.
