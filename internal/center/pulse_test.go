@@ -42,7 +42,7 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAppKey}); err == nil {
 		t.Fatal("second global monitoring service accepted")
 	}
-	request := DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Config: json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled","interval_seconds":3}`)}
+	request := DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Config: json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled"}`)}
 	if _, err := store.CreateDeployment(ctx, request); err == nil {
 		t.Fatal("collector accepted without private HTTPS")
 	}
@@ -78,8 +78,11 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if json.Unmarshal(installTask.Config, &config) != nil || config.NodeName != "collector" || config.ServiceApplicationID != deployment.ApplicationID {
 		t.Fatal("collector identity was not inherited")
 	}
-	if config.NodeRegion == nil || *config.NodeRegion != "SG" || config.GeoIPProvider == nil || *config.GeoIPProvider != "disabled" || config.IntervalSeconds != 3 {
-		t.Fatal("administrator location and interval choices were not delivered to the collector")
+	if config.NodeRegion == nil || *config.NodeRegion != "SG" || config.GeoIPProvider == nil || *config.GeoIPProvider != "disabled" {
+		t.Fatal("administrator location choices were not delivered to the collector")
+	}
+	if strings.Contains(string(installTask.Config), `"interval_seconds"`) {
+		t.Fatal("Center must not send a metrics interval override to the collector")
 	}
 	if err := store.CompleteTask(ctx, collector.ID, collector.Credential, installTask.ID, installTask.Attempt, true, "", json.RawMessage(`{"services":[]}`), installTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
@@ -97,13 +100,16 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"service_url":"https://attacker.example.com/"}`)}); err == nil {
 		t.Fatal("administrator form was allowed to replace the managed service identity")
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"node_region":"","interval_seconds":10}`)}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"node_region":""}`)}); err != nil {
 		t.Fatal(err)
 	}
 	changedTask := claimTask(t, store, collector)
 	var changed pulse.AgentConfig
-	if json.Unmarshal(changedTask.Config, &changed) != nil || changed.NodeRegion == nil || *changed.NodeRegion != "" || changed.GeoIPProvider == nil || *changed.GeoIPProvider != "disabled" || changed.IntervalSeconds != 10 || changed.ServiceURL != config.ServiceURL || changed.NodeName != config.NodeName {
+	if json.Unmarshal(changedTask.Config, &changed) != nil || changed.NodeRegion == nil || *changed.NodeRegion != "" || changed.GeoIPProvider == nil || *changed.GeoIPProvider != "disabled" || changed.ServiceURL != config.ServiceURL || changed.NodeName != config.NodeName {
 		t.Fatal("configuration did not preserve identity, retain omitted options, and clear explicit empty region")
+	}
+	if strings.Contains(string(changedTask.Config), `"interval_seconds"`) {
+		t.Fatal("configuration changes must leave the metrics interval to Pulse")
 	}
 }
 

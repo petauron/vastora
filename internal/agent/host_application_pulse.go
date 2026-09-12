@@ -109,17 +109,12 @@ func pulseEnvironment(config pulse.AgentConfig) []byte {
 	if config.GeoIPProvider != nil && *config.GeoIPProvider != "" {
 		provider = *config.GeoIPProvider
 	}
-	interval := config.IntervalSeconds
-	if interval == 0 {
-		interval = pulse.DefaultIntervalSeconds
-	}
 	return []byte("PULSE_SERVICE_URL=" + strconv.Quote(config.ServiceURL) +
 		"\nPULSE_NODE_NAME=" + strconv.Quote(config.NodeName) +
 		"\nPULSE_NODE_GROUP=" + strconv.Quote(config.NodeGroup) +
 		"\nPULSE_NODE_REGION=" + strconv.Quote(region) +
 		"\nPULSE_GEOIP_PROVIDER=" + strconv.Quote(provider) +
-		"\nPULSE_CREDENTIALS_PATH=" + pulseCredentialsPath +
-		"\nPULSE_INTERVAL_SECONDS=" + strconv.Itoa(interval) + "\n")
+		"\nPULSE_CREDENTIALS_PATH=" + pulseCredentialsPath + "\n")
 }
 
 // Retain only the two supported local location choices. Never source the file,

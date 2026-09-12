@@ -186,6 +186,10 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	if _, err := manager.ApplyPulse(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
+	installedEnvironment, err := os.ReadFile(manager.path(pulseEnv))
+	if err != nil || bytes.Contains(installedEnvironment, []byte("PULSE_INTERVAL_SECONDS=")) {
+		t.Fatal("installation must use the Pulse collector's own metrics interval default")
+	}
 	token, err := os.ReadFile(manager.path(pulseToken))
 	if err != nil || len(token) != 0 {
 		t.Fatal("one-time token retained")
@@ -199,7 +203,7 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	}
 	legacyEnvironment := strings.ReplaceAll(string(pulseEnvironment(config)), "PULSE_NODE_REGION=\"\"\n", "")
 	legacyEnvironment = strings.ReplaceAll(legacyEnvironment, "PULSE_GEOIP_PROVIDER=\"geojs\"\n", "")
-	legacyEnvironment += "PULSE_NODE_REGION='sg'\nPULSE_GEOIP_PROVIDER=disabled\n"
+	legacyEnvironment += "PULSE_NODE_REGION='sg'\nPULSE_GEOIP_PROVIDER=disabled\nPULSE_INTERVAL_SECONDS=30\n"
 	if err := writeHostFileAtomic(manager.path(pulseEnv), []byte(legacyEnvironment), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -212,8 +216,11 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 		t.Fatal("upgrade changed identity")
 	}
 	environment, err := os.ReadFile(manager.path(pulseEnv))
-	if err != nil || !bytes.Contains(environment, []byte("PULSE_NODE_REGION=\"SG\"\n")) || !bytes.Contains(environment, []byte("PULSE_GEOIP_PROVIDER=\"disabled\"\n")) || !bytes.Contains(environment, []byte("PULSE_INTERVAL_SECONDS=3\n")) {
-		t.Fatal("upgrade changed retained location settings or default interval")
+	if err != nil || !bytes.Contains(environment, []byte("PULSE_NODE_REGION=\"SG\"\n")) || !bytes.Contains(environment, []byte("PULSE_GEOIP_PROVIDER=\"disabled\"\n")) {
+		t.Fatal("upgrade changed retained location settings")
+	}
+	if bytes.Contains(environment, []byte("PULSE_INTERVAL_SECONDS=")) {
+		t.Fatal("upgrade must not retain or replace the previous metrics interval override")
 	}
 	if err := manager.RestorePulse(context.Background(), task); err != nil {
 		t.Fatal(err)

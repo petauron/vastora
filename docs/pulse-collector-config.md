@@ -61,15 +61,19 @@ checks. No live container or browser acceptance test was performed.
 ## Collector configuration
 
 Vastora manages the Pulse Service URL, Service application ID, node name, and node
-group. The application form accepts only the collector's country code, discovery
-provider, and initial metrics interval; it cannot change enrollment credentials
-or redirect a retained identity to another monitoring Service.
+group. The application form accepts only the collector's country code and discovery
+provider; it cannot change enrollment credentials or redirect a retained identity
+to another monitoring Service.
 
 | Configuration key | Behavior |
 | --- | --- |
 | `node_region` | Optional ISO 3166-1 alpha-2 country/territory code, such as `SG`, `US`, or `HK`. A manual code takes precedence over discovery. An explicit empty string clears a configured country. |
 | `geoip_provider` | `geojs` by default; `ipinfo` selects IPinfo; `disabled` disables lookup. |
-| `interval_seconds` | Initial metrics interval of 1–300 seconds, default 3. The Pulse administrator may subsequently set the running collector's interval from Pulse. |
+
+The metrics interval belongs to Pulse. Vastora does not expose an interval field
+or send `PULSE_INTERVAL_SECONDS`; installation and upgrades use the collector's
+own default instead of overriding it. Any interval controls supported by Pulse
+remain managed in Pulse, not Vastora.
 
 The default GeoJS lookup shares the node's public egress IP and Agent version
 with GeoJS, never Pulse credentials or host metrics. Choose `disabled` to opt out;
@@ -96,5 +100,5 @@ These changes target the new Pulse collector implementation. The checked-in
 release version, binary URLs, and checksums remain unchanged in this development
 branch. Before shipping it, publish the corresponding Pulse release and update
 the existing release catalog through its normal workflow; Alpha.2 does not support
-the new default 3-second interval or automatic country discovery. This work does
-not implement catalog publication or automatic release synchronization.
+automatic country discovery. This work does not implement catalog publication or
+automatic release synchronization.

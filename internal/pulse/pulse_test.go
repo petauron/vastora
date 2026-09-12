@@ -16,7 +16,7 @@ func TestCollectorRequiresCredentialFreeHTTPSRoot(t *testing.T) {
 	}
 }
 
-func TestCollectorLocationAndIntervalValidation(t *testing.T) {
+func TestCollectorLocationValidation(t *testing.T) {
 	base := AgentConfig{ServiceURL: "https://pulse.example.com/", ServiceApplicationID: "service", NodeName: "node"}
 	for _, code := range []string{"", "SG", "us", "HK"} {
 		config := base
@@ -44,20 +44,6 @@ func TestCollectorLocationAndIntervalValidation(t *testing.T) {
 	invalid.GeoIPProvider = &provider
 	if invalid.Validate() == nil {
 		t.Fatal("arbitrary GeoIP provider accepted")
-	}
-	for _, interval := range []int{-1, 301} {
-		invalid := base
-		invalid.IntervalSeconds = interval
-		if invalid.Validate() == nil {
-			t.Fatalf("invalid interval accepted: %d", interval)
-		}
-	}
-	for _, interval := range []int{0, 1, 3, 300} {
-		valid := base
-		valid.IntervalSeconds = interval
-		if err := valid.Validate(); err != nil {
-			t.Fatalf("valid interval rejected: %d: %v", interval, err)
-		}
 	}
 }
 

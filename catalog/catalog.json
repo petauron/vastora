@@ -214,15 +214,6 @@
           "description": {"en": "geojs (default), ipinfo, or disabled. The provider sees the public egress IP and Agent version, never Pulse credentials or metrics. Omit on upgrade to retain the current choice.", "zh-CN": "填写 geojs（默认）、ipinfo 或 disabled。查询服务会看到出口公网 IP 和探针版本，不会收到 Pulse 凭据或监控指标。升级时留空保留当前选择。"},
           "required": false,
           "secret": false
-        },
-        {
-          "key": "interval_seconds",
-          "type": "integer",
-          "label": {"en": "Metrics interval (seconds)", "zh-CN": "指标采集间隔（秒）"},
-          "description": {"en": "Initial collection interval, 1–300 seconds. The Pulse administrator can subsequently control the interval from the monitoring dashboard.", "zh-CN": "初始采集间隔，范围 1–300 秒。之后可由 Pulse 管理员从监控面板调整。"},
-          "required": false,
-          "secret": false,
-          "default": 3
         }
       ]
     }

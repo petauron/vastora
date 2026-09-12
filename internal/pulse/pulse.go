@@ -11,11 +11,10 @@ import (
 )
 
 const (
-	ServiceKey             = "vastora-official/pulse"
-	AgentKey               = "vastora-official/pulse-agent"
-	EnrollmentKind         = "pulse.enrollment.create"
-	DefaultIntervalSeconds = 3
-	DefaultGeoIPProvider   = "geojs"
+	ServiceKey           = "vastora-official/pulse"
+	AgentKey             = "vastora-official/pulse-agent"
+	EnrollmentKind       = "pulse.enrollment.create"
+	DefaultGeoIPProvider = "geojs"
 )
 
 type AgentConfig struct {
@@ -24,9 +23,8 @@ type AgentConfig struct {
 	NodeName             string `json:"node_name"`
 	NodeGroup            string `json:"node_group"`
 	// Nil preserves an existing host override; a supplied empty region selects automatic discovery.
-	NodeRegion      *string `json:"node_region,omitempty"`
-	GeoIPProvider   *string `json:"geoip_provider,omitempty"`
-	IntervalSeconds int     `json:"interval_seconds,omitempty"`
+	NodeRegion    *string `json:"node_region,omitempty"`
+	GeoIPProvider *string `json:"geoip_provider,omitempty"`
 }
 
 type EnrollmentTask struct {
@@ -61,9 +59,6 @@ func (config AgentConfig) Validate() error {
 		default:
 			return errors.New("pulse: GeoIP provider must be geojs, ipinfo, or disabled")
 		}
-	}
-	if config.IntervalSeconds != 0 && (config.IntervalSeconds < 1 || config.IntervalSeconds > 300) {
-		return errors.New("pulse: metrics interval must be between 1 and 300 seconds")
 	}
 	return nil
 }
