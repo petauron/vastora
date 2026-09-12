@@ -39,9 +39,10 @@ An old installation without these saved fields must provide them explicitly befo
 upgrading. A matching `/healthz` response alone does not prove that browser login,
 Origin/CSRF handling, or administrator setup works.
 
-The checked-in image/version pins still target Alpha.2 and have not been published
-or deployed by this change. The new authenticated Pulse image and its normal
-catalog release update are required before this integration can be shipped.
+The catalog pins the published Alpha.3 multi-architecture image by digest and
+both native collector archives by their upstream SHA256. Publish the compatible
+Vastora executor release before the signed catalog revision. Neither publication
+automatically upgrades an installed Pulse Service or collector.
 Go regression tests cover configuration rejection, encrypted secret retention,
 archive ownership/modes, environment secrecy, data-volume preservation, and
 copy-failure cleanup. The following checks passed with Go 1.26.6 in an isolated
@@ -96,9 +97,8 @@ Restoring a managed installation applies the same location interpretation before
 checking the expected file content. Enrollment and retained Agent credentials
 continue to use protocol version 2.
 
-These changes target the new Pulse collector implementation. The checked-in
-release version, binary URLs, and checksums remain unchanged in this development
-branch. Before shipping it, publish the corresponding Pulse release and update
-the existing release catalog through its normal workflow; Alpha.2 does not support
-automatic country discovery. This work does not implement catalog publication or
-automatic release synchronization.
+Country discovery requires the published Alpha.3 collector pinned in the catalog.
+The compiled executor contract includes the supported location and Service
+authentication fields, but deliberately excludes the metrics interval. Catalog
+publication follows the separate signed-catalog workflow; no automatic upstream
+release synchronization is introduced.

@@ -183,7 +183,20 @@
         "management": true
       }
     ],
-    "config": [],
+    "config": [
+      {
+        "key": "public_url",
+        "type": "string",
+        "required": true,
+        "secret": false
+      },
+      {
+        "key": "setup_token",
+        "type": "string",
+        "required": true,
+        "secret": true
+      }
+    ],
     "homepage": {
       "service": "dashboard",
       "path": "/"
@@ -206,7 +219,20 @@
       }
     ],
     "services": [],
-    "config": [],
+    "config": [
+      {
+        "key": "geoip_provider",
+        "type": "string",
+        "required": false,
+        "secret": false
+      },
+      {
+        "key": "node_region",
+        "type": "string",
+        "required": false,
+        "secret": false
+      }
+    ],
     "homepage": null
   }
 ]
