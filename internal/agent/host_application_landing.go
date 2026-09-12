@@ -388,6 +388,9 @@ func ApplyLanding(ctx context.Context, nodeID string, plan landing.ServerPlan) e
 	policy := landing.ServerFirewall{Revision: plan.Revision, Address: plan.Address, Interface: device, UID: journal.UID}
 	for _, source := range plan.Sources {
 		policy.Sources = append(policy.Sources, source.Address)
+		if source.TCPOnly {
+			policy.TCPOnlySources = append(policy.TCPOnlySources, source.Address)
+		}
 	}
 	if err := stopLandingService(ctx); err != nil {
 		return err

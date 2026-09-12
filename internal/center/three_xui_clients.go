@@ -14,7 +14,8 @@ import (
 )
 
 var threeXUIClientActions = map[string]bool{
-	"list": true, "list_inbounds": true, "create": true, "update": true, "set_enabled": true,
+	"landing_grant": true,
+	"list":          true, "list_inbounds": true, "create": true, "update": true, "set_enabled": true,
 	"delete": true, "reset_traffic": true, "reveal_link": true,
 	"reveal_subscription": true, "update_inbound": true, "reset_inbound_plan": true,
 }
@@ -25,6 +26,9 @@ func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (Thre
 	input.Email = strings.TrimSpace(input.Email)
 	input.NewEmail = strings.TrimSpace(input.NewEmail)
 	input.ServiceID = strings.TrimSpace(input.ServiceID)
+	if strings.HasPrefix(input.Email, "vastora-combination-") || strings.HasPrefix(input.NewEmail, "vastora-combination-") {
+		return input, errors.New("center: manage combination identities through their parent client's landing grants")
+	}
 	for _, inboundID := range input.InboundIDs {
 		if inboundID < 1 {
 			return input, errors.New("center: selected REALITY node is invalid")
@@ -38,6 +42,8 @@ func normalizeThreeXUIClientCommandInput(input ThreeXUIClientCommandInput) (Thre
 		return input, errors.New("center: client quota, expiry, or IP limit is invalid")
 	}
 	switch input.Action {
+	case "landing_grant":
+		return input, errors.New("center: use the scoped client landing interface")
 	case "list", "list_inbounds":
 	case "create":
 		if !validThreeXUIClientName(input.NewEmail) || len(input.InboundIDs) == 0 {
@@ -196,12 +202,16 @@ func (s *Store) CreateThreeXUIClientCommand(ctx context.Context, input ThreeXUIC
 			}
 		}
 	}
-	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)
 	if err != nil {
 		return ApplicationCommandView{}, err
 	}
 	id := "application-command-" + token
+	if err := s.prepareLandingParentMutation(ctx, tx, id, input, &task); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	task.OperationKey = id
+	encoded, _ := json.Marshal(task)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ApplicationID, agentID, agentID, clientCommandKind, encoded, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return ApplicationCommandView{}, fmt.Errorf("center: create 3x-ui client operation: %w", err)
 	}
@@ -420,6 +430,9 @@ func (s *Store) completeThreeXUIClientCommand(ctx context.Context, tx *sql.Tx, t
 	if json.Unmarshal(inputJSON, &input) != nil || !threeXUIClientActions[input.Action] {
 		return errors.New("center: stored 3x-ui client operation is invalid")
 	}
+	if input.Action == "landing_grant" {
+		return s.completeLandingClientCommand(ctx, tx, taskID, agentID, input, succeeded, rawResult)
+	}
 	if succeeded {
 		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.ClientCommand == nil {
 			succeeded = false
@@ -429,8 +442,9 @@ func (s *Store) completeThreeXUIClientCommand(ctx context.Context, tx *sql.Tx, t
 	now := s.now().UTC()
 	publicResult := []byte(`{}`)
 	var resultSecretID any
+	var result ThreeXUIClientCommandResult
 	if succeeded {
-		result := *envelope.ClientCommand
+		result = *envelope.ClientCommand
 		if err := validateThreeXUIClientCommandResult(input, result); err != nil {
 			succeeded = false
 			taskError = err.Error()
@@ -458,6 +472,9 @@ func (s *Store) completeThreeXUIClientCommand(ctx context.Context, tx *sql.Tx, t
 				result = ThreeXUIClientCommandResult{}
 			}
 			if succeeded {
+				if err := s.observeLandingAccounts(ctx, tx, taskID, &result); err != nil {
+					return err
+				}
 				if result.Secret != "" {
 					secretID, err := s.putSecret(ctx, tx, []byte(result.Secret), "application-command:"+taskID)
 					if err != nil {
@@ -494,6 +511,18 @@ func (s *Store) completeThreeXUIClientCommand(ctx context.Context, tx *sql.Tx, t
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = ?, result_json = ?, result_secret_id = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND state = 'running'`, state, publicResult, resultSecretID, taskError, now.Format(time.RFC3339Nano), taskID); err != nil {
 		return err
+	}
+	if succeeded {
+		// Release the parent's active-command slot before queuing follow-up
+		// child work, in the same transaction. Failure rolls back both changes.
+		if err := s.finishLandingParentMutation(ctx, tx, input, result); err != nil {
+			return err
+		}
+	}
+	if input.ManagedParentID != "" && !succeeded {
+		if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required=1 WHERE id=? AND state='failed'`, taskID); err != nil {
+			return err
+		}
 	}
 	eventRevision := int64(1)
 	if input.PlanRevision > 0 {

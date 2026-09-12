@@ -23,7 +23,7 @@ import (
 // Probe runs from the proxy host, outside the Docker forwarding gate. This
 // allows fresh recovery probes while the selected application's data remains
 // blocked. It never opens a direct connection to a public probe destination.
-type Probe struct{}
+type Probe struct{ TCPOnly bool }
 
 func (p Probe) Check(ctx context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, CheckTimeout)
@@ -43,6 +43,10 @@ func (p Probe) check(ctx context.Context, peer PeerIdentity, revision uint64) (B
 		return result, err
 	}
 	result.TCP, result.ExitIPv4 = true, exit
+	if p.TCPOnly {
+		result.CheckedAt = time.Now().UTC()
+		return result, nil
+	}
 	relay, err := p.udp(ctx, endpoint)
 	if err != nil {
 		return result, err

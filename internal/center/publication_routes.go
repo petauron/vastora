@@ -50,6 +50,13 @@ func (s *Store) gatewayServiceEndpoint(ctx context.Context, tx *sql.Tx, serviceI
 }
 
 func canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, gatewayID string, containerPort int, endpoint string) string {
+	if appKey == threeXUIAppKey && runtime == "docker" && containerPort == 2096 {
+		// Only a controller with an applied landing subscription journal is
+		// switched. Existing ordinary subscriptions keep their native origin.
+		if _, port, err := net.SplitHostPort(endpoint); err == nil && port == "2097" {
+			return endpoint
+		}
+	}
 	if appKey == threeXUIAppKey && runtime == "docker" && applicationNodeID == gatewayID && containerPort > 0 && containerPort <= 65535 {
 		return net.JoinHostPort(dockerruntime.ThreeXUIAlias, strconv.Itoa(containerPort))
 	}

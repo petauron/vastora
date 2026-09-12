@@ -48,7 +48,7 @@ func (s *Store) claimLandingProxyTask(ctx context.Context, tx *sql.Tx, nodeID st
 	var revision, attempt int64
 	var encoded []byte
 	err := tx.QueryRowContext(ctx, `SELECT p.desired_revision,p.attempt,p.desired_json FROM landing_proxy_states p
- JOIN landing_server_states server ON server.node_id=p.landing_node_id
+ LEFT JOIN landing_server_states server ON server.node_id=p.landing_node_id
  WHERE p.node_id=? AND p.desired_revision>p.applied_revision AND p.status='pending'
  AND (json_extract(p.desired_json,'$.proxy') IS NULL OR (server.applied_revision>=p.server_revision AND server.status='ready'))`, nodeID).Scan(&revision, &attempt, &encoded)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -60,6 +60,9 @@ func (s *Store) claimLandingProxyTask(ctx context.Context, tx *sql.Tx, nodeID st
 	var state landing.DesiredState
 	if json.Unmarshal(encoded, &state) != nil || state.Validate() != nil || state.Server != nil || state.NodeID != nodeID || state.Revision != uint64(revision) {
 		return nil, errors.New("center: invalid landing proxy task")
+	}
+	if ready, err := s.clientLandingRoutePrerequisites(ctx, tx, state); err != nil || !ready {
+		return nil, err
 	}
 	now := s.now().UTC()
 	result, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='applying',attempt=attempt+1,lease_expires_at=?,updated_at=? WHERE node_id=? AND desired_revision=? AND attempt=? AND status='pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), nodeID, revision, attempt)
@@ -106,7 +109,7 @@ func (s *Store) completeLandingProxy(ctx context.Context, nodeID string, revisio
 	if succeeded {
 		applied = desired
 		status, message, event = "ready", "", "succeeded"
-		if state.Proxy == nil {
+		if !state.Active() {
 			status = "stopped"
 		}
 	}
@@ -125,6 +128,9 @@ func (s *Store) completeLandingProxy(ctx context.Context, nodeID string, revisio
 		if err := s.retireLandingSources(ctx, tx, nodeID, state.Proxy != nil); err != nil {
 			return err
 		}
+	}
+	if err := s.completeClientLandingRoutes(ctx, tx, nodeID, uint64(revision), succeeded); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

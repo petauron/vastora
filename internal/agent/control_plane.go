@@ -325,6 +325,11 @@ type ThreeXUIClientInbound struct {
 }
 
 type ThreeXUIClientCommandTask struct {
+	ManagedParentID     string                  `json:"managedParentId,omitempty"`
+	GrantID             string                  `json:"grantId,omitempty"`
+	GrantRevision       uint64                  `json:"grantRevision,omitempty"`
+	GrantPhase          string                  `json:"grantPhase,omitempty"`
+	Landing             *landing.ControllerTask `json:"landing,omitempty"`
 	Action              string                  `json:"action"`
 	Email               string                  `json:"email,omitempty"`
 	NewEmail            string                  `json:"newEmail,omitempty"`
@@ -352,6 +357,8 @@ type ThreeXUIClientCommandTask struct {
 }
 
 type ThreeXUIClientView struct {
+	HasLanding      bool   `json:"hasLanding,omitempty"`
+	ID              string `json:"id,omitempty"`
 	Email           string `json:"email"`
 	Enabled         bool   `json:"enabled"`
 	TotalBytes      int64  `json:"totalBytes"`
@@ -364,12 +371,13 @@ type ThreeXUIClientView struct {
 }
 
 type ThreeXUIClientCommandResult struct {
-	Clients          []ThreeXUIClientView    `json:"clients,omitempty"`
-	ClientsObserved  bool                    `json:"clientsObserved"`
-	Inbounds         []ThreeXUIClientInbound `json:"inbounds"`
-	InboundsObserved bool                    `json:"inboundsObserved"`
-	Secret           string                  `json:"secret,omitempty"`
-	SecretKind       string                  `json:"secretKind,omitempty"`
+	Landing          *landing.ControllerResult `json:"landing,omitempty"`
+	Clients          []ThreeXUIClientView      `json:"clients,omitempty"`
+	ClientsObserved  bool                      `json:"clientsObserved"`
+	Inbounds         []ThreeXUIClientInbound   `json:"inbounds"`
+	InboundsObserved bool                      `json:"inboundsObserved"`
+	Secret           string                    `json:"secret,omitempty"`
+	SecretKind       string                    `json:"secretKind,omitempty"`
 }
 
 type ThreeXUINodeCommandTask struct {
@@ -552,6 +560,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
 		"landingHealth":                store.landingHealth(),
+		"landingClientRuntime":         store.observeLandingClientRuntime(ctx),
 		"nodeListenerRevision":         nodeListenerRevision,
 		"nodeListenerConfigHash":       nodeListenerConfigHash,
 		"applicationRuntimeGeneration": platform.ApplicationRuntimeGeneration,
@@ -805,6 +814,8 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 }
 
 func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.Duration, report func(error)) {
+	go store.runLandingAccounts(ctx, report)
+	go store.runLandingSubscriptions(ctx, report)
 	if interval < time.Second {
 		interval = 15 * time.Second
 	}

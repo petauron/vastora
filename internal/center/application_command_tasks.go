@@ -21,6 +21,9 @@ var (
 )
 
 func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
+	if err := s.queueNextLandingClientCommand(ctx, tx, agentID); err != nil {
+		return nil, err
+	}
 	var id, kind string
 	var inputJSON []byte
 	var attempt int64
@@ -129,6 +132,20 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 					return nil, failErr
 				}
 				return nil, errApplicationCommandDiscarded
+			}
+		}
+		if command.Action == "landing_grant" {
+			if err := s.hydrateLandingClientCommand(ctx, tx, &command); err != nil {
+				if _, updateErr := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='failed',last_error='Landing identity changed; refresh and retry.' WHERE id=? AND desired_revision=?`, command.GrantID, command.GrantRevision); updateErr != nil {
+					return nil, updateErr
+				}
+				return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, int64(command.GrantRevision), nil, nil, err)
+			}
+		}
+		if command.ManagedParentID != "" {
+			ready, err := s.landingParentMutationReady(ctx, tx, id, command.ManagedParentID)
+			if err != nil || !ready {
+				return nil, err
 			}
 		}
 		client = &command

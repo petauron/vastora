@@ -25,6 +25,8 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 		case "/panel/api/clients/list/paged":
 			clientListCalls.Add(1)
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","subId":"private-sub-id","enable":true,"totalGB":10737418240,"expiryTime":0,"reset":30,"limitIp":2,"inboundIds":[9],"traffic":{"up":1024,"down":2048}}],"total":1}}`))
+		case "/panel/api/clients/get/MacBook":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","uuid":"11111111-2222-4333-8444-555555555555"},"inboundIds":[9]}}`))
 		case "/panel/api/inbounds/list":
 			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"vastora-node","enable":true,"protocol":"vless","up":2048,"down":4096,"total":21474836480,"streamSettings":{"security":"reality"}}]}`))
 		default:

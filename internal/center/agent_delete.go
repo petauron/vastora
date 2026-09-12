@@ -53,6 +53,12 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 	}
 	// Uninstalled applications and fully stopped entries are only historical
 	// Center records. Keep active dependencies protected by the transaction/FKs.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM landing_proxy_states WHERE (node_id=? OR landing_node_id=?) AND status='stopped' AND desired_revision=applied_revision AND json_extract(desired_json,'$.proxy') IS NULL AND json_extract(desired_json,'$.clients') IS NULL`, id, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM three_x_ui_client_accounts WHERE controller_id IN (SELECT id FROM applications WHERE node_id=? AND status='stopped') AND pending_command_id='' AND NOT EXISTS(SELECT 1 FROM landing_client_grants WHERE parent_id=three_x_ui_client_accounts.id) AND NOT EXISTS(SELECT 1 FROM landing_client_blocks WHERE parent_id=three_x_ui_client_accounts.id)`, id); err != nil {
+		return err
+	}
 	for _, query := range []string{
 		`DELETE FROM publications WHERE entry_node_id=? AND status='stopped' AND cleanup_pending=0`,
 		`DELETE FROM applications WHERE node_id=? AND status='stopped'`,

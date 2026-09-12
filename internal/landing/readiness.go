@@ -21,6 +21,10 @@ func WaitReady(ctx context.Context, peer PeerIdentity, revision uint64) error {
 	return waitReady(ctx, peer, revision, NewLinkChecker().Check, (Probe{}).check)
 }
 
+func WaitTCPReady(ctx context.Context, peer PeerIdentity, revision uint64) error {
+	return waitReady(ctx, peer, revision, NewLinkChecker().Check, (Probe{TCPOnly: true}).check)
+}
+
 func waitReady(ctx context.Context, peer PeerIdentity, revision uint64,
 	checkLink func(context.Context, PeerIdentity) LinkResult,
 	checkBusiness func(context.Context, PeerIdentity, uint64) (BusinessResult, error),

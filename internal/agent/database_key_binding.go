@@ -57,6 +57,15 @@ func (s *Store) initializeDatabaseKeyBinding(ctx context.Context) error {
 }
 
 func verifyAgentEncryptedState(ctx context.Context, db *sql.DB, key []byte) error {
+	for _, journal := range []struct{ table, aad string }{{"landing_runtime_state", "agent-landing-runtime"}, {"landing_controller_state", "agent-landing-controller"}} {
+		if exists, err := agentTableHasColumns(ctx, db, journal.table, "id", "sealed_state"); err != nil {
+			return err
+		} else if exists {
+			if err := verifyAgentCiphertextRows(ctx, db, key, "SELECT CAST(id AS TEXT), sealed_state FROM "+journal.table, func(string) []byte { return []byte(journal.aad) }, "landing journal"); err != nil {
+				return err
+			}
+		}
+	}
 	if exists, err := agentTableHasColumns(ctx, db, "applied_installations", "instance_id", "sealed_state"); err != nil {
 		return err
 	} else if exists {

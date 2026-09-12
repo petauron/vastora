@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/realitytarget"
@@ -143,20 +144,21 @@ type SubscriptionCommandResult struct {
 }
 
 type ThreeXUIClientCommandInput struct {
-	ApplicationID     string `json:"applicationId"`
-	Action            string `json:"action"`
-	Email             string `json:"email,omitempty"`
-	NewEmail          string `json:"newEmail,omitempty"`
-	InboundID         int    `json:"inboundId,omitempty"`
-	InboundIDs        []int  `json:"inboundIds,omitempty"`
-	Enabled           bool   `json:"enabled"`
-	TotalBytes        int64  `json:"totalBytes"`
-	ResetDays         int    `json:"resetDays"`
-	ExpiryTime        int64  `json:"expiryTime"`
-	LimitIP           int    `json:"limitIp"`
-	ServiceID         string `json:"serviceId,omitempty"`
-	InboundTotalBytes int64  `json:"inboundTotalBytes"`
-	InboundResetDay   int    `json:"inboundResetDay"`
+	ConfirmSessionReset bool   `json:"confirmSessionReset"`
+	ApplicationID       string `json:"applicationId"`
+	Action              string `json:"action"`
+	Email               string `json:"email,omitempty"`
+	NewEmail            string `json:"newEmail,omitempty"`
+	InboundID           int    `json:"inboundId,omitempty"`
+	InboundIDs          []int  `json:"inboundIds,omitempty"`
+	Enabled             bool   `json:"enabled"`
+	TotalBytes          int64  `json:"totalBytes"`
+	ResetDays           int    `json:"resetDays"`
+	ExpiryTime          int64  `json:"expiryTime"`
+	LimitIP             int    `json:"limitIp"`
+	ServiceID           string `json:"serviceId,omitempty"`
+	InboundTotalBytes   int64  `json:"inboundTotalBytes"`
+	InboundResetDay     int    `json:"inboundResetDay"`
 }
 
 type ThreeXUIClientInbound struct {
@@ -183,6 +185,11 @@ type ThreeXUIClientInbound struct {
 }
 
 type ThreeXUIClientCommandTask struct {
+	ManagedParentID     string                  `json:"managedParentId,omitempty"`
+	GrantID             string                  `json:"grantId,omitempty"`
+	GrantRevision       uint64                  `json:"grantRevision,omitempty"`
+	GrantPhase          string                  `json:"grantPhase,omitempty"`
+	Landing             *landing.ControllerTask `json:"landing,omitempty"`
 	Action              string                  `json:"action"`
 	Email               string                  `json:"email,omitempty"`
 	NewEmail            string                  `json:"newEmail,omitempty"`
@@ -210,6 +217,8 @@ type ThreeXUIClientCommandTask struct {
 }
 
 type ThreeXUIClientView struct {
+	HasLanding      bool   `json:"hasLanding,omitempty"`
+	ID              string `json:"id,omitempty"`
 	Email           string `json:"email"`
 	Enabled         bool   `json:"enabled"`
 	TotalBytes      int64  `json:"totalBytes"`
@@ -222,12 +231,13 @@ type ThreeXUIClientView struct {
 }
 
 type ThreeXUIClientCommandResult struct {
-	Clients          []ThreeXUIClientView    `json:"clients,omitempty"`
-	ClientsObserved  bool                    `json:"clientsObserved"`
-	Inbounds         []ThreeXUIClientInbound `json:"inbounds"`
-	InboundsObserved bool                    `json:"inboundsObserved"`
-	Secret           string                  `json:"secret,omitempty"`
-	SecretKind       string                  `json:"secretKind,omitempty"`
+	Landing          *landing.ControllerResult `json:"landing,omitempty"`
+	Clients          []ThreeXUIClientView      `json:"clients,omitempty"`
+	ClientsObserved  bool                      `json:"clientsObserved"`
+	Inbounds         []ThreeXUIClientInbound   `json:"inbounds"`
+	InboundsObserved bool                      `json:"inboundsObserved"`
+	Secret           string                    `json:"secret,omitempty"`
+	SecretKind       string                    `json:"secretKind,omitempty"`
 }
 
 type ThreeXUINodeCommandTask struct {

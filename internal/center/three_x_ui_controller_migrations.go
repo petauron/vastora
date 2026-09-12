@@ -181,6 +181,9 @@ func (s *Store) resumeThreeXUIControllerConvergence(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := requireLandingControllerTransferSafe(ctx, tx, sourceApplicationID, controllerApplicationID); err != nil {
+		return err
+	}
 
 	token, err := randomToken(18)
 	if err != nil {
@@ -204,6 +207,20 @@ func (s *Store) resumeThreeXUIControllerConvergence(ctx context.Context) error {
 	return tx.Commit()
 }
 
+// Shared-account host migration is outside the MVP. A native 3x-ui backup
+// alone would copy partial budgets without their accounting state.
+func requireLandingControllerTransferSafe(ctx context.Context, tx *sql.Tx, source, target string) error {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM three_x_ui_client_accounts p WHERE p.controller_id IN (?,?) AND
+		(p.managed_quota=1 OR EXISTS(SELECT 1 FROM landing_client_grants WHERE parent_id=p.id))`, source, target).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return errors.New("center: moving subscription hosts with landing combinations is not supported")
+	}
+	return nil
+}
+
 func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApplicationID string, input ThreeXUIControllerMigrationInput) (ThreeXUIControllerMigrationView, error) {
 	sourceApplicationID = strings.TrimSpace(sourceApplicationID)
 	input.TargetApplicationID = strings.TrimSpace(input.TargetApplicationID)
@@ -215,6 +232,9 @@ func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApp
 		return ThreeXUIControllerMigrationView{}, err
 	}
 	defer tx.Rollback()
+	if err := requireLandingControllerTransferSafe(ctx, tx, sourceApplicationID, input.TargetApplicationID); err != nil {
+		return ThreeXUIControllerMigrationView{}, err
+	}
 	type endpoint struct {
 		applicationID, siteID, agentID, role, status, name, address, lastSeen string
 		panelPort, remoteNodeID                                               int

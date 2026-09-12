@@ -14,6 +14,7 @@ const (
 
 type AuthorizedNode struct {
 	Address string `json:"address"`
+	TCPOnly bool   `json:"tcpOnly,omitempty"`
 }
 
 // Exact private source membership is the authentication boundary. Center
@@ -87,6 +88,10 @@ timeout.io.udp: 60
 		fmt.Fprintf(&config, "socks block {\n from: 0.0.0.0/0 to: 0.0.0.0/0 port = %s\n command: connect\n}\n", port)
 	}
 	for _, source := range plan.Sources {
+		if source.TCPOnly {
+			fmt.Fprintf(&config, "socks pass {\n from: %s/32 to: 0.0.0.0/0\n command: connect\n protocol: tcp\n}\n", source.Address)
+			continue
+		}
 		fmt.Fprintf(&config, "socks pass {\n from: %s/32 to: 0.0.0.0/0\n command: connect udpassociate\n protocol: tcp udp\n udp.portrange: %d-%d\n}\n", source.Address, UDPRelayFirst, UDPRelayLast)
 		// Dante evaluates UDP replies in the reverse direction. Restrict the
 		// recipient to the same authorized client; this does not grant another

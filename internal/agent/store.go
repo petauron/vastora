@@ -31,22 +31,25 @@ var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener state")
 
 type Store struct {
-	db                    *sql.DB
-	key                   []byte
-	dataDir               string
-	now                   func() time.Time
-	gatewayMutationMu     sync.Mutex
-	landingMutationMu     sync.Mutex
-	landingCancel         context.CancelFunc
-	landingDone           chan struct{}
-	landingStatusMu       sync.RWMutex
-	landingStatus         landing.MonitorStatus
-	landingLatencyMu      sync.Mutex
-	landingLatencyTargets []landing.LatencyTarget
-	landingLatencyChanged chan struct{}
-	gatewayStartupMu      sync.RWMutex
-	gatewayStartupErr     error
-	gatewayStartupOK      bool
+	db                         *sql.DB
+	key                        []byte
+	dataDir                    string
+	now                        func() time.Time
+	gatewayMutationMu          sync.Mutex
+	landingMutationMu          sync.Mutex
+	landingCancel              context.CancelFunc
+	landingDone                chan struct{}
+	landingStatusMu            sync.RWMutex
+	landingStatus              landing.MonitorStatus
+	landingClientStatuses      map[string]landing.MonitorStatus
+	landingSubscriptionMu      sync.RWMutex
+	landingSubscriptionAddress string
+	landingLatencyMu           sync.Mutex
+	landingLatencyTargets      []landing.LatencyTarget
+	landingLatencyChanged      chan struct{}
+	gatewayStartupMu           sync.RWMutex
+	gatewayStartupErr          error
+	gatewayStartupOK           bool
 }
 
 type AppliedInstallation struct {
@@ -90,7 +93,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 17
+const agentSchemaVersion = 18
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can
@@ -617,6 +620,30 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 17
 		}
+		if version == 17 {
+			// Use a consistent SQLite snapshot, including committed WAL data.
+			backupDir, migrateErr := os.MkdirTemp(dataDir, "schema-17-backup-")
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`VACUUM INTO ?`, filepath.Join(backupDir, "agent.db"))
+			}
+			var tx *sql.Tx
+			if migrateErr == nil {
+				tx, migrateErr = db.Begin()
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE landing_controller_state(id INTEGER PRIMARY KEY CHECK(id=1),sealed_state BLOB NOT NULL); PRAGMA user_version=18`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 17 to 18: %w", migrateErr)
+			}
+			version = 18
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -731,7 +758,11 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		PRAGMA user_version = 17;`); err != nil {
+		CREATE TABLE landing_controller_state (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			sealed_state BLOB NOT NULL
+		);
+		PRAGMA user_version = 18;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
@@ -1241,10 +1272,22 @@ func (s *Store) RestorableInstallations(ctx context.Context) ([]AppliedInstallat
 }
 
 func (s *Store) RemoveApplied(ctx context.Context, appKey string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM applied_installations WHERE app_key = ?`, appKey); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Called only after successful application removal under landingMutationMu.
+	// Old tokens/ledger ownership must not attach to a new controller install.
+	if appKey == threeXUIKey {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM landing_controller_state`); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM applied_installations WHERE app_key = ?`, appKey); err != nil {
 		return fmt.Errorf("agent: remove applied state: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) ReadAppliedSecrets(ctx context.Context, instanceID string) (json.RawMessage, error) {

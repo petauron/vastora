@@ -762,6 +762,15 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	if heartbeat.Capabilities.Docker {
+		if err := recordLandingClientRuntime(ctx, tx, id, heartbeat.LandingClientRuntime, now); err != nil {
+			return err
+		}
+		if err := s.reconcileClientLandingSourcesForNode(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now); err != nil {
+			return err
+		}
 		if err := recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now); err != nil {
 			return err
 		}
