@@ -118,7 +118,9 @@ func TestAgentSchemaV2MigratesResetJournalForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE landing_runtime_state;
+	if _, err := store.db.Exec(`DROP TABLE landing_controller_state;
+		DROP TABLE landing_runtime_state;
+		DROP TABLE node_listener_applied_state;
 		DROP TABLE three_x_ui_reset_journal;
 		DROP TABLE task_receipts;
 		DROP TABLE agent_install_operations;
@@ -184,7 +186,9 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE landing_runtime_state;
+	if _, err := store.db.Exec(`DROP TABLE landing_controller_state;
+		DROP TABLE landing_runtime_state;
+		DROP TABLE node_listener_applied_state;
 		DROP TABLE agent_install_operations;
 		ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
 		ALTER TABLE task_receipts DROP COLUMN runtime_generation;
@@ -235,7 +239,9 @@ func TestAgentSchemaV10PreservesPendingCompletionOutbox(t *testing.T) {
 	ALTER TABLE control_plane_connection DROP COLUMN ca_certificate_pem;
 	ALTER TABLE agent_install_operations DROP COLUMN ca_certificate_pem;
 	ALTER TABLE agent_install_operations DROP COLUMN previous_ca_certificate_pem;
+	DROP TABLE landing_controller_state;
 	DROP TABLE landing_runtime_state;
+	DROP TABLE node_listener_applied_state;
 	PRAGMA user_version = 9`); err != nil {
 		t.Fatal(err)
 	}

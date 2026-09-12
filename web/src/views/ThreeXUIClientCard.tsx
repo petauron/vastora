@@ -23,10 +23,11 @@ type Props = {
   onEdit: () => void;
   onReset: () => void;
   onDelete: () => void;
+  onLanding?: () => void;
   children?: ReactNode;
 };
 
-export function ThreeXUIClientCard({ client, inbounds, language, expiryLabel, busy, linksDisabled, subscriptionAvailable, onEnabledChange, onCopySubscription, onCopyLink, onEdit, onReset, onDelete, children }: Props) {
+export function ThreeXUIClientCard({ client, inbounds, language, expiryLabel, busy, linksDisabled, subscriptionAvailable, onEnabledChange, onCopySubscription, onCopyLink, onEdit, onReset, onDelete, onLanding, children }: Props) {
   const nodes = inbounds.filter((inbound) => client.inboundIds.includes(inbound.id));
   const published = nodes.some((inbound) => inbound.connectHostname);
 
@@ -72,6 +73,7 @@ export function ThreeXUIClientCard({ client, inbounds, language, expiryLabel, bu
           <CopyIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "复制订阅", "Copy subscription")}
         </Button>
         <Button disabled={busy} onClick={onEdit} variant="outline"><PencilIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "编辑", "Edit")}</Button>
+        {onLanding ? <Button disabled={busy || !client.id} onClick={onLanding} variant="outline">{copy(language, "落地", "Landing")}</Button> : null}
         <DropdownMenu>
           <DropdownMenuTrigger disabled={busy} render={<Button aria-label={copy(language, `更多操作：${client.email}`, `More actions for ${client.email}`)} size="icon" variant="ghost" />}>
             <MoreHorizontalIcon aria-hidden="true" />

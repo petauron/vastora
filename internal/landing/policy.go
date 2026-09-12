@@ -12,6 +12,7 @@ import (
 type AccessRule struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
+	TCPOnly     bool   `json:"tcpOnly,omitempty"`
 }
 
 func NormalizeAccessRules(rules []AccessRule) ([]AccessRule, error) {
@@ -39,7 +40,15 @@ func NormalizeAccessRules(rules []AccessRule) ([]AccessRule, error) {
 		}
 		return 0
 	})
-	return slices.Compact(result), nil
+	merged := make([]AccessRule, 0, len(result))
+	for _, rule := range result {
+		if len(merged) > 0 && merged[len(merged)-1].Source == rule.Source && merged[len(merged)-1].Destination == rule.Destination {
+			merged[len(merged)-1].TCPOnly = merged[len(merged)-1].TCPOnly && rule.TCPOnly
+		} else {
+			merged = append(merged, rule)
+		}
+	}
+	return merged, nil
 }
 
 // ExtendHeadscalePolicy takes the deployer's fixed base policy, never an
@@ -59,12 +68,16 @@ func ExtendHeadscalePolicy(base []byte, rules []AccessRule) ([]byte, error) {
 		return nil, errors.New("landing: base management grants are missing")
 	}
 	for _, rule := range rules {
+		ports := []string{fmt.Sprintf("tcp:%d", SOCKSPort)}
+		if !rule.TCPOnly {
+			ports = append(ports, fmt.Sprintf("udp:%d-%d", UDPRelayFirst, UDPRelayLast))
+		}
 		grant, err := json.Marshal(struct {
 			Source      []string `json:"src"`
 			Destination []string `json:"dst"`
 			IP          []string `json:"ip"`
 		}{
-			[]string{rule.Source + "/32"}, []string{rule.Destination + "/32"}, []string{fmt.Sprintf("tcp:%d", SOCKSPort), fmt.Sprintf("udp:%d-%d", UDPRelayFirst, UDPRelayLast)},
+			[]string{rule.Source + "/32"}, []string{rule.Destination + "/32"}, ports,
 		})
 		if err != nil {
 			return nil, err

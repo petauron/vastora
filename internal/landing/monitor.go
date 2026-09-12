@@ -48,6 +48,7 @@ type Monitor struct {
 	CheckBusiness   func(context.Context, PeerIdentity, uint64) (BusinessResult, error)
 	StopConnections func(context.Context) error
 	Report          func(MonitorStatus)
+	TCPOnly         bool
 }
 
 func (m *Monitor) Run(ctx context.Context) error {
@@ -92,14 +93,14 @@ func (m *Monitor) Run(ctx context.Context) error {
 				status.LinkState = after.State
 			}
 		}
-		until, healthy := leaseDeadline(m.Gate, before, business, after, time.Now())
+		until, healthy := leaseDeadlineForTransport(m.Gate, before, business, after, time.Now(), m.TCPOnly)
 		attemptedRenewal := false
 		if healthy && checkErr == nil && ctx.Err() == nil {
 			attemptedRenewal = true
 			checkErr = m.Gate.renew(ctx, until)
 			if checkErr == nil {
 				status.State, status.Reason = "healthy", "direct_and_business_ready"
-				status.TCP, status.UDP, status.ExitIPv4 = true, true, business.ExitIPv4
+				status.TCP, status.UDP, status.ExitIPv4 = business.TCP, business.UDP, business.ExitIPv4
 				status.AllowedUntil = until.UTC()
 				lastHealthy = time.Now().UTC()
 				status.LastHealthyAt = lastHealthy
@@ -146,13 +147,17 @@ func (m *Monitor) stop() error {
 }
 
 func leaseDeadline(gate *BridgeGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time) (time.Time, bool) {
+	return leaseDeadlineForTransport(gate, before, business, after, now, false)
+}
+
+func leaseDeadlineForTransport(gate *BridgeGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time, tcpOnly bool) (time.Time, bool) {
 	validLink := func(result LinkResult) bool {
 		return result.State == "direct" && result.Reason == "fresh_disco_direct_response" && !result.StartedAt.IsZero() &&
 			!result.CheckedAt.Before(result.StartedAt) && result.CheckedAt.Sub(result.StartedAt) <= CheckTimeout && !result.CheckedAt.After(now)
 	}
-	if !validLink(before) || !validLink(after) || business.Peer != gate.peer || business.Revision != gate.revision || !business.TCP || !business.UDP ||
+	if !validLink(before) || !validLink(after) || business.Peer != gate.peer || business.Revision != gate.revision || !business.TCP ||
 		business.StartedAt.Before(before.CheckedAt) || business.CheckedAt.Before(business.StartedAt) || business.CheckedAt.Sub(business.StartedAt) > CheckTimeout ||
-		after.StartedAt.Before(business.CheckedAt) || !validUDPRelay(business.UDPRelay, gate.peer.Address) {
+		after.StartedAt.Before(business.CheckedAt) || (!tcpOnly && (!business.UDP || !validUDPRelay(business.UDPRelay, gate.peer.Address))) {
 		return time.Time{}, false
 	}
 	address, err := netip.ParseAddr(business.ExitIPv4)

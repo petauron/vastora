@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
@@ -147,12 +149,12 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 				return errors.New("agent: landing proxy revision changed")
 			}
 		}
-		if current.Route != nil && desired.Proxy != nil && desired.Revision != current.Desired.Revision {
-			if current.Phase != "applied" || current.Applied == nil || current.Applied.Revision != current.Desired.Revision || current.ApplicationID != desired.Proxy.ApplicationID {
+		if current.Route != nil && desired.Active() && desired.Revision != current.Desired.Revision {
+			if current.Phase != "applied" || current.Applied == nil || current.Applied.Revision != current.Desired.Revision || current.ApplicationID != desired.ApplicationID() {
 				return errors.New("agent: finish or restore the current landing change before switching")
 			}
 			// Do not stop a working exit while the replacement is unreachable.
-			if err := landing.WaitReady(ctx, desired.Proxy.Peer, desired.Revision); err != nil {
+			if err := waitLandingPeers(ctx, desired); err != nil {
 				return err
 			}
 		}
@@ -160,10 +162,10 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if err := s.stopLandingMonitor(ctx); err != nil {
 		return err
 	}
-	if desired.Proxy == nil {
+	if !desired.Active() {
 		return s.disableLandingProxy(ctx, desired, current)
 	}
-	routes, err := s.localThreeXUILandingRoutes(ctx, desired.Proxy.ApplicationID)
+	routes, err := s.localThreeXUILandingRoutes(ctx, desired.ApplicationID())
 	if err != nil {
 		return err
 	}
@@ -171,12 +173,12 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if current != nil && current.Route != nil {
 		expectedID = current.ContainerID
 	}
-	docker, bridge, policy, err := openLandingDocker(ctx, desired.Proxy.ApplicationID, expectedID)
+	docker, bridge, policy, err := openLandingDocker(ctx, desired.ApplicationID(), expectedID)
 	if err != nil {
 		return err
 	}
 	defer docker.engine.Close()
-	gate, err := landing.NewBridgeGate(desired.Proxy.Peer, bridge, desired.Revision)
+	gates, err := landingGates(desired, bridge)
 	if err != nil {
 		return err
 	}
@@ -190,14 +192,14 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		if err := waitLandingRoutes(ctx, routes); err != nil {
 			return err
 		}
-		if err := verifyLocalLandingInbounds(ctx, routes, desired.Proxy.InboundTags); err != nil {
+		if err := verifyLocalLandingPlan(ctx, routes, desired); err != nil {
 			return err
 		}
 		raw, _, err := routes.Read(ctx)
 		if err != nil {
 			return err
 		}
-		change, err := landing.PrepareRouteReplacement(*current.Route, raw, desired.Revision, desired.Proxy.InboundTags, desired.Proxy.Peer)
+		change, err := desired.ReplaceRoutes(*current.Route, raw)
 		if err != nil {
 			return err
 		}
@@ -213,21 +215,21 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		if err := ensureLandingPackage(ctx); err != nil {
 			return err
 		}
-		if err := verifyLocalLandingInbounds(ctx, routes, desired.Proxy.InboundTags); err != nil {
+		if err := verifyLocalLandingPlan(ctx, routes, desired); err != nil {
 			return err
 		}
-		if err := landing.WaitReady(ctx, desired.Proxy.Peer, desired.Revision); err != nil {
+		if err := waitLandingPeers(ctx, desired); err != nil {
 			return err
 		}
 		raw, _, err := routes.Read(ctx)
 		if err != nil {
 			return err
 		}
-		change, err := landing.PrepareRouteChange(raw, desired.Revision, desired.Proxy.InboundTags, desired.Proxy.Peer)
+		change, err := desired.PrepareRoutes(raw)
 		if err != nil {
 			return err
 		}
-		current = &landingRuntimeState{Desired: desired, ApplicationID: desired.Proxy.ApplicationID, ContainerID: docker.containerID, Bridge: bridge, RestartPolicy: policy, Route: &change, Phase: "prepared"}
+		current = &landingRuntimeState{Desired: desired, ApplicationID: desired.ApplicationID(), ContainerID: docker.containerID, Bridge: bridge, RestartPolicy: policy, Route: &change, Phase: "prepared"}
 		if err := s.saveLandingRuntime(ctx, *current); err != nil {
 			return err
 		}
@@ -235,11 +237,10 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if current.Bridge != bridge {
 		return errors.New("agent: landing proxy bridge changed")
 	}
-	if err := gate.Install(ctx); err != nil {
-		return err
-	}
-	if err := removeRetiringLandingGate(ctx, current); err != nil {
-		return err
+	for _, gate := range gates {
+		if err := gate.Install(ctx); err != nil {
+			return err
+		}
 	}
 	if err := docker.restartPolicy(ctx, "no"); err != nil {
 		return err
@@ -256,6 +257,9 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		return err
 	}
 	if err := docker.terminateConnections(ctx); err != nil {
+		return err
+	}
+	if err := removeRetiringLandingGate(ctx, current); err != nil {
 		return err
 	}
 	// This synchronous cutover also fences restored checkpoints after Agent
@@ -280,7 +284,7 @@ func (s *Store) disableLandingProxy(ctx context.Context, desired landing.Desired
 	if current.Applied != nil && current.Applied.Revision == current.Route.Revision {
 		owner = *current.Applied
 	}
-	if owner.Proxy == nil {
+	if !owner.Active() {
 		return errors.New("agent: missing landing route owner")
 	}
 	current.Applied = &owner
@@ -297,12 +301,14 @@ func (s *Store) disableLandingProxy(ctx context.Context, desired landing.Desired
 	if bridge != current.Bridge {
 		return errors.New("agent: landing recovery bridge changed")
 	}
-	gate, err := landing.NewBridgeGate(owner.Proxy.Peer, bridge, current.Route.Revision)
+	gates, err := landingGates(owner, bridge)
 	if err != nil {
 		return err
 	}
-	if err := gate.Install(ctx); err != nil {
-		return err
+	for _, gate := range gates {
+		if err := gate.Install(ctx); err != nil {
+			return err
+		}
 	}
 	if err := docker.restartPolicy(ctx, "no"); err != nil {
 		return err
@@ -329,8 +335,10 @@ func (s *Store) disableLandingProxy(ctx context.Context, desired landing.Desired
 	if err := removeRetiringLandingGate(ctx, current); err != nil {
 		return err
 	}
-	if err := gate.Remove(ctx); err != nil {
-		return err
+	for _, gate := range gates {
+		if err := gate.Remove(ctx); err != nil {
+			return err
+		}
 	}
 	return s.saveLandingRuntime(ctx, landingRuntimeState{Desired: desired, Applied: &desired, Phase: "applied"})
 }
@@ -341,21 +349,26 @@ func removeRetiringLandingGate(ctx context.Context, state *landingRuntimeState) 
 	if state.Retiring == nil {
 		return nil
 	}
-	gate, err := landing.NewBridgeGate(state.Retiring.Proxy.Peer, state.Bridge, state.Retiring.Revision)
+	gates, err := landingGates(*state.Retiring, state.Bridge)
 	if err != nil {
 		return err
 	}
 	// Install also closes an existing lease. It makes cleanup idempotent
 	// when an earlier attempt already removed this table before crashing.
-	if err := gate.Install(ctx); err != nil {
-		return err
+	for _, gate := range gates {
+		if err := gate.Install(ctx); err != nil {
+			return err
+		}
+		if err := gate.Remove(ctx); err != nil {
+			return err
+		}
 	}
-	return gate.Remove(ctx)
+	return nil
 }
 
 func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 	ctx, cancel := context.WithCancel(context.Background())
-	gate, err := landing.NewBridgeGate(state.Desired.Proxy.Peer, state.Bridge, state.Route.Revision)
+	gates, err := landingGates(state.Desired, state.Bridge)
 	if err != nil {
 		cancel()
 		return err
@@ -365,28 +378,201 @@ func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 	done := s.landingDone
 	go func() {
 		defer close(done)
-		monitor := landing.Monitor{Gate: gate, Links: landing.NewLinkChecker(), CheckBusiness: (landing.Probe{}).Check,
-			StopConnections: func(ctx context.Context) error {
-				docker, bridge, _, err := openLandingDocker(ctx, state.ApplicationID, state.ContainerID)
-				if err != nil {
-					return err
-				}
-				defer docker.engine.Close()
-				if bridge != state.Bridge {
-					return errors.New("agent: monitored proxy bridge changed")
-				}
-				return docker.terminateConnections(ctx)
-			}, Report: func(status landing.MonitorStatus) {
-				s.landingStatusMu.Lock()
-				s.landingStatus = status
-				s.landingStatusMu.Unlock()
-			},
+		var monitors sync.WaitGroup
+		// Several peers may fail together, but their session cutovers must not
+		// race Docker stop/start on the shared selected proxy instance.
+		var cutover sync.Mutex
+		shutdownStopped := false
+		stopConnections := func(stopCtx context.Context) error {
+			cutover.Lock()
+			defer cutover.Unlock()
+			if shutdownStopped {
+				return nil
+			}
+			docker, bridge, _, err := openLandingDocker(stopCtx, state.ApplicationID, state.ContainerID)
+			if err != nil {
+				return err
+			}
+			defer docker.engine.Close()
+			if bridge != state.Bridge {
+				return errors.New("agent: monitored proxy bridge changed")
+			}
+			err = docker.terminateConnections(stopCtx)
+			if ctx.Err() != nil && err == nil {
+				shutdownStopped = true
+			}
+			return err
 		}
-		if err := monitor.Run(ctx); err != nil {
-			s.landingStatusMu.Lock()
-			s.landingStatus = landing.MonitorStatus{Revision: state.Desired.Revision, State: "blocked", Reason: "monitor_stopped", CheckedAt: time.Now().UTC()}
-			s.landingStatusMu.Unlock()
+		uses := state.Desired.PeerUses()
+		for i, gate := range gates {
+			use := uses[i]
+			if !use.Active {
+				continue
+			}
+			monitors.Add(1)
+			go func() {
+				defer monitors.Done()
+				checkBusiness := func(checkCtx context.Context, peer landing.PeerIdentity, revision uint64) (landing.BusinessResult, error) {
+					if state.Desired.Clients != nil {
+						routes, err := s.localThreeXUILandingRoutes(checkCtx, state.ApplicationID)
+						if err != nil {
+							return landing.BusinessResult{}, err
+						}
+						selected := state.Desired
+						selected.Proxy = nil
+						selected.Clients = &landing.ClientPlan{ApplicationID: state.ApplicationID, Source: state.Desired.Clients.Source, AllowSessionReset: true}
+						for _, grant := range state.Desired.Clients.Grants {
+							if grant.Enabled && grant.Peer == peer {
+								selected.Clients.Grants = append(selected.Clients.Grants, grant)
+							}
+						}
+						if len(selected.Clients.Grants) > 0 {
+							if err := verifyLocalLandingPlan(checkCtx, routes, selected); err != nil {
+								return landing.BusinessResult{}, err
+							}
+						}
+					}
+					return (landing.Probe{TCPOnly: use.TCPOnly}).Check(checkCtx, peer, revision)
+				}
+				monitor := landing.Monitor{Gate: gate, Links: landing.NewLinkChecker(), TCPOnly: use.TCPOnly, CheckBusiness: checkBusiness,
+					StopConnections: stopConnections, Report: func(status landing.MonitorStatus) {
+						s.landingStatusMu.Lock()
+						if state.Desired.Proxy != nil && use.Peer == state.Desired.Proxy.Peer {
+							s.landingStatus = status
+						}
+						if s.landingClientStatuses == nil {
+							s.landingClientStatuses = map[string]landing.MonitorStatus{}
+						}
+						s.landingClientStatuses[use.Peer.ID] = status
+						s.landingStatusMu.Unlock()
+					},
+				}
+				if err := monitor.Run(ctx); err != nil {
+					s.landingStatusMu.Lock()
+					blocked := landing.MonitorStatus{Revision: state.Desired.Revision, State: "blocked", Reason: "monitor_stopped", CheckedAt: time.Now().UTC()}
+					if state.Desired.Proxy != nil && use.Peer == state.Desired.Proxy.Peer {
+						s.landingStatus = blocked
+					}
+					if s.landingClientStatuses == nil {
+						s.landingClientStatuses = map[string]landing.MonitorStatus{}
+					}
+					s.landingClientStatuses[use.Peer.ID] = blocked
+					s.landingStatusMu.Unlock()
+				}
+			}()
 		}
+		monitors.Wait()
 	}()
+	return nil
+}
+
+func landingGates(state landing.DesiredState, bridge string) ([]*landing.BridgeGate, error) {
+	gates := []*landing.BridgeGate{}
+	for _, use := range state.PeerUses() {
+		gate, err := landing.NewBridgeGate(use.Peer, bridge, state.Revision)
+		if err != nil {
+			return nil, err
+		}
+		gates = append(gates, gate)
+	}
+	return gates, nil
+}
+
+func waitLandingPeers(ctx context.Context, state landing.DesiredState) error {
+	for _, use := range state.PeerUses() {
+		if !use.Active {
+			continue
+		}
+		var err error
+		if use.TCPOnly {
+			err = landing.WaitTCPReady(ctx, use.Peer, state.Revision)
+		} else {
+			err = landing.WaitReady(ctx, use.Peer, state.Revision)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyLocalLandingPlan(ctx context.Context, routes threeXUILandingRoutes, state landing.DesiredState) error {
+	if err := verifyLocalLandingInbounds(ctx, routes, state.Inbounds()); err != nil {
+		return err
+	}
+	if state.Clients == nil {
+		return nil
+	}
+	if slices.ContainsFunc(state.Clients.Grants, func(grant landing.ClientGrant) bool { return grant.Enabled }) {
+		self, err := landing.NewLinkChecker().SelfIdentity(ctx, state.Clients.Source.Address)
+		if err != nil {
+			return errors.New("agent: entry private identity is unavailable")
+		}
+		if err := state.Clients.CheckSource(self); err != nil {
+			return err
+		}
+	}
+	raw, err := routes.request(ctx, http.MethodGet, "/panel/api/inbounds/list", nil)
+	if err != nil {
+		return err
+	}
+	var inbounds []threeXUIRealityInbound
+	if json.Unmarshal(raw, &inbounds) != nil {
+		return errors.New("agent: client inbound inventory unavailable")
+	}
+	for _, block := range state.Clients.BlockedUsers {
+		for _, inbound := range inbounds {
+			var settings struct {
+				Clients []struct {
+					Email string `json:"email"`
+					ID    string `json:"id"`
+				} `json:"clients"`
+			}
+			if json.Unmarshal(inbound.Settings, &settings) != nil {
+				return errors.New("agent: blocked identity inventory unavailable")
+			}
+			for _, client := range settings.Clients {
+				if client.Email == block.User && landing.Identity(client.ID) != block.Identity {
+					return errors.New("agent: cannot block a replacement account")
+				}
+			}
+		}
+	}
+	for _, grant := range state.Clients.Grants {
+		// Revocation only adds a deny rule. A removed account must not prevent
+		// that rule from being installed or require an offline peer to answer.
+		if !grant.Enabled {
+			continue
+		}
+		for _, inbound := range inbounds {
+			if inbound.Tag != grant.InboundTag {
+				continue
+			}
+			if inbound.Protocol != "vless" {
+				return errors.New("agent: client landing requires managed VLESS")
+			}
+			var settings struct {
+				Clients []struct {
+					Email string `json:"email"`
+					ID    string `json:"id"`
+				} `json:"clients"`
+			}
+			if json.Unmarshal(inbound.Settings, &settings) != nil {
+				return errors.New("agent: client inventory unavailable")
+			}
+			foundBase, foundFixed := false, grant.FixedUser == "" || !grant.Enabled || !grant.Mode.Fixed()
+			for _, client := range settings.Clients {
+				if client.Email == grant.BaseUser && landing.Identity(client.ID) == grant.BaseIdentity {
+					foundBase = true
+				}
+				if client.Email == grant.FixedUser && landing.Identity(client.ID) == grant.FixedIdentity {
+					foundFixed = true
+				}
+			}
+			if !foundBase || !foundFixed {
+				return errors.New("agent: granted user does not match local inbound")
+			}
+		}
+	}
 	return nil
 }

@@ -43,11 +43,15 @@ func (s *Store) retireLandingSources(ctx context.Context, tx *sql.Tx, nodeID str
 	if !enabled {
 		grants = append(grants, grant{owner, source})
 	}
+	// Remove the retired purpose before recomputing a shared source union.
+	// This transaction rolls back both changes if reconfiguration fails.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM landing_proxy_retirements WHERE node_id=?`, nodeID); err != nil {
+		return err
+	}
 	for _, g := range grants {
 		if err := s.removeLandingSource(ctx, tx, g.owner, g.source); err != nil {
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `DELETE FROM landing_proxy_retirements WHERE node_id=?`, nodeID)
-	return err
+	return nil
 }

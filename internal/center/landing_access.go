@@ -32,7 +32,7 @@ func (s *Store) landingAccessRules(ctx context.Context) ([]landing.AccessRule, e
 			continue
 		}
 		for _, source := range state.Plan.Sources {
-			rules = append(rules, landing.AccessRule{Source: source.Address, Destination: state.Plan.Address})
+			rules = append(rules, landing.AccessRule{Source: source.Address, Destination: state.Plan.Address, TCPOnly: source.TCPOnly})
 		}
 	}
 	if err := rows.Err(); err != nil {

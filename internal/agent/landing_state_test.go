@@ -116,7 +116,7 @@ func TestAgentSchemaV16AddsLandingStateForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`DROP TABLE landing_runtime_state; PRAGMA user_version = 16`); err != nil {
+	if _, err := store.db.Exec(`DROP TABLE landing_controller_state; DROP TABLE landing_runtime_state; PRAGMA user_version = 16`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

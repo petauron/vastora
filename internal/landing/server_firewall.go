@@ -18,11 +18,12 @@ import (
 // members. The output chain runs after output DNAT, so post-resolution private
 // addresses (including DNS rebinding) cannot bypass the destination restriction.
 type ServerFirewall struct {
-	Revision  uint64   `json:"revision"`
-	Address   string   `json:"address"`
-	Sources   []string `json:"sources"`
-	Interface string   `json:"interface"`
-	UID       uint32   `json:"uid"`
+	Revision       uint64   `json:"revision"`
+	Address        string   `json:"address"`
+	Sources        []string `json:"sources"`
+	TCPOnlySources []string `json:"tcpOnlySources,omitempty"`
+	Interface      string   `json:"interface"`
+	UID            uint32   `json:"uid"`
 }
 
 func (policy ServerFirewall) validate() error {
@@ -36,12 +37,19 @@ func (policy ServerFirewall) validate() error {
 		}
 		seen[source] = true
 	}
+	for _, source := range policy.TCPOnlySources {
+		if !seen[source] {
+			return errors.New("landing: TCP-only source is not authorized")
+		}
+	}
 	return nil
 }
 
 func (policy ServerFirewall) identity() (string, string) {
 	policy.Sources = slices.Clone(policy.Sources)
 	slices.Sort(policy.Sources)
+	policy.TCPOnlySources = slices.Clone(policy.TCPOnlySources)
+	slices.Sort(policy.TCPOnlySources)
 	data, _ := json.Marshal(policy)
 	digest := sha256.Sum256(data)
 	return "vastora_landing_server_" + hex.EncodeToString(digest[:8]), "vastora-landing-server-v1:" + hex.EncodeToString(digest[:])
@@ -76,7 +84,11 @@ func (policy ServerFirewall) objects() []map[string]nftObject {
 	sources := slices.Clone(policy.Sources)
 	slices.Sort(sources)
 	for _, source := range sources {
-		rule("sources", match(meta("iifname"), policy.Interface), match(payload("ip", "saddr"), source), nftObject{"return": nil})
+		expr := []any{match(meta("iifname"), policy.Interface), match(payload("ip", "saddr"), source)}
+		if slices.Contains(policy.TCPOnlySources, source) {
+			expr = append(expr, match(meta("l4proto"), "tcp"))
+		}
+		rule("sources", append(expr, nftObject{"return": nil})...)
 	}
 	rule("sources", nftObject{"drop": nil})
 	rule("output", match(meta("skuid"), policy.UID), nftObject{"jump": nftObject{"target": "destinations"}})
@@ -84,6 +96,9 @@ func (policy ServerFirewall) objects() []map[string]nftObject {
 	// the private network. There is no general established/related bypass.
 	for _, source := range sources {
 		for _, protocol := range []string{"tcp", "udp"} {
+			if protocol == "udp" && slices.Contains(policy.TCPOnlySources, source) {
+				continue
+			}
 			var port any = SOCKSPort
 			if protocol == "udp" {
 				port = nftObject{"range": []int{UDPRelayFirst, UDPRelayLast}}

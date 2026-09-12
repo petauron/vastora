@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -80,8 +81,8 @@ func TestOfficialTrustMigrationDropsOnlySupersededTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer migrated.Close()
-	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != 72 {
-		t.Fatalf("migration did not reach schema 72: version=%d err=%v", version, err)
+	if version, err := sqliteSchemaVersion(ctx, migrated.db); err != nil || version != centerSchemaVersion {
+		t.Fatalf("migration did not reach current schema: version=%d err=%v", version, err)
 	}
 	for _, check := range []struct {
 		query string
@@ -100,7 +101,7 @@ func TestOfficialTrustMigrationDropsOnlySupersededTrust(t *testing.T) {
 			t.Fatalf("%s: count=%d want=%d err=%v", check.query, count, check.want, err)
 		}
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v71-before-v72-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v71-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("expected one exact schema 71 pre-migration backup: %v err=%v", backups, err)
 	}

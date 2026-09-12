@@ -35,6 +35,7 @@ type NodeCapabilities struct {
 }
 
 type NodeHeartbeat struct {
+	LandingClientRuntime         *landing.ClientRuntime
 	LandingHealth                *landing.Health
 	PublicKey                    []byte
 	Version                      string

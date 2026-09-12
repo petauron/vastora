@@ -83,7 +83,7 @@ func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicati
 		return errors.New("center: finish or restore the current landing change before switching servers")
 	}
 	previousOwner, previousSource := owner, source
-	state := landing.DesiredState{NodeID: nodeID, Revision: revision + 1}
+	state := landing.DesiredState{NodeID: nodeID, Revision: revision + 1, Clients: previous.Clients}
 	serverRevision := int64(0)
 	if input.Enabled {
 		// Enabling requires a current private identity. Disabling uses the
@@ -137,9 +137,10 @@ func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicati
 			return err
 		}
 		found := false
-		for _, allowed := range server.Plan.Sources {
+		for index, allowed := range server.Plan.Sources {
 			if allowed.Address == source {
 				found = true
+				server.Plan.Sources[index].TCPOnly = false
 			}
 		}
 		if !found {
@@ -187,8 +188,17 @@ func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicati
 // Called only after the proxy confirms restoration. Use the stored source
 // snapshot, not the node's possibly changed network profile.
 func (s *Store) removeLandingSource(ctx context.Context, tx *sql.Tx, owner, source string) error {
+	var grants int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM landing_client_grants WHERE landing_node_id=? AND json_extract(source_peer_json,'$.address')=? AND status<>'revoked'`, owner, source).Scan(&grants); err != nil {
+		return err
+	}
+	if grants > 0 {
+		return s.refreshClientLandingSources(ctx, tx, owner)
+	}
 	var encoded []byte
-	if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, owner).Scan(&encoded); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, owner).Scan(&encoded); errors.Is(err, sql.ErrNoRows) {
+		return nil // Cleanup must not require a removed landing service.
+	} else if err != nil {
 		return err
 	}
 	var server landing.ServerState

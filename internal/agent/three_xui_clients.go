@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/petauron/vastora/internal/landing"
 )
 
 const (
@@ -44,6 +46,16 @@ type threeXUIClientDetail struct {
 }
 
 func applyThreeXUIClientCommand(ctx context.Context, store *Store, command ThreeXUIClientCommandTask) (ThreeXUIClientCommandResult, error) {
+	if command.Action == "landing_grant" {
+		if command.Landing == nil || command.Landing.Grant.ID != command.GrantID || command.Landing.Revision != command.GrantRevision || command.Landing.Phase != command.GrantPhase {
+			return ThreeXUIClientCommandResult{}, errors.New("agent: invalid scoped landing command")
+		}
+		result, err := applyLandingClientCommand(ctx, store, *command.Landing)
+		return ThreeXUIClientCommandResult{Landing: &result}, err
+	}
+	if strings.HasPrefix(strings.TrimSpace(command.Email), "vastora-combination-") || strings.HasPrefix(strings.TrimSpace(command.NewEmail), "vastora-combination-") {
+		return ThreeXUIClientCommandResult{}, errors.New("agent: combination identities require a scoped landing operation")
+	}
 	if command.TotalBytes < 0 || command.ResetDays < 0 || command.ResetDays > maxThreeXUIResetDays || command.ExpiryTime < 0 || command.InboundTotalBytes < 0 || command.InboundResetDay < 0 || command.InboundResetDay > 31 || ((command.Action == "create" || command.Action == "update") && command.ResetDays > 0 && command.ExpiryTime <= store.now().UTC().UnixMilli()) {
 		return ThreeXUIClientCommandResult{}, errors.New("agent: invalid 3x-ui traffic plan")
 	}
@@ -55,128 +67,134 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 	if command.Action == "create" || command.Action == "update" {
 		command.InboundIDs = expandProtocolInboundIDs(command.Inbounds, command.InboundIDs)
 	}
-	switch command.Action {
-	case "list", "list_inbounds":
-	case "create":
-		if !clientInboundsAvailable(command.Inbounds, command.InboundIDs) {
-			return result, errors.New("agent: selected 3x-ui nodes are unavailable")
-		}
-		existing, found, err := findListedThreeXUIClient(ctx, baseURL, token, command.NewEmail)
-		if err != nil {
+	if command.ManagedParentID != "" {
+		if err := store.applyLandingParentMutation(ctx, baseURL, token, command); err != nil {
 			return result, err
 		}
-		if found {
-			if !threeXUIClientMatchesCommand(existing, command) {
-				return result, errors.New("agent: a different 3x-ui client already uses this name")
-			}
-			break
-		}
-		clientID, err := randomUUID()
-		if err != nil {
-			return result, err
-		}
-		subID, err := randomClientToken()
-		if err != nil {
-			return result, err
-		}
-		payload := map[string]any{
-			"client": map[string]any{
-				"email": command.NewEmail, "subId": subID, "id": clientID, "flow": "xtls-rprx-vision",
-				"totalGB": command.TotalBytes, "expiryTime": command.ExpiryTime, "reset": command.ResetDays, "limitIp": command.LimitIP,
-				"tgId": 0, "enable": command.Enabled,
-			},
-			"inboundIds": command.InboundIDs,
-		}
-		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/add", token, "application/json", payload); err != nil {
-			existing, found, recoveryErr := findListedThreeXUIClient(ctx, baseURL, token, command.NewEmail)
-			if recoveryErr != nil {
-				return result, errors.Join(fmt.Errorf("agent: create 3x-ui client: %w", err), recoveryErr)
-			}
-			if !found || !threeXUIClientMatchesCommand(existing, command) {
-				return result, fmt.Errorf("agent: create 3x-ui client: %w", err)
-			}
-		}
-	case "update", "set_enabled":
-		detail, currentEmail, err := getThreeXUIClientForUpdate(ctx, baseURL, token, command)
-		if err != nil {
-			return result, err
-		}
-		if command.Action == "update" {
+	} else {
+		switch command.Action {
+		case "list", "list_inbounds":
+		case "create":
 			if !clientInboundsAvailable(command.Inbounds, command.InboundIDs) {
 				return result, errors.New("agent: selected 3x-ui nodes are unavailable")
 			}
-			setClientJSONField(detail.Client, "email", command.NewEmail)
-			setClientJSONField(detail.Client, "totalGB", command.TotalBytes)
-			setClientJSONField(detail.Client, "expiryTime", command.ExpiryTime)
-			setClientJSONField(detail.Client, "reset", command.ResetDays)
-			setClientJSONField(detail.Client, "limitIp", command.LimitIP)
-		} else {
-			setClientJSONField(detail.Client, "enable", command.Enabled)
-		}
-		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(currentEmail), token, "application/json", detail.Client); err != nil {
-			recovered, recoveredEmail, recoveryErr := getThreeXUIClientForUpdate(ctx, baseURL, token, command)
-			if recoveryErr != nil || !threeXUIClientMatchesCommand(recovered, command) {
-				if recoveryErr != nil {
-					return result, errors.Join(fmt.Errorf("agent: update 3x-ui client: %w", err), recoveryErr)
-				}
-				return result, fmt.Errorf("agent: update 3x-ui client: %w", err)
-			}
-			detail, currentEmail = recovered, recoveredEmail
-		} else if command.Action == "update" {
-			currentEmail = command.NewEmail
-		}
-		if command.Action == "update" {
-			if err := syncThreeXUIClientInbounds(ctx, baseURL, token, currentEmail, detail.InboundIDs, command.InboundIDs); err != nil {
+			existing, found, err := findListedThreeXUIClient(ctx, baseURL, token, command.NewEmail)
+			if err != nil {
 				return result, err
 			}
+			if found {
+				if !threeXUIClientMatchesCommand(existing, command) {
+					return result, errors.New("agent: a different 3x-ui client already uses this name")
+				}
+				break
+			}
+			clientID, err := randomUUID()
+			if err != nil {
+				return result, err
+			}
+			subID, err := randomClientToken()
+			if err != nil {
+				return result, err
+			}
+			payload := map[string]any{
+				"client": map[string]any{
+					"email": command.NewEmail, "subId": subID, "id": clientID, "flow": "xtls-rprx-vision",
+					"totalGB": command.TotalBytes, "expiryTime": command.ExpiryTime, "reset": command.ResetDays, "limitIp": command.LimitIP,
+					"tgId": 0, "enable": command.Enabled,
+				},
+				"inboundIds": command.InboundIDs,
+			}
+			if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/add", token, "application/json", payload); err != nil {
+				existing, found, recoveryErr := findListedThreeXUIClient(ctx, baseURL, token, command.NewEmail)
+				if recoveryErr != nil {
+					return result, errors.Join(fmt.Errorf("agent: create 3x-ui client: %w", err), recoveryErr)
+				}
+				if !found || !threeXUIClientMatchesCommand(existing, command) {
+					return result, fmt.Errorf("agent: create 3x-ui client: %w", err)
+				}
+			}
+		case "update", "set_enabled":
+			detail, currentEmail, err := getThreeXUIClientForUpdate(ctx, baseURL, token, command)
+			if err != nil {
+				return result, err
+			}
+			if command.Action == "update" {
+				if !clientInboundsAvailable(command.Inbounds, command.InboundIDs) {
+					return result, errors.New("agent: selected 3x-ui nodes are unavailable")
+				}
+				setClientJSONField(detail.Client, "email", command.NewEmail)
+				setClientJSONField(detail.Client, "totalGB", command.TotalBytes)
+				setClientJSONField(detail.Client, "expiryTime", command.ExpiryTime)
+				setClientJSONField(detail.Client, "reset", command.ResetDays)
+				setClientJSONField(detail.Client, "limitIp", command.LimitIP)
+			} else {
+				setClientJSONField(detail.Client, "enable", command.Enabled)
+			}
+			if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(currentEmail), token, "application/json", detail.Client); err != nil {
+				recovered, recoveredEmail, recoveryErr := getThreeXUIClientForUpdate(ctx, baseURL, token, command)
+				if recoveryErr != nil || !threeXUIClientMatchesCommand(recovered, command) {
+					if recoveryErr != nil {
+						return result, errors.Join(fmt.Errorf("agent: update 3x-ui client: %w", err), recoveryErr)
+					}
+					return result, fmt.Errorf("agent: update 3x-ui client: %w", err)
+				}
+				detail, currentEmail = recovered, recoveredEmail
+			} else if command.Action == "update" {
+				currentEmail = command.NewEmail
+			}
+			if command.Action == "update" {
+				if err := syncThreeXUIClientInbounds(ctx, baseURL, token, currentEmail, detail.InboundIDs, command.InboundIDs); err != nil {
+					return result, err
+				}
+			}
+		case "delete":
+			if err := deleteThreeXUIClientIfExists(ctx, baseURL, token, command.Email); err != nil {
+				return result, err
+			}
+		case "reset_traffic":
+			if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/resetTraffic/"+url.PathEscape(command.Email), token, "application/json", map[string]any{}); err != nil {
+				return result, fmt.Errorf("agent: reset 3x-ui client traffic: %w", err)
+			}
+		case "update_inbound":
+			if err := applyThreeXUIInboundPlan(ctx, store, baseURL, token, command, false); err != nil {
+				return result, err
+			}
+		case "reset_inbound_plan":
+			if err := applyThreeXUIInboundPlan(ctx, store, baseURL, token, command, true); err != nil {
+				return result, err
+			}
+			journal, completed, err := store.completedThreeXUIResetJournal(ctx, command.OperationKey, command.ServiceID, command.ExpectedNextResetAt, command.PlanRevision, command.InboundID, command.InboundTag, command.TargetNodeID)
+			if err != nil {
+				return result, err
+			}
+			if !completed {
+				return result, errors.New("agent: completed REALITY inbound reset journal is unavailable")
+			}
+			target, ok := clientInbound(command.Inbounds, []int{command.InboundID}, command.InboundID)
+			if !ok || target.ServiceID != command.ServiceID {
+				return result, errors.New("agent: completed REALITY inbound reset target is unavailable")
+			}
+			target.Enabled = journal.DesiredEnabled
+			target.TotalBytes = command.InboundTotalBytes
+			target.UsedBytes = journal.SyncUsedBytes
+			target.InboundTag = command.InboundTag
+			result.Inbounds = []ThreeXUIClientInbound{target}
+			result.InboundsObserved = false
+		case "reveal_link":
+			secret, err := revealThreeXUIClientLink(ctx, baseURL, token, command)
+			if err != nil {
+				return result, err
+			}
+			result.Secret, result.SecretKind = secret, "client_link"
+		case "reveal_subscription":
+			secret, err := revealThreeXUIClientSubscription(ctx, baseURL, token, command)
+			if err != nil {
+				return result, err
+			}
+			result.Secret, result.SecretKind = secret, "subscription"
+		default:
+			return result, errors.New("agent: unsupported 3x-ui client operation")
 		}
-	case "delete":
-		if err := deleteThreeXUIClientIfExists(ctx, baseURL, token, command.Email); err != nil {
-			return result, err
-		}
-	case "reset_traffic":
-		if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/resetTraffic/"+url.PathEscape(command.Email), token, "application/json", map[string]any{}); err != nil {
-			return result, fmt.Errorf("agent: reset 3x-ui client traffic: %w", err)
-		}
-	case "update_inbound":
-		if err := applyThreeXUIInboundPlan(ctx, store, baseURL, token, command, false); err != nil {
-			return result, err
-		}
-	case "reset_inbound_plan":
-		if err := applyThreeXUIInboundPlan(ctx, store, baseURL, token, command, true); err != nil {
-			return result, err
-		}
-		journal, completed, err := store.completedThreeXUIResetJournal(ctx, command.OperationKey, command.ServiceID, command.ExpectedNextResetAt, command.PlanRevision, command.InboundID, command.InboundTag, command.TargetNodeID)
-		if err != nil {
-			return result, err
-		}
-		if !completed {
-			return result, errors.New("agent: completed REALITY inbound reset journal is unavailable")
-		}
-		target, ok := clientInbound(command.Inbounds, []int{command.InboundID}, command.InboundID)
-		if !ok || target.ServiceID != command.ServiceID {
-			return result, errors.New("agent: completed REALITY inbound reset target is unavailable")
-		}
-		target.Enabled = journal.DesiredEnabled
-		target.TotalBytes = command.InboundTotalBytes
-		target.UsedBytes = journal.SyncUsedBytes
-		target.InboundTag = command.InboundTag
-		result.Inbounds = []ThreeXUIClientInbound{target}
-		result.InboundsObserved = false
-	case "reveal_link":
-		secret, err := revealThreeXUIClientLink(ctx, baseURL, token, command)
-		if err != nil {
-			return result, err
-		}
-		result.Secret, result.SecretKind = secret, "client_link"
-	case "reveal_subscription":
-		secret, err := revealThreeXUIClientSubscription(ctx, baseURL, token, command)
-		if err != nil {
-			return result, err
-		}
-		result.Secret, result.SecretKind = secret, "subscription"
-	default:
-		return result, errors.New("agent: unsupported 3x-ui client operation")
 	}
 	if command.Action != "list_inbounds" && command.Action != "update_inbound" && command.Action != "reset_inbound_plan" {
 		clients, err := listThreeXUIClients(ctx, baseURL, token)
@@ -186,9 +204,17 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 			}
 		} else {
 			for index := range clients {
+				detail, identityErr := getThreeXUIClient(ctx, baseURL, token, clients[index].Email)
+				if identityErr != nil {
+					return result, errors.New("agent: client identity inventory is incomplete")
+				}
+				clients[index].ID = landing.Identity(clientJSONText(detail.Client, "id"))
 				clients[index].InboundIDs = collapseProtocolInboundIDs(command.Inbounds, clients[index].InboundIDs)
 			}
-			result.Clients = clients
+			result.Clients, err = store.projectLandingAccounts(ctx, clients)
+			if err != nil {
+				return result, err
+			}
 			result.ClientsObserved = true
 		}
 	}

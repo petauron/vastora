@@ -33,3 +33,20 @@ export type LandingView = {
   proxies: LandingProxyView[];
   latencies: LandingLatencyView[];
 };
+
+export type LandingPublishingMode = "fixed" | "advanced" | "both";
+export type LandingClientMode = { parentId: string; mode: LandingPublishingMode; revision: number };
+export type LandingClientGrant = {
+  id: string;
+  parentId: string;
+  applicationId: string;
+  serviceId: string;
+  landingNodeId: string;
+  mode: LandingPublishingMode;
+  enabled: boolean;
+  revision: number;
+  appliedRevision: number;
+  status: "preparing" | "prepared" | "configuring" | "activating" | "ready" | "paused" | "revoking" | "revoked" | "failed";
+  error?: string;
+};
+export type LandingClientGrantInput = Pick<LandingClientGrant, "parentId" | "serviceId" | "landingNodeId" | "mode" | "enabled" | "revision"> & { confirmSessionReset: boolean };

@@ -30,7 +30,7 @@ func (state landingRuntimeState) validate() error {
 		return err
 	}
 	if state.Retiring != nil {
-		if state.Retiring.Validate() != nil || state.Retiring.NodeID != state.Desired.NodeID || state.Retiring.Proxy == nil || state.Retiring.Proxy.ApplicationID != state.ApplicationID || state.Route == nil || state.Retiring.Revision >= state.Route.Revision || len(state.Route.Replaces) == 0 {
+		if state.Retiring.Validate() != nil || state.Retiring.NodeID != state.Desired.NodeID || !state.Retiring.Active() || state.Retiring.ApplicationID() != state.ApplicationID || state.Route == nil || state.Retiring.Revision >= state.Route.Revision || len(state.Route.Replaces) == 0 {
 			return errors.New("agent: invalid retiring landing checkpoint")
 		}
 	}
@@ -55,11 +55,13 @@ func (state landingRuntimeState) validate() error {
 		if state.Applied != nil && state.Applied.Revision == state.Route.Revision {
 			owner = state.Applied
 		}
-		if owner.Revision != state.Route.Revision || owner.Proxy == nil || owner.Proxy.ApplicationID != state.ApplicationID {
+		if owner.Revision != state.Route.Revision || !owner.Active() || owner.ApplicationID() != state.ApplicationID {
 			return errors.New("agent: landing checkpoint does not match its application revision")
 		}
-		if _, err := landing.NewBridgeGate(owner.Proxy.Peer, state.Bridge, state.Route.Revision); err != nil {
-			return errors.New("agent: invalid landing checkpoint bridge identity")
+		for _, use := range owner.PeerUses() {
+			if _, err := landing.NewBridgeGate(use.Peer, state.Bridge, state.Route.Revision); err != nil {
+				return errors.New("agent: invalid landing checkpoint bridge identity")
+			}
 		}
 	}
 	return nil
