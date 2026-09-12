@@ -14,6 +14,7 @@ func TestLandingControllerMigrationBacksUpBeforeJournalCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropTaskReceiptIndexesForFixture(t, old.db)
 	if _, err := old.db.Exec(`DROP TABLE landing_controller_state; PRAGMA user_version=17`); err != nil {
 		t.Fatal(err)
 	}

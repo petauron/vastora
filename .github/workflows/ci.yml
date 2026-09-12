@@ -78,7 +78,7 @@ jobs:
         run: |
           ci_test_status=0
           go test ./internal/recovery ./internal/landing ./internal/realitytarget ./internal/dockerruntime ./internal/tailscalehost -count=1 || ci_test_status=$?
-          go test ./internal/agent ./internal/center -run 'Test.*(Landing|Recovery|Recover|Reality|REALITY|HAProxy|AdminRuntimeDirectory|Migration|Migrated|Backup|ExternalVolume|Heartbeat)' -count=1 || ci_test_status=$?
+          go test ./internal/agent ./internal/center -run 'Test.*(Landing|Recovery|Recover|Reality|REALITY|HAProxy|AdminRuntimeDirectory|Migration|Migrated|Backup|ExternalVolume|Heartbeat|TaskReceipt)' -count=1 || ci_test_status=$?
           exit "$ci_test_status"
       - name: Verify node protocols and HY2 subscriptions
         run: |

@@ -939,6 +939,9 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 			}
 			continue
 		}
+		if err := store.maintainTaskReceipts(ctx); err != nil && report != nil && ctx.Err() == nil {
+			report(err)
+		}
 		if maintainer, ok := c.Executor.(executorMaintainer); ok && (lastMaintenance.IsZero() || time.Since(lastMaintenance) >= time.Minute) {
 			maintenanceContext, maintenanceCancel := context.WithTimeout(ctx, 15*time.Second)
 			maintenanceErr := maintainer.Maintain(maintenanceContext)

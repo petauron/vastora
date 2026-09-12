@@ -15,6 +15,22 @@ import (
 	"github.com/petauron/vastora/internal/secret"
 )
 
+const (
+	taskReceiptRetention      = 30 * 24 * time.Hour
+	taskReceiptPruneInterval  = 5 * time.Minute
+	taskReceiptPruneTimeout   = 2 * time.Second
+	taskReceiptPruneBatchSize = 128
+	pendingTaskCompletionSQL  = `SELECT task_id, sealed_completion FROM task_receipts
+		WHERE state IN ('completed', 'reconciliation_required') ORDER BY updated_at, task_id LIMIT 1`
+	unresolvedTaskReceiptSQL = `SELECT task_id, task_kind FROM task_receipts
+		WHERE state IN ('processing', 'reconciliation_required', 'reconciliation_acknowledged') AND task_kind IN ('application.apply', 'legacy')
+		ORDER BY created_at, task_id LIMIT 1`
+	pruneTaskReceiptsSQL = `DELETE FROM task_receipts WHERE task_id IN (
+		SELECT task_id FROM task_receipts
+		WHERE (state = 'acknowledged' OR (task_kind = 'agent.update' AND state = 'processing')) AND updated_at < ?
+		ORDER BY updated_at, task_id LIMIT ?)`
+)
+
 type TaskCompletion struct {
 	TaskID                       string                `json:"taskId"`
 	Attempt                      int64                 `json:"attempt"`
@@ -26,9 +42,7 @@ type TaskCompletion struct {
 
 func (s *Store) UnresolvedApplicationTaskReceipt(ctx context.Context) (string, string, error) {
 	var taskID, taskKind string
-	err := s.db.QueryRowContext(ctx, `SELECT task_id, task_kind FROM task_receipts
-		WHERE state IN ('processing', 'reconciliation_required', 'reconciliation_acknowledged') AND task_kind IN ('application.apply', 'legacy')
-		ORDER BY created_at, task_id LIMIT 1`).Scan(&taskID, &taskKind)
+	err := s.db.QueryRowContext(ctx, unresolvedTaskReceiptSQL).Scan(&taskID, &taskKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", nil
 	}
@@ -41,8 +55,7 @@ func (s *Store) UnresolvedApplicationTaskReceipt(ctx context.Context) (string, s
 func (s *Store) PendingTaskCompletion(ctx context.Context) (*TaskCompletion, error) {
 	var taskID string
 	var sealed []byte
-	err := s.db.QueryRowContext(ctx, `SELECT task_id, sealed_completion FROM task_receipts
-		WHERE state IN ('completed', 'reconciliation_required') ORDER BY updated_at, task_id LIMIT 1`).Scan(&taskID, &sealed)
+	err := s.db.QueryRowContext(ctx, pendingTaskCompletionSQL).Scan(&taskID, &sealed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -100,8 +113,6 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM task_receipts WHERE state = 'acknowledged' AND updated_at < ?`, s.now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano))
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM task_receipts WHERE task_kind = 'agent.update' AND state = 'processing' AND updated_at < ?`, s.now().UTC().Add(-30*24*time.Hour).Format(time.RFC3339Nano))
 	var attempt int64
 	var executorRuntimeGeneration int
 	var storedHash []byte
@@ -233,6 +244,34 @@ func (s *Store) PrepareTaskReceipt(ctx context.Context, task DeploymentTask) (*T
 		return nil, err
 	}
 	return &completion, nil
+}
+
+// maintainTaskReceipts runs outside task execution, after outbox delivery and
+// startup recovery. Preserve the existing 30-day deduplication window and never
+// prune pending results or unresolved application effects. The only abandoned
+// processing receipts eligible for expiry are the existing agent.update case.
+// A single indexed DELETE bounds the batch without loading completion blobs or
+// task ID lists into Go memory. Do not VACUUM or drain a backlog in a tight loop.
+func (s *Store) maintainTaskReceipts(ctx context.Context) error {
+	s.taskReceiptPruneMu.Lock()
+	defer s.taskReceiptPruneMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	now := s.now()
+	if now.Before(s.nextTaskReceiptPrune) {
+		return nil
+	}
+	// Throttle failed attempts too; a storage error must not create a busy retry
+	// loop or prevent the next task from being claimed and recorded durably.
+	s.nextTaskReceiptPrune = now.Add(taskReceiptPruneInterval)
+	pruneContext, cancel := context.WithTimeout(ctx, taskReceiptPruneTimeout)
+	defer cancel()
+	if _, err := s.db.ExecContext(pruneContext, pruneTaskReceiptsSQL,
+		now.UTC().Add(-taskReceiptRetention).Format(time.RFC3339Nano), taskReceiptPruneBatchSize); err != nil {
+		return fmt.Errorf("agent: prune expired task receipts: %w", err)
+	}
+	return nil
 }
 
 func taskReconcilesCompleteDesiredState(kind string) bool {

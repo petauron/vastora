@@ -35,6 +35,8 @@ type Store struct {
 	key                        []byte
 	dataDir                    string
 	now                        func() time.Time
+	taskReceiptPruneMu         sync.Mutex
+	nextTaskReceiptPrune       time.Time
 	gatewayMutationMu          sync.Mutex
 	landingMutationMu          sync.Mutex
 	landingCancel              context.CancelFunc
@@ -93,7 +95,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 18
+const agentSchemaVersion = 19
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can
@@ -644,6 +646,13 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 18
 		}
+		if version == 18 {
+			if err := migrateTaskReceiptIndexesV19(db, dataDir); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 18 to 19: %w", err)
+			}
+			version = 19
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -762,7 +771,7 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		PRAGMA user_version = 18;`); err != nil {
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 19;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
