@@ -22,7 +22,7 @@ func TestRecoveryClaimSkipsUnrelatedDeploymentAndChecksOwner(t *testing.T) {
 		if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,status,created_at,updated_at) VALUES(?,?,?,?,?,'running',?,?)`, fixture.id, fixture.id, node.ID, testSiteID(t, store), fixture.key, now, now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := store.db.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,operation,state,created_at,updated_at,application_id) VALUES(?,?,?,'1','{}','{}','uninstall','pending',?,?,?)`, "task-"+fixture.id, node.ID, fixture.key, now, now, fixture.id); err != nil {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,operation,state,created_at,updated_at,application_id) VALUES(?,?,?,'1',?,?,'uninstall','pending',?,?,?)`, "task-"+fixture.id, node.ID, fixture.key, []byte(`{}`), []byte(`{}`), now, now, fixture.id); err != nil {
 			t.Fatal(err)
 		}
 	}
