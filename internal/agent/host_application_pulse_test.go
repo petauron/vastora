@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -24,10 +25,14 @@ import (
 
 func testPulseArchive(t *testing.T, name string, typeflag byte, duplicate bool) []byte {
 	t.Helper()
+	return testPulseArchiveData(t, name, typeflag, duplicate, testArtifactELF(t, "amd64"))
+}
+
+func testPulseArchiveData(t *testing.T, name string, typeflag byte, duplicate bool, data []byte) []byte {
+	t.Helper()
 	var output bytes.Buffer
 	gzipWriter := gzip.NewWriter(&output)
 	writer := tar.NewWriter(gzipWriter)
-	data := []byte("\x7fELFfake-pulse-binary")
 	count := 1
 	if duplicate {
 		count = 2
@@ -250,6 +255,69 @@ func TestPulseInstallBeforeStartupFailureCleansManagedFiles(t *testing.T) {
 	for _, path := range []string{pulseBinary, pulseEnv, pulseUnitPath, pulseDigest, pulseToken, pulseArchive} {
 		if _, err := os.Lstat(manager.path(path)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("partial installation retained %s: %v", path, err)
+		}
+	}
+}
+
+func TestPulseRejectsArtifactPlatformBeforeMutation(t *testing.T) {
+	for _, architecture := range []string{"amd64", "arm64"} {
+		for _, installed := range []bool{false, true} {
+			t.Run(architecture+map[bool]string{false: "/install", true: "/upgrade"}[installed], func(t *testing.T) {
+				other := map[string]string{"amd64": "arm64", "arm64": "amd64"}[architecture]
+				archiveArch := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[architecture]
+				name := "pulse-v0.1.0-alpha.2-linux-" + archiveArch + "/pulse-agent"
+				archive := testPulseArchiveData(t, name, tar.TypeReg, false, testArtifactELF(t, other))
+				digest := sha256.Sum256(archive) // Correct archive path/hash, wrong ELF architecture.
+				server := httptest.NewTLSServer(httpHandler(archive))
+				defer server.Close()
+				commands := 0
+				manager := SystemdHostApplicationManager{
+					RootDir: t.TempDir(), HTTPClient: server.Client(), HostTarget: platform.Target{OS: "linux", Architecture: architecture},
+					RunCommand: func(context.Context, string, ...string) error { commands++; return nil },
+				}
+				if err := writeHostFileAtomic(manager.path("/etc/os-release"), []byte("ID=debian\nVERSION_ID=12\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				paths := []string{pulseBinary, pulseEnv, pulseUnitPath, pulseDigest, pulseToken, pulseArchive, pulseCredentialsPath, pulseRuntimeToken}
+				if installed {
+					for _, file := range paths {
+						if err := writeHostFileAtomic(manager.path(file), []byte("existing managed installation"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := writeHostFileAtomic(manager.path(pulseUnitPath), pulseUnit("collector"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before := make(map[string]hostFileSnapshot)
+				for _, file := range paths {
+					var err error
+					before[file], err = captureHostFile(manager.path(file))
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				config, err := json.Marshal(pulse.AgentConfig{ServiceURL: "https://pulse.private.example.com/", ServiceApplicationID: "monitor", NodeName: "node"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				task := DeploymentTask{ID: "deployment", ApplicationID: "collector", AppKey: pulse.AgentKey, Operation: "install", Config: config, Secrets: json.RawMessage(`{"enrollment_token":"12345678901234567890123456789012"}`), Manifest: catalog.AppManifest{ID: "pulse-agent", Version: "0.1.0-alpha.2", Artifacts: []catalog.Artifact{{Name: "pulse-agent", OperatingSystem: "linux", Architecture: architecture, URL: server.URL, SHA256: hex.EncodeToString(digest[:])}}}}
+				if installed {
+					task.Operation = "upgrade"
+				}
+				if _, err := manager.ApplyPulse(context.Background(), task); err == nil || !strings.Contains(err.Error(), "platform") {
+					t.Fatalf("digest-correct wrong-platform artifact was not rejected: %v", err)
+				}
+				if commands != 0 {
+					t.Fatalf("ran %d commands before platform rejection", commands)
+				}
+				for _, file := range paths {
+					after, err := captureHostFile(manager.path(file))
+					if err != nil || !reflect.DeepEqual(after, before[file]) {
+						t.Fatalf("platform rejection mutated %s: %v", file, err)
+					}
+				}
+			})
 		}
 	}
 }

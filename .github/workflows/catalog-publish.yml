@@ -1,0 +1,91 @@
+name: Publish official application catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: New increasing catalog revision, or the same revision when retrying its original run
+        type: string
+        required: true
+      bootstrap:
+        description: First catalog publication only (no prior ledger)
+        type: boolean
+        default: false
+      supersede:
+        description: Replace an expired or failed pending publication using a higher revision; preserve its ledger
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vastora-official-catalog-stable
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main' && github.repository == 'petauron/vastora'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test publication and trust boundaries without credentials
+        run: |
+          go test ./internal/catalog ./cmd/catalog-check ./cmd/catalog-publish ./cmd/catalog-verify -count=1
+          go test ./internal/agent -run 'Test.*(Official|ArtifactELF|ArtifactPlatform)|Test(SystemdKomariApply|PulseNative)' -count=1
+          node --test scripts/upload-catalog-r2.test.mjs scripts/publish-catalog.test.mjs scripts/catalog-signing-job.test.mjs
+      - name: Validate contracts and actual public artifacts before approval
+        run: go run ./cmd/catalog-check --catalog catalog/catalog.json --root-directory catalog/trust --artifacts
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: catalog-signing
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require independently provisioned root and protected environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -s catalog/trust/1.root.json
+          gh api "repos/$GITHUB_REPOSITORY/environments/catalog-signing" |
+            jq -e '(.protection_rules | any(.type == "required_reviewers" and (.reviewers | length > 0))) and .deployment_branch_policy.protected_branches == true' >/dev/null
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build publication tools from the approved commit
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/catalog-bin"
+          go build -o "$RUNNER_TEMP/catalog-bin/catalog-publish" ./cmd/catalog-publish
+          go build -o "$RUNNER_TEMP/catalog-bin/catalog-verify" ./cmd/catalog-verify
+      - name: Sign, persist ledger, atomically publish, and independently verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CATALOG_REVISION: ${{ inputs.revision }}
+          CATALOG_BOOTSTRAP: ${{ inputs.bootstrap }}
+          CATALOG_SUPERSEDE: ${{ inputs.supersede }}
+          CATALOG_SIGNERS: ${{ secrets.CATALOG_SIGNERS }}
+          CATALOG_BIN: ${{ runner.temp }}/catalog-bin
+          CATALOG_WORK: ${{ runner.temp }}/catalog-publication
+          CATALOG_KEY_DIRECTORY: ${{ runner.temp }}/catalog-signers
+          AWS_ACCESS_KEY_ID: ${{ secrets.CATALOG_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CATALOG_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_EC2_METADATA_DISABLED: 'true'
+          R2_BUCKET_NAME: ${{ vars.CATALOG_R2_BUCKET_NAME }}
+          R2_ENDPOINT: https://${{ vars.CATALOG_CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        run: node scripts/catalog-signing-job.mjs

@@ -53,7 +53,7 @@ COPY --from=center-build /out/vastora /usr/local/bin/vastora
 COPY --from=binary-amd64 /out/vastora /app/agent-binaries/linux-amd64
 COPY --from=binary-arm64 /out/vastora /app/agent-binaries/linux-arm64
 COPY --from=web-build /src/web/dist /app/web/dist
-COPY catalog/catalog.json /app/catalog/catalog.json
+COPY catalog/trust/ /app/catalog-trust/
 COPY --from=center-build --chown=65532:65532 /out/center-data /var/lib/vastora
 VOLUME ["/var/lib/vastora"]
 ENTRYPOINT ["/usr/local/bin/vastora"]

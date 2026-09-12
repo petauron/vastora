@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/center"
 	"github.com/petauron/vastora/internal/deployapi"
 )
@@ -118,7 +119,8 @@ func runCenter(arguments []string) error {
 		dataDir := flags.String("data-dir", "", "Center state directory")
 		listen := flags.String("listen", "127.0.0.1:8080", "listen address")
 		webDir := flags.String("web-dir", "web/dist", "compiled React web directory")
-		officialCatalog := flags.String("official-catalog", "catalog/catalog.json", "official Catalog JSON file")
+		officialCatalogOrigin := flags.String("official-catalog-origin", catalog.OfficialOrigin, "official TUF metadata HTTPS origin")
+		officialCatalogRoot := flags.String("official-catalog-root", "", "independently provisioned official TUF root metadata file")
 		agentBinariesDir := flags.String("agent-binaries-dir", "agent-binaries", "directory containing linux-amd64 and linux-arm64 Agent binaries")
 		agentConnectURL := flags.String("agent-connect-url", "", "Agent-reachable Center URL suggested during first setup")
 		coLocatedAgentURL := flags.String("co-located-agent-url", "", "host-only Center URL for a co-located Agent")
@@ -170,15 +172,22 @@ func runCenter(arguments []string) error {
 		if *tlsCert == "" && !loopbackAddress(*listen) && !*allowContainerHTTP {
 			return errors.New("refusing a non-loopback HTTP listener; provide TLS certificate and key")
 		}
-		catalogPayload, err := os.ReadFile(*officialCatalog)
-		if err != nil {
-			return fmt.Errorf("read official catalog: %w", err)
+		var catalogRoot []byte
+		if *officialCatalogRoot != "" {
+			var err error
+			catalogRoot, err = os.ReadFile(*officialCatalogRoot)
+			if err != nil {
+				return fmt.Errorf("read official trust root: %w", err)
+			}
 		}
 		store, err := center.Open(*dataDir, headscaleAllowedURLs...)
 		if err != nil {
 			return err
 		}
 		defer store.Close()
+		if err := store.ConfigureOfficialCatalog(context.Background(), *officialCatalogOrigin); err != nil {
+			return err
+		}
 		helperRuntime, err := store.ConfigureExternalHelpers(center.ExternalHelperConfig{
 			ReleaseMetadataURL:         *releaseMetadataURL,
 			ReleaseInstallerBaseURL:    *releaseInstallerBaseURL,
@@ -193,9 +202,6 @@ func runCenter(arguments []string) error {
 			return err
 		}
 		if err := store.UseHostNetworkAddresses(*hostNetworkAddresses); err != nil {
-			return err
-		}
-		if err := store.SeedOfficialCatalog(context.Background(), catalogPayload); err != nil {
 			return err
 		}
 		maintenanceContext, stopMaintenance := context.WithCancel(context.Background())
@@ -219,7 +225,7 @@ func runCenter(arguments []string) error {
 			fmt.Fprintf(os.Stderr, "Center REALITY traffic plan reset: %v\n", err)
 		})
 		centerServer := center.NewServer(store, *webDir, *tlsCert != "").
-			WithOfficialCatalog(catalogPayload).
+			WithOfficialCatalogTrust(*officialCatalogOrigin, catalogRoot).
 			WithAgentBinaries(*agentBinariesDir).
 			WithSetupAgentConnectURL(normalizedAgentConnectURL).
 			WithCoLocatedAgentURL(normalizedCoLocatedAgentURL).

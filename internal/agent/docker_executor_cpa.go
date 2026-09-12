@@ -27,8 +27,7 @@ type cpaSecrets struct {
 }
 
 func deployCPA(ctx context.Context, docker *client.Client, task DeploymentTask, bindAddress string) error {
-	expectedVersion, official := OfficialAppVersion("cpa")
-	if task.Manifest.ID != "cpa" || !official || task.Manifest.Version != expectedVersion {
+	if task.Manifest.ID != "cpa" || ValidateOfficialContract(task.Manifest) != nil {
 		return errors.New("agent: unsupported official CPA package")
 	}
 	imageRef, err := pullDeclaredImage(ctx, docker, task, "cli-proxy-api")

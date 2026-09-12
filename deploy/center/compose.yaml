@@ -21,8 +21,10 @@ services:
       - http://127.0.0.1:${VASTORA_CENTER_BOOTSTRAP_PORT:-8080}
       - --web-dir
       - /app/web/dist
-      - --official-catalog
-      - /app/catalog/catalog.json
+      - --official-catalog-origin
+      - ${VASTORA_OFFICIAL_CATALOG_ORIGIN:-https://downloads.petauron.com/vastora/catalog/}
+      - --official-catalog-root
+      - ${VASTORA_OFFICIAL_CATALOG_ROOT:-/app/catalog-trust/1.root.json}
       - --deployer-socket
       - /run/vastora-deployer/deployer.sock
       - --release-metadata-url

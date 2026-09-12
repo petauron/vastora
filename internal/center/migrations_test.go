@@ -1381,6 +1381,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	defer tx.Rollback()
 	for _, statement := range []string{
 		`DROP TABLE three_x_ui_node_protocols`,
+		`DROP TABLE official_catalog_trust`,
 		`DROP TABLE cloudflare_access_settings`,
 		`DROP TABLE reality_security_checks`,
 		`DROP TABLE node_listener_states`,
@@ -1451,6 +1452,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 		`ALTER TABLE agent_enrollment_tokens DROP COLUMN ca_certificate_pem`,
 		`ALTER TABLE deployments DROP COLUMN registry_credential_id`,
 		`ALTER TABLE deployments DROP COLUMN change_proposal_id`,
+		`ALTER TABLE deployments DROP COLUMN pre_dispatch_application_status`,
 		`ALTER TABLE services DROP COLUMN region_code`,
 		`ALTER TABLE services DROP COLUMN display_name`,
 		`ALTER TABLE catalog_sources DROP COLUMN last_checked_at`,

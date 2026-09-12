@@ -389,7 +389,21 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
-  if (["handleLanding", "handleSelectLanding", "handleConfigureLandingProxy"].includes(route.handler)) {
+  if (route.handler === "handleListSources" || route.handler === "handleListApps") {
+    const sources = route.handler === "handleListSources";
+    const field = sources ? "sources" : "apps";
+    operation.description = sources
+      ? "Catalog source status. The reserved vastora-official identity is anchored to independently provisioned TUF trust, not the editable source name or URL. Catalog revision and expiry describe the last verified cache; a failed refresh does not replace it."
+      : "Available catalog entries. installBlocked means the cached entry may be displayed but cannot authorize a new install or upgrade. Existing application recovery, configuration and uninstall use their recorded manifests.";
+    operation.responses["200"].content["application/json"].schema = {
+      type: "object", required: [field], additionalProperties: false,
+      properties: { [field]: { type: "array", items: schemaForGoType(sources ? "CatalogSource" : "AppView") } },
+    };
+  } else if (route.handler === "handleOfficialCatalog") {
+    operation.description = "Returns the last accepted official target, including signed identity, channel, revision and lifetime. This endpoint alone is not a signature proof: independent clients must verify the upstream TUF repository with their own trusted root. Expired cache may be returned for display only. Missing or damaged cache returns 404.";
+    operation.responses["200"].headers = noStoreHeaders;
+    operation.responses["200"].content["application/json"].schema = schemaForGoType("catalog.OfficialTarget");
+  } else if (["handleLanding", "handleSelectLanding", "handleConfigureLandingProxy"].includes(route.handler)) {
     operation.description = "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations.";
     operation.responses["200"].content["application/json"].schema = { $ref: "#/components/schemas/LandingView" };
   } else if (route.handler === "handleLandingLatencyEvents") {

@@ -220,6 +220,7 @@ func makeLegacyUnboundCenter(t *testing.T, directory string) {
 		DROP TABLE agent_updates;
 		ALTER TABLE publications DROP COLUMN access_application_id;
 		ALTER TABLE deployments DROP COLUMN change_proposal_id;
+		ALTER TABLE deployments DROP COLUMN pre_dispatch_application_status;
 		ALTER TABLE deployments DROP COLUMN executed_runtime_generation;
 		ALTER TABLE application_commands DROP COLUMN reconciliation_requested;
 		DROP INDEX agent_enrollment_one_reconnect_idx;

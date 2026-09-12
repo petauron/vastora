@@ -38,6 +38,19 @@ async function loadCenterRemoteAccess(signal?: AbortSignal) {
   }
 }
 
+async function loadCatalogSources(signal?: AbortSignal): Promise<Pick<AppData, "sources" | "catalogSourcesError">> {
+  try {
+    const { sources } = await api.sources(signal);
+    return { sources, catalogSourcesError: undefined };
+  } catch (error) {
+    if (signal?.aborted || (error instanceof APIError && error.status === 401)) throw error;
+    // Do not present source status cached from another screen as current. App
+    // manifests keep their own server-provided install restrictions, and source
+    // status failures must not prevent managing already installed applications.
+    return { sources: [], catalogSourcesError: "Catalog source status is unavailable" };
+  }
+}
+
 export async function loadScreenData(screen: Screen, signal?: AbortSignal): Promise<AppDataPatch> {
   const statusPromise = api.status(signal);
 
@@ -79,7 +92,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       };
     }
     case "apps": {
-      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations, remoteAccess] = await Promise.all([
+      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations, remoteAccess, catalogSources] = await Promise.all([
         statusPromise,
         api.apps(signal),
         api.registryCredentials(signal),
@@ -91,7 +104,8 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         api.integrations(signal),
         api.sites(signal),
         api.threeXUIControllerMigrations(signal),
-        loadCenterRemoteAccess(signal)
+        loadCenterRemoteAccess(signal),
+        loadCatalogSources(signal)
       ]);
       return {
         status,
@@ -105,7 +119,8 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         integrations: integrations.integrations,
         sites: sites.sites,
         threeXUIControllerMigrations: migrations.migrations,
-        ...remoteAccess
+        ...remoteAccess,
+        ...catalogSources
       };
     }
     case "network": {
@@ -143,6 +158,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         status,
         centerUpdate,
         sources: sources.sources,
+        catalogSourcesError: undefined,
         applications: applications.applications,
         agents: agents.agents,
         systemDomain

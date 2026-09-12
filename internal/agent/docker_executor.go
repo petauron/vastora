@@ -168,9 +168,8 @@ func validateApplicationTask(task DeploymentTask) error {
 	if !strings.HasSuffix(task.AppKey, "/"+task.Manifest.ID) {
 		return errors.New("agent: application task does not match its signed manifest")
 	}
-	expectedVersion, official := OfficialAppVersion(task.Manifest.ID)
-	if !official || task.Manifest.Version != expectedVersion {
-		return errors.New("agent: unsupported official app package version")
+	if err := ValidateOfficialContract(task.Manifest); err != nil {
+		return err
 	}
 	if task.AppKey != threeXUIKey && task.ApplicationRole != "" {
 		return errors.New("agent: application topology role is only valid for 3x-ui")

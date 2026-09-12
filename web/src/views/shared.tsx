@@ -1,15 +1,28 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { CheckIcon, CircleAlertIcon, CircleCheckIcon, Clock3Icon, CopyIcon, ShieldAlertIcon } from "lucide-react";
 import type { Language } from "../translations";
+import type { AppView } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 export const copy = (language: Language, zh: string, en: string) => language === "zh-CN" ? zh : en;
 
+// The server remains authoritative; also stop stale open forms at their known
+// expiry instead of waiting for the next dashboard refresh.
+export function catalogInstallBlocked(app?: AppView) {
+  if (!app || app.installBlocked) return true;
+  if (!app.catalogExpiresAt) return false;
+  const expiry = Date.parse(app.catalogExpiresAt);
+  return !Number.isFinite(expiry) || expiry <= Date.now();
+}
+
 export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  if (normalized === "refresh the app catalog and retry this operation.") {
+    return copy(language, "请先在设置中刷新应用目录，再重试。", "Refresh the app catalog in Settings, then retry.");
+  }
   if (code === "protocols_need_own_exit") return copy(language, "请先切换为“本机出口”，启用 HY2 后再选择落地机。", "Switch to the node's own exit, enable HY2, then select the landing server again.");
   if (code === "protocols_need_domain") return copy(language, "请先配置节点的公网地址，再修改协议。", "Set up the node's public address before changing protocols.");
   if (code === "protocols_domain_in_use") return copy(language, "HY2 正在使用这个地址，请先关闭 HY2 再移除。", "Disable HY2 before removing its public address.");
@@ -81,9 +94,10 @@ export function PageHeading({ title, description, action }: { title: string; des
 
 export function StateBadge({ value, language = document.documentElement.lang === "zh-CN" ? "zh-CN" : "en" }: { value: string; language?: Language }) {
   const good = ["ready", "running", "succeeded", "configured", "connected", "active", "healthy"].includes(value);
-  const bad = ["failed", "degraded", "offline", "lease_expired", "recovery"].includes(value);
+  const bad = ["failed", "degraded", "offline", "lease_expired", "recovery", "expired"].includes(value);
   const Icon = good ? CircleCheckIcon : bad ? CircleAlertIcon : Clock3Icon;
   const labels: Record<string, [string, string]> = {
+    expired: ["需刷新", "Refresh required"],
     ready: ["就绪", "Ready"], running: ["运行中", "Running"], succeeded: ["成功", "Succeeded"], configured: ["已配置", "Configured"], connected: ["已连接", "Connected"], active: ["正常", "Active"], healthy: ["健康", "Healthy"], stale: ["使用缓存", "Using cache"],
     failed: ["失败", "Failed"], degraded: ["异常", "Degraded"], recovery: ["需恢复", "Recovery needed"], offline: ["离线", "Offline"], lease_expired: ["已重试", "Retried"], pending: ["等待中", "Pending"], applying: ["配置中", "Applying"], stopped: ["已停止", "Stopped"], disabled: ["未启用", "Disabled"], unconfigured: ["未配置", "Not configured"], queued: ["已排队", "Queued"], claimed: ["执行中", "In progress"]
   };
