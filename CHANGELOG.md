@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.0-alpha.123](https://github.com/petauron/vastora/compare/v0.1.0-alpha.122...v0.1.0-alpha.123) (2026-09-12)
+
+
+### Features
+
+* **catalog:** publish independently signed official catalogs ([#404](https://github.com/petauron/vastora/issues/404)) ([175d969](https://github.com/petauron/vastora/commit/175d969b7cd828b6a0f36dfee576f6ab255426a5))
+* **nodes:** stop offline agent access without removing workloads ([#408](https://github.com/petauron/vastora/issues/408)) ([d533d88](https://github.com/petauron/vastora/commit/d533d887ca6d56090bb2021272c708c2b4bcf7b7))
+* **pulse:** integrate authenticated service and collector settings ([#405](https://github.com/petauron/vastora/issues/405)) ([f25c096](https://github.com/petauron/vastora/commit/f25c0969adbb982eb03f15bd7108031f0ae79a57))
+
+
+### Bug Fixes
+
+* **catalog:** provision approved production trust root ([#410](https://github.com/petauron/vastora/issues/410)) ([0922279](https://github.com/petauron/vastora/commit/09222794bb908b10140fdd1269e854cb152eea68))
+* preserve scoped recovery and assistant conversation safety ([#403](https://github.com/petauron/vastora/issues/403)) ([cae7bbf](https://github.com/petauron/vastora/commit/cae7bbf4c5b63cc054615c858ebc2dd941813796))
+* **web:** simplify subscription client cards and HY2 guidance ([#407](https://github.com/petauron/vastora/issues/407)) ([d7e778e](https://github.com/petauron/vastora/commit/d7e778ef540cdba867516c6d0c7c794a997baa64))
+
 ## [0.1.0-alpha.122](https://github.com/petauron/vastora/compare/v0.1.0-alpha.121...v0.1.0-alpha.122) (2026-09-11)
 
 
