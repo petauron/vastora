@@ -19,7 +19,7 @@ func pulseFixture(t *testing.T) (*Store, AgentCredential, AgentCredential, Deplo
 	t.Cleanup(func() { _ = store.Close() })
 	service := enrollOrchestrationNode(t, store, "monitor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
 	collector := enrollOrchestrationNode(t, store, "collector", NodeCapabilities{}, []networking.Candidate{{Address: "10.0.0.11", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.11", LANAddress: "10.0.0.11", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Config: json.RawMessage(`{}`)})
+	deployment, err := store.CreateDeployment(context.Background(), DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Config: json.RawMessage(`{"public_url":"https://pulse.example.com","setup_token":"test-only-pulse-setup-token-0000000000"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAppKey}); err == nil {
 		t.Fatal("second global monitoring service accepted")
 	}
-	request := DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Config: json.RawMessage(`{}`)}
+	request := DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Config: json.RawMessage(`{"node_region":"SG","geoip_provider":"disabled","interval_seconds":3}`)}
 	if _, err := store.CreateDeployment(ctx, request); err == nil {
 		t.Fatal("collector accepted without private HTTPS")
 	}
@@ -78,6 +78,9 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	if json.Unmarshal(installTask.Config, &config) != nil || config.NodeName != "collector" || config.ServiceApplicationID != deployment.ApplicationID {
 		t.Fatal("collector identity was not inherited")
 	}
+	if config.NodeRegion == nil || *config.NodeRegion != "SG" || config.GeoIPProvider == nil || *config.GeoIPProvider != "disabled" || config.IntervalSeconds != 3 {
+		t.Fatal("administrator location and interval choices were not delivered to the collector")
+	}
 	if err := store.CompleteTask(ctx, collector.ID, collector.Credential, installTask.ID, installTask.Attempt, true, "", json.RawMessage(`{"services":[]}`), installTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +90,20 @@ func TestPulseEnrollmentPrivateHTTPSAndNativeInstall(t *testing.T) {
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Operation: "uninstall"}); err == nil {
 		t.Fatal("monitor removed while collectors still installed")
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"geoip_provider":"arbitrary"}`)}); err == nil {
+		t.Fatal("invalid provider accepted by Center")
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"service_url":"https://attacker.example.com/"}`)}); err == nil {
+		t.Fatal("administrator form was allowed to replace the managed service identity")
+	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: collector.ID, AppKey: pulseAgentAppKey, Operation: "configure", Config: json.RawMessage(`{"node_region":"","interval_seconds":10}`)}); err != nil {
+		t.Fatal(err)
+	}
+	changedTask := claimTask(t, store, collector)
+	var changed pulse.AgentConfig
+	if json.Unmarshal(changedTask.Config, &changed) != nil || changed.NodeRegion == nil || *changed.NodeRegion != "" || changed.GeoIPProvider == nil || *changed.GeoIPProvider != "disabled" || changed.IntervalSeconds != 10 || changed.ServiceURL != config.ServiceURL || changed.NodeName != config.NodeName {
+		t.Fatal("configuration did not preserve identity, retain omitted options, and clear explicit empty region")
 	}
 }
 

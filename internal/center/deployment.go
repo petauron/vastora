@@ -14,6 +14,7 @@ import (
 	"github.com/distribution/reference"
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/platform"
+	"github.com/petauron/vastora/internal/pulse"
 	"golang.org/x/mod/semver"
 )
 
@@ -285,19 +286,35 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		if request.AppKey == pulseAgentAppKey {
 			// Collector identity and endpoint are managed by Center, never form
 			// fields. Upgrades keep the established endpoint and node identity.
-			if _, _, err = normalizeDeploymentConfig(manifest, request.Config); err != nil {
-				return DeploymentView{}, err
+			options, _, normalizeErr := normalizeDeploymentConfig(manifest, request.Config)
+			if normalizeErr != nil {
+				return DeploymentView{}, normalizeErr
 			}
 			if request.Operation == "install" {
-				config, err = s.pulseAgentConfig(ctx, request.AgentID)
+				config, err = s.pulseAgentConfig(ctx, request.AgentID, options)
 			} else {
 				config, err = removeJSONObjectKeys(deploymentConfig, "enrollment_token")
+			}
+			var collectorConfig pulse.AgentConfig
+			if err == nil && json.Unmarshal(config, &collectorConfig) != nil {
+				err = errors.New("center: invalid Pulse collector configuration")
+			}
+			if err == nil {
+				err = collectorConfig.Validate()
+			}
+			if err != nil {
+				return DeploymentView{}, err
 			}
 			secrets = []byte(`{}`)
 		} else {
 			config, secrets, err = normalizeDeploymentConfig(manifest, deploymentConfig)
 		}
 		if err != nil {
+			return DeploymentView{}, err
+		}
+	}
+	if request.AppKey == pulseAppKey && request.Operation != "uninstall" {
+		if _, _, err := pulse.DecodeServiceConfig(config, secrets); err != nil {
 			return DeploymentView{}, err
 		}
 	}

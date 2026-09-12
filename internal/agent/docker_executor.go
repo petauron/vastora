@@ -208,6 +208,9 @@ func validateApplicationTask(task DeploymentTask) error {
 		if !networking.IsPrivateServiceAddress(bindAddress) {
 			return errors.New("agent: Pulse must bind only to a private service address")
 		}
+		if _, _, err := pulse.DecodeServiceConfig(task.Config, task.Secrets); err != nil {
+			return err
+		}
 	case threeXUIKey:
 		config, err := decodeThreeXUIConfig(task.Config)
 		if err != nil {
