@@ -537,12 +537,18 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		return observeErr, err
 	}
 	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
+	recoveryCode := store.runtimeRecoveryCode()
+	recoveryApplications := store.runtimeRecoveryApplications()
+	if recoveryCode != "application" {
+		recoveryApplications = nil
+	}
 	payload := map[string]any{
 		"publicKey": publicKey,
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"gatewayRevision":              gatewayRevision,
-		"runtimeRecovery":              store.runtimeRecoveryCode(),
+		"runtimeRecovery":              recoveryCode,
+		"runtimeRecoveryApplications":  recoveryApplications,
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
 		"landingHealth":                store.landingHealth(),
@@ -902,6 +908,21 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 			}
 		}
 		if restorePending {
+			if scope := store.runtimeRecoveryScope(); scope != nil {
+				claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+				task, err := c.claimTask(claimContext, store, 10*time.Second, "", scope)
+				cancel()
+				if err != nil && report != nil && ctx.Err() == nil {
+					report(err)
+				}
+				if task != nil {
+					c.processTaskWithLease(ctx, store, *task, report)
+					// Receipt delivery remains ahead of restoration. Re-read the
+					// durable installation, never replay a pre-repair snapshot.
+					lastRestore = time.Time{}
+					continue
+				}
+			}
 			if !waitForTaskRetry(ctx) {
 				return
 			}
@@ -1341,6 +1362,14 @@ func waitForGateway(ctx context.Context, driver GatewayDriver) error {
 }
 
 func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration, requiredTaskIDs ...string) (*DeploymentTask, error) {
+	requiredID := ""
+	if len(requiredTaskIDs) != 0 {
+		requiredID = strings.TrimSpace(requiredTaskIDs[0])
+	}
+	return c.claimTask(ctx, store, wait, requiredID, nil)
+}
+
+func (c Client) claimTask(ctx context.Context, store *Store, wait time.Duration, requiredID string, recovery *controlplane.RecoveryScope) (*DeploymentTask, error) {
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return nil, err
@@ -1357,8 +1386,15 @@ func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Durat
 		} `json:"task"`
 	}
 	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/tasks/next?wait=" + url.QueryEscape(wait.String())
-	if len(requiredTaskIDs) != 0 && strings.TrimSpace(requiredTaskIDs[0]) != "" {
-		endpoint += "&taskId=" + url.QueryEscape(strings.TrimSpace(requiredTaskIDs[0]))
+	if requiredID != "" {
+		endpoint += "&taskId=" + url.QueryEscape(requiredID)
+	}
+	if recovery != nil {
+		if recovery.Validate() != nil || requiredID != "" {
+			return nil, errors.New("agent: invalid recovery claim scope")
+		}
+		encoded, _ := json.Marshal(recovery)
+		endpoint += "&recovery=" + url.QueryEscape(string(encoded))
 	}
 	if err := c.get(ctx, endpoint, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
 		return nil, err
@@ -1379,6 +1415,12 @@ func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Durat
 	}
 	if task.ID != response.Task.ID || task.Attempt != response.Task.Attempt || task.ID == "" || task.Attempt <= 0 {
 		return nil, errors.New("agent: encrypted task identity does not match its envelope")
+	}
+	if requiredID != "" && task.ID != requiredID {
+		return nil, errors.New("agent: Center returned a different reconciliation task")
+	}
+	if recovery != nil && !recoveryTaskAllowed(*recovery, task) {
+		return nil, errors.New("agent: Center returned a task outside the recovery scope")
 	}
 	return &task, nil
 }

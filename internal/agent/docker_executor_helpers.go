@@ -134,7 +134,7 @@ func pullDeclaredImage(ctx context.Context, docker *client.Client, task Deployme
 	}
 	if task.OfflineRestore {
 		if _, err := docker.ImageInspect(ctx, imageReference); err != nil {
-			return "", fmt.Errorf("agent: offline restore requires cached image %s: %w", imageReference, err)
+			return "", offlineImageUnavailableError{fmt.Errorf("agent: offline restore requires cached image %s: %w", imageReference, err)}
 		}
 		return imageReference, nil
 	}

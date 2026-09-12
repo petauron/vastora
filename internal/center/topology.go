@@ -13,6 +13,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
@@ -46,6 +47,7 @@ type NodeHeartbeat struct {
 	ApplicationEndpointsObserved bool
 	GatewayHealthy               bool
 	RuntimeRecovery              string
+	RuntimeRecoveryApplications  []controlplane.RecoveryApplication
 	GatewayRevision              int64
 	GatewayConfigHash            string
 	NodeListenerHealthy          bool

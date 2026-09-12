@@ -66,28 +66,29 @@ type AgentCredential struct {
 }
 
 type AgentView struct {
-	ID                    string                   `json:"id"`
-	Name                  string                   `json:"name"`
-	Version               string                   `json:"version"`
-	OperatingSystem       string                   `json:"operatingSystem"`
-	Architecture          string                   `json:"architecture"`
-	Status                string                   `json:"status"`
-	AppliedInstallations  int                      `json:"appliedInstallations"`
-	EnrolledAt            time.Time                `json:"enrolledAt"`
-	LastSeenAt            time.Time                `json:"lastSeenAt"`
-	Connected             bool                     `json:"connected"`
-	SiteID                string                   `json:"siteId"`
-	Roles                 []string                 `json:"roles"`
-	Capabilities          NodeCapabilities         `json:"capabilities"`
-	NetworkCandidates     []networking.Candidate   `json:"networkCandidates"`
-	PublicEgress          *networking.PublicEgress `json:"publicEgress,omitempty"`
-	NetworkProfile        *networking.Profile      `json:"networkProfile,omitempty"`
-	GatewayHealthy        bool                     `json:"gatewayHealthy"`
-	RuntimeRecovery       string                   `json:"runtimeRecovery,omitempty"`
-	TailscaleOwnership    string                   `json:"tailscaleOwnership"`
-	CredentialRevoked     bool                     `json:"credentialRevoked"`
-	RemoteUpdateSupported bool                     `json:"remoteUpdateSupported"`
-	Update                *AgentUpdateView         `json:"update,omitempty"`
+	ID                          string                             `json:"id"`
+	Name                        string                             `json:"name"`
+	Version                     string                             `json:"version"`
+	OperatingSystem             string                             `json:"operatingSystem"`
+	Architecture                string                             `json:"architecture"`
+	Status                      string                             `json:"status"`
+	AppliedInstallations        int                                `json:"appliedInstallations"`
+	EnrolledAt                  time.Time                          `json:"enrolledAt"`
+	LastSeenAt                  time.Time                          `json:"lastSeenAt"`
+	Connected                   bool                               `json:"connected"`
+	SiteID                      string                             `json:"siteId"`
+	Roles                       []string                           `json:"roles"`
+	Capabilities                NodeCapabilities                   `json:"capabilities"`
+	NetworkCandidates           []networking.Candidate             `json:"networkCandidates"`
+	PublicEgress                *networking.PublicEgress           `json:"publicEgress,omitempty"`
+	NetworkProfile              *networking.Profile                `json:"networkProfile,omitempty"`
+	GatewayHealthy              bool                               `json:"gatewayHealthy"`
+	RuntimeRecovery             string                             `json:"runtimeRecovery,omitempty"`
+	RuntimeRecoveryApplications []controlplane.RecoveryApplication `json:"runtimeRecoveryApplications,omitempty"`
+	TailscaleOwnership          string                             `json:"tailscaleOwnership"`
+	CredentialRevoked           bool                               `json:"credentialRevoked"`
+	RemoteUpdateSupported       bool                               `json:"remoteUpdateSupported"`
+	Update                      *AgentUpdateView                   `json:"update,omitempty"`
 }
 
 func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
@@ -569,10 +570,13 @@ func (s *Store) RevokeAgentCredential(ctx context.Context, agentID string) error
 func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string, heartbeat NodeHeartbeat) error {
 	switch heartbeat.RuntimeRecovery {
 	case "":
-	case "pending", "reconciliation", "application", "gateway", "listener":
+	case "pending", "reconciliation", "application", "landing", "gateway", "listener":
 		heartbeat.GatewayHealthy, heartbeat.NodeListenerHealthy = false, false
 	default:
 		return errors.New("center: Agent reported an invalid recovery state")
+	}
+	if len(heartbeat.RuntimeRecoveryApplications) != 0 && (heartbeat.RuntimeRecovery != "application" || (controlplane.RecoveryScope{Stage: heartbeat.RuntimeRecovery, Applications: heartbeat.RuntimeRecoveryApplications}).Validate() != nil) {
+		return errors.New("center: Agent reported invalid recovery applications")
 	}
 	if len(heartbeat.PublicKey) != 0 && controlplane.ValidatePublicKey(heartbeat.PublicKey) != nil {
 		return errors.New("center: Agent heartbeat requires its X25519 public key")
@@ -684,6 +688,9 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET x25519_public_key = CASE WHEN length(x25519_public_key) = 0 THEN ? ELSE x25519_public_key END, version = ?, applied_installations = ?, roles_json = ?, capabilities_json = ?, gateway_healthy = ?, runtime_recovery = ?, runtime_generation = ?, remote_update_supported = ?, tailscale_ownership = ?, last_seen_at = ?, public_egress_address = CASE WHEN ? THEN ? ELSE public_egress_address END, public_egress_bind_address = CASE WHEN ? THEN ? ELSE public_egress_bind_address END, public_egress_mode = CASE WHEN ? THEN ? ELSE public_egress_mode END, public_egress_observed_at = CASE WHEN ? THEN ? ELSE public_egress_observed_at END WHERE id = ?`, heartbeat.PublicKey, strings.TrimSpace(heartbeat.Version), heartbeat.AppliedInstallations, rolesJSON, capabilitiesJSON, heartbeat.GatewayHealthy, heartbeat.RuntimeRecovery, heartbeat.ApplicationRuntimeGeneration, heartbeat.RemoteUpdateSupported, heartbeat.TailscaleOwnership, now.Format(time.RFC3339Nano), replacePublicEgress, publicEgress.Address, replacePublicEgress, publicEgress.BindAddress, replacePublicEgress, publicEgress.Mode, replacePublicEgress, publicEgressObservedAt, id); err != nil {
 		return fmt.Errorf("center: record agent heartbeat: %w", err)
+	}
+	if err := saveRuntimeRecoveryApplications(ctx, tx, id, heartbeat.RuntimeRecoveryApplications); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_network_candidates WHERE agent_id = ?`, id); err != nil {
 		return fmt.Errorf("center: replace Agent network candidates: %w", err)
@@ -990,7 +997,7 @@ func normalizeAgentPublicEgress(value *networking.PublicEgress, candidates []net
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, runtime_recovery, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at, remote_update_supported FROM agents ORDER BY status, name, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, version, operating_system, architecture, status, applied_installations, enrolled_at, last_seen_at, site_id, roles_json, capabilities_json, gateway_healthy, runtime_recovery, tailscale_ownership, credential_revoked_at <> '', public_egress_address, public_egress_bind_address, public_egress_mode, public_egress_observed_at, remote_update_supported, COALESCE((SELECT value FROM settings WHERE key='agent_runtime_recovery:'||agents.id),'[]') FROM agents ORDER BY status, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("center: list agents: %w", err)
 	}
@@ -999,9 +1006,13 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 		var agent AgentView
 		var enrolledAt, lastSeenAt, publicAddress, publicBindAddress, publicMode, publicObservedAt string
 		var rolesJSON, capabilitiesJSON []byte
+		var recoveryJSON string
 		var gatewayHealthy int
-		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.RuntimeRecovery, &agent.TailscaleOwnership, &agent.CredentialRevoked, &publicAddress, &publicBindAddress, &publicMode, &publicObservedAt, &agent.RemoteUpdateSupported); err != nil {
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.Version, &agent.OperatingSystem, &agent.Architecture, &agent.Status, &agent.AppliedInstallations, &enrolledAt, &lastSeenAt, &agent.SiteID, &rolesJSON, &capabilitiesJSON, &gatewayHealthy, &agent.RuntimeRecovery, &agent.TailscaleOwnership, &agent.CredentialRevoked, &publicAddress, &publicBindAddress, &publicMode, &publicObservedAt, &agent.RemoteUpdateSupported, &recoveryJSON); err != nil {
 			return nil, fmt.Errorf("center: scan agent: %w", err)
+		}
+		if json.Unmarshal([]byte(recoveryJSON), &agent.RuntimeRecoveryApplications) != nil {
+			return nil, errors.New("center: invalid saved recovery applications")
 		}
 		var err error
 		agent.EnrolledAt, err = time.Parse(time.RFC3339Nano, enrolledAt)

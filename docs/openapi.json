@@ -5973,6 +5973,24 @@
                   "runtimeRecovery": {
                     "type": "string"
                   },
+                  "runtimeRecoveryApplications": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "appKey": {
+                          "type": "string"
+                        },
+                        "applicationId": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
                   "gatewayRevision": {
                     "type": "integer"
                   },
@@ -6184,6 +6202,14 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "recovery",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {

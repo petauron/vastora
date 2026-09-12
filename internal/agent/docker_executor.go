@@ -280,7 +280,7 @@ func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
 		if installation.AppKey == threeXUIKey {
 			state, err := store.landingRuntime(ctx)
 			if err != nil {
-				failures = append(failures, err)
+				failures = append(failures, recoveryFailure(installation, "restore_failed", err))
 				continue
 			}
 			if state != nil && state.Route != nil {
@@ -297,21 +297,21 @@ func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
 			ApplicationRole: installation.ApplicationRole, OfflineRestore: true,
 		}
 		if installation.Manifest.ID == "" {
-			failures = append(failures, fmt.Errorf("agent: legacy %s state cannot be restored offline; reconcile it with Center", installation.AppKey))
+			failures = append(failures, recoveryFailure(installation, "state_incomplete", fmt.Errorf("agent: legacy %s state cannot be restored offline; reconcile it with Center", installation.AppKey)))
 			continue
 		}
 		if strings.TrimSpace(installation.ApplicationID) == "" {
-			failures = append(failures, fmt.Errorf("agent: %s state has no proven application ownership; reconcile it with Center", installation.AppKey))
+			failures = append(failures, recoveryFailure(installation, "state_incomplete", fmt.Errorf("agent: %s state has no proven application ownership; reconcile it with Center", installation.AppKey)))
 			continue
 		}
 		if installation.AppKey == komariKey {
 			restorer, ok := e.Host.(HostApplicationRestorer)
 			if !ok {
-				failures = append(failures, errors.New("agent: host application recovery capability is not configured"))
+				failures = append(failures, recoveryFailure(installation, "restore_failed", errors.New("agent: host application recovery capability is not configured")))
 				continue
 			}
 			if err := restorer.RestoreKomari(ctx, task); err != nil {
-				failures = append(failures, fmt.Errorf("agent: restore %s: %w", installation.AppKey, err))
+				failures = append(failures, recoveryFailure(installation, "restore_failed", fmt.Errorf("agent: restore %s: %w", installation.AppKey, err)))
 			}
 			continue
 		}
@@ -320,22 +320,22 @@ func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
 				RestorePulse(context.Context, DeploymentTask) error
 			})
 			if !ok {
-				failures = append(failures, errors.New("agent: Pulse recovery capability is not configured"))
+				failures = append(failures, recoveryFailure(installation, "restore_failed", errors.New("agent: Pulse recovery capability is not configured")))
 				continue
 			}
 			if err := restorer.RestorePulse(ctx, task); err != nil {
-				failures = append(failures, err)
+				failures = append(failures, recoveryFailure(installation, "restore_failed", err))
 			}
 			continue
 		}
 		containerName, ok := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer, pulse.ServiceKey: pulseContainer}[installation.AppKey]
 		if !ok {
-			failures = append(failures, fmt.Errorf("agent: persisted application %s is unsupported", installation.AppKey))
+			failures = append(failures, recoveryFailure(installation, "restore_failed", fmt.Errorf("agent: persisted application %s is unsupported", installation.AppKey)))
 			continue
 		}
 		running, err := e.containerMatchesInstallation(ctx, containerName, installation)
 		if err != nil {
-			failures = append(failures, err)
+			failures = append(failures, recoveryFailure(installation, "restore_failed", err))
 			continue
 		}
 		if running {
@@ -344,12 +344,12 @@ func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
 				bindAddress = installation.ServiceAddress
 			}
 			if _, err := reportedServices(ctx, task, bindAddress); err != nil {
-				failures = append(failures, fmt.Errorf("agent: verify restored %s health: %w", installation.AppKey, err))
+				failures = append(failures, recoveryFailure(installation, "health_check_failed", fmt.Errorf("agent: verify restored %s health: %w", installation.AppKey, err)))
 			}
 			continue
 		}
 		if _, err := e.Deploy(ctx, task); err != nil {
-			failures = append(failures, fmt.Errorf("agent: restore %s: %w", installation.AppKey, err))
+			failures = append(failures, recoveryFailure(installation, "restore_failed", fmt.Errorf("agent: restore %s: %w", installation.AppKey, err)))
 		}
 	}
 	return errors.Join(failures...)

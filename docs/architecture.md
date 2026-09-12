@@ -458,10 +458,44 @@ keys, short IDs, clients, and subscription identity are unchanged.
 
 ## Offline and backup boundaries
 
-Agent persists the last successfully applied Site Gateway and node-listener
-states and restores them before contacting Center. Existing containers, Caddy
-routes, and connectors continue while Center is unavailable; only desired-state
-changes pause.
+Agent persists the last successfully applied applications, Site Gateway and
+node-listener states. Management heartbeats remain reachable during restoration;
+normal desired-state tasks wait until restoration succeeds. Existing containers,
+Caddy routes, and connectors continue while Center is unavailable. Offline
+restoration never downloads missing images.
+
+If application restoration cannot converge, the same serialized task loop can
+claim existing typed deployment repairs for the identified failed applications.
+The authenticated `tasks/next` request carries a bounded JSON `recovery` scope
+(`stage` plus `applications`); it is mutually exclusive with exact `taskId`
+reconciliation. Center filters before claiming a lease, and Agent validates the
+decrypted task against its local scope. Only install/configure/upgrade/uninstall
+of a failed app key and its known application identity are eligible; unrelated
+installs, ordinary application commands, publications and Agent self-updates are
+not. Runtime-generation-incompatible tasks cannot block the repair queue.
+The typed executors retain their image, private binding and resource ownership
+checks. A missing local application ID does not authorize adoption of resources
+with missing or conflicting Docker ownership labels.
+
+Recovery also permits an already queued landing-proxy disable intent, and an
+empty node-listener state when that listener is the failed stage. These retain
+their existing rollback checkpoints and monotonic revisions. Gateway recovery
+does not permit a separate component stop: its live cached driver state requires
+operator reconciliation. A damaged landing checkpoint or unreachable panel that
+prevents safe landing restoration likewise remains fenced, rather than clearing
+its route or network guard.
+
+Task completion outboxes and exact-ID unresolved receipts remain ahead of repair
+claims. After a repair is durably recorded/acknowledged, restoration re-reads the
+current persisted state; no old restore runs concurrently or replays a captured
+pre-repair snapshot. Only complete restoration clears the data-plane readiness
+fence. Heartbeats expose the failed application identity and fixed reason code
+(`state_incomplete`, `image_unavailable`, `health_check_failed`, `restore_failed`),
+never raw runtime errors. These diagnostics are stored transactionally with the
+heartbeat in agent-scoped settings and removed on recovery or Agent deletion.
+Encrypted state that cannot be read, unknown app identities and legacy unresolved
+receipts still require explicit operator intervention; no guessed repair scope
+is accepted.
 
 Remote Agent updates stop the Agent and publish a protected, integrity-checked
 copy of `agent.db` and `agent.key` before installing the candidate executable.
