@@ -201,6 +201,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/disable", s.requireAuth(true, s.handleDisableAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.requireAuth(true, s.handleDeleteAgent))
 	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", s.requireAuth(true, s.handleRevokeAgentCredential))
+	mux.HandleFunc("POST /api/v1/agents/{id}/remove", s.requireAuth(true, s.handleRemoveOfflineAgent))
 	mux.HandleFunc("PUT /api/v1/agents/{id}/network-profile", s.requireAuth(true, s.handleConfirmNetworkProfile))
 	mux.HandleFunc("POST /api/v1/agents/enroll", s.handleEnrollAgent)
 	mux.HandleFunc("POST /api/v1/agents/{id}/heartbeat", s.handleAgentHeartbeat)
@@ -385,6 +386,14 @@ func writeError(writer http.ResponseWriter, status int, err error) {
 // operational diagnostics remain on the authenticated diagnostic/task surfaces.
 func publicErrorMessage(code string) string {
 	switch code {
+	case "node_remove_online":
+		return "The node is online. Permanent removal is only available for offline nodes."
+	case "node_remove_confirmation":
+		return "The node name does not match."
+	case "node_remove_shared":
+		return "This node provides a shared service. Move its subscription controller, landing service or access entry before removing it."
+	case "node_disable_in_use":
+		return "This node still has apps or access entries. For an expired offline node, use permanent removal."
 	case "protocols_need_own_exit":
 		return "Switch to the node's own exit before adding HY2, then select the landing server again."
 	case "protocols_need_domain":
@@ -433,6 +442,18 @@ func errorCode(status int, message string) string {
 	}
 	normalized := strings.ToLower(message)
 	switch {
+	case message == errNodeRemovalOnline.Error():
+		return "node_remove_online"
+	case message == errNodeRemovalName.Error():
+		return "node_remove_confirmation"
+	case message == errNodeRemovalShared.Error():
+		return "node_remove_shared"
+	case normalized == "center: uninstall active applications before disabling this node",
+		normalized == "center: remove this node as a site gateway before disabling it",
+		normalized == "center: stop publications using this node before disabling it",
+		normalized == "center: wait for active node tasks before disabling it",
+		normalized == "center: stop the cloudflare tunnel connector before disabling this node":
+		return "node_disable_in_use"
 	case normalized == "center: switch to the node's own exit before adding hy2, then select the landing server again":
 		return "protocols_need_own_exit"
 	case normalized == "center: configure the node public domain before changing protocols":

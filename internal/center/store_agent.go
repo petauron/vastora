@@ -89,6 +89,12 @@ type AgentView struct {
 	CredentialRevoked           bool                               `json:"credentialRevoked"`
 	RemoteUpdateSupported       bool                               `json:"remoteUpdateSupported"`
 	Update                      *AgentUpdateView                   `json:"update,omitempty"`
+	Removal                     *AgentRemovalView                  `json:"removal,omitempty"`
+}
+
+type AgentRemovalView struct {
+	State  string `json:"state"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func (s *Store) CreateAgentEnrollment(ctx context.Context, spec AgentEnrollmentSpec) (AgentEnrollment, error) {
@@ -690,7 +696,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 	publicationCleanups := []publicationCleanup{}
 	var previousRuntimeGeneration int
 	var storedPublicKey []byte
-	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, x25519_public_key FROM agents WHERE id = ?`, id).Scan(&previousRuntimeGeneration, &storedPublicKey); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT runtime_generation, x25519_public_key FROM agents WHERE id = ? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, id, tokenHash(credential)).Scan(&previousRuntimeGeneration, &storedPublicKey); err != nil {
 		return fmt.Errorf("center: read Agent runtime generation: %w", err)
 	}
 	if len(storedPublicKey) == 0 && len(heartbeat.PublicKey) == 0 {
@@ -1078,6 +1084,36 @@ func (s *Store) ListAgents(ctx context.Context) ([]AgentView, error) {
 	for index := range agents {
 		byID[agents[index].ID] = index
 		agents[index].NetworkCandidates = []networking.Candidate{}
+	}
+	removalRows, err := s.db.QueryContext(ctx, `SELECT agent_id,state,last_error FROM agent_removals`)
+	if err != nil {
+		return nil, err
+	}
+	for removalRows.Next() {
+		var id, state, message string
+		if err := removalRows.Scan(&id, &state, &message); err != nil {
+			removalRows.Close()
+			return nil, err
+		}
+		if index, ok := byID[id]; ok {
+			view := &AgentRemovalView{State: state}
+			if state == "failed" {
+				switch message {
+				case errNodeRemovalShared.Error():
+					view.Reason = "shared_service"
+				case errNodeRemovalControllerOffline.Error():
+					view.Reason = "controller_unavailable"
+				default:
+					view.Reason = "cleanup_failed"
+				}
+			}
+			agents[index].Removal = view
+		}
+	}
+	removalErr := removalRows.Err()
+	removalRows.Close()
+	if removalErr != nil {
+		return nil, removalErr
 	}
 	updateRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.agent_id, u.target_version, u.state, u.last_error, u.updated_at
 		FROM agent_updates u WHERE u.rowid = (SELECT latest.rowid FROM agent_updates latest WHERE latest.agent_id = u.agent_id ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)`)

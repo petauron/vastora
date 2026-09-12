@@ -212,6 +212,9 @@ func runCenter(arguments []string) error {
 		go store.RunPublicationCleanup(maintenanceContext, time.Minute, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center publication cleanup: %v\n", err)
 		})
+		go store.RunAgentRemovals(maintenanceContext, func(err error) {
+			fmt.Fprintf(os.Stderr, "Center node removal: %v\n", err)
+		})
 		go store.RunCertificateRenewal(maintenanceContext, 12*time.Hour, func(err error) {
 			fmt.Fprintf(os.Stderr, "Center private HTTPS renewal: %v\n", err)
 		})

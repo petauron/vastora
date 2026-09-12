@@ -111,6 +111,13 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
+	var authorized int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id=? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, agentID, tokenHash(credential)).Scan(&authorized); err != nil {
+		return nil, err
+	}
+	if authorized != 1 {
+		return nil, errors.New("center: invalid Agent credential")
+	}
 	// Self-update repairs the management process, not application state. It
 	// remains available inside a runtime recovery scope, but never overtakes
 	// an exact interrupted-task reconciliation.

@@ -31,6 +31,13 @@ func (s *Store) ensureCloudflareTunnel(ctx context.Context, agentID string) erro
 	s.cloudflareTunnelMu.Lock()
 	defer s.cloudflareTunnelMu.Unlock()
 
+	var active int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id=? AND status='active'`, agentID).Scan(&active); err != nil {
+		return err
+	}
+	if active != 1 {
+		return errors.New("center: agent not found")
+	}
 	var existing int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cloudflare_tunnels WHERE agent_id = ?`, agentID).Scan(&existing); err != nil {
 		return err
@@ -361,6 +368,11 @@ func (client cloudflareClient) reconcileOwnedTunnel(ctx context.Context, operati
 }
 
 func cloudflareTunnelTokenMatches(token, accountID, tunnelID, secret string) bool {
+	account, tunnel, key, ok := cloudflareTunnelTokenIdentity(token)
+	return ok && account == accountID && tunnel == tunnelID && subtle.ConstantTimeCompare([]byte(key), []byte(secret)) == 1
+}
+
+func cloudflareTunnelTokenIdentity(token string) (account, tunnel, key string, ok bool) {
 	encoded := strings.TrimSpace(token)
 	var decoded []byte
 	var err error
@@ -371,7 +383,7 @@ func cloudflareTunnelTokenMatches(token, accountID, tunnelID, secret string) boo
 		}
 	}
 	if err != nil {
-		return false
+		return "", "", "", false
 	}
 	var claims struct {
 		AccountID string `json:"a"`
@@ -379,7 +391,7 @@ func cloudflareTunnelTokenMatches(token, accountID, tunnelID, secret string) boo
 		Secret    string `json:"s"`
 	}
 	if json.Unmarshal(decoded, &claims) != nil {
-		return false
+		return "", "", "", false
 	}
-	return claims.AccountID == accountID && claims.TunnelID == tunnelID && subtle.ConstantTimeCompare([]byte(claims.Secret), []byte(secret)) == 1
+	return claims.AccountID, claims.TunnelID, claims.Secret, claims.AccountID != "" && claims.TunnelID != "" && claims.Secret != ""
 }

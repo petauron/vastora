@@ -305,6 +305,7 @@ export type AgentView = {
   tailscaleOwnership?: "managed" | "external" | "";
   remoteUpdateSupported: boolean;
   update?: AgentUpdate;
+  removal?: { state: "pending" | "failed"; reason?: "shared_service" | "controller_unavailable" | "cleanup_failed" };
 };
 
 export type AgentUpdate = {

@@ -121,6 +121,7 @@ export const api = {
 	startAgentUpdate: (agentId: string) => request<AgentUpdate>(`/api/v1/agents/${encodeURIComponent(agentId)}/updates`, { method: "POST", body: "{}" }),
 	disableAgent: (agentId: string) => request<{ disabled: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/disable`, { method: "POST", body: "{}" }),
 	revokeAgentCredential: (agentId: string) => request<{ revoked: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/revoke`, { method: "POST", body: "{}" }),
+	removeOfflineAgent: (agentId: string, confirmation: string) => request<{ removing: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/remove`, { method: "POST", body: JSON.stringify({ confirmation }) }),
 	deleteAgent: (agentId: string) => request<{ deleted: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
 	applications: (signal?: AbortSignal) => request<{ applications: Application[] }>("/api/v1/applications", { signal }),
 	revealApplicationCredentials: (applicationId: string, currentPassword: string) => request<ApplicationCredentials>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/reveal`, { method: "POST", body: JSON.stringify({ currentPassword }) }),

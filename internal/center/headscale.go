@@ -782,8 +782,13 @@ func headscaleRequestURL(path string, query url.Values) (string, error) {
 		fixedURL = headscalePinnedRequestOrigin + "/api/v1/user"
 	case "/api/v1/preauthkey":
 		fixedURL = headscalePinnedRequestOrigin + "/api/v1/preauthkey"
+	case "/api/v1/node":
+		fixedURL = headscalePinnedRequestOrigin + "/api/v1/node"
 	default:
-		return "", errors.New("center: Headscale API path is invalid")
+		if !validHeadscaleNodePath(path) {
+			return "", errors.New("center: Headscale API path is invalid")
+		}
+		fixedURL = headscalePinnedRequestOrigin + path
 	}
 	target, err := url.Parse(fixedURL)
 	if err != nil {
