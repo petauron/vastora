@@ -42,8 +42,6 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 		`DELETE FROM landing_proxy_states WHERE landing_node_id=? AND status='stopped'`,
 		`DELETE FROM three_x_ui_client_accounts WHERE controller_id IN(SELECT id FROM applications WHERE node_id=?)`,
 		`DELETE FROM application_commands WHERE gateway_node_id=? AND state NOT IN('pending','running') AND reconciliation_required=0`,
-		`DELETE FROM node_listener_migration_cutovers WHERE legacy_gateway_id=? OR replacement_node_id=?`,
-		`DELETE FROM tunnel_connector_migration_cutovers WHERE legacy_gateway_id=?`,
 		`DELETE FROM publications WHERE entry_node_id=? AND status='stopped' AND cleanup_pending=0`,
 		`DELETE FROM applications WHERE node_id=?`,
 		`DELETE FROM cloudflare_tunnel_operations WHERE agent_id=?`,
