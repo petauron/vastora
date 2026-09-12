@@ -82,8 +82,8 @@ jobs:
           CATALOG_BIN: ${{ runner.temp }}/catalog-bin
           CATALOG_WORK: ${{ runner.temp }}/catalog-publication
           CATALOG_KEY_DIRECTORY: ${{ runner.temp }}/catalog-signers
-          AWS_ACCESS_KEY_ID: ${{ secrets.CATALOG_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.CATALOG_R2_SECRET_ACCESS_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
           AWS_EC2_METADATA_DISABLED: 'true'
           R2_BUCKET_NAME: ${{ vars.CATALOG_R2_BUCKET_NAME }}

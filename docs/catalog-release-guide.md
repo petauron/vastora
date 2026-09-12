@@ -24,7 +24,7 @@ separately and pass `--official-catalog-root`; no initial trust is fetched from 
 ## Catalog release checklist
 
 Distribution base: `https://downloads.petauron.com/vastora/catalog/`.
-Objects belong under `vastora/catalog/` in the existing download bucket; do not
+Objects belong under `vastora/catalog/` in the existing `petauron-downloads` bucket; do not
 replace the bucket's other project or installer objects. The mutable pointer is
 `vastora/catalog/timestamp.json`, not a file at the bucket root. This path choice
 does not provision the signing environment or upload the first publication.
@@ -52,9 +52,9 @@ conditions in its [S3 API compatibility reference](https://developers.cloudflare
 7. Refresh a Center without changing its program version. Check the new catalog
    revision and explicitly install or upgrade the selected application.
 
-The hosting path is selected; initial root provisioning and the production
-publication environment are not yet configured by this change. Do not describe the catalog
-as live until those steps and the end-to-end publication check have succeeded.
+The approved initial public root is checked in, and the protected publication
+environment uses the existing online role keys. Do not describe the catalog as
+live until the end-to-end publication check has succeeded.
 See [distribution design](official-catalog-distribution.md) for the current
 implementation checklist and trust limitations.
 
@@ -77,13 +77,15 @@ configuration and fails closed if it cannot read/confirm it. Operator setup:
   the signer verifies authorization against the reviewed root. No root role is
   accepted by this interface. Keys are materialized only in a temporary private
   directory and removed at job exit; none enter artifacts or command output.
-- Environment secrets `CATALOG_R2_ACCESS_KEY_ID` and
-  `CATALOG_R2_SECRET_ACCESS_KEY`: dedicated object read/write credentials scoped
-  as narrowly as R2 permits to the existing download bucket, not account-admin
-  credentials. The script only writes `vastora/catalog/`; this is not a claim
-  that R2 credentials themselves enforce a per-prefix boundary.
+- Organization secrets `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`, already
+  granted to this repository, are reused with operator approval. These credentials
+  are shared with other project releases, not dedicated catalog credentials.
+  The publisher receives them only after the protected deployment is approved
+  and writes only `vastora/catalog/`; this is not a claim that the credentials
+  themselves enforce a per-prefix boundary. Do not broaden their existing scope
+  or copy them into repository files or logs.
 - Environment variables `CATALOG_R2_BUCKET_NAME` (the existing `download`
-  bucket) and `CATALOG_CLOUDFLARE_ACCOUNT_ID`.
+  domain's bucket, `petauron-downloads`) and `CATALOG_CLOUDFLARE_ACCOUNT_ID`.
 
 The GitHub record is `catalog-r<N>`, explicitly a prerelease and never marked
 Latest. Before any R2 write, its draft asset `catalog-publication.json` retains

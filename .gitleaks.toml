@@ -9,3 +9,10 @@ paths = ['''^\.vastora/''']
 description = "Cloudflare OAuth public client identifier"
 paths = ['''^internal/center/cloudflare_oauth\.go$''']
 regexes = ['''565bf36df0a8deb0fde1bd27367a44bd''']
+
+[[allowlists]]
+description = "Reviewed public TUF root identifier, not a signing private key"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^catalog/trust/README\.md$''']
+regexes = ['''^e7892d2fba95f7f7cb9aa9cb62b9b8ebae0b993409d3a5485a2b38d9319ab0e4$''']
