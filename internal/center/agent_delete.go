@@ -33,6 +33,7 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 		return errors.New("center: node still in use")
 	}
 	for _, query := range []string{
+		`SELECT COUNT(*) FROM agent_removals WHERE agent_id=?`,
 		`SELECT COUNT(*) FROM applications WHERE node_id=? AND status<>'stopped'`,
 		`SELECT COUNT(*) FROM publications WHERE entry_node_id=? AND (status<>'stopped' OR cleanup_pending=1)`,
 		`SELECT COUNT(*) FROM publications p JOIN services s ON s.id=p.service_id JOIN applications a ON a.id=s.application_id WHERE a.node_id=? AND (p.status<>'stopped' OR p.cleanup_pending=1)`,

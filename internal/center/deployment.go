@@ -362,6 +362,14 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	defer tx.Rollback()
+	// Recheck under the write transaction: an offline node may have been
+	// permanently retired while catalog/configuration preparation was running.
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id=? AND status='active'`, request.AgentID).Scan(&exists); err != nil {
+		return DeploymentView{}, err
+	}
+	if exists == 0 {
+		return DeploymentView{}, errors.New("center: agent not found")
+	}
 	if strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") && (request.Operation == "install" || request.Operation == "upgrade") {
 		if err := authorizeOfficialManifest(ctx, tx, "stable", manifest, s.now().UTC()); err != nil {
 			return DeploymentView{}, err

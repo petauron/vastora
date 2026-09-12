@@ -27,6 +27,10 @@ export function userError(language: Language, error: unknown) {
   if (code === "protocols_need_domain") return copy(language, "请先配置节点的公网地址，再修改协议。", "Set up the node's public address before changing protocols.");
   if (code === "protocols_domain_in_use") return copy(language, "HY2 正在使用这个地址，请先关闭 HY2 再移除。", "Disable HY2 before removing its public address.");
   if (code === "node_operation_busy") return copy(language, "请等待当前节点操作完成后再试。", "Wait for the current node operation to finish.");
+  if (code === "node_remove_online") return copy(language, "节点已上线。永久移除仅用于不再使用的离线节点。", "The node is online. Permanent removal is only for retired offline nodes.");
+  if (code === "node_remove_confirmation") return copy(language, "节点名称不一致，请核对后重试。", "The node name does not match. Check it and try again.");
+  if (code === "node_remove_shared") return copy(language, "这个节点仍提供共享服务，请先更换订阅主机、落地机或访问入口，再移除节点。", "This node provides a shared service. Move its subscription controller, landing service or access entry before removing it.");
+  if (code === "node_disable_in_use") return copy(language, "节点仍有关联应用或入口。如果已到期且不再使用，请选择“永久移除”。", "This node still has apps or access entries. For an expired node, choose Permanently remove.");
   if (code === "node_delete_requires_disabled") {
     return copy(language, "请先停用节点，再删除。", "Disable the node before deleting it.");
   }
@@ -94,9 +98,11 @@ export function PageHeading({ title, description, action }: { title: string; des
 
 export function StateBadge({ value, language = document.documentElement.lang === "zh-CN" ? "zh-CN" : "en" }: { value: string; language?: Language }) {
   const good = ["ready", "running", "succeeded", "configured", "connected", "active", "healthy"].includes(value);
-  const bad = ["failed", "degraded", "offline", "lease_expired", "recovery", "expired"].includes(value);
+  const bad = ["failed", "degraded", "offline", "lease_expired", "recovery", "expired", "removal_failed"].includes(value);
   const Icon = value === "access_stopped" ? UnplugIcon : good ? CircleCheckIcon : bad ? CircleAlertIcon : Clock3Icon;
   const labels: Record<string, [string, string]> = {
+    removing: ["正在移除", "Removing"],
+    removal_failed: ["移除未完成", "Removal incomplete"],
     access_stopped: ["已停止接入", "Access stopped"],
     expired: ["需刷新", "Refresh required"],
     ready: ["就绪", "Ready"], running: ["运行中", "Running"], succeeded: ["成功", "Succeeded"], configured: ["已配置", "Configured"], connected: ["已连接", "Connected"], active: ["正常", "Active"], healthy: ["健康", "Healthy"], stale: ["使用缓存", "Using cache"],
