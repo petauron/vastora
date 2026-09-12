@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
@@ -138,6 +139,8 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
+	clock := store.now().UTC()
+	store.now = func() time.Time { return clock }
 	first := enrollOrchestrationNode(t, store, "rollout-a", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.96", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.96", LANAddress: "10.0.0.96", EnabledKinds: []string{networking.KindLAN}})
 	second := enrollOrchestrationNode(t, store, "rollout-b", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.97", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.97", LANAddress: "10.0.0.97", EnabledKinds: []string{networking.KindLAN}})
 	heartbeatAgentUpdateVersion(t, store, first, "0.1.0-alpha.88", true)
@@ -164,6 +167,12 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	}
 	if status.Total != 2 || status.Updated != 0 || status.Updating != 2 || status.Pending != 0 {
 		t.Fatalf("unexpected rollout status: %#v", status)
+	}
+	clock = clock.Add(agentConnectedMaxAge)
+	heartbeatAgentUpdateVersion(t, store, second, "0.1.0-alpha.88", true)
+	status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
+	if err != nil || status.Total != 2 || status.Updating != 1 || status.Offline != 1 {
+		t.Fatalf("offline Agent obscured the remaining online update: %#v, %v", status, err)
 	}
 }
 
@@ -193,6 +202,110 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	}
 	if status.Failed != 1 || status.Pending != 0 || status.Updating != 0 {
 		t.Fatalf("unexpected failed rollout status: %#v", status)
+	}
+}
+
+func TestAgentUpdateRolloutSkipsOfflineAgentsUntilReconnect(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	clock := store.now().UTC()
+	store.now = func() time.Time { return clock }
+	node := enrollOrchestrationNode(t, store, "offline-update-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.95", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.95", LANAddress: "10.0.0.95", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+	clock = clock.Add(agentConnectedMaxAge)
+
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 0 {
+		t.Fatalf("offline Agent was queued automatically: %v, %v", queued, err)
+	}
+	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89"); err == nil || !strings.Contains(err.Error(), "must be online") {
+		t.Fatalf("offline Agent accepted a manual update: %v", err)
+	}
+	status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
+	if err != nil || status.Total != 1 || status.Offline != 1 || status.Updating != 0 || status.Pending != 0 {
+		t.Fatalf("offline rollout status = %#v, %v", status, err)
+	}
+
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 1 || queued[0] != node.ID {
+		t.Fatalf("reconnected Agent was not queued: %v, %v", queued, err)
+	}
+}
+
+func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
+	for _, state := range []string{"pending", "running", "installing"} {
+		t.Run(state, func(t *testing.T) {
+			store := openOrchestrationStore(t)
+			defer store.Close()
+			ctx := context.Background()
+			clock := store.now().UTC()
+			store.now = func() time.Time { return clock }
+			node := enrollOrchestrationNode(t, store, "interrupted-update-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.96", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.96", LANAddress: "10.0.0.96", EnabledKinds: []string{networking.KindLAN}})
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+			queued, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var task *AgentTask
+			if state != "pending" {
+				task, err = store.ClaimNextTask(ctx, node.ID, node.Credential)
+				if err != nil || task == nil || task.ID != queued.ID {
+					t.Fatalf("claim update: %#v, %v", task, err)
+				}
+			}
+			if state == "installing" {
+				if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+					t.Fatal(err)
+				}
+			}
+			status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
+			if err != nil || status.Updating != 1 || status.Offline != 0 {
+				t.Fatalf("online update status = %#v, %v", status, err)
+			}
+
+			clock = clock.Add(agentConnectedMaxAge)
+			status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
+			if err != nil || status.Total != 1 || status.Offline != 1 || status.Updating != 0 || status.Updated != 0 || status.Failed != 0 || status.Pending != 0 {
+				t.Fatalf("offline update kept rollout busy: %#v, %v", status, err)
+			}
+			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(nodes) != 0 {
+				t.Fatalf("offline update was queued again: %v, %v", nodes, err)
+			}
+			var persistedState string
+			if err := store.db.QueryRowContext(ctx, `SELECT state FROM agent_updates WHERE id = ?`, queued.ID).Scan(&persistedState); err != nil || persistedState != state {
+				t.Fatalf("offline status changed durable task: state=%q err=%v", persistedState, err)
+			}
+
+			clock = clock.Add(taskLeaseDuration)
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+			status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
+			if err != nil || status.Updating != 1 || status.Offline != 0 {
+				t.Fatalf("reconnected update status = %#v, %v", status, err)
+			}
+			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(nodes) != 0 {
+				t.Fatalf("reconnect duplicated the durable update: %v, %v", nodes, err)
+			}
+			if state != "installing" {
+				task, err = store.ClaimNextTask(ctx, node.ID, node.Credential)
+				if err != nil || task == nil || task.ID != queued.ID {
+					t.Fatalf("resume update: %#v, %v", task, err)
+				}
+				if state == "running" && task.Attempt != 2 {
+					t.Fatalf("expired download attempt was not reclaimed: %#v", task)
+				}
+			}
+			if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+				t.Fatal(err)
+			}
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.89", true)
+			if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
+				t.Fatal(err)
+			}
+			status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
+			if err != nil || status.Updated != 1 || status.Updating != 0 || status.Offline != 0 {
+				t.Fatalf("reconnected update did not complete: %#v, %v", status, err)
+			}
+		})
 	}
 }
 
