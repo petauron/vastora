@@ -292,7 +292,12 @@ export type AgentView = {
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
   gatewayHealthy: boolean;
-  runtimeRecovery?: "pending" | "reconciliation" | "application" | "gateway" | "listener";
+  runtimeRecovery?: "pending" | "reconciliation" | "landing" | "application" | "gateway" | "listener";
+  runtimeRecoveryApplications?: Array<{
+    appKey: string;
+    applicationId?: string;
+    reason: "state_incomplete" | "image_unavailable" | "health_check_failed" | "restore_failed";
+  }>;
   tailscaleOwnership?: "managed" | "external" | "";
   remoteUpdateSupported: boolean;
   update?: AgentUpdate;
