@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.126](https://github.com/petauron/vastora/compare/v0.1.0-alpha.125...v0.1.0-alpha.126) (2026-09-12)
+
+
+### Features
+
+* **nodes:** 永久移除到期离线节点及关联记录 ([#419](https://github.com/petauron/vastora/issues/419)) ([1a31b5a](https://github.com/petauron/vastora/commit/1a31b5a1d1be11916704d350e50170b6d8a96a7a))
+
 ## [0.1.0-alpha.125](https://github.com/petauron/vastora/compare/v0.1.0-alpha.124...v0.1.0-alpha.125) (2026-09-12)
 
 
