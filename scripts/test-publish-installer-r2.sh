@@ -95,6 +95,7 @@ case "$operation" in
     printf '{}\n'
     ;;
   list-objects-v2)
+    [ "$prefix" = "vastora/releases/" ] || { echo 'Installer cleanup listed outside its release prefix.' >&2; exit 2; }
     keys_file="$FAKE_R2_DIR/list-keys"
     find "$FAKE_R2_DIR/objects" -type f | sed "s|^$FAKE_R2_DIR/objects/||" | sort |
       awk -v prefix="$prefix" 'index($0, prefix) == 1' > "$keys_file"
@@ -174,6 +175,13 @@ if "$script_dir/publish-installer-r2.sh" stage --version "$newer_version" --buck
 fi
 
 mkdir -p "$fake_r2/objects/vastora/releases/v0.0.0-stale"
+# Installer cleanup must coexist with independently published catalog files
+# and other objects in the shared download bucket.
+mkdir -p "$fake_r2/objects/vastora/catalog/targets" "$fake_r2/objects/pulse"
+printf 'catalog root\n' > "$fake_r2/objects/vastora/catalog/1.root.json"
+printf 'catalog target\n' > "$fake_r2/objects/vastora/catalog/targets/catalog.json"
+printf 'unrelated\n' > "$fake_r2/objects/vastora/unexpected-object"
+printf 'pulse release\n' > "$fake_r2/objects/pulse/release.json"
 stale_number=1
 while [ "$stale_number" -le 1002 ]; do
   : > "$fake_r2/objects/vastora/releases/v0.0.0-stale/object-$stale_number"
@@ -181,13 +189,17 @@ while [ "$stale_number" -le 1002 ]; do
 done
 "$script_dir/reconcile-installer-r2.sh" --bucket "$bucket" --endpoint "$endpoint" --dry-run > "$temporary_dir/dry-run.txt"
 grep -Fq "vastora/releases/v$version/install.sh" "$temporary_dir/dry-run.txt"
-
-printf 'unexpected\n' > "$fake_r2/objects/vastora/unexpected-object"
-if "$script_dir/reconcile-installer-r2.sh" --bucket "$bucket" --endpoint "$endpoint" >/dev/null 2>&1; then
-  echo "R2 reconciliation accepted an unknown Vastora prefix." >&2
+if grep -Eq 'Would delete: (vastora/catalog/|vastora/unexpected-object|pulse/)' "$temporary_dir/dry-run.txt"; then
+  echo "R2 reconciliation included unrelated objects in its deletion plan." >&2
   exit 1
 fi
-rm "$fake_r2/objects/vastora/unexpected-object"
+
+printf 'unsafe\n' > "$fake_r2/objects/vastora/releases/unsafe object"
+if "$script_dir/reconcile-installer-r2.sh" --bucket "$bucket" --endpoint "$endpoint" >/dev/null 2>&1; then
+  echo "R2 reconciliation accepted an unsafe release object key." >&2
+  exit 1
+fi
+rm "$fake_r2/objects/vastora/releases/unsafe object"
 
 touch "$fake_r2/change-pointer"
 if "$script_dir/reconcile-installer-r2.sh" --bucket "$bucket" --endpoint "$endpoint" >/dev/null 2>&1; then
@@ -211,7 +223,11 @@ fi
 rm "$fake_r2/skip-delete"
 
 "$script_dir/reconcile-installer-r2.sh" --bucket "$bucket" --endpoint "$endpoint" >/dev/null
-test "$(find "$fake_r2/objects/vastora" -type f | wc -l | tr -d ' ')" = "6"
+test "$(find "$fake_r2/objects/vastora/releases" -type f | wc -l | tr -d ' ')" = "5"
+test "$(cat "$fake_r2/objects/vastora/catalog/1.root.json")" = 'catalog root'
+test "$(cat "$fake_r2/objects/vastora/catalog/targets/catalog.json")" = 'catalog target'
+test "$(cat "$fake_r2/objects/vastora/unexpected-object")" = 'unrelated'
+test "$(cat "$fake_r2/objects/pulse/release.json")" = 'pulse release'
 test -f "$fake_r2/objects/vastora/current.json"
 test -f "$fake_r2/objects/vastora/releases/v$newer_version/activated.json"
 test ! -e "$fake_r2/objects/vastora/releases/v$version/manifest.json"

@@ -86,13 +86,13 @@ list_keys() {
     page_number=$((page_number + 1))
     page="$temporary_dir/list-$page_number.json"
     if [ -n "$continuation" ]; then
-      aws_r2 list-objects-v2 --bucket "$bucket" --prefix "vastora/" --max-keys 1000 --continuation-token "$continuation" > "$page"
+      aws_r2 list-objects-v2 --bucket "$bucket" --prefix "$release_root" --max-keys 1000 --continuation-token "$continuation" > "$page"
     else
-      aws_r2 list-objects-v2 --bucket "$bucket" --prefix "vastora/" --max-keys 1000 > "$page"
+      aws_r2 list-objects-v2 --bucket "$bucket" --prefix "$release_root" --max-keys 1000 > "$page"
     fi
     if ! jq -e 'all(.Contents[]?;
       (.Key | type == "string") and
-      (.Key | test("^vastora/[A-Za-z0-9._/-]+$")) and
+      (.Key | test("^vastora/releases/[A-Za-z0-9._/-]+$")) and
       (.Key | contains("//") | not) and
       (.Key | split("/") | all(. != "" and . != "." and . != ".."))
     )' "$page" >/dev/null; then
@@ -134,12 +134,14 @@ for key in "$manifest_key" "$activated_key"; do
 done
 
 expected="$temporary_dir/expected-keys"
+# The current pointer is read and verified separately. Listing and deletion
+# must never include sibling namespaces such as the independent app catalog.
 {
-  printf '%s\n' "$current_key" "$manifest_key" "$activated_key"
+  printf '%s\n' "$manifest_key" "$activated_key"
   jq -r '.assets[].key' "$current_manifest"
 } | sort -u > "$expected"
-if [ "$(wc -l < "$expected" | tr -d ' ')" != "6" ]; then
-  echo "R2 current release does not resolve to exactly six protected objects." >&2
+if [ "$(wc -l < "$expected" | tr -d ' ')" != "5" ]; then
+  echo "R2 current release does not resolve to exactly five protected release objects." >&2
   exit 1
 fi
 
@@ -209,4 +211,4 @@ if ! cmp -s "$current_manifest" "$final_pointer"; then
   echo "R2 current release pointer changed during reconciliation." >&2
   exit 1
 fi
-echo "Reconciled R2 to the six protected objects for Vastora $version."
+echo "Reconciled R2 release objects for Vastora $version and preserved its current pointer."
