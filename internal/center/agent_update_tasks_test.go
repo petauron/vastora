@@ -279,7 +279,7 @@ func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
 			clock = clock.Add(taskLeaseDuration)
 			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
 			status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
-			if err != nil || status.Updating != 1 || status.Offline != 0 {
+			if err != nil || status.Updating != 0 || status.Failed != 1 || status.Offline != 0 {
 				t.Fatalf("reconnected update status = %#v, %v", status, err)
 			}
 			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(nodes) != 0 {
@@ -316,5 +316,54 @@ func heartbeatAgentUpdateVersion(t *testing.T, store *Store, node AgentCredentia
 		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, RemoteUpdateSupported: supported,
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAgentUpdateRolloutBlockedTasksDoNotStayBusy(t *testing.T) {
+	for _, test := range []struct {
+		name, state, message string
+		stalled              bool
+	}{
+		{"reported recovery failure", "installing", "protected recovery does not match this update", false},
+		{"unclaimed task", "pending", "", true},
+		{"stalled download", "running", "", true},
+		{"silent helper", "installing", "", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := openOrchestrationStore(t)
+			defer store.Close()
+			ctx := context.Background()
+			clock := store.now().UTC()
+			store.now = func() time.Time { return clock }
+			node := enrollOrchestrationNode(t, store, "blocked-update", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.94", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.94", LANAddress: "10.0.0.94", EnabledKinds: []string{networking.KindLAN}})
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.123", true)
+			queued, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.124")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec(`UPDATE agent_updates SET state=?,last_error=? WHERE id=?`, test.state, test.message, queued.ID); err != nil {
+				t.Fatal(err)
+			}
+			if test.stalled {
+				clock = clock.Add(agentUpdateProgressTimeout)
+			}
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.123", true)
+			status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.124")
+			if err != nil || status.Updating != 0 || status.Failed != 1 || status.Offline != 0 {
+				t.Fatalf("blocked task kept rollout busy: %#v %v", status, err)
+			}
+			var state string
+			if err := store.db.QueryRow(`SELECT state FROM agent_updates WHERE id=?`, queued.ID).Scan(&state); err != nil || state != test.state {
+				t.Fatalf("presentation cancelled durable recovery: %s %v", state, err)
+			}
+			if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.124"); err != nil || len(queued) != 0 {
+				t.Fatalf("blocked task was duplicated: %v %v", queued, err)
+			}
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.124", true)
+			status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.124")
+			if err != nil || status.Updated != 1 || status.Failed != 0 {
+				t.Fatalf("recovered version did not clear attention status: %#v %v", status, err)
+			}
+		})
 	}
 }

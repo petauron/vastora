@@ -111,7 +111,10 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
-	if requiredTaskID == "" && recovery == nil {
+	// Self-update repairs the management process, not application state. It
+	// remains available inside a runtime recovery scope, but never overtakes
+	// an exact interrupted-task reconciliation.
+	if requiredTaskID == "" {
 		updateTask, updateErr := s.claimAgentUpdate(ctx, tx, agentID)
 		if updateErr != nil {
 			return nil, updateErr

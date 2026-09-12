@@ -51,11 +51,8 @@ func (s *Store) runtimeRecoveryScope() *controlplane.RecoveryScope {
 		}
 	}
 	visit(recovery.cause)
-	// These failures have no typed, provably safe repair target. Keep management
-	// heartbeats available, but do not issue empty or unsupported claim scopes.
-	if scope.Stage == "gateway" || scope.Stage == "application" && len(scope.Applications) == 0 {
-		return nil
-	}
+	// An empty application scope cannot authorize application changes, but it
+	// must still allow a verified self-update to repair the management process.
 	if scope.Validate() != nil {
 		return nil
 	}
@@ -74,6 +71,9 @@ func (s *Store) runtimeRecoveryApplications() []controlplane.RecoveryApplication
 func recoveryTaskAllowed(scope controlplane.RecoveryScope, task DeploymentTask) bool {
 	if scope.Validate() != nil {
 		return false
+	}
+	if task.Kind == "agent.update" {
+		return true
 	}
 	if task.Kind == "application.apply" && scope.Stage == "application" && task.ApplicationID != "" {
 		switch task.Operation {

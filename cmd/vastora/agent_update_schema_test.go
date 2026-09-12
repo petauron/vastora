@@ -338,6 +338,76 @@ func testAgentSchemaVersion(t *testing.T, path string) int {
 	return version
 }
 
+func TestHostUpdateRecoveryIsolatedFromPreviousTasksAndAttempts(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "agent")
+	store, err := agent.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	candidate := filepath.Join(root, "vastora")
+	if err := os.WriteFile(candidate, []byte("candidate"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	operation := hostUpdateOperation{Version: 1, TaskID: "agent-update-isolated", Attempt: 1, AgentID: "node", DataDir: dataDir, SourceVersion: "0.1.0-alpha.123", TargetVersion: "0.1.0-alpha.124"}
+	first := defaultHostUpdateActivationEnvironment(root, operation).recoveryDirectory
+	if err := prepareHostUpdateRecovery(context.Background(), operation, first, candidate); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(first, hostUpdateRecoveryManifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*hostUpdateOperation){
+		func(value *hostUpdateOperation) { value.TaskID = "agent-update-next" },
+		func(value *hostUpdateOperation) { value.Attempt++ },
+		func(value *hostUpdateOperation) { value.AgentID = "another-node" },
+		func(value *hostUpdateOperation) { value.TargetVersion = "0.1.0-alpha.125" },
+	} {
+		other := operation
+		change(&other)
+		directory := defaultHostUpdateActivationEnvironment(root, other).recoveryDirectory
+		if directory == first || filepath.Dir(directory) != root {
+			t.Fatal("new update shares or escapes the previous recovery directory")
+		}
+		if err := prepareHostUpdateRecovery(context.Background(), other, directory, candidate); err != nil {
+			t.Fatalf("old recovery blocked a new update: %v", err)
+		}
+		if _, err := os.Lstat(directory + ".partial"); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("partial recovery directory was not attempt-scoped or cleaned")
+		}
+		if err := removeHostUpdateRecovery(directory); err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.ReadFile(filepath.Join(first, hostUpdateRecoveryManifestName))
+		if err != nil || string(after) != string(before) {
+			t.Fatal("new update altered the previous recovery point")
+		}
+	}
+	// Explicit uninstall uses the same strict per-directory ownership checks.
+	if err := removeHostUpdateRecoveryPoints(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(first); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("explicit cleanup left a task-scoped recovery point")
+	}
+	if _, err := os.Stat(candidate); err != nil {
+		t.Fatal("recovery cleanup removed an unrelated file")
+	}
+}
+
+func TestHostUpdateServiceBoundsAutomaticRecoveryAttempts(t *testing.T) {
+	unit := hostUpdateServiceUnit()
+	for _, required := range []string{"StartLimitIntervalSec=infinity\n", "StartLimitBurst=5\n", "Restart=on-failure\n", "RestartSec=15s\n", " agent cleanup-update --operation-file "} {
+		if !strings.Contains(unit, required) {
+			t.Fatalf("update helper lost bounded recovery or protected cleanup: %s", required)
+		}
+	}
+}
+
 func TestHostUpdateRecoveryCleanupRejectsUnexpectedFiles(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "recovery")
 	if err := os.Mkdir(directory, 0o700); err != nil {

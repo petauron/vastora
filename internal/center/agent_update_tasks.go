@@ -30,6 +30,11 @@ type AgentUpdateRolloutStatus struct {
 	Manual        int    `json:"manual"`
 }
 
+// This bounds the busy indicator, not the durable installation or its backup.
+// A helper that already owns a migration must remain recoverable after the UI
+// reports that it needs attention.
+const agentUpdateProgressTimeout = 5 * time.Minute
+
 func isAgentUpdateTaskID(value string) bool {
 	return strings.HasPrefix(value, "agent-update-")
 }
@@ -164,7 +169,9 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT agent.version, agent.last_seen_at, agent.remote_update_supported,
 		COALESCE((SELECT update_task.state FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
-		COALESCE((SELECT update_task.target_version FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), '')
+		COALESCE((SELECT update_task.target_version FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
+		COALESCE((SELECT update_task.last_error FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
+		COALESCE((SELECT update_task.updated_at FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), '')
 		FROM agents agent
 		WHERE agent.status = 'active' AND agent.credential_revoked_at = ''
 		ORDER BY agent.name, agent.id`)
@@ -174,9 +181,9 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 	defer rows.Close()
 	connectedAfter := s.now().UTC().Add(-agentConnectedMaxAge)
 	for rows.Next() {
-		var currentVersion, lastSeenAt, updateState, updateTarget string
+		var currentVersion, lastSeenAt, updateState, updateTarget, updateError, updateUpdatedAt string
 		var supported bool
-		if err := rows.Scan(&currentVersion, &lastSeenAt, &supported, &updateState, &updateTarget); err != nil {
+		if err := rows.Scan(&currentVersion, &lastSeenAt, &supported, &updateState, &updateTarget, &updateError, &updateUpdatedAt); err != nil {
 			return status, err
 		}
 		currentSemver := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
@@ -193,6 +200,11 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 		// An offline Agent cannot keep the completed Center update busy. Keep
 		// its durable task intact so a reconnect or host helper can resume it.
 		if connected && (updateState == "pending" || updateState == "running" || updateState == "installing") {
+			progressAt, progressErr := time.Parse(time.RFC3339Nano, updateUpdatedAt)
+			if (updateState == "installing" && strings.TrimSpace(updateError) != "") || progressErr != nil || !progressAt.After(s.now().UTC().Add(-agentUpdateProgressTimeout)) {
+				status.Failed++
+				continue
+			}
 			status.Updating++
 			continue
 		}
