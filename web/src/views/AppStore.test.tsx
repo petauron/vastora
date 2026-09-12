@@ -55,6 +55,37 @@ describe("app identity", () => {
 });
 
 describe("app store cards", () => {
+  it("keeps same-name apps attributable to their catalog namespaces", () => {
+    const values = [app("pulse"), app("pulse", "community")];
+    const container = markup(<>{values.map(value => <AppStoreCard key={value.key} app={value} language="zh-CN" installedCount={0} canInstall blocker="" onInstall={vi.fn()} />)}</>);
+    const origins = [...container.querySelectorAll('[aria-label="目录来源"]')].map(value => value.textContent);
+    expect(origins).toEqual(["官方目录", "第三方目录 · community"]);
+    expect(container.querySelectorAll('[aria-label="Petauron 官方应用"]')).toHaveLength(1);
+  });
+
+  it("explains why an empty official store cannot install before first verification", () => {
+    const data = { apps: [], applications: [], sources: [{ id: "vastora-official", status: "pending" }] } as unknown as AppData;
+    const container = markup(<AppStore data={data} language="zh-CN" onInstall={vi.fn()} />);
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("官方目录等待首次验证");
+    expect(container.textContent).toContain("设置中刷新应用目录");
+    expect(container.querySelector("button")).toBeNull();
+  });
+
+  it.each(["2020-01-01T00:00:00Z", "invalid-date"])("blocks a stale view with an expired or invalid catalog expiry: %s", (catalogExpiresAt) => {
+    const container = markup(<AppStoreCard app={{ ...app(), catalogExpiresAt }} language="zh-CN" installedCount={0} canInstall blocker="" onInstall={vi.fn()} />);
+    expect(container.querySelector<HTMLButtonElement>("button")?.disabled).toBe(true);
+    expect(container.textContent).toContain("刷新应用目录");
+  });
+
+  it("blocks installation from expired catalog even with eligible nodes", () => {
+    const value = { ...app(), installBlocked: true };
+    const container = markup(<AppStoreCard app={value} language="zh-CN" installedCount={1} canInstall blocker="" onInstall={vi.fn()} />);
+    const button = container.querySelector<HTMLButtonElement>("button");
+    expect(button?.disabled).toBe(true);
+    expect(container.textContent).toContain("刷新应用目录");
+    expect(container.textContent).toContain("已安装应用不受影响");
+    expect(button?.getAttribute("aria-describedby")).toBeTruthy();
+  });
   it("keeps full descriptions, a compact version line and a named install action", () => {
     const value = app("pulse");
     value.app.services = [{ name: "dashboard", protocol: "http", containerPort: 8080 }];
@@ -87,7 +118,8 @@ describe("app store cards", () => {
   it("does not bypass the private access prerequisite for the official collector", () => {
     const data = {
       apps: [app()],
-      agents: [{ id: "collector", connected: true, capabilities: { docker: false }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView],
+      sources: [],
+      agents: [{ id: "collector", connected: true, credentialRevoked: false, capabilities: { docker: false }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView],
       applications: [{ id: "monitor", appKey: "vastora-official/pulse", status: "running", installedVersion: "0.1.0-alpha.2" } as Application],
       services: [], publications: [],
     } as unknown as AppData;

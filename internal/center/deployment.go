@@ -362,6 +362,23 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	defer tx.Rollback()
+	if strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") && (request.Operation == "install" || request.Operation == "upgrade") {
+		if err := authorizeOfficialManifest(ctx, tx, "stable", manifest, s.now().UTC()); err != nil {
+			return DeploymentView{}, err
+		}
+	}
+	// Preserve the last confirmed state before prepareApplication locks the
+	// instance as pending. It can be restored only if the upgrade is rejected
+	// before any Agent has had the opportunity to change the instance.
+	preDispatchApplicationStatus := "failed"
+	if request.Operation == "upgrade" && strings.HasPrefix(request.AppKey, OfficialCatalogSourceID+"/") {
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM applications WHERE node_id = ? AND app_key = ?`, request.AgentID, request.AppKey).Scan(&preDispatchApplicationStatus); err != nil {
+			return DeploymentView{}, fmt.Errorf("center: read pre-upgrade application state: %w", err)
+		}
+		if preDispatchApplicationStatus != "running" && preDispatchApplicationStatus != "failed" && preDispatchApplicationStatus != "stopped" {
+			return DeploymentView{}, errors.New("center: confirm the existing application state before upgrading")
+		}
+	}
 	applicationID, err := s.prepareApplication(ctx, tx, request, manifest, now)
 	if err != nil {
 		return DeploymentView{}, err
@@ -385,8 +402,8 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			return DeploymentView{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation, change_proposal_id)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration, nullableString(request.ChangeProposalID)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation, change_proposal_id, pre_dispatch_application_status)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`, deployment.ID, deployment.AgentID, deployment.AppKey, deployment.AppVersion, serializedManifest, config, serviceAddress, secretID, nullableString(registryCredentialID), deployment.Operation, deployment.DeleteData, deployment.State, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), applicationID, platform.ApplicationRuntimeGeneration, nullableString(request.ChangeProposalID), preDispatchApplicationStatus); err != nil {
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	if producesCredentials {

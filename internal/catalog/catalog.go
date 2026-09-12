@@ -281,7 +281,7 @@ func validateConfigDefault(field ConfigField, appID string) error {
 		return nil
 	}
 	raw := []byte(*field.Default)
-	if string(raw) == "null" {
+	if strings.TrimSpace(string(raw)) == "null" {
 		return fmt.Errorf("catalog: default for field %q in %q must match type %q", field.Key, appID, field.Type)
 	}
 	switch field.Type {
@@ -397,17 +397,12 @@ func validateLocalized(kind, appID string, value LocalizedText) error {
 }
 
 func ParseCatalog(payload []byte) (Catalog, error) {
-	if err := validateCatalogJSONShape(payload); err != nil {
-		return Catalog{}, err
-	}
 	var c Catalog
-	decoder := json.NewDecoder(strings.NewReader(string(payload)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&c); err != nil {
+	if err := decodeStrictJSON(payload, &c); err != nil {
 		return Catalog{}, fmt.Errorf("catalog: decode payload: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return Catalog{}, errors.New("catalog: payload must contain one JSON value")
+	if err := validateCatalogJSONShape(payload); err != nil {
+		return Catalog{}, err
 	}
 	if err := ValidateCatalog(c); err != nil {
 		return Catalog{}, err
@@ -583,13 +578,8 @@ func MarshalEnvelope(envelope Envelope) ([]byte, error) {
 
 func ParseEnvelope(raw []byte) (Envelope, error) {
 	var envelope Envelope
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
+	if err := decodeStrictJSON(raw, &envelope); err != nil {
 		return Envelope{}, fmt.Errorf("catalog: decode envelope: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return Envelope{}, errors.New("catalog: envelope must contain one JSON value")
 	}
 	if err := validateKeyID(envelope.KeyID); err != nil {
 		return Envelope{}, err

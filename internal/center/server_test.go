@@ -910,7 +910,7 @@ func TestCatalogSourceRejectsCredentialsEmbeddedInURL(t *testing.T) {
 	}
 }
 
-func TestOfficialCatalogMetadataKeepsItsBuiltinURL(t *testing.T) {
+func TestOfficialCatalogMetadataExposesTrustedRevision(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -927,7 +927,7 @@ func TestOfficialCatalogMetadataKeepsItsBuiltinURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sources) != 1 || sources[0].ID != OfficialCatalogSourceID || sources[0].URL != "builtin://vastora-official" {
+	if len(sources) != 1 || sources[0].ID != OfficialCatalogSourceID || sources[0].URL != "https://example.invalid/catalog" || sources[0].CatalogRevision != 1 || sources[0].ExpiresAt == nil || sources[0].PublicKey != "" {
 		t.Fatalf("unexpected official Catalog metadata: %#v", sources)
 	}
 }

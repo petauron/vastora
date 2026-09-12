@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -188,28 +189,29 @@ func (s *Server) handleEnrollAgent(writer http.ResponseWriter, request *http.Req
 
 func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.Request) {
 	var input struct {
-		PublicKey                    []byte                           `json:"publicKey"`
-		Version                      string                           `json:"version"`
-		AppliedInstallations         int                              `json:"appliedInstallations"`
-		Roles                        []string                         `json:"roles"`
-		Capabilities                 NodeCapabilities                 `json:"capabilities"`
-		NetworkCandidates            []networking.Candidate           `json:"networkCandidates"`
-		PublicEgress                 *networking.PublicEgress         `json:"publicEgress"`
-		ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
-		ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
-		GatewayHealthy               bool                             `json:"gatewayHealthy"`
-		RuntimeRecovery              string                           `json:"runtimeRecovery"`
-		GatewayRevision              int64                            `json:"gatewayRevision"`
-		GatewayConfigHash            string                           `json:"gatewayConfigHash"`
-		NodeListenerHealthy          bool                             `json:"nodeListenerHealthy"`
-		LandingHealth                *landing.Health                  `json:"landingHealth"`
-		NodeListenerRevision         int64                            `json:"nodeListenerRevision"`
-		NodeListenerConfigHash       string                           `json:"nodeListenerConfigHash"`
-		ApplicationRuntimeGeneration int                              `json:"applicationRuntimeGeneration"`
-		RemoteUpdateSupported        bool                             `json:"remoteUpdateSupported"`
-		TailscaleEnrolled            bool                             `json:"tailscaleEnrolled"`
-		TailscaleOwnership           string                           `json:"tailscaleOwnership"`
-		Startup                      bool                             `json:"startup"`
+		PublicKey                    []byte                             `json:"publicKey"`
+		Version                      string                             `json:"version"`
+		AppliedInstallations         int                                `json:"appliedInstallations"`
+		Roles                        []string                           `json:"roles"`
+		Capabilities                 NodeCapabilities                   `json:"capabilities"`
+		NetworkCandidates            []networking.Candidate             `json:"networkCandidates"`
+		PublicEgress                 *networking.PublicEgress           `json:"publicEgress"`
+		ApplicationEndpoints         []ApplicationEndpointObservation   `json:"applicationEndpoints"`
+		ApplicationEndpointsObserved bool                               `json:"applicationEndpointsObserved"`
+		GatewayHealthy               bool                               `json:"gatewayHealthy"`
+		RuntimeRecovery              string                             `json:"runtimeRecovery"`
+		RuntimeRecoveryApplications  []controlplane.RecoveryApplication `json:"runtimeRecoveryApplications"`
+		GatewayRevision              int64                              `json:"gatewayRevision"`
+		GatewayConfigHash            string                             `json:"gatewayConfigHash"`
+		NodeListenerHealthy          bool                               `json:"nodeListenerHealthy"`
+		LandingHealth                *landing.Health                    `json:"landingHealth"`
+		NodeListenerRevision         int64                              `json:"nodeListenerRevision"`
+		NodeListenerConfigHash       string                             `json:"nodeListenerConfigHash"`
+		ApplicationRuntimeGeneration int                                `json:"applicationRuntimeGeneration"`
+		RemoteUpdateSupported        bool                               `json:"remoteUpdateSupported"`
+		TailscaleEnrolled            bool                               `json:"tailscaleEnrolled"`
+		TailscaleOwnership           string                             `json:"tailscaleOwnership"`
+		Startup                      bool                               `json:"startup"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
@@ -220,7 +222,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
@@ -282,7 +284,16 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusBadRequest, errors.New("center: reconciliation task ID is invalid"))
 		return
 	}
-	task, err := s.store.WaitAndClaimNextTask(request.Context(), request.PathValue("id"), credential, wait, requiredTaskID)
+	var recovery *controlplane.RecoveryScope
+	if raw := request.URL.Query().Get("recovery"); raw != "" {
+		var scope controlplane.RecoveryScope
+		if len(raw) > 8192 || json.Unmarshal([]byte(raw), &scope) != nil || scope.Validate() != nil || requiredTaskID != "" {
+			writeError(writer, http.StatusBadRequest, errors.New("center: invalid recovery claim scope"))
+			return
+		}
+		recovery = &scope
+	}
+	task, err := s.store.waitAndClaimTask(request.Context(), request.PathValue("id"), credential, wait, requiredTaskID, recovery)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return

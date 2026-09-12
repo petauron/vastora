@@ -65,5 +65,8 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 		// Do not expose SQLite schema or dependency details to the UI.
 		return errors.New("center: node could not be deleted; check remaining dependencies")
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, runtimeRecoverySettingsPrefix+id); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

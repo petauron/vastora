@@ -20,9 +20,9 @@ import (
 
 func TestSystemdKomariApplyAndRemove(t *testing.T) {
 	t.Parallel()
-	binary := []byte("komari-agent-test")
+	binary := testArtifactELF(t, "amd64")
 	digest := sha256.Sum256(binary)
-	server := httptest.NewServer(httpHandler(binary))
+	server := httptest.NewTLSServer(httpHandler(binary))
 	defer server.Close()
 	var commands []string
 	manager := SystemdHostApplicationManager{
@@ -72,9 +72,9 @@ func TestSystemdKomariApplyAndRemove(t *testing.T) {
 
 func TestSystemdKomariRemoveResumesFromOwnershipJournal(t *testing.T) {
 	t.Parallel()
-	binary := []byte("managed-binary")
+	binary := testArtifactELF(t, "amd64")
 	digest := sha256.Sum256(binary)
-	server := httptest.NewServer(httpHandler(binary))
+	server := httptest.NewTLSServer(httpHandler(binary))
 	defer server.Close()
 	paths := []string{komariUnitPath, komariConfigPath, komariBinaryPath}
 	for _, interruption := range []struct {
@@ -275,9 +275,9 @@ func TestSystemdKomariRemoveRetriesDaemonReload(t *testing.T) {
 
 func TestSystemdKomariApplyRollsBackFiles(t *testing.T) {
 	t.Parallel()
-	binary := []byte("new-binary")
+	binary := testArtifactELF(t, "amd64")
 	digest := sha256.Sum256(binary)
-	server := httptest.NewServer(httpHandler(binary))
+	server := httptest.NewTLSServer(httpHandler(binary))
 	defer server.Close()
 	root := t.TempDir()
 	manager := SystemdHostApplicationManager{
@@ -299,13 +299,67 @@ func TestSystemdKomariApplyRollsBackFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := manager.ApplyKomari(context.Background(), komariTestTask(server.URL, hex.EncodeToString(digest[:]))); err == nil {
-		t.Fatal("expected service restart failure")
+	if err := manager.ApplyKomari(context.Background(), komariTestTask(server.URL, hex.EncodeToString(digest[:]))); err == nil || !strings.Contains(err.Error(), "restart failed") {
+		t.Fatalf("expected service restart failure, got %v", err)
 	}
 	for path, want := range old {
 		got, err := os.ReadFile(manager.path(path))
 		if err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s was not restored: %q, err=%v", path, got, err)
+		}
+	}
+}
+
+func TestSystemdKomariRejectsArtifactPlatformBeforeMutation(t *testing.T) {
+	for _, architecture := range []string{"amd64", "arm64"} {
+		for _, installed := range []bool{false, true} {
+			t.Run(architecture+map[bool]string{false: "/install", true: "/upgrade"}[installed], func(t *testing.T) {
+				other := map[string]string{"amd64": "arm64", "arm64": "amd64"}[architecture]
+				binary := testArtifactELF(t, other)
+				digest := sha256.Sum256(binary) // Correct hash, wrong declared platform.
+				server := httptest.NewTLSServer(httpHandler(binary))
+				defer server.Close()
+				commands := 0
+				manager := SystemdHostApplicationManager{
+					RootDir: t.TempDir(), HTTPClient: server.Client(), HostTarget: platform.Target{OS: "linux", Architecture: architecture},
+					RunCommand: func(context.Context, string, ...string) error { commands++; return nil },
+				}
+				paths := []string{komariBinaryPath, komariConfigPath, komariUnitPath}
+				if installed {
+					for _, file := range paths {
+						if err := writeHostFileAtomic(manager.path(file), []byte("existing managed installation"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := writeHostFileAtomic(manager.path(komariUnitPath), komariUnit(), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				before := make(map[string]hostFileSnapshot)
+				for _, file := range paths {
+					var err error
+					before[file], err = captureHostFile(manager.path(file))
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				task := komariTestTask(server.URL, hex.EncodeToString(digest[:]))
+				if installed {
+					task.Operation = "upgrade"
+				}
+				if err := manager.ApplyKomari(context.Background(), task); err == nil || !strings.Contains(err.Error(), "platform") {
+					t.Fatalf("digest-correct wrong-platform artifact was not rejected: %v", err)
+				}
+				if commands != 0 {
+					t.Fatalf("ran %d commands before platform rejection", commands)
+				}
+				for _, file := range paths {
+					after, err := captureHostFile(manager.path(file))
+					if err != nil || !reflect.DeepEqual(after, before[file]) {
+						t.Fatalf("platform rejection mutated %s: %v", file, err)
+					}
+				}
+			})
 		}
 	}
 }
@@ -335,7 +389,10 @@ func komariTestTask(downloadURL, digest string) DeploymentTask {
 			ID: "komari-agent", Version: "1.2.60", License: "MIT", HostAccess: true,
 			Name:        catalog.LocalizedText{English: "Komari Agent", SimplifiedChinese: "Komari 探针"},
 			Description: catalog.LocalizedText{English: "Komari monitoring agent.", SimplifiedChinese: "Komari 监控探针。"},
-			Artifacts:   []catalog.Artifact{{Name: "komari-agent", OperatingSystem: "linux", Architecture: "amd64", URL: downloadURL, SHA256: digest}},
+			Artifacts: []catalog.Artifact{
+				{Name: "komari-agent", OperatingSystem: "linux", Architecture: "amd64", URL: downloadURL, SHA256: digest},
+				{Name: "komari-agent", OperatingSystem: "linux", Architecture: "arm64", URL: downloadURL, SHA256: digest},
+			},
 			Config: []catalog.ConfigField{
 				{Key: "endpoint", Type: "string", Label: catalog.LocalizedText{English: "Endpoint", SimplifiedChinese: "面板地址"}, Description: catalog.LocalizedText{English: "Komari endpoint.", SimplifiedChinese: "Komari 面板地址。"}, Required: true},
 				{Key: "token", Type: "string", Label: catalog.LocalizedText{English: "Token", SimplifiedChinese: "令牌"}, Description: catalog.LocalizedText{English: "Agent token.", SimplifiedChinese: "探针令牌。"}, Required: true, Secret: true},

@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CheckIcon, CopyIcon, ExternalLinkIcon, LinkIcon, PencilIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, ServerIcon, Trash2Icon, UsersIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, LinkIcon, PlusIcon, RefreshCwIcon, RotateCcwIcon, ServerIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { api } from "../api";
 import type { Application, ApplicationCommand, ThreeXUIClient, ThreeXUIClientCommandInput, ThreeXUIClientInbound } from "../types";
 import type { Language } from "../translations";
 import { copy, userError } from "./shared";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -15,8 +14,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { useApplicationCommandExecutor } from "../hooks/use-application-command-executor";
 import { clearSecretOperation, commandSecretOperations, commandSecretScope, secretOperation } from "../secret-delivery";
-import { bytesFromGB, dateInputValueInTimeZone, endOfDayEpochInTimeZone, formatBytes, gigabytesFromBytes, nextRenewalDateInTimeZone, SubscriptionTrafficPlanFields } from "./TrafficPlanFields";
+import { bytesFromGB, dateInputValueInTimeZone, endOfDayEpochInTimeZone, gigabytesFromBytes, nextRenewalDateInTimeZone, SubscriptionTrafficPlanFields } from "./TrafficPlanFields";
 import { hasObservedThreeXUIState, mergeCachedCommand, mergeCommandUpdate } from "./threeXUICommandState";
+import { ThreeXUIClientCard } from "./ThreeXUIClientCard";
 
 type Editor = { client?: ThreeXUIClient } | null;
 type RevealedLink = { title: string; value: string; commandId: string; operationKey: string; scope: string } | null;
@@ -187,22 +187,25 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
           {!busy && clients.length === 0 && !refreshError ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><UsersIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有客户端", "No clients yet")}</EmptyTitle><EmptyDescription>{copy(language, "为手机、电脑或路由器各创建一个客户端，便于单独停用和查看流量。", "Create one client per phone, computer, or router so each can be disabled and tracked separately.")}</EmptyDescription>{inbounds.length ? <Button className="mt-3" onClick={() => openEditor({})} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加第一个客户端", "Add first client")}</Button> : null}</EmptyHeader></Empty> : null}
 
           <div className="grid gap-3">
-            {visibleClients.map((client) => {
-              const publishedInbound = inbounds.find((inbound) => inbound.connectHostname && client.inboundIds.includes(inbound.id));
-				const inboundNames = inbounds.filter((inbound) => client.inboundIds.includes(inbound.id)).map((inbound) => inbound.displayName || inbound.nodeName || inbound.name);
-              return <div className="rounded-2xl border bg-card p-4" key={client.email}>
-                <div className="flex flex-wrap items-start gap-3">
-                  <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="truncate font-medium">{client.email}</h3><Badge variant={client.enabled ? "secondary" : "outline"}>{client.enabled ? copy(language, "已启用", "Enabled") : copy(language, "已停用", "Disabled")}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{inboundNames.length ? copy(language, `已接入 ${inboundNames.length} 个节点：${inboundNames.join("、")}`, `Connected to ${inboundNames.length} node(s): ${inboundNames.join(", ")}`) : copy(language, "未连接节点", "No node attached")}</p></div>
-                  <Switch aria-label={copy(language, `启用 ${client.email}`, `Enable ${client.email}`)} checked={client.enabled} disabled={busy} onCheckedChange={(enabled) => void run({ action: "set_enabled", email: client.email, enabled }).catch(() => undefined)} />
-                </div>
-                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-4"><Metric label={copy(language, "订阅已用（上下行）", "Subscription used (up + down)")} value={`${formatBytes(client.usedBytes)}${client.totalBytes ? ` / ${formatBytes(client.totalBytes)}` : ""}`} /><Metric label={copy(language, "有效期", "Expires")} value={formatExpiry(client.expiryTime, language, siteTimezone)} /><Metric label={copy(language, "自动续期", "Auto-renewal")} value={client.resetDays ? copy(language, `每 ${client.resetDays} 天`, `Every ${client.resetDays} days`) : copy(language, "关闭", "Off")} /><Metric label={copy(language, "设备数限制", "IP limit")} value={client.limitIp ? String(client.limitIp) : copy(language, "不限", "Unlimited")} /></div>
-	                {resetClient?.email === client.email ? <Alert className="mt-4"><RotateCcwIcon /><AlertTitle>{copy(language, `重置“${client.email}”的订阅用量？`, `Reset subscription usage for “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "这会把该客户端在所有 VLESS 节点上的合计用量清零，相当于立即开始一个新套餐周期，且不能撤销。", "This clears the client's combined usage across every VLESS node, immediately starting a new allowance cycle. It cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setResetClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).then(() => setResetClient(null)).catch(() => undefined)} size="sm">{copy(language, "确认重置", "Reset usage")}</Button></div></AlertDescription></Alert> : null}
-				{deleteClient?.email === client.email ? <Alert className="mt-4" variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : <div className="mt-4 flex flex-wrap gap-2"><Button disabled={busy || Boolean(revealed) || !publishedInbound} onClick={() => void reveal(client, "reveal_link")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制 VLESS", "Copy VLESS")}</Button><Button disabled={busy || Boolean(revealed) || !command?.subscriptionAvailable} onClick={() => void reveal(client, "reveal_subscription")} size="sm" variant="outline"><LinkIcon data-icon="inline-start" />{copy(language, "复制订阅", "Copy subscription")}</Button><Button disabled={busy} onClick={() => openEditor({ client })} size="icon-sm" title={copy(language, "编辑", "Edit")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑", "Edit")}</span></Button><Button disabled={busy} onClick={() => { setDeleteClient(null); setResetClient(client); }} size="icon-sm" title={copy(language, "重置流量", "Reset traffic")} variant="ghost"><RotateCcwIcon /><span className="sr-only">{copy(language, "重置流量", "Reset traffic")}</span></Button><Button disabled={busy} onClick={() => { setResetClient(null); setDeleteClient(client); }} size="icon-sm" title={copy(language, "删除", "Delete")} variant="ghost"><Trash2Icon /><span className="sr-only">{copy(language, "删除", "Delete")}</span></Button></div>}
-                {!publishedInbound ? <p className="mt-2 text-xs text-muted-foreground">{copy(language, "为入站完成公网发布后才能导出 VLESS 链接。", "Publish the inbound before exporting a VLESS URL.")}</p> : null}
-                {!command?.subscriptionAvailable ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, "开启公网订阅后才能复制订阅地址。", "Enable public subscription before copying a subscription URL.")}</p> : null}
-                {command?.subscriptionAvailable ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, "同一地址会自动适配 OpenClash、Mihomo 和其他客户端。", "The same URL automatically adapts to OpenClash, Mihomo, and other clients.")}</p> : null}
-              </div>;
-            })}
+            {visibleClients.map((client) => <ThreeXUIClientCard
+              key={client.email}
+              client={client}
+              inbounds={inbounds}
+              language={language}
+              expiryLabel={formatExpiry(client.expiryTime, language, siteTimezone)}
+              busy={busy}
+              linksDisabled={Boolean(revealed)}
+              subscriptionAvailable={Boolean(command?.subscriptionAvailable)}
+              onEnabledChange={(enabled) => void run({ action: "set_enabled", email: client.email, enabled }).catch(() => undefined)}
+              onCopySubscription={() => void reveal(client, "reveal_subscription")}
+              onCopyLink={() => void reveal(client, "reveal_link")}
+              onEdit={() => openEditor({ client })}
+              onReset={() => { setDeleteClient(null); setResetClient(client); }}
+              onDelete={() => { setResetClient(null); setDeleteClient(client); }}
+            >
+              {resetClient?.email === client.email ? <Alert><RotateCcwIcon /><AlertTitle>{copy(language, `重置“${client.email}”的订阅用量？`, `Reset subscription usage for “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "这会把该客户端在所有 VLESS 节点上的合计用量清零，相当于立即开始一个新套餐周期，且不能撤销。", "This clears the client's combined usage across every VLESS node, immediately starting a new allowance cycle. It cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setResetClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "reset_traffic", email: client.email }).then(() => setResetClient(null)).catch(() => undefined)} size="sm">{copy(language, "确认重置", "Reset usage")}</Button></div></AlertDescription></Alert> : null}
+              {deleteClient?.email === client.email ? <Alert variant="destructive"><Trash2Icon /><AlertTitle>{copy(language, `删除“${client.email}”？`, `Delete “${client.email}”?`)}</AlertTitle><AlertDescription><p>{copy(language, "该客户端会立即无法连接，此操作不能撤销。", "This client will stop connecting immediately. This cannot be undone.")}</p><div className="mt-3 flex gap-2"><Button disabled={busy} onClick={() => setDeleteClient(null)} size="sm" variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void run({ action: "delete", email: client.email }).then(() => setDeleteClient(null)).catch(() => undefined)} size="sm" variant="destructive">{copy(language, "确认删除", "Delete client")}</Button></div></AlertDescription></Alert> : null}
+            </ThreeXUIClientCard>)}
           </div>
           {pageCount > 1 ? <div className="flex items-center justify-between"><Button disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} size="sm" variant="outline">{copy(language, "上一页", "Previous")}</Button><span className="text-xs tabular-nums text-muted-foreground">{Math.min(page, pageCount)} / {pageCount}</span><Button disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} size="sm" variant="outline">{copy(language, "下一页", "Next")}</Button></div> : null}
         </div>
@@ -300,8 +303,6 @@ function clientEditorDraft(client: ThreeXUIClient | undefined, inbounds: ThreeXU
 function sameSelection(left: number[], right: number[]) {
   return left.length === right.length && left.every((id) => right.includes(id));
 }
-
-function Metric({ label, value }: { label: string; value: string }) { return <div><p className="text-muted-foreground">{label}</p><p className="mt-1 font-medium tabular-nums">{value}</p></div>; }
 
 function formatExpiry(value: number, language: Language, timeZone?: string) {
   if (!value) return copy(language, "永不过期", "Never");

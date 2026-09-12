@@ -76,7 +76,7 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	}
 	differentKey := request
 	differentKey.SecretOperationKey = "deployment-operation-key-0002"
-	if _, err := store.CreateDeployment(ctx, differentKey); err == nil || !strings.Contains(err.Error(), "already has a 3x-ui controller") {
+	if _, err := store.CreateDeployment(ctx, differentKey); err == nil || !strings.Contains(err.Error(), "already has a 3x-ui subscription controller") {
 		store.Close()
 		t.Fatalf("different key bypassed the deployment conflict: %v", err)
 	}

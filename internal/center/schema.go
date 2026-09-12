@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 71
+const centerSchemaVersion = 72
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -31,6 +31,15 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	statements := []string{
+		`CREATE TABLE official_catalog_trust (
+			channel TEXT PRIMARY KEY,
+			revision INTEGER NOT NULL CHECK(revision >= 0),
+			target_sha256 TEXT NOT NULL,
+			observed_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			metadata_json BLOB NOT NULL,
+			target BLOB NOT NULL
+		)`,
 		cloudflareAccessSettingsSchema,
 		`INSERT INTO cloudflare_access_settings(id) VALUES(1)`,
 		landingServerSchema,
@@ -614,6 +623,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			secret_id TEXT REFERENCES secrets(id),
 			registry_credential_id TEXT REFERENCES registry_credentials(id) ON DELETE RESTRICT,
 			operation TEXT NOT NULL CHECK(operation IN ('install', 'upgrade', 'configure', 'uninstall')),
+			pre_dispatch_application_status TEXT NOT NULL DEFAULT 'failed' CHECK(pre_dispatch_application_status IN ('running', 'failed', 'stopped')),
 			delete_data INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL CHECK(state IN ('pending', 'running', 'succeeded', 'failed')),
 			reconciliation_required INTEGER NOT NULL DEFAULT 0 CHECK(reconciliation_required IN (0, 1)),

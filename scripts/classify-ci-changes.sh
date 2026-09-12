@@ -48,7 +48,7 @@ while IFS= read -r path; do
     deploy/*|scripts/*|install.sh|catalog/*|Dockerfile*|release-please-config.json) deployment=true ;;
   esac
   case "$path" in
-    Dockerfile.center|.dockerignore|go.mod|go.sum|web/package.json|web/package-lock.json|catalog/catalog.json) container=true ;;
+    Dockerfile.center|.dockerignore|catalog/trust/*|go.mod|go.sum|web/package.json|web/package-lock.json) container=true ;;
   esac
   case "$path" in
     CHANGELOG.md|.release-please-manifest.json|version.txt) release_metadata=true ;;

@@ -8,11 +8,13 @@ export type CatalogSource = {
   customCASet: boolean;
   bearerTokenSet: boolean;
   enabled: boolean;
-  status: "pending" | "healthy" | "stale" | "failed" | "disabled";
+  status: "pending" | "healthy" | "stale" | "failed" | "disabled" | "expired";
   refreshIntervalSeconds: number;
   fetchedAt?: string;
   checkedAt?: string;
   lastError?: string;
+  catalogRevision?: number;
+  expiresAt?: string;
 };
 
 export type CenterStatus = {
@@ -28,6 +30,7 @@ export type AppData = {
   status: CenterStatus;
   centerUpdate: CenterUpdateStatus;
   sources: CatalogSource[];
+  catalogSourcesError?: string;
   apps: AppView[];
   registryCredentials: RegistryCredential[];
   agents: AgentView[];
@@ -285,6 +288,7 @@ export type AgentView = {
   enrolledAt: string;
   lastSeenAt: string;
   connected: boolean;
+  credentialRevoked: boolean;
   siteId: string;
   roles: string[];
   capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean };
@@ -292,7 +296,12 @@ export type AgentView = {
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;
   gatewayHealthy: boolean;
-  runtimeRecovery?: "pending" | "reconciliation" | "application" | "gateway" | "listener";
+  runtimeRecovery?: "pending" | "reconciliation" | "landing" | "application" | "gateway" | "listener";
+  runtimeRecoveryApplications?: Array<{
+    appKey: string;
+    applicationId?: string;
+    reason: "state_incomplete" | "image_unavailable" | "health_check_failed" | "restore_failed";
+  }>;
   tailscaleOwnership?: "managed" | "external" | "";
   remoteUpdateSupported: boolean;
   update?: AgentUpdate;
@@ -329,6 +338,9 @@ export type AppView = {
   key: string;
   sourceId: string;
   fetchedAt: string;
+  catalogRevision?: number;
+  catalogExpiresAt?: string;
+  installBlocked?: boolean;
   app: {
     id: string;
     version: string;

@@ -78,6 +78,17 @@ type TunnelTaskState struct {
 }
 
 func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, requiredTaskIDs ...string) (*AgentTask, error) {
+	requiredID := ""
+	if len(requiredTaskIDs) != 0 {
+		requiredID = strings.TrimSpace(requiredTaskIDs[0])
+	}
+	return s.claimNextTask(ctx, agentID, credential, requiredID, nil)
+}
+
+func (s *Store) claimNextTask(ctx context.Context, agentID, credential, requiredTaskID string, recovery *controlplane.RecoveryScope) (*AgentTask, error) {
+	if recovery != nil && (recovery.Validate() != nil || requiredTaskID != "") {
+		return nil, errors.New("center: invalid recovery claim scope")
+	}
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
 	}
@@ -100,11 +111,7 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 		return nil, fmt.Errorf("center: begin task claim: %w", err)
 	}
 	defer tx.Rollback()
-	requiredTaskID := ""
-	if len(requiredTaskIDs) != 0 {
-		requiredTaskID = strings.TrimSpace(requiredTaskIDs[0])
-	}
-	if requiredTaskID == "" {
+	if requiredTaskID == "" && recovery == nil {
 		updateTask, updateErr := s.claimAgentUpdate(ctx, tx, agentID)
 		if updateErr != nil {
 			return nil, updateErr
@@ -130,9 +137,31 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 		query += ` AND d.id = ?`
 		queryArgs = append(queryArgs, requiredTaskID)
 	}
+	if recovery != nil {
+		query += ` AND d.runtime_generation>=0 AND d.runtime_generation<=? AND d.operation IN ('install','configure','upgrade','uninstall') AND (`
+		queryArgs = append(queryArgs, agentRuntimeGeneration)
+		query += `0`
+		if recovery.Stage == "application" {
+			for _, application := range recovery.Applications {
+				query += ` OR (d.app_key=? AND (?='' OR d.application_id=?))`
+				queryArgs = append(queryArgs, application.AppKey, application.ApplicationID, application.ApplicationID)
+			}
+		}
+		query += `)`
+	}
 	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
 	err = tx.QueryRowContext(ctx, query, queryArgs...).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &registryCredentialID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt, &reconciliationRequested, &requiredRuntimeGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
+		if recovery != nil {
+			task, err := s.claimRecoveryStopTask(ctx, tx, agentID, recovery.Stage)
+			if err != nil || task == nil {
+				return nil, err
+			}
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
+			return task, nil
+		}
 		if requiredTaskID != "" {
 			return nil, nil
 		}
@@ -273,6 +302,24 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
 	}
+	// Recheck only work that has never reached an Agent. Recovery of an
+	// already-issued operation must remain possible without a live catalog.
+	if attempt == 0 && reconciliationRequested == 0 && strings.HasPrefix(task.AppKey, OfficialCatalogSourceID+"/") && (task.Operation == "install" || task.Operation == "upgrade") {
+		if err := authorizeOfficialManifest(ctx, tx, "stable", task.Manifest, s.now().UTC()); err != nil {
+			now := s.now().UTC().Format(time.RFC3339Nano)
+			const message = "Refresh the app catalog and retry this operation."
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE deployments SET state = 'failed', error = ?, updated_at = ? WHERE id = ?`, message, now, task.ID); updateErr != nil {
+				return nil, updateErr
+			}
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE applications SET status = (SELECT pre_dispatch_application_status FROM deployments WHERE id = ?), updated_at = ? WHERE id = ? AND status = 'pending'`, task.ID, now, task.ApplicationID); updateErr != nil {
+				return nil, updateErr
+			}
+			if eventErr := s.recordTaskEvent(ctx, tx, task.ID, agentID, "application.apply", applicationTaskRevision, "failed", message); eventErr != nil {
+				return nil, eventErr
+			}
+			return nil, tx.Commit()
+		}
+	}
 	task.Kind = "application.apply"
 	task.Attempt = attempt + 1
 	task.Revision = applicationTaskRevision
@@ -334,8 +381,16 @@ func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, r
 }
 
 func (s *Store) WaitAndClaimNextTask(ctx context.Context, agentID, credential string, wait time.Duration, requiredTaskIDs ...string) (*AgentTask, error) {
+	requiredID := ""
+	if len(requiredTaskIDs) != 0 {
+		requiredID = strings.TrimSpace(requiredTaskIDs[0])
+	}
+	return s.waitAndClaimTask(ctx, agentID, credential, wait, requiredID, nil)
+}
+
+func (s *Store) waitAndClaimTask(ctx context.Context, agentID, credential string, wait time.Duration, requiredID string, recovery *controlplane.RecoveryScope) (*AgentTask, error) {
 	if wait <= 0 {
-		return s.ClaimNextTask(ctx, agentID, credential, requiredTaskIDs...)
+		return s.claimNextTask(ctx, agentID, credential, requiredID, recovery)
 	}
 	if wait > 30*time.Second {
 		wait = 30 * time.Second
@@ -345,7 +400,7 @@ func (s *Store) WaitAndClaimNextTask(ctx context.Context, agentID, credential st
 	for {
 		key := "agent:" + agentID
 		changed := s.taskChanges.subscribe(key)
-		task, err := s.ClaimNextTask(ctx, agentID, credential, requiredTaskIDs...)
+		task, err := s.claimNextTask(ctx, agentID, credential, requiredID, recovery)
 		if err != nil || task != nil {
 			s.taskChanges.unsubscribe(key, changed)
 			return task, err

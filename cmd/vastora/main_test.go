@@ -191,9 +191,9 @@ func TestUnimplementedCapabilitiesCannotBeAdvertised(t *testing.T) {
 }
 
 func TestCenterBootstrapDoesNotRequireSuggestedAgentURL(t *testing.T) {
-	missingCatalog := filepath.Join(t.TempDir(), "missing-catalog.json")
-	err := runCenter([]string{"serve", "--data-dir", t.TempDir(), "--official-catalog", missingCatalog})
-	if err == nil || !strings.Contains(err.Error(), "read official catalog") {
+	missingRoot := filepath.Join(t.TempDir(), "missing-root.json")
+	err := runCenter([]string{"serve", "--data-dir", t.TempDir(), "--official-catalog-root", missingRoot})
+	if err == nil || !strings.Contains(err.Error(), "read official trust root") {
 		t.Fatalf("Center did not reach startup without --agent-connect-url: %v", err)
 	}
 }

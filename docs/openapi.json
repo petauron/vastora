@@ -5973,6 +5973,24 @@
                   "runtimeRecovery": {
                     "type": "string"
                   },
+                  "runtimeRecoveryApplications": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "appKey": {
+                          "type": "string"
+                        },
+                        "applicationId": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
                   "gatewayRevision": {
                     "type": "integer"
                   },
@@ -6184,6 +6202,14 @@
             "schema": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          {
+            "name": "recovery",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -6686,7 +6712,39 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "channel": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "integer"
+                    },
+                    "generatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "catalog": {}
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
               }
             }
           },
@@ -6705,7 +6763,8 @@
           "500": {
             "$ref": "#/components/responses/Error"
           }
-        }
+        },
+        "description": "Returns the last accepted official target, including signed identity, channel, revision and lifetime. This endpoint alone is not a signature proof: independent clients must verify the upstream TUF repository with their own trusted root. Expired cache may be returned for display only. Missing or damaged cache returns 404."
       }
     },
     "/api/v1/catalog/sources": {
@@ -6726,7 +6785,90 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "sources"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "displayName": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "publicKey": {
+                            "type": "string"
+                          },
+                          "customCASet": {
+                            "type": "boolean"
+                          },
+                          "bearerTokenSet": {
+                            "type": "boolean"
+                          },
+                          "enabled": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "refreshIntervalSeconds": {
+                            "type": "integer"
+                          },
+                          "fetchedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "checkedAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "lastError": {
+                            "type": "string"
+                          },
+                          "catalogRevision": {
+                            "type": "integer"
+                          },
+                          "expiresAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -6745,7 +6887,8 @@
           "500": {
             "$ref": "#/components/responses/Error"
           }
-        }
+        },
+        "description": "Catalog source status. The reserved vastora-official identity is anchored to independently provisioned TUF trust, not the editable source name or URL. Catalog revision and expiry describe the last verified cache; a failed refresh does not replace it."
       },
       "post": {
         "tags": [
@@ -7073,7 +7216,234 @@
             "description": "Successful response.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "apps"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "apps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "sourceId": {
+                            "type": "string"
+                          },
+                          "app": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "version": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "en": {
+                                    "type": "string"
+                                  },
+                                  "zh-CN": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "description": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "en": {
+                                    "type": "string"
+                                  },
+                                  "zh-CN": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "license": {
+                                "type": "string"
+                              },
+                              "images": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "reference": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "artifacts": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "operatingSystem": {
+                                      "type": "string"
+                                    },
+                                    "architecture": {
+                                      "type": "string"
+                                    },
+                                    "url": {
+                                      "type": "string"
+                                    },
+                                    "sha256": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              },
+                              "services": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "protocol": {
+                                      "type": "string"
+                                    },
+                                    "containerPort": {
+                                      "type": "integer"
+                                    },
+                                    "defaultHostPort": {
+                                      "type": "integer"
+                                    },
+                                    "hostPortField": {
+                                      "type": "string"
+                                    },
+                                    "healthPath": {
+                                      "type": "string"
+                                    },
+                                    "management": {
+                                      "type": "boolean"
+                                    }
+                                  }
+                                }
+                              },
+                              "homepage": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "service": {
+                                        "type": "string"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      }
+                                    }
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "config": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "key": {
+                                      "type": "string"
+                                    },
+                                    "type": {
+                                      "type": "string"
+                                    },
+                                    "label": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "en": {
+                                          "type": "string"
+                                        },
+                                        "zh-CN": {
+                                          "type": "string"
+                                        }
+                                      }
+                                    },
+                                    "description": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "en": {
+                                          "type": "string"
+                                        },
+                                        "zh-CN": {
+                                          "type": "string"
+                                        }
+                                      }
+                                    },
+                                    "required": {
+                                      "type": "boolean"
+                                    },
+                                    "secret": {
+                                      "type": "boolean"
+                                    },
+                                    "default": {
+                                      "anyOf": [
+                                        {},
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              },
+                              "hostAccess": {
+                                "type": "boolean"
+                              }
+                            }
+                          },
+                          "fetchedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "catalogExpiresAt": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "catalogRevision": {
+                            "type": "integer"
+                          },
+                          "installBlocked": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },
@@ -7092,7 +7462,8 @@
           "500": {
             "$ref": "#/components/responses/Error"
           }
-        }
+        },
+        "description": "Available catalog entries. installBlocked means the cached entry may be displayed but cannot authorize a new install or upgrade. Existing application recovery, configuration and uninstall use their recorded manifests."
       }
     },
     "/api/v1/registry-credentials": {

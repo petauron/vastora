@@ -16,6 +16,34 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 )
 
+func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "expired-catalog", NodeCapabilities{Docker: true}, []networking.Candidate{
+		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
+	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE official_catalog_trust SET expires_at = '1970-01-01T00:00:00Z'`); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, created.ID)
+	if err != nil || task != nil {
+		t.Fatalf("expired catalog task dispatched: %v %v", task, err)
+	}
+	var state string
+	var attempt int
+	if err := store.db.QueryRow(`SELECT state, attempt FROM deployments WHERE id = ?`, created.ID).Scan(&state, &attempt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "failed" || attempt != 0 {
+		t.Fatalf("state=%s attempt=%d", state, attempt)
+	}
+}
+
 func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -295,7 +323,7 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	clock := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
+	clock := store.now().UTC()
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
@@ -340,7 +368,7 @@ func TestTaskLeaseRenewalKeepsAttemptActiveAndNeverResurrectsExpiredLease(t *tes
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	clock := store.now().UTC()
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "lease-renewal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
 	config := json.RawMessage(`{"debug":false}`)
@@ -381,7 +409,7 @@ func TestAgentStartupImmediatelyRecoversProcessOwnedTaskLease(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	clock := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	clock := store.now().UTC()
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "startup-lease-recovery", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.12", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.12", LANAddress: "10.0.0.12", EnabledKinds: []string{networking.KindLAN}})
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}); err != nil {
@@ -419,7 +447,7 @@ func TestDeploymentCompletionUsesCapturedServiceAddress(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE agent_network_profiles SET service_address = '10.0.0.12', lan_address = '10.0.0.12' WHERE agent_id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	result, _ := json.Marshal(ApplicationTaskResult{Services: []ApplicationServiceResult{{Name: "api", Protocol: "http", ContainerPort: 8317, HostPort: 8317, Address: "10.0.0.11"}}})
+	result := cpaApplicationResult("10.0.0.11")
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
