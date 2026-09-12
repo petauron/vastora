@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.0-alpha.124](https://github.com/petauron/vastora/compare/v0.1.0-alpha.123...v0.1.0-alpha.124) (2026-09-12)
+
+
+### Features
+
+* **landing:** add client-scoped subscription combinations MVP ([81c39be](https://github.com/petauron/vastora/commit/81c39be8f172516b547df3daa4102d7c8043cf65))
+
+
+### Bug Fixes
+
+* **center:** skip offline agents in update progress ([382ced6](https://github.com/petauron/vastora/commit/382ced6faf590db82a4f1339b46bdbe4ddb1536e))
+
+
+### Performance Improvements
+
+* **agent:** bound task receipt maintenance and index hot queries ([bcdad97](https://github.com/petauron/vastora/commit/bcdad97a354aaba16370289e67db5b2a716dae34))
+
 ## [0.1.0-alpha.123](https://github.com/petauron/vastora/compare/v0.1.0-alpha.122...v0.1.0-alpha.123) (2026-09-12)
 
 
