@@ -188,7 +188,11 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			status.Updated++
 			continue
 		}
-		if updateState == "pending" || updateState == "running" || updateState == "installing" {
+		seen, parseErr := time.Parse(time.RFC3339Nano, lastSeenAt)
+		connected := parseErr == nil && seen.After(connectedAfter)
+		// An offline Agent cannot keep the completed Center update busy. Keep
+		// its durable task intact so a reconnect or host helper can resume it.
+		if connected && (updateState == "pending" || updateState == "running" || updateState == "installing") {
 			status.Updating++
 			continue
 		}
@@ -200,8 +204,7 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			status.Manual++
 			continue
 		}
-		seen, parseErr := time.Parse(time.RFC3339Nano, lastSeenAt)
-		if parseErr != nil || !seen.After(connectedAfter) {
+		if !connected {
 			status.Offline++
 			continue
 		}

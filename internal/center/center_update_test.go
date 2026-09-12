@@ -116,12 +116,14 @@ func TestCenterUpdateStatusReportsVerifiedHostProgress(t *testing.T) {
 	}
 }
 
-func TestCenterUpdateDoesNotBlockOnUnqueuedRemoteAgents(t *testing.T) {
+func TestAgentUpdateRolloutDoesNotBlockCenterWhenUnqueuedOrOffline(t *testing.T) {
 	previousVersion := Version
 	Version = "0.1.0-alpha.99"
 	defer func() { Version = previousVersion }()
 	store := openOrchestrationStore(t)
 	defer store.Close()
+	clock := store.now().UTC()
+	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "remote-update-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.99", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.99", LANAddress: "10.0.0.99", EnabledKinds: []string{networking.KindLAN}})
 	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.98", true)
 	updater := &fakeCenterUpdater{status: deployapi.CenterUpdateExecution{
@@ -141,6 +143,15 @@ func TestCenterUpdateDoesNotBlockOnUnqueuedRemoteAgents(t *testing.T) {
 	status = server.centerUpdateStatus(context.Background(), false)
 	if status.State != "applying" || status.Phase != "agents" || status.Progress != 98 || status.AgentRollout == nil || status.AgentRollout.Updating != 1 {
 		t.Fatalf("unexpected remote Agent rollout status: %#v", status)
+	}
+	task, err := store.ClaimNextTask(context.Background(), node.ID, node.Credential)
+	if err != nil || task == nil || task.Kind != "agent.update" {
+		t.Fatalf("claim remote update: %#v, %v", task, err)
+	}
+	clock = clock.Add(agentConnectedMaxAge)
+	status = server.centerUpdateStatus(context.Background(), false)
+	if status.State != "succeeded" || status.Phase != "completed" || status.Progress != 100 || !status.UpdateAvailable || !status.Automatic || status.AgentRollout == nil || status.AgentRollout.Updating != 0 || status.AgentRollout.Offline != 1 {
+		t.Fatalf("offline Agent blocked the completed Center update: %#v", status)
 	}
 }
 
