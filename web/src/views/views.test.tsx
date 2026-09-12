@@ -1185,8 +1185,10 @@ describe("network and app views", () => {
     });
     expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "list" });
     expect(document.body.textContent).toContain("MacBook");
-    expect(document.body.textContent).toContain("已接入 1 个节点：edge-worker");
-    expect(document.body.textContent).toContain("订阅已用（上下行）");
+    expect(document.body.textContent).toContain("已接入 1 个节点");
+    expect(document.querySelector<HTMLDetailsElement>('details:has([aria-label="已接入节点"])')?.open).toBe(false);
+    expect(document.querySelector('[aria-label="已接入节点"]')?.textContent).toContain("edge-worker");
+    expect(document.body.textContent).toContain("已用流量");
     expect(document.body.textContent).toContain("日常管理");
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("编辑") || button.querySelector(".sr-only")?.textContent === "编辑")?.click());
     expect(document.body.textContent).toContain("客户端额度（可选）");
@@ -1205,8 +1207,9 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
     expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "update", email: "MacBook", newEmail: "MacBook", inboundIds: [9, 10], totalBytes: 10 * 1024 ** 3, resetDays: 0, expiryTime: 0, limitIp: 2 });
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="更多操作：MacBook"]')?.click(); });
     await act(async () => {
-      [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("复制 VLESS"))?.click();
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("复制 VLESS"))?.click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1229,7 +1232,8 @@ describe("network and app views", () => {
     expect([...document.querySelectorAll("button")].filter((button) => button.textContent?.trim() === "复制订阅")).toHaveLength(1);
     expect([...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "OpenClash")).toBe(false);
     const resetCallsBeforeConfirmation = create.mock.calls.filter(([input]) => input.action === "reset_traffic").length;
-    act(() => document.querySelector<HTMLButtonElement>('button[title="重置流量"]')?.click());
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="更多操作：MacBook"]')?.click(); });
+    await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("重置流量"))?.click(); });
     expect(document.body.textContent).toContain("所有 VLESS 节点上的合计用量清零");
     expect(create.mock.calls.filter(([input]) => input.action === "reset_traffic")).toHaveLength(resetCallsBeforeConfirmation);
     await act(async () => {
@@ -1237,6 +1241,10 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
     expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", action: "reset_traffic", email: "MacBook" });
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="更多操作：MacBook"]')?.click(); });
+    await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("删除客户端"))?.click(); });
+    expect(document.body.textContent).toContain("删除“MacBook”？");
+    expect(create.mock.calls.some(([input]) => input.action === "delete")).toBe(false);
   });
 
   it("shows cached clients immediately while refreshing and formats expiry in the Site timezone", async () => {

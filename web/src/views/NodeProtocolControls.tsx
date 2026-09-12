@@ -72,7 +72,7 @@ export function NodeProtocolControls({ serviceId, language, onUpdated }: { servi
         <Checkbox id={`${serviceId}-${protocol}`} checked={draft[protocol]} disabled={active || command?.reconciliationRequired} aria-invalid={empty} onCheckedChange={(checked) => setDraft((current) => ({ ...current, [protocol]: checked }))} />
         <FieldLabel htmlFor={`${serviceId}-${protocol}`}>{protocol.toUpperCase()}</FieldLabel>
       </Field>)}
-      {draft.hy2 ? <FieldDescription>{copy(language, "HY2 需要放行节点的 UDP 443，并通过已连接的 Cloudflare 签发证书。", "HY2 needs UDP 443 allowed on the node and a certificate issued through your connected Cloudflare account.")}</FieldDescription> : null}
+      {draft.hy2 ? <FieldDescription>{copy(language, "HY2 需要放行节点的 UDP 443。TLS 证书由系统自动申请并续期。", "HY2 needs UDP 443 allowed on the node. TLS certificates are requested and renewed automatically.")}</FieldDescription> : null}
       {draft.hy2 ? <FieldDescription>{copy(language, "HY2 使用客户端套餐；原 VLESS 节点套餐仍只计算 VLESS 流量。", "HY2 uses client quotas. The existing VLESS node plan counts VLESS traffic only.")}</FieldDescription> : null}
       {empty ? <FieldError>{copy(language, "至少选择一种协议。", "Select at least one protocol.")}</FieldError> : null}
       <Button className="w-fit" disabled={active || empty || (!changed && saved.state !== "failed" && command?.state !== "failed")} onClick={() => void save()} type="button" variant="outline">
