@@ -119,7 +119,7 @@ describe("app store cards", () => {
     const data = {
       apps: [app()],
       sources: [],
-      agents: [{ id: "collector", connected: true, capabilities: { docker: false }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView],
+      agents: [{ id: "collector", connected: true, credentialRevoked: false, capabilities: { docker: false }, networkProfile: { serviceAddress: "10.0.0.2" } } as AgentView],
       applications: [{ id: "monitor", appKey: "vastora-official/pulse", status: "running", installedVersion: "0.1.0-alpha.2" } as Application],
       services: [], publications: [],
     } as unknown as AppData;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentView, AppData, Application, Service } from "../types";
 import { canInstall, eligibleAppNodes, gatewaysForKind, installBlocker, pulsePrivateAccess } from "./appAccess";
 
-const agent = { id: "collector", name: "Collector", connected: true, capabilities: { docker: false }, networkProfile: { serviceAddress: "10.0.0.2", enabledKinds: ["lan"] } } as AgentView;
+const agent = { id: "collector", name: "Collector", connected: true, credentialRevoked: false, capabilities: { docker: false }, networkProfile: { serviceAddress: "10.0.0.2", enabledKinds: ["lan"] } } as AgentView;
 const controller = { id: "monitor", appKey: "vastora-official/pulse", status: "running", installedVersion: "0.1.0-alpha.2" } as Application;
 const dashboard = { id: "dashboard", applicationId: "monitor", name: "dashboard", status: "ready", protocol: "http" } as Service;
 const data = { agents: [agent], applications: [controller], services: [dashboard], publications: [] } as unknown as AppData;

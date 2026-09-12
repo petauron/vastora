@@ -22,7 +22,7 @@ afterEach(() => {
 const agentFixture = (): AgentView => ({
   id: "agent-a", name: "Node A", version: "test", operatingSystem: "linux", architecture: "amd64",
   status: "active", appliedInstallations: 1, enrolledAt: "2026-09-12T00:00:00Z", lastSeenAt: "2026-09-12T00:00:00Z",
-  connected: true, siteId: "site-a", roles: ["worker"],
+  connected: true, credentialRevoked: false, siteId: "site-a", roles: ["worker"],
   capabilities: { docker: true, gateway: false, tunnel: false, metrics: false, logs: false },
   networkCandidates: [], gatewayHealthy: false, remoteUpdateSupported: true, runtimeRecovery: "application",
   runtimeRecoveryApplications: [

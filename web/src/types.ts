@@ -288,6 +288,7 @@ export type AgentView = {
   enrolledAt: string;
   lastSeenAt: string;
   connected: boolean;
+  credentialRevoked: boolean;
   siteId: string;
   roles: string[];
   capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean };
