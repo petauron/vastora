@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.125](https://github.com/petauron/vastora/compare/v0.1.0-alpha.124...v0.1.0-alpha.125) (2026-09-12)
+
+
+### Bug Fixes
+
+* **agent:** isolate self-update recovery and stop stalled rollout indicators ([#417](https://github.com/petauron/vastora/issues/417)) ([0f7bcb3](https://github.com/petauron/vastora/commit/0f7bcb3f094a52dd538c90b4c16a71a37ac41644))
+* **release:** preserve independent catalog during R2 cleanup ([#415](https://github.com/petauron/vastora/issues/415)) ([7c2af2f](https://github.com/petauron/vastora/commit/7c2af2f0d4113d42347597bc98393393dcc23ff4))
+
 ## [0.1.0-alpha.124](https://github.com/petauron/vastora/compare/v0.1.0-alpha.123...v0.1.0-alpha.124) (2026-09-12)
 
 
