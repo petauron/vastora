@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.0-alpha.133](https://github.com/petauron/vastora/compare/v0.1.0-alpha.131...v0.1.0-alpha.133) (2026-09-14)
+
+### Features
+
+* Configure multiple exit combinations directly from application node rows (#433).
+
+### Bug Fixes
+
+* Remove obsolete client landing editor reset that blocked the alpha.132 build (#435).
+
 ## [0.1.0-alpha.132](https://github.com/petauron/vastora/compare/v0.1.0-alpha.131...v0.1.0-alpha.132) (2026-09-13)
 
 
