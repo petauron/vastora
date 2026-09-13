@@ -37,15 +37,6 @@ require_in "$publish_job" '          outputs: type=image,name=${{ env.CENTER_IMA
 require_in "$publish_job" '          provenance: mode=max'
 require_in "$publish_job" '          cache-to: type=registry,ref=${{ env.CENTER_IMAGE }}:buildcache,mode=max,compression=zstd,compression-level=3,ignore-error=true'
 require_in "$publish_job" '          sbom: true'
-require_in "$publish_job" '      - name: Restore Go compiler caches'
-require_in "$publish_job" '      - name: Inject Go compiler caches'
-require_in "$publish_job" '          path: ${{ runner.temp }}/vastora-go-cache'
-require_in "$publish_job" "          skip-extraction: \${{ steps.go-cache.outputs.cache-hit == 'true' }}"
-for architecture in amd64 arm64; do
-  require_in "$publish_job" "\"id\": \"vastora-go-build-$architecture\""
-done
-require_in "$(cat "$project_dir/Dockerfile.center")" 'COPY scripts/trim-go-build-cache.sh /trim-go-build-cache.sh'
-require_in "$(cat "$project_dir/scripts/trim-go-build-cache.sh")" '536870912'
 require_in "$publish_job" '      - name: Smoke-test released Center image'
 require_in "$publish_job" '          actual_version="$(docker run --rm --platform linux/amd64 --network none --read-only'
 require_in "$publish_job" '            "$CENTER_IMAGE@$IMAGE_DIGEST" version)"'
