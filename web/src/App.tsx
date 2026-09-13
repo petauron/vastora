@@ -65,6 +65,12 @@ export function App() {
   const screenLoadGeneration = useRef(0);
   const screenLoadController = useRef<AbortController | null>(null);
 
+  useEffect(() => {
+    if (!notice || notice.error || phase !== "ready") return;
+    const timer = window.setTimeout(() => setNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [notice, phase]);
+
   const setLanguage = (next: Language) => {
     window.localStorage.setItem("vastora.language", next);
     setLanguageState(next);
@@ -115,6 +121,7 @@ export function App() {
       window.history[replace ? "replaceState" : "pushState"]({}, "", path);
     }
     focusAfterNavigation.current = true;
+    setNotice(null);
     activeScreen.current = target;
     setScreen(target);
     void loadScreen(target).catch(handleLoadError);
@@ -317,7 +324,7 @@ export function App() {
           </header>
           <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-7 md:px-8 md:py-10" id="main-content" ref={mainRef} tabIndex={-1}>
             {connection === "reconnecting" ? <Alert aria-live="assertive" variant="destructive"><WifiOffIcon /><AlertTitle>{copy(language, "与 Center 的连接已中断", "Connection to Center was interrupted")}</AlertTitle><AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><span>{copy(language, `${userError(language, connectionError)} 页面保留的是上次成功同步的数据${lastSync ? `（${lastSync.toLocaleTimeString(language)}）` : ""}。`, `${userError(language, connectionError)} This page is showing the last successful data${lastSync ? ` from ${lastSync.toLocaleTimeString(language)}` : ""}.`)}</span><Button disabled={loadingScreen === screen} onClick={() => void loadScreen(screen).catch(handleLoadError)} size="sm" variant="outline">{loadingScreen === screen ? <Spinner data-icon="inline-start" /> : <RefreshCwIcon data-icon="inline-start" />}{copy(language, "立即重试", "Retry now")}</Button></AlertDescription></Alert> : null}
-            {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle>{notice.message}</AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
+            {notice ? <Alert aria-live="polite" variant={notice.error ? "destructive" : "default"}>{notice.error ? <CircleAlertIcon /> : <CircleCheckIcon />}<AlertTitle className="flex items-start justify-between gap-3"><span>{notice.message}</span><Button aria-label={copy(language, "关闭提示", "Dismiss notice")} onClick={() => setNotice(null)} size="xs" variant="ghost">{copy(language, "关闭", "Dismiss")}</Button></AlertTitle>{notice.detail && notice.detail !== notice.message ? <AlertDescription><details><summary className="cursor-pointer">{copy(language, "查看技术详情", "Technical details")}</summary><code className="mt-2 block break-all text-xs">{notice.detail}</code></details></AlertDescription> : null}</Alert> : null}
             <Suspense fallback={<ScreenLoading language={language} />}>
               {!loadedScreens.has(screen) ? <ScreenLoading language={language} /> : null}
               {loadedScreens.has(screen) && screen === "home" ? <HomeView data={data} language={language} onNavigate={navigate} mutate={mutate} /> : null}

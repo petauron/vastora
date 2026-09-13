@@ -6,10 +6,17 @@ FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS dante-source
 COPY scripts/install-landing-build-deps.sh /install-build-deps.sh
 RUN sh /install-build-deps.sh
 COPY scripts/build-landing-dante.sh /build-dante.sh
-FROM dante-source AS dante-amd64
+FROM dante-source AS dante-build-amd64
 RUN sh /build-dante.sh amd64 /out
-FROM dante-source AS dante-arm64
+FROM dante-source AS dante-build-arm64
 RUN sh /build-dante.sh arm64 /out
+
+# Export only the artifacts, so a cache hit does not materialize the C build
+# environment just to read /out. Keep these layers independent of Go sources.
+FROM scratch AS dante-amd64
+COPY --link --from=dante-build-amd64 /out/ /out/
+FROM scratch AS dante-arm64
+COPY --link --from=dante-build-arm64 /out/ /out/
 
 FROM --platform=$BUILDPLATFORM node:24.20.0-bookworm-slim AS web-build
 WORKDIR /src/web
@@ -19,15 +26,21 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY web/ ./
 RUN npm run build
 
+FROM scratch AS web-assets
+COPY --link --from=web-build /src/web/dist/ /dist/
+
 FROM --platform=$BUILDPLATFORM golang:1.26.8-bookworm AS go-source
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN GOTOOLCHAIN=go1.26.6 go mod download
-COPY cmd/ ./cmd/
-COPY internal/ ./internal/
+# Keep extracted modules, checksum metadata and the selected toolchain. The
+# downloaded ZIPs duplicate those files and are not needed to compile them.
+RUN GOTOOLCHAIN=go1.26.6 go mod download && \
+    find /go/pkg/mod/cache/download -type f -name '*.zip' -delete
+COPY --link cmd/ ./cmd/
+COPY --link internal/ ./internal/
 
 FROM go-source AS binary-amd64
-COPY --from=dante-amd64 /out/ /src/internal/dantebundle/assets/
+COPY --link --from=dante-amd64 /out/ /src/internal/dantebundle/assets/
 ARG VASTORA_VERSION=0.1.0-dev
 RUN --mount=type=cache,id=vastora-go-build-amd64,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
@@ -35,7 +48,7 @@ RUN --mount=type=cache,id=vastora-go-build-amd64,target=/root/.cache/go-build \
     -o /out/vastora ./cmd/vastora
 
 FROM go-source AS binary-arm64
-COPY --from=dante-arm64 /out/ /src/internal/dantebundle/assets/
+COPY --link --from=dante-arm64 /out/ /src/internal/dantebundle/assets/
 ARG VASTORA_VERSION=0.1.0-dev
 RUN --mount=type=cache,id=vastora-go-build-arm64,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
@@ -49,10 +62,10 @@ RUN mkdir /out/center-data && chown 65532:65532 /out/center-data
 
 FROM gcr.io/distroless/static-debian13:nonroot
 WORKDIR /app
-COPY --from=center-build /out/vastora /usr/local/bin/vastora
-COPY --from=binary-amd64 /out/vastora /app/agent-binaries/linux-amd64
-COPY --from=binary-arm64 /out/vastora /app/agent-binaries/linux-arm64
-COPY --from=web-build /src/web/dist /app/web/dist
+COPY --link --from=center-build /out/vastora /usr/local/bin/vastora
+COPY --link --from=binary-amd64 /out/vastora /app/agent-binaries/linux-amd64
+COPY --link --from=binary-arm64 /out/vastora /app/agent-binaries/linux-arm64
+COPY --link --from=web-assets /dist/ /app/web/dist/
 COPY catalog/trust/ /app/catalog-trust/
 COPY --from=center-build --chown=65532:65532 /out/center-data /var/lib/vastora
 VOLUME ["/var/lib/vastora"]

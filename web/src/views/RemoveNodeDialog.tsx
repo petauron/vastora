@@ -31,7 +31,7 @@ export function RemoveNodeDialog({ agent, language, mutate, onClose }: {
     if (busy || pending || agent.connected || !nameMatches) return;
     setBusy(true); setError("");
     try {
-      await mutate(() => api.removeOfflineAgent(agent.id, existing ? agent.name : confirmation.trim()), copy(language, "正在移除节点，完成后将从列表中消失。", "Removing the node. It will disappear from the list when cleanup finishes."));
+      await mutate(() => api.removeOfflineAgent(agent.id, existing ? agent.name : confirmation.trim()), copy(language, "移除请求已提交，可在节点列表查看进度。", "Removal requested. View progress in the node list."));
       onClose();
     } catch (cause) { setError(userError(language, cause)); }
     finally { setBusy(false); }

@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { localized, operationLabel } from "./appAccess";
-import { copy, StateBadge } from "./shared";
+import { catalogInstallBlocked, copy, StateBadge } from "./shared";
 import { AppIdentityBadge } from "./AppIdentity";
 import { canCreateRealityNode, publicationNeedsAttention, serviceNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
 
@@ -24,6 +24,7 @@ type InstalledAppsProps = {
   language: Language;
   mutate: Mutate;
   onManage: (application: Application) => void;
+  onUpgrade: (application: Application) => void;
   onClients: (application: Application) => void;
   onReality: (application: Application) => void;
 };
@@ -50,7 +51,7 @@ export function InstalledApps({ groups, ...props }: InstalledAppsProps) {
   </LandingProvider>;
 }
 
-function InstalledApplicationGroup({ group, language, mutate, onManage, onClients, onReality, showSite }: Omit<InstalledAppsProps, "groups"> & { group: InstalledAppGroup; showSite: boolean }) {
+function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrade, onClients, onReality, showSite }: Omit<InstalledAppsProps, "groups"> & { group: InstalledAppGroup; showSite: boolean }) {
   const headingID = useId();
   const [query, setQuery] = useState("");
   const threeXUI = group.appKey === threeXUIAppKey;
@@ -80,7 +81,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onClient
     </CardHeader>
     <CardContent className="flex min-w-0 flex-col gap-4">
       {threeXUI && group.legacyControllers.length > 0 ? <ControllerConvergence group={group} language={language} onManage={onManage} /> : null}
-      {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} /> : null}
+      {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} onUpgrade={onUpgrade} /> : null}
       {threeXUI ? <LandingNotice language={language} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <InputGroup className="max-w-xs">
@@ -100,7 +101,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onClient
           </TableRow>
         </TableHeader>
         <TableBody className="block lg:table-row-group">
-          {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
+          {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
           {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 VLESS 节点", "No VLESS nodes configured")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
@@ -129,7 +130,7 @@ function ControllerConvergence({ group, language, onManage }: { group: Installed
   </Alert>;
 }
 
-function ControllerBand({ instance, language, onClients, onManage }: { instance: InstalledAppInstance; language: Language; onClients: (application: Application) => void; onManage: (application: Application) => void }) {
+function ControllerBand({ instance, language, onClients, onManage, onUpgrade }: { instance: InstalledAppInstance; language: Language; onClients: (application: Application) => void; onManage: (application: Application) => void; onUpgrade: (application: Application) => void }) {
   const { application, agent, services, publications, locked } = instance;
   const webServiceIDs = new Set(services.filter((service) => service.protocol === "http" || service.protocol === "https").map((service) => service.id));
   const webAttention = publications.some((publication) => webServiceIDs.has(publication.serviceId) && publicationNeedsAttention(publication));
@@ -145,6 +146,7 @@ function ControllerBand({ instance, language, onClients, onManage }: { instance:
       {webAttention ? <span className="text-xs text-destructive">{copy(language, "入口待处理", "Access needs attention")}</span> : null}
     </div>
     <div className="flex flex-wrap items-center gap-2">
+      <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} />
       <Button disabled={locked} onClick={() => onClients(application)} size="sm" variant="outline">{copy(language, "客户端与订阅", "Clients & subscriptions")}</Button>
       {panelPublication?.accessUrl ? <a className={buttonVariants({ size: "sm", variant: "outline" })} href={panelPublication.accessUrl} rel="noreferrer" target="_blank">
         {copy(language, "打开面板", "Open panel")}<ExternalLinkIcon aria-hidden="true" data-icon="inline-end" />
@@ -154,7 +156,20 @@ function ControllerBand({ instance, language, onClients, onManage }: { instance:
   </section>;
 }
 
-function ApplicationStatus({ instance, language }: { instance: InstalledAppInstance; language: Language }) {
+function ApplicationUpdate({ instance, language, onUpgrade }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void }) {
+  const { application, app, agent, activeChange } = instance;
+  if (!application.updateAvailable) return null;
+  const legacy = application.appKey === threeXUIAppKey && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
+  const updating = activeChange?.operation === "upgrade";
+  const disabled = Boolean(activeChange) || !agent?.connected || legacy || catalogInstallBlocked(app);
+  const name = agent?.name ?? application.nodeId;
+  return <Button aria-label={copy(language, `更新 ${name} 的应用`, `Update application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `更新到 v${application.availableVersion}`, `Update to v${application.availableVersion}`)}>
+    {updating ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}
+    {updating ? copy(language, "更新中", "Updating") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
+  </Button>;
+}
+
+function ApplicationStatus({ instance, language, onUpgrade }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void }) {
   const { application, activeChange, agent } = instance;
   const syncing = application.role === "worker" && (application.nodeSyncStatus === "pending" || application.nodeSyncStatus === "applying");
   const syncFailed = application.role === "worker" && (!instance.controller || !["ready", "pending", "applying"].includes(application.nodeSyncStatus ?? ""));
@@ -168,7 +183,7 @@ function ApplicationStatus({ instance, language }: { instance: InstalledAppInsta
     {syncing ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" />{copy(language, "正在接入订阅主机", "Connecting to controller")}</span> : null}
     {syncFailed ? <span className="text-xs text-destructive">{copy(language, "尚未接入订阅主机", "Controller not connected")}</span> : null}
     {agent && !agent.connected ? <span className="text-xs text-destructive">{copy(language, "节点离线", "Node offline")}</span> : null}
-    {application.updateAvailable ? <Badge variant="outline">{copy(language, "有可用更新", "Update available")}</Badge> : null}
+    <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} />
   </div>;
 }
 
@@ -189,7 +204,7 @@ function AccessStatus({ services, publications, language, threeXUI }: { services
   </span>;
 }
 
-function InstalledInstanceRow({ instance, language, mutate, onManage, onReality, threeXUI, showSite }: { instance: InstalledAppInstance; language: Language; mutate: Mutate; onManage: (application: Application) => void; onReality: (application: Application) => void; threeXUI: boolean; showSite: boolean }) {
+function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade, onReality, threeXUI, showSite }: { instance: InstalledAppInstance; language: Language; mutate: Mutate; onManage: (application: Application) => void; onUpgrade: (application: Application) => void; onReality: (application: Application) => void; threeXUI: boolean; showSite: boolean }) {
   const [checking, setChecking] = useState(false);
   const { application, agent, locked } = instance;
   const services = threeXUI ? instance.realityServices : instance.services;
@@ -218,7 +233,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onReality,
     </TableCell>
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "应用状态", "Application")}</p>
-      <ApplicationStatus instance={instance} language={language} />
+      <ApplicationStatus instance={instance} language={language} onUpgrade={onUpgrade} />
     </TableCell>
     {threeXUI ? <>
       <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
