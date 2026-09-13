@@ -12,26 +12,13 @@ import (
 // not merely a presentation preference on the subscription response.
 type PublishingMode string
 
-const (
-	FixedMode    PublishingMode = "fixed"
-	AdvancedMode PublishingMode = "advanced"
-	BothMode     PublishingMode = "both"
-)
+const FixedMode PublishingMode = "fixed"
 
-func (m PublishingMode) Valid() bool    { return m == FixedMode || m == AdvancedMode || m == BothMode }
-func (m PublishingMode) Fixed() bool    { return m == FixedMode || m == BothMode }
-func (m PublishingMode) Advanced() bool { return m == AdvancedMode || m == BothMode }
+func (m PublishingMode) Valid() bool { return m == FixedMode }
+func (m PublishingMode) Fixed() bool { return m == FixedMode }
 
 func (g ClientGrant) Published(mode PublishingMode) ClientGrant {
-	fixed, advanced := mode.Fixed() && g.Mode.Fixed(), mode.Advanced() && g.Mode.Advanced()
-	switch {
-	case fixed && advanced:
-		g.Mode = BothMode
-	case fixed:
-		g.Mode = FixedMode
-	case advanced:
-		g.Mode = AdvancedMode
-	default:
+	if !mode.Valid() || !g.Mode.Valid() {
 		g.Enabled = false
 	}
 	return g

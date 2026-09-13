@@ -107,6 +107,17 @@ func (s *Store) ConfigureClientLanding(ctx context.Context, input LandingClientG
 		return LandingClientGrantView{}, err
 	}
 	defer tx.Rollback()
+	view, err := s.configureClientLanding(ctx, tx, input, true)
+	if err != nil {
+		return LandingClientGrantView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return LandingClientGrantView{}, err
+	}
+	return view, nil
+}
+
+func (s *Store) configureClientLanding(ctx context.Context, tx *sql.Tx, input LandingClientGrantInput, checkBusy bool) (LandingClientGrantView, error) {
 	var controllerID, email string
 	var metadata []byte
 	if err := tx.QueryRowContext(ctx, `SELECT controller_id,email,metadata_json FROM three_x_ui_client_accounts WHERE id=?`, input.ParentID).Scan(&controllerID, &email, &metadata); err != nil {
@@ -158,7 +169,7 @@ func (s *Store) ConfigureClientLanding(ctx context.Context, input LandingClientG
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id IN (?,?) AND (state IN ('pending','running') OR reconciliation_required=1)`, controllerNode, selected.NodeID).Scan(&busy); err != nil {
 		return LandingClientGrantView{}, err
 	}
-	if busy != 0 {
+	if checkBusy && busy != 0 {
 		return LandingClientGrantView{}, errors.New("center: wait for the current node operation to finish")
 	}
 	var id string
@@ -222,9 +233,6 @@ func (s *Store) ConfigureClientLanding(ctx context.Context, input LandingClientG
 		err = s.queueClientLandingRoutes(ctx, tx, selected.ApplicationID)
 	}
 	if err != nil {
-		return LandingClientGrantView{}, err
-	}
-	if err := tx.Commit(); err != nil {
 		return LandingClientGrantView{}, err
 	}
 	record.Mode, record.Enabled = input.Mode, input.Enabled

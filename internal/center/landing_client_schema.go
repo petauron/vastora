@@ -1,13 +1,13 @@
 package center
 
-// Keep this identical to migration 73 for fresh installations.
+// Current schema for fresh installations; existing databases migrate forward.
 const landingClientSchema = `
 CREATE TABLE three_x_ui_client_accounts (
  id TEXT PRIMARY KEY,
  controller_id TEXT NOT NULL REFERENCES applications(id) ON DELETE RESTRICT,
  email TEXT NOT NULL,
  metadata_json BLOB NOT NULL CHECK(json_valid(metadata_json)),
- mode TEXT NOT NULL DEFAULT 'fixed' CHECK(mode IN ('fixed','advanced','both')),
+ mode TEXT NOT NULL DEFAULT 'fixed' CHECK(mode='fixed'),
  revision INTEGER NOT NULL DEFAULT 1,
  pending_command_id TEXT NOT NULL DEFAULT '',
  managed_quota INTEGER NOT NULL DEFAULT 0 CHECK(managed_quota IN(0,1)),

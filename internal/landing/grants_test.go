@@ -13,25 +13,16 @@ func clientGrantFixture(id string, mode PublishingMode) ClientGrant {
 	return ClientGrant{ID: id, ParentID: parent, BaseIdentity: parent, BaseUser: "phone", InboundTag: "business", FixedUser: FixedUser(id), FixedIdentity: Identity("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"), Peer: PeerIdentity{ID: "landing-a", PublicKey: "key-a", Address: "100.64.0.8"}, Mode: mode, Enabled: true}
 }
 
-func TestClientGrantModesIntersectWithoutEscalation(t *testing.T) {
-	for _, allowed := range []PublishingMode{FixedMode, AdvancedMode, BothMode} {
-		for _, published := range []PublishingMode{FixedMode, AdvancedMode, BothMode} {
-			grant := clientGrantFixture("combination-a", allowed).Published(published)
-			if err := grant.Validate(); err != nil {
-				t.Fatal(err)
-			}
-			if grant.Enabled && grant.Mode.Fixed() != (allowed.Fixed() && published.Fixed()) || grant.Enabled && grant.Mode.Advanced() != (allowed.Advanced() && published.Advanced()) {
-				t.Fatalf("mode expanded: %s / %s -> %+v", allowed, published, grant)
-			}
-			if grant.Enabled != ((allowed.Fixed() && published.Fixed()) || (allowed.Advanced() && published.Advanced())) {
-				t.Fatal("disjoint modes remained enabled")
-			}
+func TestClientGrantRejectsRemovedModes(t *testing.T) {
+	for _, mode := range []PublishingMode{"advanced", "both", ""} {
+		if mode.Valid() || clientGrantFixture("combination-a", mode).Validate() == nil {
+			t.Fatal("accepted a removed publishing mode")
 		}
 	}
 }
 
-func TestClientGrantRoutesKeepBaseAndScopeAdvancedException(t *testing.T) {
-	grant := clientGrantFixture("combination-a", BothMode)
+func TestClientGrantRoutesKeepBaseWithoutPrivateException(t *testing.T) {
+	grant := clientGrantFixture("combination-a", FixedMode)
 	forced := &ProxyPlan{ApplicationID: "entry", InboundTags: []string{"business"}, Peer: grant.Peer}
 	for _, proxy := range []*ProxyPlan{nil, forced} {
 		change, err := PrepareClientRoutes(json.RawMessage(routeFixture), 3, proxy, []ClientGrant{grant})
@@ -63,7 +54,7 @@ func TestClientGrantRoutesKeepBaseAndScopeAdvancedException(t *testing.T) {
 				catchall = i
 			}
 		}
-		if advanced < 0 || fixed <= advanced || catchall <= fixed {
+		if advanced != -1 || fixed < 0 || catchall <= fixed {
 			t.Fatalf("unsafe route order: %d/%d/%d", advanced, fixed, catchall)
 		}
 		before, _, _ := decodeRouteSettings(change.Before)
@@ -76,7 +67,7 @@ func TestClientGrantRoutesKeepBaseAndScopeAdvancedException(t *testing.T) {
 }
 
 func TestRevokedClientRoutesNeverRestoreDirectForOldChild(t *testing.T) {
-	grant := clientGrantFixture("combination-a", BothMode)
+	grant := clientGrantFixture("combination-a", FixedMode)
 	first, err := PrepareClientRoutes(json.RawMessage(routeFixture), 3, nil, []ClientGrant{grant})
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +106,7 @@ func TestRevokedClientRoutesNeverRestoreDirectForOldChild(t *testing.T) {
 }
 
 func TestClientOnlyParentBlockHasValidRouteAndNoPeerDependency(t *testing.T) {
-	grant := clientGrantFixture("combination-a", BothMode)
+	grant := clientGrantFixture("combination-a", FixedMode)
 	state := DesiredState{NodeID: "entry", Revision: 1, Clients: &ClientPlan{ApplicationID: "app", AllowSessionReset: true, BlockedUsers: []ClientBlock{{ParentID: grant.ParentID, InboundTag: "removed", User: grant.BaseUser, Identity: grant.BaseIdentity}}}}
 	if err := state.Validate(); err != nil {
 		t.Fatal(err)

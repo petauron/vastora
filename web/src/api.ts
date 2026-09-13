@@ -1,6 +1,6 @@
 import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
-import type { LandingView, LandingClientGrant, LandingClientGrantInput, LandingClientMode } from "./landing-types";
+import type { LandingView, LandingClientGrant, LandingClientGrantInput, LandingClientCombinationsInput } from "./landing-types";
 import type { NodeProtocols } from "./types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
 
@@ -76,8 +76,7 @@ export const api = {
   },
   clientLandingGrants: (parentId: string, signal?: AbortSignal) => request<LandingClientGrant[]>(`/api/v1/three-x-ui/client-landing?parentId=${encodeURIComponent(parentId)}`, { signal }),
   configureClientLanding: (input: LandingClientGrantInput) => request<LandingClientGrant>("/api/v1/three-x-ui/client-landing", { method: "PUT", body: JSON.stringify(input) }),
-  clientLandingMode: (parentId: string, signal?: AbortSignal) => request<LandingClientMode>(`/api/v1/three-x-ui/client-landing/mode?parentId=${encodeURIComponent(parentId)}`, { signal }),
-  configureClientLandingMode: (input: LandingClientMode & { confirmSessionReset: boolean }) => request<LandingClientMode>("/api/v1/three-x-ui/client-landing/mode", { method: "PUT", body: JSON.stringify(input) }),
+  configureClientLandingCombinations: (input: LandingClientCombinationsInput) => request<LandingClientGrant[]>("/api/v1/three-x-ui/client-landing/combinations", { method: "POST", body: JSON.stringify(input) }),
   landing: (signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", { signal }),
   selectLanding: (nodeIds: string[], revision: number, signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", {
     method: "PUT", body: JSON.stringify({ nodeIds, revision }), signal

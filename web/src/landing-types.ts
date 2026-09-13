@@ -34,8 +34,7 @@ export type LandingView = {
   latencies: LandingLatencyView[];
 };
 
-export type LandingPublishingMode = "fixed" | "advanced" | "both";
-export type LandingClientMode = { parentId: string; mode: LandingPublishingMode; revision: number };
+export type LandingPublishingMode = "fixed";
 export type LandingClientGrant = {
   id: string;
   parentId: string;
@@ -50,3 +49,9 @@ export type LandingClientGrant = {
   error?: string;
 };
 export type LandingClientGrantInput = Pick<LandingClientGrant, "parentId" | "serviceId" | "landingNodeId" | "mode" | "enabled" | "revision"> & { confirmSessionReset: boolean };
+export type LandingClientCombinationsInput = {
+  parentId: string;
+  serviceId: string;
+  targets: Array<{ landingNodeId: string; revision: number }>;
+  confirmSessionReset: boolean;
+};

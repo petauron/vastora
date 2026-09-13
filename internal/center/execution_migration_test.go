@@ -77,7 +77,7 @@ func TestExecutionMigrationBacksUpAndFailsClosed(t *testing.T) {
 		if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 			t.Fatal(err)
 		}
-		want := 75
+		want := centerSchemaVersion
 		if conflict {
 			want = 74
 			var partial int

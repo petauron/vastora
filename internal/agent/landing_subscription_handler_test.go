@@ -33,14 +33,14 @@ func landingSubscriptionTestState(t *testing.T) (*Store, *landingControllerState
 	parentUUID := "11111111-2222-4333-8444-555555555555"
 	childUUID := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	parent := landing.Identity(parentUUID)
-	grant := landing.ClientGrant{ID: "grant-a", ParentID: parent, BaseIdentity: parent, BaseUser: "Phone", InboundTag: "business", FixedUser: landing.FixedUser("grant-a"), FixedIdentity: landing.Identity(childUUID), Peer: landing.PeerIdentity{ID: "landing-a", PublicKey: "key-a", Address: "100.64.0.9"}, Mode: landing.BothMode, Enabled: true}
+	grant := landing.ClientGrant{ID: "grant-a", ParentID: parent, BaseIdentity: parent, BaseUser: "Phone", InboundTag: "business", FixedUser: landing.FixedUser("grant-a"), FixedIdentity: landing.Identity(childUUID), Peer: landing.PeerIdentity{ID: "landing-a", PublicKey: "key-a", Address: "100.64.0.9"}, Mode: landing.FixedMode, Enabled: true}
 	link := func(id string) string {
 		return "vless://" + id + "@entry.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=example.com&pbk=public-key&sid=deadbeef#Original"
 	}
 	state := &landingControllerState{ControllerID: "controller", Grants: map[string]landingControllerGrant{
 		grant.ID: {Task: landing.ControllerTask{Grant: grant, Revision: 1, Phase: "activate", ControllerID: "controller", InboundID: 9, FixedUUID: childUUID, EntryName: "Entry A", LandingName: "Landing A"}, Phase: "ready", ChildSubscription: "private-child-token", Material: landing.ControllerResult{BaseLink: link(parentUUID), FixedLink: link(childUUID)}},
 	}, Accounts: map[string]landingControllerAccount{
-		parent: {ID: parent, Email: "Phone", SubscriptionToken: "parent-sub-token", Mode: landing.BothMode, Enabled: true, Total: 1000, Expiry: store.now().Add(time.Hour).UnixMilli(), Members: []landing.QuotaMember{{ID: parent, Observed: 100, Active: true}, {ID: grant.FixedIdentity, Observed: 50, Active: true}}},
+		parent: {ID: parent, Email: "Phone", SubscriptionToken: "parent-sub-token", Mode: landing.FixedMode, Enabled: true, Total: 1000, Expiry: store.now().Add(time.Hour).UnixMilli(), Members: []landing.QuotaMember{{ID: parent, Observed: 100, Active: true}, {ID: grant.FixedIdentity, Observed: 50, Active: true}}},
 	}}
 	return store, state, parent
 }
