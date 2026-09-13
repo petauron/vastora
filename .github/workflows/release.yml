@@ -333,6 +333,16 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - name: Check out release baseline metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require an authoritative release baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh scripts/require-release-baseline.sh
+
       - name: Create or update the next release pull request without publishing
         id: release_pr_action
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5

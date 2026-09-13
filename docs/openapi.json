@@ -10135,6 +10135,9 @@
               }
             }
           },
+          "controllerBlocked": {
+            "type": "boolean"
+          },
           "tasksPaused": {
             "type": "boolean"
           },
