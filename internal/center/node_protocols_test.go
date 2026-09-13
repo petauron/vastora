@@ -47,7 +47,7 @@ func TestNodeProtocolsDefaultAndImmutablePhases(t *testing.T) {
 			t.Fatal(err)
 		}
 		raw, _ := json.Marshal(map[string]any{"protocolCommand": nodeprotocol.Result{Phase: phase}})
-		if err := store.completeApplicationCommand(ctx, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
+		if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
 			t.Fatal(err)
 		}
 		var after []byte
@@ -127,7 +127,7 @@ func TestProtocolVerificationRejectsWrongSibling(t *testing.T) {
 			result.HY2InboundID = 999
 		}
 		raw, _ := json.Marshal(map[string]any{"protocolCommand": result})
-		if err := store.completeApplicationCommand(ctx, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
+		if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
 			t.Fatal(err)
 		}
 	}

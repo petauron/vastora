@@ -2,6 +2,8 @@ package center
 
 import (
 	"context"
+	"errors"
+	"github.com/petauron/vastora/internal/controlplane"
 	"strings"
 	"testing"
 	"time"
@@ -31,11 +33,12 @@ func TestAgentUpdateRequiresHandoffAndTargetVersionReconnect(t *testing.T) {
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
 		t.Fatal("Agent update completed before durable helper handoff")
 	}
-	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+	begin := prepareUpdateHandoffForTest(t, store, node, *task)
+	if err := begin(); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
-		t.Fatalf("duplicate update handoff was not idempotent: %v", err)
+	if err := begin(); !errors.Is(err, errExecutionAuthorization) {
+		t.Fatalf("duplicate update handoff consumed permission twice: %v", err)
 	}
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
 		t.Fatal("Agent update completed before the target version reconnected")
@@ -54,7 +57,7 @@ func TestAgentUpdateRequiresHandoffAndTargetVersionReconnect(t *testing.T) {
 	}
 }
 
-func TestAgentUpdateRecoveryRemainsActiveUntilTargetReconnects(t *testing.T) {
+func TestAgentUpdateUncertainFailureDoesNotResumeWhenTargetReconnects(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -69,28 +72,29 @@ func TestAgentUpdateRecoveryRemainsActiveUntilTargetReconnects(t *testing.T) {
 	if err != nil || task == nil {
 		t.Fatalf("claim update: %#v, %v", task, err)
 	}
-	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+	begin := prepareUpdateHandoffForTest(t, store, node, *task)
+	if err := begin(); err != nil {
 		t.Fatal(err)
 	}
 	const recoveryRequired = "recovery required; schema-compatible candidate remains installed"
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
+		if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
 			t.Fatalf("recovery report replay failed: %v", err)
 		}
 	}
 	var state, lastError string
-	if err := store.db.QueryRowContext(ctx, `SELECT state, last_error FROM agent_updates WHERE id = ?`, task.ID).Scan(&state, &lastError); err != nil || state != "installing" || lastError != recoveryRequired {
+	if err := store.db.QueryRowContext(ctx, `SELECT state, last_error FROM agent_updates WHERE id = ?`, task.ID).Scan(&state, &lastError); err != nil || state != "failed" || lastError != recoveryRequired {
 		t.Fatalf("recovery no longer owns the update: state=%q error=%q err=%v", state, lastError, err)
 	}
 	var failedActivations int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id = ? AND event = 'failed'`, task.ID).Scan(&failedActivations); err != nil || failedActivations != 1 {
 		t.Fatalf("replayed recovery reports duplicated activation events: count=%d err=%v", failedActivations, err)
 	}
-	if repeated, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89"); err != nil || repeated.ID != queued.ID {
-		t.Fatalf("manual retry replaced the recovering attempt: %#v %v", repeated, err)
+	if repeated, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89"); err == nil {
+		t.Fatalf("ordinary update bypassed manual disposition: %#v", repeated)
 	}
 	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.90"); err == nil {
 		t.Fatal("a competing version replaced an active recovery")
@@ -101,26 +105,30 @@ func TestAgentUpdateRecoveryRemainsActiveUntilTargetReconnects(t *testing.T) {
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
 		t.Fatal("recovery succeeded without a target-version heartbeat")
 	}
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt+1, false, "stale", nil, true); err == nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt+1, false, "stale", nil, true); err == nil {
 		t.Fatal("a stale attempt changed recovery state")
 	}
-	if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
-		t.Fatalf("recovering update could not resume the same durable attempt: %v", err)
+	if err := begin(); !errors.Is(err, errExecutionAuthorization) {
+		t.Fatalf("recovering update consumed handoff twice: %v", err)
 	}
 	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.89", true)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
-		t.Fatalf("recovered target heartbeat could not complete update: %v", err)
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
+		t.Fatal("target heartbeat silently completed the failed update")
+	}
+	rollout, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
+	if err != nil || rollout.Failed != 1 || rollout.Updated != 0 || rollout.Updating != 0 {
+		t.Fatalf("new version hid unresolved failure: %+v %v", rollout, err)
 	}
 
 	agents, err := store.ListAgents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(agents) != 1 || agents[0].Update == nil || agents[0].Update.ID != queued.ID || agents[0].Update.State != "succeeded" || agents[0].Update.LastError != "" {
+	if len(agents) != 1 || agents[0].Update == nil || agents[0].Update.ID != queued.ID || agents[0].Update.State != "failed" || agents[0].Update.LastError != recoveryRequired {
 		t.Fatalf("recovered update state = %#v", agents)
 	}
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err == nil {
-		t.Fatal("a late recovery report reopened a completed update")
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, recoveryRequired, nil, true); err != nil {
+		t.Fatalf("same failure evidence changed disposition: %v", err)
 	}
 }
 
@@ -196,6 +204,12 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 0 {
 		t.Fatalf("failed rollout was automatically retried: %#v, %v", queued, err)
 	}
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+		t.Fatalf("new release bypassed the failed update: %#v, %v", queued, err)
+	}
+	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.90"); err != nil || status.Failed != 1 || status.Pending != 0 || status.Updating != 0 {
+		t.Fatalf("blocked new release still appears pending: %#v, %v", status, err)
+	}
 	status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
 	if err != nil {
 		t.Fatal(err)
@@ -247,14 +261,16 @@ func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
 				t.Fatal(err)
 			}
 			var task *AgentTask
+			var begin func() error
 			if state != "pending" {
 				task, err = store.ClaimNextTask(ctx, node.ID, node.Credential)
 				if err != nil || task == nil || task.ID != queued.ID {
 					t.Fatalf("claim update: %#v, %v", task, err)
 				}
+				begin = prepareUpdateHandoffForTest(t, store, node, *task)
 			}
 			if state == "installing" {
-				if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+				if err := begin(); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -285,17 +301,45 @@ func TestAgentUpdateRolloutOfflineTasksRemainRecoverable(t *testing.T) {
 			if nodes, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(nodes) != 0 {
 				t.Fatalf("reconnect duplicated the durable update: %v, %v", nodes, err)
 			}
-			if state != "installing" {
+			if state == "running" {
+				if err := begin(); err == nil {
+					t.Fatal("expired authorization accepted a late handoff before task recovery")
+				}
+				for poll := 0; poll < 2; poll++ {
+					if replay, err := store.ClaimNextTask(ctx, node.ID, node.Credential); (err != nil && !errors.Is(err, errExecutionBlocked)) || replay != nil {
+						t.Fatalf("expired update was automatically replayed: %#v, %v", replay, err)
+					}
+				}
+				if err := begin(); err == nil {
+					t.Fatal("failed attempt accepted a late handoff")
+				}
+				var attempt int64
+				var message, lease string
+				if err := store.db.QueryRowContext(ctx, `SELECT state, attempt, last_error, lease_expires_at FROM agent_updates WHERE id=?`, task.ID).Scan(&persistedState, &attempt, &message, &lease); err != nil {
+					t.Fatal(err)
+				}
+				if persistedState != "failed" || attempt != task.Attempt || lease != "" || !strings.Contains(message, "manual verification") {
+					t.Fatalf("interrupted attempt was not preserved: %s attempt=%d lease=%q error=%q", persistedState, attempt, lease, message)
+				}
+				if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+					t.Fatalf("new rollout bypassed the interrupted attempt: %#v, %v", queued, err)
+				}
+				return
+			}
+			if state == "pending" {
 				task, err = store.ClaimNextTask(ctx, node.ID, node.Credential)
 				if err != nil || task == nil || task.ID != queued.ID {
 					t.Fatalf("resume update: %#v, %v", task, err)
 				}
-				if state == "running" && task.Attempt != 2 {
-					t.Fatalf("expired download attempt was not reclaimed: %#v", task)
-				}
+				begin = prepareUpdateHandoffForTest(t, store, node, *task)
 			}
-			if err := store.beginAgentUpdate(ctx, node.ID, node.Credential, task.ID, task.Attempt); err != nil {
-				t.Fatal(err)
+			beginErr := begin()
+			if state == "installing" {
+				if !errors.Is(beginErr, errExecutionAuthorization) {
+					t.Fatalf("reconnection reauthorized installing helper: %v", beginErr)
+				}
+			} else if beginErr != nil {
+				t.Fatal(beginErr)
 			}
 			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.89", true)
 			if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err != nil {
@@ -316,6 +360,65 @@ func heartbeatAgentUpdateVersion(t *testing.T, store *Store, node AgentCredentia
 		ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, RemoteUpdateSupported: supported,
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func prepareUpdateHandoffForTest(t *testing.T, store *Store, node AgentCredential, task AgentTask) func() error {
+	t.Helper()
+	ctx := context.Background()
+	session := "update-task-test-current-process-session"
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := store.PersistExecutionAuthorization(ctx, node.ID, session, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CheckExecutionStep(ctx, node.ID, session, auth.ID, "handoff"); err != nil {
+		t.Fatal(err)
+	}
+	return func() error {
+		return store.beginAgentUpdateExecution(ctx, node.ID, node.Credential, task.ID, task.Attempt, auth.ID, session)
+	}
+}
+
+func TestAgentUpdateRolloutVersionDoesNotCompleteActiveTask(t *testing.T) {
+	for _, state := range []string{"pending", "running", "installing"} {
+		for _, version := range []string{"0.1.0-alpha.124", "0.1.0-alpha.125"} {
+			t.Run(state+"/"+version, func(t *testing.T) {
+				store := openOrchestrationStore(t)
+				defer store.Close()
+				ctx := context.Background()
+				clock := store.now().UTC()
+				store.now = func() time.Time { return clock }
+				node := enrollOrchestrationNode(t, store, "version-observation", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.94", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.94", LANAddress: "10.0.0.94", EnabledKinds: []string{networking.KindLAN}})
+				heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.123", true)
+				queued, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.124")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.db.Exec(`UPDATE agent_updates SET state=? WHERE id=?`, state, queued.ID); err != nil {
+					t.Fatal(err)
+				}
+				heartbeatAgentUpdateVersion(t, store, node, version, true)
+				status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.124")
+				if err != nil || status.Total != 1 || status.Updating != 1 || status.Updated != 0 {
+					t.Fatalf("active operation hidden by version observation: %+v %v", status, err)
+				}
+				clock = clock.Add(agentConnectedMaxAge + time.Second)
+				status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.124")
+				if err != nil || status.Total != 1 || status.Offline != 1 || status.Updating != 0 || status.Updated != 0 {
+					t.Fatalf("offline operation reported complete or kept rollout busy: %+v %v", status, err)
+				}
+				var actual string
+				if err := store.db.QueryRow(`SELECT state FROM agent_updates WHERE id=?`, queued.ID).Scan(&actual); err != nil || actual != state {
+					t.Fatalf("status observation changed execution state: %q %v", actual, err)
+				}
+			})
+		}
 	}
 }
 
@@ -361,8 +464,8 @@ func TestAgentUpdateRolloutBlockedTasksDoNotStayBusy(t *testing.T) {
 			}
 			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.124", true)
 			status, err = store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.124")
-			if err != nil || status.Updated != 1 || status.Failed != 0 {
-				t.Fatalf("recovered version did not clear attention status: %#v %v", status, err)
+			if err != nil || status.Updated != 0 || status.Failed != 1 {
+				t.Fatalf("version heartbeat erased unresolved execution: %#v %v", status, err)
 			}
 		})
 	}

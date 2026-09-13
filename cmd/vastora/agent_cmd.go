@@ -211,31 +211,6 @@ func runAgent(arguments []string) error {
 		}
 		fmt.Println("Agent Center connection updated")
 		return nil
-	case "resolve-legacy-task":
-		flags := flag.NewFlagSet("agent resolve-legacy-task", flag.ContinueOnError)
-		flags.SetOutput(os.Stderr)
-		dataDir := flags.String("data-dir", "/var/lib/vastora/agent", "Agent state directory")
-		taskID := flags.String("task-id", "", "legacy task receipt ID reported by the Agent")
-		confirmed := flags.Bool("confirm-external-state-reviewed", false, "confirm that the task's external effect was inspected before releasing the fence")
-		if err := flags.Parse(arguments[1:]); err != nil {
-			return err
-		}
-		if err := requireLinuxRoot("agent resolve-legacy-task"); err != nil {
-			return err
-		}
-		if strings.TrimSpace(*taskID) == "" || !*confirmed || flags.NArg() != 0 {
-			return errors.New("usage: vastora agent resolve-legacy-task --task-id ID --confirm-external-state-reviewed")
-		}
-		store, err := agent.Open(*dataDir)
-		if err != nil {
-			return err
-		}
-		defer store.Close()
-		if err := store.ResolveLegacyTaskReceipt(context.Background(), *taskID); err != nil {
-			return err
-		}
-		fmt.Printf("Legacy task %s acknowledged; Agent task processing can resume\n", *taskID)
-		return nil
 	case "update":
 		flags := flag.NewFlagSet("agent update", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -280,6 +255,7 @@ func runAgent(arguments []string) error {
 		if err != nil {
 			return err
 		}
+		defer httpClient.CloseIdleConnections()
 		executable, err := os.Executable()
 		if err != nil {
 			return fmt.Errorf("locate vastora executable: %w", err)
@@ -609,28 +585,14 @@ func runAgent(arguments []string) error {
 			client.TunnelProvisioner = agent.DockerTunnelProvisioner{}
 		}
 		controlLogger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-		// Keep management reachable while the private address/runtime recovers.
-		// RunTasks serializes receipt recovery, applications, then ingress; no
-		// new work is claimed and no ingress is reported ready before recovery.
+		// Reconnection is observation only. A failed heartbeat must not trigger
+		// offline application restoration or replay a management operation.
 		go func() {
-			runtimeRecovered := false
 			for {
-				// Tell a reachable Center that management is alive before waiting
-				// for services. If Center itself is unavailable, offline recovery
-				// can restore the gateway needed to reach it.
 				if err := client.StartupHeartbeat(context.Background(), store); err == nil {
 					break
 				} else {
 					controlLogger.Error("Initial Agent heartbeat failed", "event", "control_plane.heartbeat", "error", controlplane.SafeError(err.Error()))
-				}
-				if !runtimeRecovered {
-					restoreContext, restoreCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-					restoreErr := client.RecoverStartupRuntime(restoreContext, store)
-					restoreCancel()
-					runtimeRecovered = restoreErr == nil
-					if restoreErr != nil {
-						controlLogger.Error("Agent runtime recovery is pending", "event", "runtime.recovery", "error", controlplane.SafeError(restoreErr.Error()))
-					}
 				}
 				time.Sleep(time.Second)
 			}
@@ -751,21 +713,25 @@ func updateAgentExecutable(ctx context.Context, client *http.Client, connection 
 	}
 	defer os.Remove(temporaryPath)
 	backupPath := executable + ".previous"
-	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("prepare Agent rollback file: %w", err)
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
-	if err := os.Rename(executable, backupPath); err != nil {
+	// Keep the running executable in place until the verified candidate can
+	// replace it atomically. A failed update never automatically downgrades it.
+	if err := copyExecutableAtomic(executable, backupPath); err != nil {
 		return "", fmt.Errorf("preserve previous Agent binary: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := os.Rename(temporaryPath, executable); err != nil {
-		_ = os.Rename(backupPath, executable)
 		return "", fmt.Errorf("install Agent update: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if err := restart(); err != nil {
-		_ = os.Rename(executable, temporaryPath)
-		_ = os.Rename(backupPath, executable)
-		_ = restart()
-		return "", fmt.Errorf("restart updated Agent; previous binary restored: %w", err)
+		return "", fmt.Errorf("restart updated Agent; stopped for explicit maintenance, previous binary preserved: %w", err)
 	}
 	return expectedVersion, nil
 }

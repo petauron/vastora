@@ -176,18 +176,23 @@ func verifyPinnedCA(state tls.ConnectionState, fingerprint string) error {
 	return errors.New("agent: Center CA fingerprint mismatch")
 }
 
-func (c Client) clientFor(fingerprint, certificatePEM string, timeout time.Duration) (*http.Client, error) {
+func (c Client) clientFor(fingerprint, certificatePEM string, timeout time.Duration) (*http.Client, func(), error) {
 	if strings.TrimSpace(fingerprint) == "" {
 		if c.HTTPClient != nil {
-			return c.HTTPClient, nil
+			return c.HTTPClient, func() {}, nil
 		}
-		return &http.Client{Timeout: timeout}, nil
+		return &http.Client{Timeout: timeout}, func() {}, nil
 	}
-	return pinnedHTTPClient(fingerprint, certificatePEM, timeout)
+	client, err := pinnedHTTPClient(fingerprint, certificatePEM, timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, client.CloseIdleConnections, nil
 }
 
 // CenterHTTPClient returns a client that enforces the persisted Center CA pin.
-// It is used by command paths outside Client, including binary updates.
+// It is used by command paths outside Client, including binary updates. The
+// caller owns the transport and must close its idle connections when finished.
 func CenterHTTPClient(connection Connection, timeout time.Duration) (*http.Client, error) {
 	if _, _, err := normalizeCenterTrust(connection.CenterURL, connection.CAFingerprint, connection.CACertificatePEM); err != nil {
 		return nil, err
@@ -196,7 +201,7 @@ func CenterHTTPClient(connection Connection, timeout time.Duration) (*http.Clien
 		return nil, err
 	}
 	if strings.TrimSpace(connection.CAFingerprint) == "" {
-		return &http.Client{Timeout: timeout}, nil
+		return &http.Client{Timeout: timeout, Transport: http.DefaultTransport.(*http.Transport).Clone()}, nil
 	}
 	return pinnedHTTPClient(connection.CAFingerprint, connection.CACertificatePEM, timeout)
 }

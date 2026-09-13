@@ -350,19 +350,24 @@ func (s *Store) desiredGatewayState(ctx context.Context, tx *sql.Tx, gatewayID s
 	return state.Sorted(), nil
 }
 
-func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
+func (s *Store) CompleteGatewayState(ctx context.Context, commit projectionCommit, agentID, credential string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return err
-	}
-	taskError = strings.TrimSpace(taskError)
-	if len(taskError) > 1024 {
-		taskError = taskError[:1024]
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	return s.projectGatewayState(ctx, tx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
+}
+
+func (s *Store) projectGatewayState(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
+	taskError = strings.TrimSpace(taskError)
+	if len(taskError) > 1024 {
+		taskError = taskError[:1024]
+	}
+	var err error
 	var desired, applied, attempt int64
 	var currentStatus string
 	if err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, attempt FROM gateway_states WHERE gateway_node_id = ?`, agentID).Scan(&desired, &applied, &currentStatus, &attempt); err != nil {
@@ -372,9 +377,8 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 		return nil
 	}
 	if revision < desired {
-		// The Agent durably retries task completions until Center acknowledges
-		// them. A newer complete desired state supersedes this result, so accept
-		// the obsolete receipt without projecting it onto the newer revision.
+		// Never project an obsolete result onto a newer revision. The execution
+		// caller rejects a projection that did not invoke its commit callback.
 		return nil
 	}
 	if revision != desired {
@@ -431,7 +435,7 @@ func (s *Store) CompleteGatewayState(ctx context.Context, agentID, credential st
 			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(tx); err != nil {
 		return err
 	}
 	for _, target := range verificationTargets {

@@ -96,10 +96,21 @@ func TestHostDecommissionPersistsResultAcrossCallbackFailure(t *testing.T) {
 func TestHostDecommissionRetainsOperationAfterCleanupFailure(t *testing.T) {
 	environment := newAgentUninstallFixture(t)
 	var callbacks atomic.Int32
+	var starts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if strings.HasPrefix(request.URL.Path, "/api/v1/agent-decommission-results/") {
 			callbacks.Add(1)
-			_ = json.NewEncoder(response).Encode(map[string]bool{"completed": true})
+			var input struct {
+				Error string `json:"error"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&input); err != nil || input.Error != "host removal interrupted" {
+				t.Errorf("failure evidence missing: %v %+v", err, input)
+			}
+			_ = json.NewEncoder(response).Encode(map[string]bool{"recorded": true})
+			return
+		}
+		if starts.Add(1) > 1 {
+			response.WriteHeader(http.StatusConflict)
 			return
 		}
 		_ = json.NewEncoder(response).Encode(map[string]bool{"started": true})
@@ -114,18 +125,23 @@ func TestHostDecommissionRetainsOperationAfterCleanupFailure(t *testing.T) {
 		t.Fatalf("cleanup failure was not retained: %v", err)
 	}
 	assertUninstallPathsAbsent(t, filepath.Join(filepath.Dir(operationPath), "result.json"), filepath.Join(filepath.Dir(operationPath), "completed"))
-	if callbacks.Load() != 0 {
-		t.Fatal("failed cleanup sent a completion callback")
+	if callbacks.Load() != 1 {
+		t.Fatal("failed cleanup did not send exactly one failure report")
 	}
 	if _, err := readHostDecommissionOperation(operationPath); err != nil {
 		t.Fatalf("failed cleanup lost its recoverable operation: %v", err)
 	}
 	if err := runHostDecommission(context.Background(), operationPath, client, func(ctx context.Context, operation hostDecommissionOperation) error {
-		return uninstallAgentHostWithEnvironment(ctx, operation.DeleteData, false, false, environment)
-	}); err != nil {
-		t.Fatalf("failed cleanup could not resume: %v", err)
+		t.Fatal("failed cleanup resumed with a consumed authorization")
+		return nil
+	}); err == nil {
+		t.Fatal("consumed handoff was accepted")
 	}
-	assertUninstallPathsAbsent(t, environment.dataDir, environment.unitPath, environment.binaryPaths[0], environment.binaryPaths[1])
+	for _, path := range []string{environment.dataDir, environment.unitPath, environment.binaryPaths[0], environment.binaryPaths[1]} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("failed helper removed retained state: %v", err)
+		}
+	}
 	if callbacks.Load() != 1 {
 		t.Fatalf("completion callbacks = %d, want 1", callbacks.Load())
 	}
@@ -183,6 +199,7 @@ func TestHostDecommissionRejectsUntrustedOrStaleResult(t *testing.T) {
 func writeHostDecommissionFixture(t *testing.T, dataDir, centerURL string) (string, hostDecommissionOperation) {
 	t.Helper()
 	operation := hostDecommissionOperation{
+		ExecutionID: "test-execution", SessionID: "test-session",
 		Version: 2, TaskID: "agent-decommission-fixture", Attempt: 2, DeleteData: true,
 		DataDir: dataDir, AgentID: "fixture", CenterURL: centerURL, Credential: "synthetic-cleanup-credential",
 		CallbackURL: centerURL + "/api/v1/agent-decommission-results/agent-decommission-fixture", CallbackToken: "synthetic-callback-token",

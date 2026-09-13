@@ -107,7 +107,7 @@ func verifyAgentEncryptedState(ctx context.Context, db *sql.DB, key []byte) erro
 	if exists, err := agentTableHasColumns(ctx, db, "task_receipts", "task_id", "sealed_completion"); err != nil {
 		return err
 	} else if exists {
-		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT task_id, sealed_completion FROM task_receipts WHERE sealed_completion IS NOT NULL`, taskCompletionContext, "task completion"); err != nil {
+		if err := verifyAgentCiphertextRows(ctx, db, key, `SELECT task_id, sealed_completion FROM task_receipts WHERE sealed_completion IS NOT NULL`, legacyTaskCompletionContext, "task completion"); err != nil {
 			return err
 		}
 	}

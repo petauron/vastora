@@ -39,7 +39,7 @@ func (s *Store) landingLatencyTargetSnapshot() ([]landing.LatencyTarget, <-chan 
 // blocks the management heartbeat, and only four probes run at once.
 func (c Client) RunLandingLatencyChecks(ctx context.Context, store *Store, report func(error)) {
 	checker := landing.NewLinkChecker()
-	defer checker.HTTPClient.CloseIdleConnections()
+	defer checker.Close()
 	slots := make(chan struct{}, 4)
 	store.runLandingLatencyChecks(ctx, 15*time.Second, func(ctx context.Context, target landing.LatencyTarget) {
 		select {

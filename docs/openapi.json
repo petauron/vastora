@@ -169,8 +169,20 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "action": {
+                    "type": "string"
+                  },
+                  "sequence": {
+                    "type": "integer"
+                  },
+                  "phase": {
+                    "type": "string"
+                  },
                   "attempt": {
                     "type": "integer"
+                  },
+                  "error": {
+                    "type": "string"
                   }
                 }
               }
@@ -1963,7 +1975,43 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "parentId": {
+                    "type": "string"
+                  },
+                  "serviceId": {
+                    "type": "string"
+                  },
+                  "landingNodeId": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "revision": {
+                    "type": "integer"
+                  },
+                  "confirmSessionReset": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
       },
       "put": {
         "tags": [
@@ -2012,7 +2060,43 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "parentId": {
+                    "type": "string"
+                  },
+                  "serviceId": {
+                    "type": "string"
+                  },
+                  "landingNodeId": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "revision": {
+                    "type": "integer"
+                  },
+                  "confirmSessionReset": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/three-x-ui/client-landing/mode": {
@@ -2062,7 +2146,24 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "confirmSessionReset": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
       },
       "put": {
         "tags": [
@@ -2111,7 +2212,24 @@
               "type": "string"
             }
           }
-        ]
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "confirmSessionReset": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/three-x-ui/landing/latencies/events": {
@@ -6463,6 +6581,1209 @@
         "description": "Immediately report one completed latency observation. Agent bearer authentication owns the source node; Center revalidates the configured target identity, revision and freshness. Invalid or replayed observations return 409. This endpoint cannot change routes or authorize business traffic."
       }
     },
+    "/api/v1/agents/{id}/execution-session": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Execution Session",
+        "operationId": "executionSession_post",
+        "x-vastora-audience": "agent",
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "protocol": {
+                    "type": "integer",
+                    "const": 2
+                  }
+                },
+                "required": [
+                  "sessionId",
+                  "protocol"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Register a process-local session for execution protocol 2. Unsupported protocols and retired sessions are rejected; replacing a session leaves unfinished Agent executions unknown. This request does not authorize a command."
+      }
+    },
+    "/api/v1/agents/{id}/legacy-receipts": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Import Legacy Receipt",
+        "operationId": "importLegacyReceipt_post",
+        "x-vastora-audience": "agent",
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "One strict JSON object, bounded to 3 MiB with a completion bounded to 2 MiB. May contain generated credentials; never log or expose the body.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "digest": {
+                    "type": "string"
+                  },
+                  "receipt": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "taskId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "attempt": {
+                        "type": "integer"
+                      },
+                      "runtimeGeneration": {
+                        "type": "integer"
+                      },
+                      "taskHash": {
+                        "type": "string",
+                        "contentEncoding": "base64"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "completion": {},
+                      "createdAt": {
+                        "type": "string"
+                      },
+                      "updatedAt": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "sessionId",
+                  "digest",
+                  "receipt"
+                ]
+              }
+            }
+          }
+        },
+        "description": "One-time legacy evidence transfer, not task execution or result replay. Authenticated Agent and current process session are required. Identical evidence is acknowledged only after encrypted archival; conflicts fail closed. Unacknowledged legacy outcomes fence new work until operator disposition. Original acknowledged receipts retain their historical status without applying business effects."
+      }
+    },
+    "/api/v1/executions": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List Executions",
+        "operationId": "listExecutions_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "executions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "agentId": {
+                            "type": "string"
+                          },
+                          "taskId": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "attempt": {
+                            "type": "integer"
+                          },
+                          "state": {
+                            "type": "string"
+                          },
+                          "phase": {
+                            "type": "string"
+                          },
+                          "lastError": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "disposition": {
+                            "type": "string"
+                          },
+                          "canConfirm": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Administrator-only execution history. Reports persisted phases, errors and dispositions, never sealed task or result evidence. A successful heartbeat does not imply execution success.",
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Exclusive insertion cursor from nextCursor. Omit for the newest page; each page contains at most 100 records."
+          }
+        ]
+      }
+    },
+    "/api/v1/execution-claim-control": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get Execution Claim Control",
+        "operationId": "getExecutionClaimControl_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "paused": {
+                      "type": "boolean"
+                    },
+                    "actor": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Administrator-only persisted control of new task claims and authorization issuance. Pausing does not cancel previously authorized executions or stop heartbeats, session registration or read-only observation. Resuming does not dispose unresolved executions or replay failed tasks."
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set Execution Claim Control",
+        "operationId": "setExecutionClaimControl_put",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "paused": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "paused"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Administrator-only persisted control of new task claims and authorization issuance. Pausing does not cancel previously authorized executions or stop heartbeats, session registration or read-only observation. Resuming does not dispose unresolved executions or replay failed tasks."
+      }
+    },
+    "/api/v1/executions/{executionID}/legacy-receipt": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Inspect Legacy Receipt",
+        "operationId": "inspectLegacyReceipt_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "executionId": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "attempt": {
+                      "type": "integer"
+                    },
+                    "runtimeGeneration": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "hasCompletion": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "executionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "description": "Administrator-only inspection of one bounded legacy receipt archive. Returns original task identity and evidence availability, never completion contents or credentials. Does not resolve, replay or delete evidence."
+      }
+    },
+    "/api/v1/executions/{executionID}/reexecute": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Reexecute Execution",
+        "operationId": "reexecuteExecution_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "executionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "reexecute"
+                    ]
+                  },
+                  "executionStopped": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "action",
+                  "executionStopped",
+                  "note"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Explicit administrator decision for a failed or unknown execution after verifying it stopped. Records the audit disposition and queues the exact task revision; a later claim creates a new attempt and authorization. Does not replay the old execution."
+      }
+    },
+    "/api/v1/executions/{executionID}/abandon": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Abandon Execution",
+        "operationId": "abandonExecution_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "executionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "abandon"
+                    ]
+                  },
+                  "executionStopped": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "action",
+                  "executionStopped",
+                  "note"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Explicitly abandon a stopped application or runtime execution. Atomically terminates its exact business attempt and records the operator decision while retaining evidence and existing effects. Does not queue, undo or replay commands. Helpers and imported legacy receipts require their dedicated resolution workflow."
+      }
+    },
+    "/api/v1/executions/{executionID}/confirm-completed": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Confirm Execution",
+        "operationId": "confirmExecution_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "executionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "confirm-completed"
+                    ]
+                  },
+                  "executionStopped": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "action",
+                  "executionStopped",
+                  "note"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Confirm an uncertain application deployment/command, landing server/proxy, gateway routes/component, node listener or tunnel using retained successful result evidence. Application deployment also requires original runtime generation evidence. Applies the normal result validation and business projection atomically with the administrator disposition, retaining historical state and evidence. Rejects missing, invalid or unknown result evidence and superseded attempts or revisions. Does not invoke the Agent executor. Imported receipts are not yet supported; helpers use their dedicated resolution endpoint."
+      }
+    },
+    "/api/v1/executions/{executionID}/resolve-helper": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Dispose Helper Execution",
+        "operationId": "disposeHelperExecution_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "executionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "confirm-completed",
+                      "abandon"
+                    ]
+                  },
+                  "executionStopped": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "action",
+                  "executionStopped",
+                  "note"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Resolve an Agent update or decommission helper without issuing a command. Update confirmation requires a fresh target-version heartbeat. Decommission confirmation is an explicit administrator attestation of actual cleanup, never inferred from offline status. Records the stopped-execution confirmation, administrator and verification note; old helper permissions and callbacks remain rejected."
+      }
+    },
+    "/api/v1/executions/{executionID}/resolve-legacy": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Dispose Legacy Receipt",
+        "operationId": "disposeLegacyReceipt_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "executionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "abandon"
+                    ]
+                  },
+                  "executionStopped": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                },
+                "required": [
+                  "action",
+                  "executionStopped",
+                  "note"
+                ]
+              }
+            }
+          }
+        },
+        "description": "Explicitly abandon an unresolved imported application or runtime receipt after verifying its executor stopped. Terminates only its matching business attempt and records the administrator disposition atomically. Preserves the complete encrypted archive, including generated credentials, and continues acknowledging identical migration uploads. No replay or remote cleanup. Rejects superseded attempts/revisions and unsupported legacy helpers. Confirmation and reexecution of legacy receipts are not yet supported."
+      }
+    },
+    "/api/v1/agents/{id}/executions/{executionID}": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Execution Transition",
+        "operationId": "executionTransition_post",
+        "x-vastora-audience": "agent",
+        "security": [
+          {
+            "AgentBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "ready"
+                      ],
+                      "properties": {
+                        "ready": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "recorded"
+                      ],
+                      "properties": {
+                        "recorded": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "description": "Prevents storage of the security-sensitive response.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "executionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "start",
+                      "step",
+                      "renew",
+                      "stop",
+                      "helper-step",
+                      "helper-observe"
+                    ]
+                  },
+                  "digest": {
+                    "type": "string"
+                  },
+                  "phase": {
+                    "type": "string"
+                  },
+                  "unknown": {
+                    "type": "boolean"
+                  },
+                  "error": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sessionId",
+                  "action"
+                ],
+                "oneOf": [
+                  {
+                    "properties": {
+                      "action": {
+                        "const": "start"
+                      }
+                    },
+                    "required": [
+                      "digest"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "action": {
+                        "enum": [
+                          "step",
+                          "helper-step"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "phase"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "action": {
+                        "enum": [
+                          "renew",
+                          "stop",
+                          "helper-observe"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "description": "Consume or inspect an execution bound to the authenticated Agent and session. Lost replies are unknown, not permission to repeat mutations. helper-observe is read-only and returns ready; other transitions return recorded. Expired, stopped, disposed or mismatched executions fail closed."
+      }
+    },
     "/api/v1/agents/{id}/tasks/next": {
       "get": {
         "tags": [
@@ -6512,30 +7833,24 @@
             }
           },
           {
-            "name": "recovery",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "taskId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
             "name": "wait",
             "in": "query",
             "required": false,
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-Vastora-Execution-Session",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
           }
-        ]
+        ],
+        "description": "Claim only after registering the current execution session. Center persists the content digest and single-use authorization before returning an encrypted task. Only one wait query parameter is accepted; recovery and historical task selectors are rejected. Unresolved executions fence further claims."
       }
     },
     "/api/v1/agents/{id}/tasks/{taskID}/lease": {
@@ -6673,6 +7988,12 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "executionId": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
                   "taskId": {
                     "type": "string"
                   },
@@ -6753,6 +8074,12 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "executionId": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
                   "attempt": {
                     "type": "integer"
                   }
@@ -6830,6 +8157,12 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "executionId": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  },
                   "attempt": {
                     "type": "integer"
                   },

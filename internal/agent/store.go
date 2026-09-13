@@ -31,27 +31,24 @@ var errNoAppliedGatewayState = errors.New("agent: no applied gateway state")
 var errNoAppliedNodeListenerState = errors.New("agent: no applied node listener state")
 
 type Store struct {
+	executionMu                sync.Mutex
+	activeExecution            *activeExecution
+	linkChecker                *landing.LinkChecker
 	db                         *sql.DB
 	key                        []byte
 	dataDir                    string
 	now                        func() time.Time
-	taskReceiptPruneMu         sync.Mutex
-	nextTaskReceiptPrune       time.Time
 	gatewayMutationMu          sync.Mutex
 	landingMutationMu          sync.Mutex
 	landingCancel              context.CancelFunc
 	landingDone                chan struct{}
 	landingStatusMu            sync.RWMutex
 	landingStatus              landing.MonitorStatus
-	landingClientStatuses      map[string]landing.MonitorStatus
 	landingSubscriptionMu      sync.RWMutex
 	landingSubscriptionAddress string
 	landingLatencyMu           sync.Mutex
 	landingLatencyTargets      []landing.LatencyTarget
 	landingLatencyChanged      chan struct{}
-	gatewayStartupMu           sync.RWMutex
-	gatewayStartupErr          error
-	gatewayStartupOK           bool
 }
 
 type AppliedInstallation struct {
@@ -153,7 +150,7 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("agent: open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db, key: key, dataDir: dataDir, now: time.Now}
+	store := &Store{db: db, key: key, dataDir: dataDir, now: time.Now, linkChecker: landing.NewLinkChecker()}
 	if existingDatabase {
 		bound, err := inspectAgentDatabaseKeyBinding(context.Background(), db, key)
 		if err != nil {
@@ -1098,6 +1095,8 @@ func (s *Store) Connection(ctx context.Context) (Connection, error) {
 }
 
 func (s *Store) Close() error {
+	s.stopActiveExecution(errors.New("agent: store is closing"))
+	s.linkChecker.Close()
 	s.landingMutationMu.Lock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	err := s.stopLandingMonitor(ctx)

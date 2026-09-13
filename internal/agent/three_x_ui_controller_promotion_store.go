@@ -128,21 +128,6 @@ func (s *Store) ClearThreeXUIControllerPromotion(ctx context.Context, migrationI
 	return nil
 }
 
-func (s *Store) resumableThreeXUIControllerPromotion(ctx context.Context, task DeploymentTask) (bool, error) {
-	if task.Kind != "application.command" || task.ControllerCommand == nil || task.ControllerCommand.Action != "promote" {
-		return false, nil
-	}
-	promotion, found, err := s.ThreeXUIControllerPromotion(ctx)
-	if err != nil || !found {
-		return false, err
-	}
-	hash, err := threeXUIControllerCommandHash(*task.ControllerCommand)
-	if err != nil {
-		return false, err
-	}
-	return promotion.TaskID == task.ID && promotion.MigrationID == task.ControllerCommand.MigrationID && bytes.Equal(promotion.CommandHash, hash), nil
-}
-
 func threeXUIControllerPromotionPhaseIndex(phase string) int {
 	for index, candidate := range []string{"prepared", "imported", "api_ready", "role_configured", "applied"} {
 		if phase == candidate {

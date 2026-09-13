@@ -60,7 +60,7 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 			t.Fatal("expected landing server task")
 		}
 		peer := &landing.PeerIdentity{ID: "peer", PublicKey: "key", Address: "100.64.0.8"}
-		if err := store.completeLandingServer(ctx, owner, task.Revision, task.Attempt, true, peer); err != nil {
+		if err := store.completeLandingServer(ctx, commitProjectionOnlyForTest, owner, task.Revision, task.Attempt, true, peer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -104,7 +104,7 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 	if enable == nil || enable.LandingProxyState.Proxy == nil || len(enable.LandingProxyState.Proxy.InboundTags) != 1 || enable.LandingProxyState.Proxy.InboundTags[0] != "business" {
 		t.Fatal("missing managed proxy enable task")
 	}
-	if err := store.completeLandingProxy(ctx, proxy, enable.Revision, enable.Attempt, false); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, proxy, enable.Revision, enable.Attempt, false); err != nil {
 		t.Fatal(err)
 	}
 	view, err := store.Landing(ctx)
@@ -122,7 +122,7 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 		t.Fatal("explicit retry must preserve revision and advance attempt")
 	}
 	enable = retry
-	if err := store.completeLandingProxy(ctx, proxy, enable.Revision, enable.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, proxy, enable.Revision, enable.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	// Restoring direct routing must remain possible without a current network
@@ -151,7 +151,7 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 	if disable == nil || disable.LandingProxyState.Proxy != nil {
 		t.Fatal("missing restoration task despite unhealthy landing")
 	}
-	if err := store.completeLandingProxy(ctx, proxy, disable.Revision, disable.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, proxy, disable.Revision, disable.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	if len(readServer().Plan.Sources) != 0 {

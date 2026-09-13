@@ -2,6 +2,7 @@ import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationComman
 
 import type { LandingView, LandingClientGrant, LandingClientGrantInput, LandingClientMode } from "./landing-types";
 import type { NodeProtocols } from "./types";
+import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
 
 export class APIError extends Error {
   constructor(
@@ -59,6 +60,20 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  executions: (before = 0, signal?: AbortSignal) => request<ExecutionPage>(`/api/v1/executions${before ? `?before=${before}` : ""}`, { signal }),
+  executionClaimControl: (signal?: AbortSignal) => request<ExecutionClaimControl>("/api/v1/execution-claim-control", { signal }),
+  setExecutionClaimControl: (paused: boolean) => request<{ recorded: boolean }>("/api/v1/execution-claim-control", { method: "PUT", body: JSON.stringify({ paused }) }),
+  inspectLegacyReceipt: (id: string, signal?: AbortSignal) => request<LegacyReceiptView>(`/api/v1/executions/${encodeURIComponent(id)}/legacy-receipt`, { signal }),
+  disposeExecution: (id: string, kind: string, input: ExecutionDisposition) => {
+    if (kind === "legacy.receipt" && input.action !== "abandon") {
+      return Promise.reject(new Error("Legacy executions can only be archived."));
+    }
+    const endpoint = kind === "legacy.receipt" ? "resolve-legacy"
+      : input.action === "reexecute" ? "reexecute"
+      : isHelperExecution(kind) ? "resolve-helper"
+      : input.action === "confirm-completed" ? "confirm-completed" : "abandon";
+    return request(`/api/v1/executions/${encodeURIComponent(id)}/${endpoint}`, { method: "POST", body: JSON.stringify(input) });
+  },
   clientLandingGrants: (parentId: string, signal?: AbortSignal) => request<LandingClientGrant[]>(`/api/v1/three-x-ui/client-landing?parentId=${encodeURIComponent(parentId)}`, { signal }),
   configureClientLanding: (input: LandingClientGrantInput) => request<LandingClientGrant>("/api/v1/three-x-ui/client-landing", { method: "PUT", body: JSON.stringify(input) }),
   clientLandingMode: (parentId: string, signal?: AbortSignal) => request<LandingClientMode>(`/api/v1/three-x-ui/client-landing/mode?parentId=${encodeURIComponent(parentId)}`, { signal }),

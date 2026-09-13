@@ -242,7 +242,7 @@ func (s *Store) claimTunnelTask(ctx context.Context, tx *sql.Tx, agentID string)
 	var desiredJSON []byte
 	var tokenSecretID string
 	err := tx.QueryRowContext(ctx, `SELECT desired_revision, desired_json, token_secret_id, attempt FROM cloudflare_tunnels
-		WHERE agent_id = ? AND desired_revision > applied_revision AND status IN ('pending', 'failed')`, agentID).Scan(&revision, &desiredJSON, &tokenSecretID, &attempt)
+		WHERE agent_id = ? AND desired_revision > applied_revision AND status = 'pending'`, agentID).Scan(&revision, &desiredJSON, &tokenSecretID, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -264,7 +264,7 @@ func (s *Store) claimTunnelTask(ctx context.Context, tx *sql.Tx, agentID string)
 	state.Token = string(token)
 	now := s.now().UTC()
 	claimed, err := tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ?
-		WHERE agent_id = ? AND desired_revision = ? AND attempt = ? AND status IN ('pending', 'failed')`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, revision, attempt)
+		WHERE agent_id = ? AND desired_revision = ? AND attempt = ? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, revision, attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -278,16 +278,20 @@ func (s *Store) claimTunnelTask(ctx context.Context, tx *sql.Tx, agentID string)
 	return task, nil
 }
 
-func (s *Store) completeTunnelState(ctx context.Context, agentID string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
-	taskError = strings.TrimSpace(taskError)
-	if len(taskError) > 1024 {
-		taskError = taskError[:1024]
-	}
+func (s *Store) completeTunnelState(ctx context.Context, commit projectionCommit, agentID string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	return s.projectTunnelState(ctx, tx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
+}
+
+func (s *Store) projectTunnelState(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
+	taskError = strings.TrimSpace(taskError)
+	if len(taskError) > 1024 {
+		taskError = taskError[:1024]
+	}
 	var desired, applied, attempt int64
 	var status string
 	if err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, attempt FROM cloudflare_tunnels WHERE agent_id = ?`, agentID).Scan(&desired, &applied, &status, &attempt); err != nil {
@@ -297,10 +301,9 @@ func (s *Store) completeTunnelState(ctx context.Context, agentID string, revisio
 		return nil
 	}
 	if revision < desired || (revision == desired && expectedAttempt < attempt) {
-		// The Agent completion outbox retries until Center acknowledges it. A
-		// newer desired revision or claim already superseded this result, so
-		// acknowledge the obsolete delivery without applying it. Rejecting it
-		// here would permanently block the Agent from claiming newer tasks.
+		// A newer revision or attempt superseded this result. Leave it untouched;
+		// the execution caller rejects the uncommitted projection and keeps its
+		// unresolved fence until explicit operator disposition.
 		return nil
 	}
 	if revision != desired || expectedAttempt > attempt {
@@ -349,7 +352,7 @@ func (s *Store) completeTunnelState(ctx context.Context, agentID string, revisio
 			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(tx); err != nil {
 		return err
 	}
 	for _, target := range verificationTargets {

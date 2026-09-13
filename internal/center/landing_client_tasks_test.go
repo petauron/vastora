@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 			t.Fatal("missing server task")
 		}
 		peer := &landing.PeerIdentity{ID: "landing", PublicKey: "landing-key", Address: "100.64.0.9"}
-		if err := store.completeLandingServer(ctx, owner.ID, task.Revision, task.Attempt, true, peer); err != nil {
+		if err := store.completeLandingServer(ctx, commitProjectionOnlyForTest, owner.ID, task.Revision, task.Attempt, true, peer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -121,13 +122,51 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if routes == nil || routes.LandingProxyState.Clients == nil || len(routes.LandingProxyState.Clients.Grants) != 1 || !routes.LandingProxyState.Clients.Grants[0].Enabled {
 		t.Fatal("missing scoped entry routes")
 	}
-	if err := store.completeLandingProxy(ctx, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	completeController("activate")
 	grants, err := store.LandingClientGrants(ctx, parent)
 	if err != nil || len(grants) != 1 || grants[0].Status != "ready" || grants[0].AppliedRevision != grant.Revision {
 		t.Fatal("grant became ready without the full task sequence", err)
+	}
+	for _, executionState := range []string{"offered", "running", "helper_running", "failed", "unknown", "abandoned"} {
+		t.Run("cross-node-fence/"+executionState, func(t *testing.T) {
+			tx, err := store.db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if executionState != "abandoned" {
+				_, err = tx.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('target-fence',?,'target-task','landing.server.apply',1,'test-session','test-digest',X'00',?,'apply',?,?,?)`, owner.ID, executionState, now, now, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if _, err := tx.Exec(`UPDATE landing_server_states SET status='failed' WHERE node_id=?`, owner.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// If the source heartbeat reaches target reconciliation, this invalid
+			// plan will fail decoding. It must instead skip the fenced target.
+			if _, err := tx.Exec(`UPDATE landing_server_states SET desired_json='{}' WHERE node_id=?`, owner.ID); err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				if err := store.reconcileClientLandingSourcesForNode(ctx, tx, entry.ID); err != nil {
+					t.Fatalf("source heartbeat reached interrupted target: %v", err)
+				}
+			}
+			if executionState != "abandoned" {
+				if err := store.refreshClientLandingSources(ctx, tx, owner.ID); !errors.Is(err, errExecutionBlocked) {
+					t.Fatalf("direct dependent mutation bypassed target fence: %v", err)
+				}
+			}
+			var revision int64
+			if err := tx.QueryRow(`SELECT desired_revision FROM landing_server_states WHERE node_id=?`, owner.ID).Scan(&revision); err != nil || revision != server.Revision {
+				t.Fatalf("target revision changed: %d %v", revision, err)
+			}
+		})
 	}
 	for _, enabled := range []bool{false, true} {
 		command, err := store.CreateThreeXUIClientCommand(ctx, ThreeXUIClientCommandInput{ApplicationID: "client-controller", Action: "set_enabled", Email: "Phone", Enabled: enabled, ConfirmSessionReset: true})
@@ -140,7 +179,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		if fence.Kind != "landing.proxy.apply" || fence.LandingProxyState == nil || len(fence.LandingProxyState.Clients.BlockedUsers) != 2 {
 			t.Fatal("parent update bypassed the base/child disconnection fence")
 		}
-		if err := store.completeLandingProxy(ctx, entry.ID, fence.Revision, fence.Attempt, true); err != nil {
+		if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, fence.Revision, fence.Attempt, true); err != nil {
 			t.Fatal(err)
 		}
 		parentTask := claimTask(t, store, entry)
@@ -166,7 +205,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 			}
 			t.Fatalf("parent lifecycle did not update its child's route authority: enabled=%v task=%+v status=%s", enabled, routes, status)
 		}
-		if err := store.completeLandingProxy(ctx, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
+		if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
 			t.Fatal(err)
 		}
 		if enabled {
@@ -188,7 +227,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if routes == nil || routes.LandingProxyState.Clients.Grants[0].Enabled {
 		t.Fatal("revocation required the offline landing or left its route enabled")
 	}
-	if err := store.completeLandingProxy(ctx, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	completeController("retire")
@@ -202,7 +241,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if routes == nil || routes.LandingProxyState == nil || routes.LandingProxyState.Active() {
 		t.Fatal("retired child route did not restore the original configuration")
 	}
-	if err := store.completeLandingProxy(ctx, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	server = claimLanding(true)
@@ -220,7 +259,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if fence.Kind != "landing.proxy.apply" {
 		t.Fatal("deletion skipped disconnection")
 	}
-	if err := store.completeLandingProxy(ctx, entry.ID, fence.Revision, fence.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, fence.Revision, fence.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	deletion := claimTask(t, store, entry)
@@ -242,7 +281,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if routes == nil || routes.LandingProxyState.Active() {
 		t.Fatal("final restoration requires a deleted landing server")
 	}
-	if err := store.completeLandingProxy(ctx, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 }

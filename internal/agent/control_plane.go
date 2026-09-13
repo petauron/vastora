@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,12 +31,14 @@ import (
 var Version = "0.1.0-dev"
 
 const (
-	maxDeferredTaskAttempts int64 = 4
-	taskLeaseRenewInterval        = time.Minute
-	taskControlTimeout            = 15 * time.Second
+	taskLeaseRenewInterval = time.Minute
+	taskControlTimeout     = 15 * time.Second
 )
 
 type Client struct {
+	executionAbort     func(error)
+	executionSession   string
+	execution          controlplane.ExecutionAuthorization
 	HTTPClient         *http.Client
 	Executor           Executor
 	Roles              []string
@@ -66,6 +70,8 @@ type HostDecommissioner interface {
 }
 
 type HostDecommissionRequest struct {
+	ExecutionID   string
+	SessionID     string
 	TaskID        string
 	Attempt       int64
 	DeleteData    bool
@@ -79,64 +85,31 @@ type HostUpdater interface {
 }
 
 type HostUpdateRequest struct {
+	ExecutionID   string
+	SessionID     string
 	TaskID        string
 	Attempt       int64
 	TargetVersion string
 	Connection    Connection
 }
 
-// deferredTaskCompletionError leaves the Center task lease active so the same
-// deterministic operation is retried after lease recovery. It is reserved for
-// cases where reporting a terminal failure could strand an external resource
-// whose cleanup outcome is still unknown.
-type deferredTaskCompletionError struct {
-	cause error
-}
+// uncertainTaskOutcomeError records possible partial effects. Every occurrence
+// requires explicit disposition; attempts never authorize retries or rollback.
+type uncertainTaskOutcomeError struct{ cause error }
 
-func (e *deferredTaskCompletionError) Error() string { return e.cause.Error() }
-func (e *deferredTaskCompletionError) Unwrap() error { return e.cause }
+func (e *uncertainTaskOutcomeError) Error() string { return e.cause.Error() }
+func (e *uncertainTaskOutcomeError) Unwrap() error { return e.cause }
 
-func deferTaskCompletion(cause error) error {
+func uncertainTaskOutcome(cause error) error {
 	if cause == nil {
 		return nil
 	}
-	return &deferredTaskCompletionError{cause: cause}
+	return &uncertainTaskOutcomeError{cause: cause}
 }
 
-// reconciliationTaskCompletionError represents an operation whose external
-// commit may already be visible. It must keep the same Center task alive until
-// deterministic reconciliation succeeds; converting it to a terminal failure
-// would allow a second command to create a duplicate external resource.
-type reconciliationTaskCompletionError struct {
-	cause error
-}
-
-func (e *reconciliationTaskCompletionError) Error() string { return e.cause.Error() }
-func (e *reconciliationTaskCompletionError) Unwrap() error { return e.cause }
-
-func deferTaskUntilReconciled(cause error) error {
-	if cause == nil {
-		return nil
-	}
-	return &reconciliationTaskCompletionError{cause: cause}
-}
-
-func taskCompletionIsDeferred(err error) bool {
-	var deferred *deferredTaskCompletionError
-	return errors.As(err, &deferred)
-}
-
-func taskCompletionShouldBeDeferred(err error, attempt int64) bool {
-	var reconciliation *reconciliationTaskCompletionError
-	if errors.As(err, &reconciliation) {
-		return attempt < maxDeferredTaskAttempts
-	}
-	return taskCompletionIsDeferred(err) && attempt < maxDeferredTaskAttempts
-}
-
-func taskCompletionRequiresReconciliation(err error, attempt int64) bool {
-	var reconciliation *reconciliationTaskCompletionError
-	return attempt >= maxDeferredTaskAttempts && errors.As(err, &reconciliation)
+func taskOutcomeIsUncertain(err error) bool {
+	var uncertain *uncertainTaskOutcomeError
+	return errors.As(err, &uncertain)
 }
 
 type Capabilities struct {
@@ -156,39 +129,39 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
-	PulseEnrollment           *pulse.EnrollmentTask          `json:"pulseEnrollment,omitempty"`
-	ProtocolCommand           *nodeprotocol.Task             `json:"protocolCommand,omitempty"`
-	Kind                      string                         `json:"kind"`
-	ID                        string                         `json:"id"`
-	Attempt                   int64                          `json:"attempt"`
-	AppKey                    string                         `json:"appKey"`
-	Manifest                  catalog.AppManifest            `json:"manifest"`
-	Config                    json.RawMessage                `json:"config"`
-	Secrets                   json.RawMessage                `json:"secrets"`
-	Operation                 string                         `json:"operation"`
-	DeleteData                bool                           `json:"deleteData"`
-	DecommissionCallbackURL   string                         `json:"decommissionCallbackUrl,omitempty"`
-	DecommissionCallbackToken string                         `json:"decommissionCallbackToken,omitempty"`
-	Revision                  int64                          `json:"revision,omitempty"`
-	ApplicationID             string                         `json:"applicationId,omitempty"`
-	ApplicationRole           string                         `json:"applicationRole,omitempty"`
-	ServiceAddress            string                         `json:"serviceAddress,omitempty"`
-	GatewayState              *gateway.DesiredState          `json:"gatewayState,omitempty"`
-	NodeListenerState         *gateway.NodeListenerState     `json:"nodeListenerState,omitempty"`
-	LandingServerState        *landing.ServerState           `json:"landingServerState,omitempty"`
-	LandingProxyState         *landing.DesiredState          `json:"landingProxyState,omitempty"`
-	GatewayCertificates       []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
-	TunnelState               *TunnelDesiredState            `json:"tunnelState,omitempty"`
-	ApplicationCommand        *RealityCommandTask            `json:"applicationCommand,omitempty"`
-	SubscriptionCommand       *SubscriptionCommandTask       `json:"subscriptionCommand,omitempty"`
-	ClientCommand             *ThreeXUIClientCommandTask     `json:"clientCommand,omitempty"`
-	NodeCommand               *ThreeXUINodeCommandTask       `json:"nodeCommand,omitempty"`
-	ControllerCommand         *ThreeXUIControllerCommandTask `json:"controllerCommand,omitempty"`
-	RegistryCredential        *RegistryCredential            `json:"registryCredential,omitempty"`
-	Reconcile                 bool                           `json:"reconcile,omitempty"`
-	RequiredRuntimeGeneration int                            `json:"requiredRuntimeGeneration,omitempty"`
-	OfflineRestore            bool                           `json:"-"`
-	TargetVersion             string                         `json:"targetVersion,omitempty"`
+	Authorization             controlplane.ExecutionAuthorization `json:"-"`
+	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
+	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
+	Kind                      string                              `json:"kind"`
+	ID                        string                              `json:"id"`
+	Attempt                   int64                               `json:"attempt"`
+	AppKey                    string                              `json:"appKey"`
+	Manifest                  catalog.AppManifest                 `json:"manifest"`
+	Config                    json.RawMessage                     `json:"config"`
+	Secrets                   json.RawMessage                     `json:"secrets"`
+	Operation                 string                              `json:"operation"`
+	DeleteData                bool                                `json:"deleteData"`
+	DecommissionCallbackURL   string                              `json:"decommissionCallbackUrl,omitempty"`
+	DecommissionCallbackToken string                              `json:"decommissionCallbackToken,omitempty"`
+	Revision                  int64                               `json:"revision,omitempty"`
+	ApplicationID             string                              `json:"applicationId,omitempty"`
+	ApplicationRole           string                              `json:"applicationRole,omitempty"`
+	ServiceAddress            string                              `json:"serviceAddress,omitempty"`
+	GatewayState              *gateway.DesiredState               `json:"gatewayState,omitempty"`
+	NodeListenerState         *gateway.NodeListenerState          `json:"nodeListenerState,omitempty"`
+	LandingServerState        *landing.ServerState                `json:"landingServerState,omitempty"`
+	LandingProxyState         *landing.DesiredState               `json:"landingProxyState,omitempty"`
+	GatewayCertificates       []gateway.Certificate               `json:"gatewayCertificates,omitempty"`
+	TunnelState               *TunnelDesiredState                 `json:"tunnelState,omitempty"`
+	ApplicationCommand        *RealityCommandTask                 `json:"applicationCommand,omitempty"`
+	SubscriptionCommand       *SubscriptionCommandTask            `json:"subscriptionCommand,omitempty"`
+	ClientCommand             *ThreeXUIClientCommandTask          `json:"clientCommand,omitempty"`
+	NodeCommand               *ThreeXUINodeCommandTask            `json:"nodeCommand,omitempty"`
+	ControllerCommand         *ThreeXUIControllerCommandTask      `json:"controllerCommand,omitempty"`
+	RegistryCredential        *RegistryCredential                 `json:"registryCredential,omitempty"`
+	Reconcile                 bool                                `json:"reconcile,omitempty"`
+	RequiredRuntimeGeneration int                                 `json:"requiredRuntimeGeneration,omitempty"`
+	TargetVersion             string                              `json:"targetVersion,omitempty"`
 }
 
 type RegistryCredential struct {
@@ -199,14 +172,6 @@ type RegistryCredential struct {
 
 type Executor interface {
 	Deploy(context.Context, DeploymentTask) (ApplicationTaskResult, error)
-}
-
-type executorMaintainer interface {
-	Maintain(context.Context) error
-}
-
-type executorRestorer interface {
-	Restore(context.Context, *Store) error
 }
 
 type ApplicationServiceResult struct {
@@ -493,7 +458,7 @@ func (c Client) Heartbeat(ctx context.Context, store *Store) error {
 }
 
 // StartupHeartbeat reports a new Agent process before its task loop begins.
-// Center uses this boundary to release work leased to the previous process.
+// Center uses this boundary to fence work leased to the previous process.
 func (c Client) StartupHeartbeat(ctx context.Context, store *Store) error {
 	_, err := c.heartbeatWithStartup(ctx, store, true)
 	return err
@@ -503,7 +468,12 @@ func (c Client) heartbeat(ctx context.Context, store *Store) (error, error) {
 	return c.heartbeatWithStartup(ctx, store, false)
 }
 
-func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup bool) (error, error) {
+func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup bool) (observationErr, controlErr error) {
+	defer func() {
+		if controlErr != nil {
+			store.stopActiveExecution(controlErr)
+		}
+	}()
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return nil, err
@@ -518,9 +488,6 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	}
 	gatewayHealthy, gatewayRevision, gatewayConfigHash := gatewayRuntimeStatus(ctx, store, c.GatewayDriver)
 	nodeListenerHealthy, nodeListenerRevision, nodeListenerConfigHash := nodeListenerRuntimeStatus(ctx, store, c.NodeListener)
-	if store.requireGatewayStartup() != nil {
-		gatewayHealthy, nodeListenerHealthy = false, false
-	}
 	now := time.Now()
 	candidates, err := networking.Discover(now)
 	if err != nil {
@@ -545,18 +512,11 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		return observeErr, err
 	}
 	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
-	recoveryCode := store.runtimeRecoveryCode()
-	recoveryApplications := store.runtimeRecoveryApplications()
-	if recoveryCode != "application" {
-		recoveryApplications = nil
-	}
 	payload := map[string]any{
 		"publicKey": publicKey,
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
 		"gatewayRevision":              gatewayRevision,
-		"runtimeRecovery":              recoveryCode,
-		"runtimeRecoveryApplications":  recoveryApplications,
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
 		"landingHealth":                store.landingHealth(),
@@ -844,131 +804,46 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 }
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
-	var lastMaintenance time.Time
-	var lastRestore time.Time
-	restorePending := true
-	for {
-		completionContext, completionCancel := freshTaskControlContext(ctx)
-		pendingCompletion, completionErr := store.PendingTaskCompletion(completionContext)
-		completionCancel()
-		if completionErr != nil {
-			if report != nil && ctx.Err() == nil {
-				report(completionErr)
-			}
-			if !waitForTaskRetry(ctx) {
-				return
-			}
-			continue
-		}
-		if pendingCompletion != nil {
-			if err := c.deliverTaskCompletion(ctx, store, *pendingCompletion); err != nil {
-				if report != nil && ctx.Err() == nil {
-					report(err)
-				}
-				if !waitForTaskRetry(ctx) {
-					return
-				}
-			}
-			continue
-		}
-		if restorePending {
-			receiptTaskID, receiptKind, receiptErr := store.UnresolvedApplicationTaskReceipt(ctx)
-			if receiptErr != nil {
-				if report != nil && ctx.Err() == nil {
-					report(receiptErr)
-				}
-				if !waitForTaskRetry(ctx) {
-					return
-				}
-				continue
-			}
-			if receiptTaskID != "" {
-				if receiptKind == "legacy" {
-					if report != nil {
-						report(errors.New("agent: legacy unresolved task receipt requires operator reconciliation"))
-					}
-					if !waitForTaskRetry(ctx) {
-						return
-					}
-					continue
-				}
-				claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-				task, err := c.claimNextTask(claimContext, store, 10*time.Second, receiptTaskID)
-				cancel()
-				if err != nil {
-					if report != nil && ctx.Err() == nil {
-						report(err)
-					}
-				} else if task != nil {
-					c.processTaskWithLease(ctx, store, *task, report)
-				}
-				continue
-			}
-		}
-		if restorePending && (lastRestore.IsZero() || time.Since(lastRestore) >= time.Minute) {
-			lastRestore = time.Now()
-			restoreContext, restoreCancel := context.WithTimeout(ctx, 5*time.Minute)
-			restoreErr := c.RecoverStartupRuntime(restoreContext, store)
-			restoreCancel()
-			if restoreErr != nil {
-				if report != nil && ctx.Err() == nil {
-					report(restoreErr)
-				}
-			} else {
-				restorePending = false
-			}
-		}
-		if restorePending {
-			if scope := store.runtimeRecoveryScope(); scope != nil {
-				claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-				task, err := c.claimTask(claimContext, store, 10*time.Second, "", scope)
-				cancel()
-				if err != nil && report != nil && ctx.Err() == nil {
-					report(err)
-				}
-				if task != nil {
-					c.processTaskWithLease(ctx, store, *task, report)
-					// Receipt delivery remains ahead of restoration. Re-read the
-					// durable installation, never replay a pre-repair snapshot.
-					lastRestore = time.Time{}
-					continue
-				}
-			}
-			if !waitForTaskRetry(ctx) {
-				return
-			}
-			continue
-		}
-		if err := store.maintainTaskReceipts(ctx); err != nil && report != nil && ctx.Err() == nil {
+	reportError := func(err error) {
+		if err != nil && report != nil && ctx.Err() == nil {
 			report(err)
 		}
-		if maintainer, ok := c.Executor.(executorMaintainer); ok && (lastMaintenance.IsZero() || time.Since(lastMaintenance) >= time.Minute) {
-			maintenanceContext, maintenanceCancel := context.WithTimeout(ctx, 15*time.Second)
-			maintenanceErr := maintainer.Maintain(maintenanceContext)
-			maintenanceCancel()
-			lastMaintenance = time.Now()
-			if maintenanceErr != nil && report != nil && ctx.Err() == nil {
-				report(maintenanceErr)
-			}
+	}
+	session, err := newExecutionSessionID()
+	if err != nil {
+		reportError(err)
+		return
+	}
+	c.executionSession = session
+	for {
+		if err := c.registerExecutionSession(ctx, store); err == nil {
+			break
+		} else {
+			reportError(err)
 		}
+		if !waitForTaskRetry(ctx) {
+			return
+		}
+	}
+	if err := c.TransferLegacyReceipts(ctx, store); err != nil {
+		reportError(err)
+		return
+	}
+	for {
 		claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 		task, err := c.claimNextTask(claimContext, store, 10*time.Second)
 		cancel()
 		if err != nil {
-			if ctx.Err() != nil {
+			reportError(err)
+			if !waitForTaskRetry(ctx) {
 				return
-			}
-			if report != nil {
-				report(err)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Second):
 			}
 			continue
 		}
 		if task == nil {
+			if ctx.Err() != nil {
+				return
+			}
 			continue
 		}
 		c.processTaskWithLease(ctx, store, *task, report)
@@ -979,35 +854,37 @@ func freshTaskControlContext(parent context.Context) (context.Context, context.C
 	return context.WithTimeout(context.WithoutCancel(parent), taskControlTimeout)
 }
 
-func (c Client) deliverTaskCompletion(parent context.Context, store *Store, completion TaskCompletion) error {
-	deliveryContext, deliveryCancel := freshTaskControlContext(parent)
-	err := c.sendTaskCompletion(deliveryContext, store, completion)
-	deliveryCancel()
-	if err != nil {
-		return err
-	}
-	acknowledgeContext, acknowledgeCancel := freshTaskControlContext(parent)
-	err = store.AcknowledgeTaskCompletion(acknowledgeContext, completion.TaskID)
-	acknowledgeCancel()
-	return err
-}
-
 func (c Client) processTaskWithLease(parent context.Context, store *Store, task DeploymentTask, report func(error)) {
 	c.processTaskWithLeaseInterval(parent, store, task, report, taskLeaseRenewInterval)
 }
 
 func (c Client) processTaskWithLeaseInterval(parent context.Context, store *Store, task DeploymentTask, report func(error), interval time.Duration) {
-	executionContext, cancelExecution := context.WithCancel(parent)
+	c.execution = task.Authorization
+	executionContext, cancelExecution, release, err := store.beginExecution(parent)
+	if err != nil {
+		if report != nil {
+			report(err)
+		}
+		return
+	}
+	defer release()
+	c.executionAbort = cancelExecution
+	if err := c.executionTransition(executionContext, store, "start", "", false, ""); err != nil {
+		if report != nil {
+			report(err)
+		}
+		return
+	}
 	renewalResult := make(chan error, 1)
 	go func() {
 		err := c.renewTaskLeaseLoop(executionContext, store, task, interval)
 		if err != nil {
-			cancelExecution()
+			cancelExecution(err)
 		}
 		renewalResult <- err
 	}()
 	c.processTask(executionContext, store, task, report)
-	cancelExecution()
+	cancelExecution(context.Canceled)
 	if err := <-renewalResult; err != nil && parent.Err() == nil && report != nil {
 		report(err)
 	}
@@ -1025,7 +902,10 @@ func (c Client) renewTaskLeaseLoop(ctx context.Context, store *Store, task Deplo
 			return nil
 		case <-ticker.C:
 			requestContext, cancel := context.WithTimeout(ctx, taskControlTimeout)
-			err := c.renewTaskLease(requestContext, store, task.ID, task.Attempt)
+			err := c.executionTransition(requestContext, store, "renew", "", false, "")
+			if err == nil {
+				err = c.renewTaskLease(requestContext, store, task.ID, task.Attempt)
+			}
 			cancel()
 			if err != nil {
 				return fmt.Errorf("agent: renew task lease: %w", err)
@@ -1044,20 +924,9 @@ func waitForTaskRetry(ctx context.Context) bool {
 }
 
 func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTask, report func(error)) {
-	receiptContext, receiptCancel := freshTaskControlContext(ctx)
-	storedCompletion, receiptErr := store.PrepareTaskReceipt(receiptContext, task)
-	receiptCancel()
-	if receiptErr != nil {
+	if err := c.executionTransition(ctx, store, "step", "apply", false, ""); err != nil {
 		if report != nil {
-			report(receiptErr)
-		}
-		return
-	}
-	if storedCompletion != nil {
-		if err := c.deliverTaskCompletion(ctx, store, *storedCompletion); err != nil {
-			if report != nil {
-				report(err)
-			}
+			report(err)
 		}
 		return
 	}
@@ -1140,14 +1009,14 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 					ConfigureHY2Port(context.Context, *Store, string, bool) error
 				})
 				if !ok {
-					err = deferTaskUntilReconciled(errors.New("agent: protocol port cleanup is unavailable"))
+					err = uncertainTaskOutcome(errors.New("agent: protocol port cleanup is unavailable"))
 				} else {
 					err = executor.ConfigureHY2Port(ctx, store, task.ApplicationCommand.TargetApplicationID, false)
 				}
 			}
-			if err == nil {
-				result.ApplicationCommand = &commandResult
-			}
+			// Preserve partial results in encrypted Center evidence even when a
+			// later step failed. This does not mark the command successful.
+			result.ApplicationCommand = &commandResult
 		} else if task.SubscriptionCommand != nil {
 			var commandResult SubscriptionCommandResult
 			commandResult, err = applySubscriptionCommand(ctx, store, *task.SubscriptionCommand)
@@ -1203,7 +1072,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		err = c.applyLandingServerTask(ctx, store, task)
 		if err == nil && task.LandingServerState.Plan != nil {
 			var peer landing.PeerIdentity
-			peer, err = landing.NewLinkChecker().SelfIdentity(ctx, task.LandingServerState.Plan.Address)
+			peer, err = store.linkChecker.SelfIdentity(ctx, task.LandingServerState.Plan.Address)
 			if err == nil {
 				result.LandingPeer = &peer
 			}
@@ -1241,7 +1110,10 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 				connection, err = store.Connection(ctx)
 			}
 			if err == nil {
-				err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, CallbackURL: callbackURL, CallbackToken: task.DecommissionCallbackToken, Connection: connection})
+				err = c.executionTransition(ctx, store, "step", "handoff", false, "")
+				if err == nil {
+					err = c.Decommissioner.ScheduleFinalRemoval(ctx, HostDecommissionRequest{ExecutionID: c.execution.ID, SessionID: c.executionSession, TaskID: task.ID, Attempt: task.Attempt, DeleteData: task.DeleteData, CallbackURL: callbackURL, CallbackToken: task.DecommissionCallbackToken, Connection: connection})
+				}
 				decommissionHandedOff = err == nil
 			}
 		}
@@ -1254,7 +1126,10 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			var connection Connection
 			connection, err = store.Connection(ctx)
 			if err == nil {
-				err = c.Updater.ScheduleUpdate(ctx, HostUpdateRequest{TaskID: task.ID, Attempt: task.Attempt, TargetVersion: task.TargetVersion, Connection: connection})
+				err = c.executionTransition(ctx, store, "step", "handoff", false, "")
+				if err == nil {
+					err = c.Updater.ScheduleUpdate(ctx, HostUpdateRequest{ExecutionID: c.execution.ID, SessionID: c.executionSession, TaskID: task.ID, Attempt: task.Attempt, TargetVersion: task.TargetVersion, Connection: connection})
+				}
 				updateHandedOff = err == nil
 			}
 		}
@@ -1281,45 +1156,34 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 	committedThreeXUI := task.Kind == "application.apply" && task.Operation != "uninstall" && task.AppKey == threeXUIKey && strings.TrimSpace(result.GeneratedSecrets["api_token"]) != ""
 	if err != nil && committedThreeXUI {
-		err = deferTaskUntilReconciled(err)
+		err = uncertainTaskOutcome(err)
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
-		persistContext, persistCancel := freshTaskControlContext(ctx)
-		_, err = store.RecordApplied(persistContext, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
-		persistCancel()
+		err = c.executionTransition(ctx, store, "step", "persist", false, "")
+		if err == nil {
+			_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
+		}
 		if err != nil && committedThreeXUI {
-			err = deferTaskUntilReconciled(err)
+			err = uncertainTaskOutcome(err)
 		}
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation == "uninstall" {
-		persistContext, persistCancel := freshTaskControlContext(ctx)
-		err = store.RemoveApplied(persistContext, task.AppKey)
-		persistCancel()
-	}
-	if taskCompletionShouldBeDeferred(err, task.Attempt) {
-		// Do not turn an uncertain compensation into a terminal failure. Center's
-		// task lease recovery requeues the same command ID, allowing its
-		// deterministic 3x-ui tag/client identifiers to converge safely.
-		if report != nil {
-			report(errors.New(safeTaskError(err)))
+		err = c.executionTransition(ctx, store, "step", "persist", false, "")
+		if err == nil {
+			err = store.RemoveApplied(ctx, task.AppKey)
 		}
-		return
 	}
-	reconciliationRequired := taskCompletionRequiresReconciliation(err, task.Attempt)
-	completion := TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Result: result, Error: safeTaskError(err), ReconciliationRequired: reconciliationRequired}
+	reconciliationRequired := ctx.Err() != nil || taskOutcomeIsUncertain(err)
+	completion := taskCompletion{TaskID: task.ID, Attempt: task.Attempt, Result: result, Error: safeTaskError(err), ReconciliationRequired: reconciliationRequired}
 	if task.Kind == "application.apply" {
 		completion.ApplicationRuntimeGeneration = platform.ApplicationRuntimeGeneration
 	}
+	// One bounded report attempt is observation, not permission for another
+	// mutation. No result queue or automatic replay survives this execution.
 	completionContext, completionCancel := freshTaskControlContext(ctx)
-	completionErr := store.RecordTaskCompletion(completionContext, completion)
+	completeErr := c.sendTaskCompletion(completionContext, store, completion)
 	completionCancel()
-	if completionErr != nil {
-		if report != nil {
-			report(completionErr)
-		}
-		return
-	}
-	if completeErr := c.deliverTaskCompletion(ctx, store, completion); completeErr != nil {
+	if completeErr != nil {
 		if report != nil {
 			report(completeErr)
 		}
@@ -1329,7 +1193,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	}
 }
 
-func (c Client) sendTaskCompletion(ctx context.Context, store *Store, completion TaskCompletion) error {
+func (c Client) sendTaskCompletion(ctx context.Context, store *Store, completion taskCompletion) error {
 	var deploymentErr error
 	if completion.Error != "" {
 		deploymentErr = errors.New(completion.Error)
@@ -1375,15 +1239,7 @@ func waitForGateway(ctx context.Context, driver GatewayDriver) error {
 	}
 }
 
-func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration, requiredTaskIDs ...string) (*DeploymentTask, error) {
-	requiredID := ""
-	if len(requiredTaskIDs) != 0 {
-		requiredID = strings.TrimSpace(requiredTaskIDs[0])
-	}
-	return c.claimTask(ctx, store, wait, requiredID, nil)
-}
-
-func (c Client) claimTask(ctx context.Context, store *Store, wait time.Duration, requiredID string, recovery *controlplane.RecoveryScope) (*DeploymentTask, error) {
+func (c Client) claimNextTask(ctx context.Context, store *Store, wait time.Duration) (*DeploymentTask, error) {
 	connection, err := store.Connection(ctx)
 	if err != nil {
 		return nil, err
@@ -1394,22 +1250,13 @@ func (c Client) claimTask(ctx context.Context, store *Store, wait time.Duration,
 	}
 	var response struct {
 		Task *struct {
-			ID       string                `json:"id"`
-			Attempt  int64                 `json:"attempt"`
-			Envelope controlplane.Envelope `json:"envelope"`
+			Authorization controlplane.ExecutionAuthorization `json:"authorization"`
+			ID            string                              `json:"id"`
+			Attempt       int64                               `json:"attempt"`
+			Envelope      controlplane.Envelope               `json:"envelope"`
 		} `json:"task"`
 	}
 	endpoint := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/tasks/next?wait=" + url.QueryEscape(wait.String())
-	if requiredID != "" {
-		endpoint += "&taskId=" + url.QueryEscape(requiredID)
-	}
-	if recovery != nil {
-		if recovery.Validate() != nil || requiredID != "" {
-			return nil, errors.New("agent: invalid recovery claim scope")
-		}
-		encoded, _ := json.Marshal(recovery)
-		endpoint += "&recovery=" + url.QueryEscape(string(encoded))
-	}
 	if err := c.get(ctx, endpoint, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response); err != nil {
 		return nil, err
 	}
@@ -1421,6 +1268,10 @@ func (c Client) claimTask(ctx context.Context, store *Store, wait time.Duration,
 	if err != nil {
 		return nil, err
 	}
+	digest := sha256.Sum256(plaintext)
+	if response.Task.Authorization.Protocol != controlplane.ExecutionProtocol || response.Task.Authorization.ID == "" || response.Task.Authorization.Digest != hex.EncodeToString(digest[:]) {
+		return nil, errors.New("agent: invalid execution authorization or content digest")
+	}
 	var task DeploymentTask
 	decoder := json.NewDecoder(bytes.NewReader(plaintext))
 	decoder.DisallowUnknownFields()
@@ -1430,12 +1281,7 @@ func (c Client) claimTask(ctx context.Context, store *Store, wait time.Duration,
 	if task.ID != response.Task.ID || task.Attempt != response.Task.Attempt || task.ID == "" || task.Attempt <= 0 {
 		return nil, errors.New("agent: encrypted task identity does not match its envelope")
 	}
-	if requiredID != "" && task.ID != requiredID {
-		return nil, errors.New("agent: Center returned a different reconciliation task")
-	}
-	if recovery != nil && !recoveryTaskAllowed(*recovery, task) {
-		return nil, errors.New("agent: Center returned a task outside the recovery scope")
-	}
+	task.Authorization = response.Task.Authorization
 	return &task, nil
 }
 
@@ -1449,6 +1295,8 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 		return err
 	}
 	payload := map[string]any{"attempt": attempt, "succeeded": deploymentErr == nil, "error": "", "result": result, "reconciliationRequired": reconciliationRequired, "applicationRuntimeGeneration": applicationRuntimeGeneration}
+	payload["executionId"] = c.execution.ID
+	payload["sessionId"] = c.executionSession
 	if deploymentErr != nil {
 		payload["error"] = deploymentErr.Error()
 	}
@@ -1457,11 +1305,11 @@ func (c Client) completeTask(ctx context.Context, store *Store, taskID string, a
 
 // BeginHostDecommission transfers responsibility for a claimed cleanup from
 // the short Agent task lease to the persistent host helper.
-func (c Client) BeginHostDecommission(ctx context.Context, connection Connection, taskID string, attempt int64) error {
-	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
+func (c Client) BeginHostDecommission(ctx context.Context, connection Connection, taskID string, attempt int64, executionID, sessionID string) error {
+	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" || executionID == "" || sessionID == "" {
 		return errors.New("agent: invalid host decommission handoff")
 	}
-	payload := map[string]any{"taskId": taskID, "attempt": attempt}
+	payload := map[string]any{"taskId": taskID, "attempt": attempt, "executionId": executionID, "sessionId": sessionID}
 	var response struct {
 		Started bool `json:"started"`
 	}
@@ -1494,6 +1342,42 @@ func (c Client) CompleteHostDecommission(ctx context.Context, callbackURL, callb
 	return nil
 }
 
+// AuthorizeHostDecommissionStep consumes one ordered cleanup permission.
+func (c Client) AuthorizeHostDecommissionStep(ctx context.Context, callbackURL, callbackToken, taskID string, attempt, sequence int64, phase string) error {
+	callbackURL, err := normalizeHostDecommissionCallbackURL(callbackURL, taskID)
+	if err != nil || attempt <= 0 || sequence <= 0 || callbackToken == "" {
+		return errors.New("agent: invalid cleanup step")
+	}
+	var response struct {
+		Recorded bool `json:"recorded"`
+	}
+	if err := c.post(ctx, callbackURL, map[string]any{"action": "step", "attempt": attempt, "sequence": sequence, "phase": phase}, callbackToken, "", "", &response); err != nil {
+		return err
+	}
+	if !response.Recorded {
+		return errors.New("agent: Center did not authorize cleanup step")
+	}
+	return nil
+}
+
+// ReportHostDecommissionFailure only records evidence; it never retries cleanup.
+func (c Client) ReportHostDecommissionFailure(ctx context.Context, callbackURL, callbackToken, taskID string, attempt int64, cleanupErr error) error {
+	callbackURL, err := normalizeHostDecommissionCallbackURL(callbackURL, taskID)
+	if err != nil || attempt <= 0 || strings.TrimSpace(callbackToken) == "" || cleanupErr == nil {
+		return errors.New("agent: invalid host decommission failure")
+	}
+	var response struct {
+		Recorded bool `json:"recorded"`
+	}
+	if err := c.post(ctx, callbackURL, map[string]any{"attempt": attempt, "error": cleanupErr.Error()}, callbackToken, "", "", &response); err != nil {
+		return err
+	}
+	if !response.Recorded {
+		return errors.New("agent: Center did not acknowledge host cleanup failure")
+	}
+	return nil
+}
+
 func normalizeHostDecommissionCallbackURL(raw, taskID string) (string, error) {
 	taskID = strings.TrimSpace(taskID)
 	callbackURL, err := normalizeCenterURL(raw)
@@ -1509,24 +1393,38 @@ func normalizeHostDecommissionCallbackURL(raw, taskID string) (string, error) {
 
 // BeginHostUpdate transfers a claimed update from the Agent lease to the
 // persistent systemd helper before the Agent process is restarted.
-func (c Client) BeginHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64) error {
+func (c Client) CheckHostUpdateStep(ctx context.Context, connection Connection, executionID, sessionID, phase string) error {
+	input := controlplane.ExecutionTransitionRequest{SessionID: sessionID, Action: "helper-step", Phase: phase}
+	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/executions/"+url.PathEscape(executionID), input, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
+}
+
+func (c Client) HostUpdateObserved(ctx context.Context, connection Connection, executionID, sessionID string) (bool, error) {
+	input := controlplane.ExecutionTransitionRequest{SessionID: sessionID, Action: "helper-observe"}
+	var result struct {
+		Ready bool `json:"ready"`
+	}
+	err := c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/executions/"+url.PathEscape(executionID), input, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &result)
+	return result.Ready, err
+}
+
+func (c Client) BeginHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64, executionID, sessionID string) error {
 	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
 		return errors.New("agent: invalid host update handoff")
 	}
-	payload := map[string]any{"attempt": attempt}
+	payload := map[string]any{"attempt": attempt, "executionId": executionID, "sessionId": sessionID}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/updates/"+url.PathEscape(taskID)+"/start", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
 // CompleteHostUpdate reports the persistent helper outcome. Center accepts a
 // success only after the target Agent version has reconnected by heartbeat.
-func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64, updateErr error, recoveryRequired bool) error {
+func (c Client) CompleteHostUpdate(ctx context.Context, connection Connection, taskID string, attempt int64, updateErr error, recoveryRequired bool, executionID, sessionID string) error {
 	if strings.TrimSpace(taskID) == "" || attempt <= 0 || strings.TrimSpace(connection.AgentID) == "" || strings.TrimSpace(connection.Credential) == "" {
 		return errors.New("agent: invalid host update completion")
 	}
 	if recoveryRequired && updateErr == nil {
 		return errors.New("agent: host update recovery requires an error")
 	}
-	payload := map[string]any{"attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": recoveryRequired}
+	payload := map[string]any{"executionId": executionID, "sessionId": sessionID, "attempt": attempt, "succeeded": updateErr == nil, "error": safeTaskError(updateErr), "result": ApplicationTaskResult{}, "reconciliationRequired": recoveryRequired}
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/result", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
@@ -1543,12 +1441,21 @@ func (c Client) renewTaskLease(ctx context.Context, store *Store, taskID string,
 	return c.post(ctx, connection.CenterURL+"/api/v1/agents/"+url.PathEscape(connection.AgentID)+"/tasks/"+url.PathEscape(taskID)+"/lease", payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, nil)
 }
 
-func (c Client) post(ctx context.Context, endpoint string, payload any, credential, caFingerprint, caCertificatePEM string, target any) error {
+func (c Client) post(ctx context.Context, endpoint string, payload any, credential, caFingerprint, caCertificatePEM string, target any) (err error) {
+	return c.postLimit(ctx, endpoint, payload, credential, caFingerprint, caCertificatePEM, target, controlplane.MaxJSONPayload)
+}
+
+func (c Client) postLimit(ctx context.Context, endpoint string, payload any, credential, caFingerprint, caCertificatePEM string, target any, limit int) (err error) {
+	defer func() {
+		if err != nil && c.executionAbort != nil {
+			c.executionAbort(err)
+		}
+	}()
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("agent: encode Center request: %w", err)
 	}
-	if len(body) > controlplane.MaxJSONPayload {
+	if len(body) > limit {
 		return errors.New("agent: Center request exceeds the allowed size")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -1559,10 +1466,11 @@ func (c Client) post(ctx context.Context, endpoint string, payload any, credenti
 	if credential != "" {
 		request.Header.Set("Authorization", "Bearer "+credential)
 	}
-	client, err := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
+	client, release, err := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
 	if err != nil {
 		return err
 	}
+	defer release()
 	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("agent: request Center: %w", err)
@@ -1588,16 +1496,23 @@ func (c Client) post(ctx context.Context, endpoint string, payload any, credenti
 	return nil
 }
 
-func (c Client) get(ctx context.Context, endpoint, credential, caFingerprint, caCertificatePEM string, target any) error {
+func (c Client) get(ctx context.Context, endpoint, credential, caFingerprint, caCertificatePEM string, target any) (err error) {
+	defer func() {
+		if err != nil && c.executionAbort != nil {
+			c.executionAbort(err)
+		}
+	}()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("agent: create Center request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+credential)
-	client, err := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
+	request.Header.Set("X-Vastora-Execution-Session", c.executionSession)
+	client, release, err := c.clientFor(caFingerprint, caCertificatePEM, 15*time.Second)
 	if err != nil {
 		return err
 	}
+	defer release()
 	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("agent: request Center: %w", err)

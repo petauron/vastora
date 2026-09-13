@@ -23,38 +23,39 @@ import (
 )
 
 type AgentTask struct {
-	PulseEnrollment           *pulse.EnrollmentTask          `json:"pulseEnrollment,omitempty"`
-	ProtocolCommand           *nodeprotocol.Task             `json:"protocolCommand,omitempty"`
-	Kind                      string                         `json:"kind"`
-	ID                        string                         `json:"id"`
-	Attempt                   int64                          `json:"attempt"`
-	AppKey                    string                         `json:"appKey"`
-	Manifest                  catalog.AppManifest            `json:"manifest"`
-	Config                    json.RawMessage                `json:"config"`
-	Secrets                   json.RawMessage                `json:"secrets"`
-	Operation                 string                         `json:"operation"`
-	DeleteData                bool                           `json:"deleteData"`
-	DecommissionCallbackURL   string                         `json:"decommissionCallbackUrl,omitempty"`
-	DecommissionCallbackToken string                         `json:"decommissionCallbackToken,omitempty"`
-	Revision                  int64                          `json:"revision,omitempty"`
-	ApplicationID             string                         `json:"applicationId,omitempty"`
-	ApplicationRole           string                         `json:"applicationRole,omitempty"`
-	ServiceAddress            string                         `json:"serviceAddress,omitempty"`
-	GatewayState              *gateway.DesiredState          `json:"gatewayState,omitempty"`
-	NodeListenerState         *gateway.NodeListenerState     `json:"nodeListenerState,omitempty"`
-	LandingServerState        *landing.ServerState           `json:"landingServerState,omitempty"`
-	LandingProxyState         *landing.DesiredState          `json:"landingProxyState,omitempty"`
-	GatewayCertificates       []gateway.Certificate          `json:"gatewayCertificates,omitempty"`
-	TunnelState               *TunnelTaskState               `json:"tunnelState,omitempty"`
-	ApplicationCommand        *RealityCommandTask            `json:"applicationCommand,omitempty"`
-	SubscriptionCommand       *SubscriptionCommandTask       `json:"subscriptionCommand,omitempty"`
-	ClientCommand             *ThreeXUIClientCommandTask     `json:"clientCommand,omitempty"`
-	NodeCommand               *ThreeXUINodeCommandTask       `json:"nodeCommand,omitempty"`
-	ControllerCommand         *ThreeXUIControllerCommandTask `json:"controllerCommand,omitempty"`
-	RegistryCredential        *AgentRegistryCredential       `json:"registryCredential,omitempty"`
-	Reconcile                 bool                           `json:"reconcile,omitempty"`
-	RequiredRuntimeGeneration int                            `json:"requiredRuntimeGeneration,omitempty"`
-	TargetVersion             string                         `json:"targetVersion,omitempty"`
+	Authorization             controlplane.ExecutionAuthorization `json:"-"`
+	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
+	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
+	Kind                      string                              `json:"kind"`
+	ID                        string                              `json:"id"`
+	Attempt                   int64                               `json:"attempt"`
+	AppKey                    string                              `json:"appKey"`
+	Manifest                  catalog.AppManifest                 `json:"manifest"`
+	Config                    json.RawMessage                     `json:"config"`
+	Secrets                   json.RawMessage                     `json:"secrets"`
+	Operation                 string                              `json:"operation"`
+	DeleteData                bool                                `json:"deleteData"`
+	DecommissionCallbackURL   string                              `json:"decommissionCallbackUrl,omitempty"`
+	DecommissionCallbackToken string                              `json:"decommissionCallbackToken,omitempty"`
+	Revision                  int64                               `json:"revision,omitempty"`
+	ApplicationID             string                              `json:"applicationId,omitempty"`
+	ApplicationRole           string                              `json:"applicationRole,omitempty"`
+	ServiceAddress            string                              `json:"serviceAddress,omitempty"`
+	GatewayState              *gateway.DesiredState               `json:"gatewayState,omitempty"`
+	NodeListenerState         *gateway.NodeListenerState          `json:"nodeListenerState,omitempty"`
+	LandingServerState        *landing.ServerState                `json:"landingServerState,omitempty"`
+	LandingProxyState         *landing.DesiredState               `json:"landingProxyState,omitempty"`
+	GatewayCertificates       []gateway.Certificate               `json:"gatewayCertificates,omitempty"`
+	TunnelState               *TunnelTaskState                    `json:"tunnelState,omitempty"`
+	ApplicationCommand        *RealityCommandTask                 `json:"applicationCommand,omitempty"`
+	SubscriptionCommand       *SubscriptionCommandTask            `json:"subscriptionCommand,omitempty"`
+	ClientCommand             *ThreeXUIClientCommandTask          `json:"clientCommand,omitempty"`
+	NodeCommand               *ThreeXUINodeCommandTask            `json:"nodeCommand,omitempty"`
+	ControllerCommand         *ThreeXUIControllerCommandTask      `json:"controllerCommand,omitempty"`
+	RegistryCredential        *AgentRegistryCredential            `json:"registryCredential,omitempty"`
+	Reconcile                 bool                                `json:"reconcile,omitempty"`
+	RequiredRuntimeGeneration int                                 `json:"requiredRuntimeGeneration,omitempty"`
+	TargetVersion             string                              `json:"targetVersion,omitempty"`
 }
 
 type AgentRegistryCredential struct {
@@ -77,20 +78,14 @@ type TunnelTaskState struct {
 	Ingress  []TunnelTaskIngress `json:"ingress"`
 }
 
-func (s *Store) ClaimNextTask(ctx context.Context, agentID, credential string, requiredTaskIDs ...string) (*AgentTask, error) {
-	requiredID := ""
-	if len(requiredTaskIDs) != 0 {
-		requiredID = strings.TrimSpace(requiredTaskIDs[0])
-	}
-	return s.claimNextTask(ctx, agentID, credential, requiredID, nil)
-}
-
-func (s *Store) claimNextTask(ctx context.Context, agentID, credential, requiredTaskID string, recovery *controlplane.RecoveryScope) (*AgentTask, error) {
-	if recovery != nil && (recovery.Validate() != nil || requiredTaskID != "") {
-		return nil, errors.New("center: invalid recovery claim scope")
-	}
+func (s *Store) claimNextTask(ctx context.Context, agentID, credential, requiredTaskID string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return nil, err
+	}
+	if paused, err := executionClaimsPaused(ctx, s.db); err != nil {
+		return nil, err
+	} else if paused {
+		return nil, errExecutionBlocked
 	}
 	s.domainSwitchMu.Lock()
 	_, aliasErr := s.beginDueSystemEndpointAliasRetirements(ctx)
@@ -112,22 +107,33 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	}
 	defer tx.Rollback()
 	var authorized int
+	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
+		return nil, err
+	} else if paused {
+		return nil, errExecutionBlocked
+	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agents WHERE id=? AND status='active' AND credential_revoked_at='' AND credential_hash=?`, agentID, tokenHash(credential)).Scan(&authorized); err != nil {
 		return nil, err
 	}
 	if authorized != 1 {
 		return nil, errors.New("center: invalid Agent credential")
 	}
-	// Self-update repairs the management process, not application state. It
-	// remains available inside a runtime recovery scope, but never overtakes
-	// an exact interrupted-task reconciliation.
+	var executionBlocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, agentID).Scan(&executionBlocked); err != nil {
+		return nil, err
+	}
+	if executionBlocked {
+		return nil, errExecutionBlocked
+	}
+	// Self-update is subject to the same unresolved-execution fence as all
+	// other work. It has no recovery-mode bypass.
 	if requiredTaskID == "" {
 		updateTask, updateErr := s.claimAgentUpdate(ctx, tx, agentID)
 		if updateErr != nil {
 			return nil, updateErr
 		}
 		if updateTask != nil {
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, updateTask); err != nil {
 				return nil, err
 			}
 			return updateTask, nil
@@ -147,37 +153,15 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		query += ` AND d.id = ?`
 		queryArgs = append(queryArgs, requiredTaskID)
 	}
-	if recovery != nil {
-		query += ` AND d.runtime_generation>=0 AND d.runtime_generation<=? AND d.operation IN ('install','configure','upgrade','uninstall') AND (`
-		queryArgs = append(queryArgs, agentRuntimeGeneration)
-		query += `0`
-		if recovery.Stage == "application" {
-			for _, application := range recovery.Applications {
-				query += ` OR (d.app_key=? AND (?='' OR d.application_id=?))`
-				queryArgs = append(queryArgs, application.AppKey, application.ApplicationID, application.ApplicationID)
-			}
-		}
-		query += `)`
-	}
 	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
 	err = tx.QueryRowContext(ctx, query, queryArgs...).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &registryCredentialID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt, &reconciliationRequested, &requiredRuntimeGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
-		if recovery != nil {
-			task, err := s.claimRecoveryStopTask(ctx, tx, agentID, recovery.Stage)
-			if err != nil || task == nil {
-				return nil, err
-			}
-			if err := tx.Commit(); err != nil {
-				return nil, err
-			}
-			return task, nil
-		}
 		if requiredTaskID != "" {
 			return nil, nil
 		}
 		commandTask, commandErr := s.claimApplicationCommand(ctx, tx, agentID)
 		if errors.Is(commandErr, errApplicationCommandDiscarded) {
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, nil); err != nil {
 				return nil, err
 			}
 			return nil, nil
@@ -186,7 +170,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return nil, commandErr
 		}
 		if commandTask != nil {
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, commandTask); err != nil {
 				return nil, err
 			}
 			return commandTask, nil
@@ -196,7 +180,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return nil, landingErr
 		}
 		if landingTask != nil {
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, landingTask); err != nil {
 				return nil, err
 			}
 			return landingTask, nil
@@ -206,7 +190,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return nil, proxyErr
 		}
 		if proxyTask != nil {
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, proxyTask); err != nil {
 				return nil, err
 			}
 			return proxyTask, nil
@@ -216,7 +200,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			return nil, listenerErr
 		}
 		if listenerTask != nil {
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, listenerTask); err != nil {
 				return nil, err
 			}
 			return listenerTask, nil
@@ -224,11 +208,11 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		var desiredStatus string
 		var generation int64
 		err = tx.QueryRowContext(ctx, `SELECT desired_status, generation, attempt FROM gateway_components
-			WHERE gateway_node_id = ? AND generation > applied_generation AND status IN ('pending', 'failed')`, agentID).Scan(&desiredStatus, &generation, &attempt)
+			WHERE gateway_node_id = ? AND generation > applied_generation AND status = 'pending'`, agentID).Scan(&desiredStatus, &generation, &attempt)
 		if err == nil {
 			task = AgentTask{Kind: "gateway.component.apply", ID: gatewayComponentTaskID(agentID, generation), Attempt: attempt + 1, Operation: desiredStatus, Revision: generation}
 			now := s.now().UTC()
-			claimed, err := tx.ExecContext(ctx, `UPDATE gateway_components SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND generation = ? AND attempt = ? AND status IN ('pending', 'failed')`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, generation, attempt)
+			claimed, err := tx.ExecContext(ctx, `UPDATE gateway_components SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND generation = ? AND attempt = ? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, generation, attempt)
 			if err != nil {
 				return nil, fmt.Errorf("center: claim gateway component task: %w", err)
 			}
@@ -238,7 +222,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, generation, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
 				return nil, err
 			}
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, &task); err != nil {
 				return nil, err
 			}
 			return &task, nil
@@ -251,7 +235,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		err = tx.QueryRowContext(ctx, `SELECT s.desired_revision, s.desired_json, s.attempt FROM gateway_states s
 			JOIN gateway_components c ON c.gateway_node_id = s.gateway_node_id
 			WHERE s.gateway_node_id = ? AND c.desired_status = 'running' AND c.status = 'ready'
-			AND s.desired_revision > s.applied_revision AND s.status IN ('pending', 'failed')`, agentID).Scan(&revision, &desiredJSON, &attempt)
+			AND s.desired_revision > s.applied_revision AND s.status = 'pending'`, agentID).Scan(&revision, &desiredJSON, &attempt)
 		if errors.Is(err, sql.ErrNoRows) {
 			tunnelTask, tunnelErr := s.claimTunnelTask(ctx, tx, agentID)
 			if tunnelErr != nil {
@@ -265,12 +249,12 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 				if decommissionTask == nil {
 					return nil, nil
 				}
-				if err := tx.Commit(); err != nil {
+				if err := commitTask(tx, decommissionTask); err != nil {
 					return nil, err
 				}
 				return decommissionTask, nil
 			}
-			if err := tx.Commit(); err != nil {
+			if err := commitTask(tx, tunnelTask); err != nil {
 				return nil, err
 			}
 			return tunnelTask, nil
@@ -288,7 +272,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		}
 		task = AgentTask{Kind: "gateway.routes.apply", ID: gatewayRouteTaskID(agentID, revision), Attempt: attempt + 1, Revision: revision, GatewayState: &state, GatewayCertificates: certificates}
 		now := s.now().UTC()
-		claimed, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND attempt = ? AND status IN ('pending', 'failed')`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, revision, attempt)
+		claimed, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE gateway_node_id = ? AND desired_revision = ? AND attempt = ? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, revision, attempt)
 		if err != nil {
 			return nil, fmt.Errorf("center: claim gateway desired state: %w", err)
 		}
@@ -301,7 +285,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, revision, "claimed", fmt.Sprintf("attempt %d", attempt+1)); err != nil {
 			return nil, err
 		}
-		if err := tx.Commit(); err != nil {
+		if err := commitTask(tx, &task); err != nil {
 			return nil, err
 		}
 		return &task, nil
@@ -327,7 +311,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			if eventErr := s.recordTaskEvent(ctx, tx, task.ID, agentID, "application.apply", applicationTaskRevision, "failed", message); eventErr != nil {
 				return nil, eventErr
 			}
-			return nil, tx.Commit()
+			return nil, commitTask(tx, nil)
 		}
 	}
 	task.Kind = "application.apply"
@@ -384,23 +368,15 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err := s.recordTaskEvent(ctx, tx, task.ID, agentID, task.Kind, task.Revision, "claimed", fmt.Sprintf("attempt %d", task.Attempt)); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commitTask(tx, &task); err != nil {
 		return nil, fmt.Errorf("center: commit task claim: %w", err)
 	}
 	return &task, nil
 }
 
-func (s *Store) WaitAndClaimNextTask(ctx context.Context, agentID, credential string, wait time.Duration, requiredTaskIDs ...string) (*AgentTask, error) {
-	requiredID := ""
-	if len(requiredTaskIDs) != 0 {
-		requiredID = strings.TrimSpace(requiredTaskIDs[0])
-	}
-	return s.waitAndClaimTask(ctx, agentID, credential, wait, requiredID, nil)
-}
-
-func (s *Store) waitAndClaimTask(ctx context.Context, agentID, credential string, wait time.Duration, requiredID string, recovery *controlplane.RecoveryScope) (*AgentTask, error) {
+func (s *Store) waitAndClaimTask(ctx context.Context, agentID, credential string, wait time.Duration, requiredID string, commitTask func(*sql.Tx, *AgentTask) error) (*AgentTask, error) {
 	if wait <= 0 {
-		return s.claimNextTask(ctx, agentID, credential, requiredID, recovery)
+		return s.claimNextTask(ctx, agentID, credential, requiredID, commitTask)
 	}
 	if wait > 30*time.Second {
 		wait = 30 * time.Second
@@ -410,7 +386,7 @@ func (s *Store) waitAndClaimTask(ctx context.Context, agentID, credential string
 	for {
 		key := "agent:" + agentID
 		changed := s.taskChanges.subscribe(key)
-		task, err := s.claimNextTask(ctx, agentID, credential, requiredID, recovery)
+		task, err := s.claimNextTask(ctx, agentID, credential, requiredID, commitTask)
 		if err != nil || task != nil {
 			s.taskChanges.unsubscribe(key, changed)
 			return task, err
@@ -427,13 +403,9 @@ func (s *Store) waitAndClaimTask(ctx context.Context, agentID, credential string
 	}
 }
 
-func (s *Store) CompleteTask(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, executedRuntimeGeneration int) error {
-	return s.completeTaskWithDisposition(ctx, agentID, credential, taskID, expectedAttempt, succeeded, taskError, rawResult, false, executedRuntimeGeneration)
-}
-
 var errInvalidReconciliationDisposition = errors.New("center: invalid task reconciliation disposition")
 
-func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool, executedRuntimeGenerations ...int) error {
+func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projectionCommit, agentID, credential, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool, executedRuntimeGenerations ...int) error {
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return err
 	}
@@ -442,8 +414,8 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		return errInvalidReconciliationDisposition
 	}
 	if strings.HasPrefix(taskID, "application-command-") {
-		err := s.completeApplicationCommand(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
-		if err == nil {
+		err := s.completeApplicationCommand(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
+		if err == nil && succeeded && !reconciliationRequired {
 			s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
 		}
 		return err
@@ -452,16 +424,16 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		if succeeded || reconciliationRequired {
 			return errors.New("center: Agent host cleanup success must use its task-bound completion callback")
 		}
-		return s.failAgentDecommissionClaim(ctx, agentID, expectedAttempt, taskError)
+		return s.failAgentDecommissionClaim(ctx, commit, agentID, expectedAttempt, taskError)
 	}
 	if isAgentUpdateTaskID(taskID) {
-		return s.completeAgentUpdate(ctx, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
+		return s.completeAgentUpdate(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, reconciliationRequired)
 	}
 	if revision, gatewayTask := gatewayTaskRevision(taskID); gatewayTask {
 		if reconciliationRequired {
 			return errInvalidReconciliationDisposition
 		}
-		return s.CompleteGatewayState(ctx, agentID, credential, revision, expectedAttempt, succeeded, taskError)
+		return s.CompleteGatewayState(ctx, commit, agentID, credential, revision, expectedAttempt, succeeded, taskError)
 	}
 	if revision, ok := landingServerTaskRevision(taskID); ok {
 		if reconciliationRequired {
@@ -476,7 +448,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		if succeeded && len(rawResult) > 0 && json.Unmarshal(rawResult, &result) != nil {
 			return errors.New("center: invalid landing service result")
 		}
-		return s.completeLandingServer(ctx, agentID, revision, expectedAttempt, succeeded, result.LandingPeer)
+		return s.completeLandingServer(ctx, commit, agentID, revision, expectedAttempt, succeeded, result.LandingPeer)
 	}
 	if revision, ok := landingProxyTaskRevision(taskID); ok {
 		if reconciliationRequired {
@@ -485,26 +457,51 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		if taskID != landingProxyTaskID(agentID, revision) {
 			return errStaleTaskLease
 		}
-		return s.completeLandingProxy(ctx, agentID, revision, expectedAttempt, succeeded)
+		return s.completeLandingProxy(ctx, commit, agentID, revision, expectedAttempt, succeeded)
 	}
 	if revision, listenerTask := nodeListenerTaskRevision(taskID); listenerTask {
 		if reconciliationRequired {
 			return errInvalidReconciliationDisposition
 		}
-		return s.completeNodeListenerState(ctx, agentID, revision, expectedAttempt, succeeded, taskError)
+		return s.completeNodeListenerState(ctx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
 	}
 	if revision, tunnelTask := tunnelTaskRevision(taskID); tunnelTask {
 		if reconciliationRequired {
 			return errInvalidReconciliationDisposition
 		}
-		return s.completeTunnelState(ctx, agentID, revision, expectedAttempt, succeeded, taskError)
+		return s.completeTunnelState(ctx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
 	}
 	if generation, componentTask := gatewayComponentTaskGeneration(taskID); componentTask {
 		if reconciliationRequired {
 			return errInvalidReconciliationDisposition
 		}
-		return s.completeGatewayComponent(ctx, agentID, generation, expectedAttempt, succeeded, taskError)
+		return s.completeGatewayComponent(ctx, commit, agentID, generation, expectedAttempt, succeeded, taskError)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	appKey, publicationCleanups, err := s.projectApplicationDeployment(ctx, tx, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired, executedRuntimeGenerations...)
+	if err != nil {
+		return err
+	}
+	if err := commit(tx); err != nil {
+		return err
+	}
+	s.resumeCredentialRotationForDeployment(ctx, taskID)
+	if succeeded && !reconciliationRequired && appKey == threeXUIAppKey {
+		s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
+	}
+	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
+		return fmt.Errorf("center: record publication cleanup state: %w", err)
+	}
+	return nil
+}
+
+// projectApplicationDeployment validates and persists an existing result only.
+// Transaction ownership and any subsequent operations belong to the caller.
+func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool, executedRuntimeGenerations ...int) (string, []publicationCleanup, error) {
 	state := "succeeded"
 	if !succeeded {
 		state = "failed"
@@ -513,11 +510,7 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 	if len(taskError) > 1024 {
 		taskError = taskError[:1024]
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	var err error
 	var applicationID, appKey, role, operation, currentState string
 	var attempt int64
 	var currentReconciliationRequired, requiredRuntimeGeneration, agentRuntimeGeneration int
@@ -525,42 +518,39 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 	var serviceAddress string
 	if err := tx.QueryRowContext(ctx, `SELECT d.application_id, a.app_key, a.role, d.operation, d.state, d.reconciliation_required, d.manifest_json, d.config_json, d.service_address, d.attempt, d.runtime_generation, agent.runtime_generation
 		FROM deployments d JOIN applications a ON a.id = d.application_id JOIN agents agent ON agent.id = d.agent_id WHERE d.id = ? AND d.agent_id = ?`, taskID, agentID).Scan(&applicationID, &appKey, &role, &operation, &currentState, &currentReconciliationRequired, &manifestJSON, &configJSON, &serviceAddress, &attempt, &requiredRuntimeGeneration, &agentRuntimeGeneration); err != nil {
-		return errors.New("center: task not found")
+		return "", nil, errors.New("center: task not found")
 	}
 	if currentState == "succeeded" || currentState == "failed" {
-		if reconciliationRequired && (currentState != "failed" || currentReconciliationRequired != 1) {
-			return errInvalidReconciliationDisposition
-		}
-		return nil
+		return "", nil, errStaleTaskLease
 	}
 	if currentState != "running" {
-		return errors.New("center: task is not active")
+		return "", nil, errors.New("center: task is not active")
 	}
 	if expectedAttempt <= 0 || expectedAttempt != attempt {
-		return errors.New("center: stale task result")
+		return "", nil, errors.New("center: stale task result")
 	}
 	if len(executedRuntimeGenerations) != 1 {
-		return errors.New("center: Agent task result is missing application runtime generation evidence")
+		return "", nil, errors.New("center: Agent task result is missing application runtime generation evidence")
 	}
 	executedRuntimeGeneration := executedRuntimeGenerations[0]
 	if executedRuntimeGeneration < 0 || executedRuntimeGeneration < requiredRuntimeGeneration || agentRuntimeGeneration < executedRuntimeGeneration {
-		return errors.New("center: Agent task result does not prove the required application runtime generation")
+		return "", nil, errors.New("center: Agent task result does not prove the required application runtime generation")
 	}
 	now := s.now().UTC()
 	publicationCleanups := []publicationCleanup{}
 	var taskResult ApplicationTaskResult
 	if succeeded || reconciliationRequired {
 		if len(rawResult) != 0 && string(rawResult) != "null" && json.Unmarshal(rawResult, &taskResult) != nil {
-			return errors.New("center: invalid Agent task result")
+			return "", nil, errors.New("center: invalid Agent task result")
 		}
 	}
 	if reconciliationRequired {
 		if err := validateReconciliationGeneratedSecrets(taskResult.GeneratedSecrets); err != nil {
-			return err
+			return "", nil, err
 		}
 		if operation != "uninstall" {
 			if err := s.storeApplicationSecrets(ctx, tx, taskID, applicationID, taskResult.GeneratedSecrets, now); err != nil {
-				return err
+				return "", nil, err
 			}
 		}
 	}
@@ -568,25 +558,19 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 		if operation != "uninstall" {
 			var manifest catalog.AppManifest
 			if json.Unmarshal(manifestJSON, &manifest) != nil || catalog.ValidateApp(manifest) != nil {
-				return errors.New("center: stored deployment manifest is invalid")
+				return "", nil, errors.New("center: stored deployment manifest is invalid")
 			}
 			if err := validateApplicationResult(manifest, appKey, role, configJSON, serviceAddress, taskResult); err != nil {
-				state = "failed"
-				taskError = err.Error()
-				succeeded = false
+				return "", nil, err
 			}
 		}
 		if succeeded {
 			if err := s.completeApplication(ctx, tx, taskID, applicationID, operation, executedRuntimeGeneration, taskResult, now, &publicationCleanups); err != nil {
-				state = "failed"
-				taskError = err.Error()
-				succeeded = false
+				return "", nil, err
 			}
 			if succeeded && operation != "uninstall" {
 				if err := s.storeApplicationSecrets(ctx, tx, taskID, applicationID, taskResult.GeneratedSecrets, now); err != nil {
-					state = "failed"
-					taskError = err.Error()
-					succeeded = false
+					return "", nil, err
 				}
 			}
 			if succeeded {
@@ -595,18 +579,8 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 				} else {
 					err = s.queueThreeXUINodeReconcile(ctx, tx, taskID, applicationID, "", now)
 				}
-				if err != nil && operation != "uninstall" {
-					if role == threeXUIRoleWorker {
-						if _, syncErr := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status = 'failed', last_error = ?, updated_at = ? WHERE worker_application_id = ?`, err.Error(), now.Format(time.RFC3339Nano), applicationID); syncErr != nil {
-							return syncErr
-						}
-						err = nil
-					}
-				}
 				if err != nil {
-					state = "failed"
-					taskError = err.Error()
-					succeeded = false
+					return "", nil, err
 				}
 			}
 		}
@@ -616,37 +590,27 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, agentID, creden
 			taskError = "application task failed"
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'failed', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
+			return "", nil, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'degraded', last_error = ?, updated_at = ? WHERE application_id = ? AND status <> 'stopped'`, taskError, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return err
+			return "", nil, err
 		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE deployments SET state = ?, reconciliation_required = ?, reconciliation_requested = 0, executed_runtime_generation = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running'`, state, reconciliationRequired, executedRuntimeGeneration, taskError, now.Format(time.RFC3339Nano), taskID, agentID)
 	if err != nil {
-		return fmt.Errorf("center: complete task: %w", err)
+		return "", nil, fmt.Errorf("center: complete task: %w", err)
 	}
 	changed, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("center: complete task: %w", err)
+		return "", nil, fmt.Errorf("center: complete task: %w", err)
 	}
 	if changed != 1 {
-		return errors.New("center: task is not active")
+		return "", nil, errors.New("center: task is not active")
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.apply", applicationTaskRevision, state, taskError); err != nil {
-		return err
+		return "", nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	s.resumeCredentialRotationForDeployment(ctx, taskID)
-	if appKey == threeXUIAppKey {
-		s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
-	}
-	if err := s.cleanupStoppedPublications(ctx, publicationCleanups); err != nil {
-		return fmt.Errorf("center: record publication cleanup state: %w", err)
-	}
-	return nil
+	return appKey, publicationCleanups, nil
 }
 
 func validateReconciliationGeneratedSecrets(generated map[string]string) error {
@@ -671,16 +635,20 @@ func gatewayComponentTaskID(agentID string, generation int64) string {
 	return fmt.Sprintf("gateway-component-%s-g%d", agentID, generation)
 }
 
-func (s *Store) completeGatewayComponent(ctx context.Context, agentID string, generation, expectedAttempt int64, succeeded bool, taskError string) error {
-	taskError = strings.TrimSpace(taskError)
-	if len(taskError) > 1024 {
-		taskError = taskError[:1024]
-	}
+func (s *Store) completeGatewayComponent(ctx context.Context, commit projectionCommit, agentID string, generation, expectedAttempt int64, succeeded bool, taskError string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	return s.projectGatewayComponent(ctx, tx, commit, agentID, generation, expectedAttempt, succeeded, taskError)
+}
+
+func (s *Store) projectGatewayComponent(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID string, generation, expectedAttempt int64, succeeded bool, taskError string) error {
+	taskError = strings.TrimSpace(taskError)
+	if len(taskError) > 1024 {
+		taskError = taskError[:1024]
+	}
 	var desiredStatus, currentStatus string
 	var desiredGeneration, appliedGeneration, attempt int64
 	if err := tx.QueryRowContext(ctx, `SELECT desired_status, generation, applied_generation, status, attempt FROM gateway_components WHERE gateway_node_id = ?`, agentID).Scan(&desiredStatus, &desiredGeneration, &appliedGeneration, &currentStatus, &attempt); err != nil {
@@ -723,7 +691,7 @@ func (s *Store) completeGatewayComponent(ctx context.Context, agentID string, ge
 	if err := s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(agentID, generation), agentID, "gateway.component.apply", generation, event, taskError); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }
 
 func (s *Store) authenticateAgent(ctx context.Context, id, credential string) error {

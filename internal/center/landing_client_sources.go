@@ -13,6 +13,15 @@ import (
 // Regenerate protocol capabilities from the union of independent purposes.
 // Old source snapshots stay referenced until route/session revocation succeeds.
 func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, landingID string) error {
+	// The caller can be another node's heartbeat or task result. Its own
+	// permission does not resolve an interrupted execution on the landing node.
+	var blocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, landingID).Scan(&blocked); err != nil {
+		return err
+	}
+	if blocked {
+		return errExecutionBlocked
+	}
 	var data []byte
 	if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, landingID).Scan(&data); errors.Is(err, sql.ErrNoRows) {
 		return nil // Nothing remains to authorize on a removed service.

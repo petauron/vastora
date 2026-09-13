@@ -144,7 +144,7 @@ func (s *Store) realityRemovalReady(ctx context.Context, tx *sql.Tx, agentID str
 	return restored, nil
 }
 
-func (s *Store) completeRealityRemoveCommand(ctx context.Context, tx *sql.Tx, taskID, agentID, applicationID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeRealityRemoveCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID, applicationID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input RealityCommandTask
 	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "remove" || input.TargetApplicationID != applicationID || input.TargetNodeID != 0 || input.ServiceID == "" || input.InboundID < 1 || !validThreeXUIInboundTag(input.InboundTag) {
 		return errors.New("center: stored local VLESS removal is invalid")
@@ -205,5 +205,5 @@ func (s *Store) completeRealityRemoveCommand(ctx context.Context, tx *sql.Tx, ta
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, state, message); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }

@@ -206,6 +206,18 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/enroll", s.handleEnrollAgent)
 	mux.HandleFunc("POST /api/v1/agents/{id}/heartbeat", s.handleAgentHeartbeat)
 	mux.HandleFunc("POST /api/v1/agents/{id}/landing-latencies", s.handleAgentLandingLatency)
+	mux.HandleFunc("POST /api/v1/agents/{id}/execution-session", s.handleExecutionSession)
+	mux.HandleFunc("POST /api/v1/agents/{id}/legacy-receipts", s.handleImportLegacyReceipt)
+	mux.HandleFunc("GET /api/v1/executions", s.requireAuth(false, s.handleListExecutions))
+	mux.HandleFunc("GET /api/v1/execution-claim-control", s.requireAuth(false, s.handleGetExecutionClaimControl))
+	mux.HandleFunc("PUT /api/v1/execution-claim-control", s.requireAuth(true, s.handleSetExecutionClaimControl))
+	mux.HandleFunc("GET /api/v1/executions/{executionID}/legacy-receipt", s.requireAuth(false, s.handleInspectLegacyReceipt))
+	mux.HandleFunc("POST /api/v1/executions/{executionID}/reexecute", s.requireAuth(true, s.handleReexecuteExecution))
+	mux.HandleFunc("POST /api/v1/executions/{executionID}/abandon", s.requireAuth(true, s.handleAbandonExecution))
+	mux.HandleFunc("POST /api/v1/executions/{executionID}/confirm-completed", s.requireAuth(true, s.handleConfirmExecution))
+	mux.HandleFunc("POST /api/v1/executions/{executionID}/resolve-helper", s.requireAuth(true, s.handleDisposeHelperExecution))
+	mux.HandleFunc("POST /api/v1/executions/{executionID}/resolve-legacy", s.requireAuth(true, s.handleDisposeLegacyReceipt))
+	mux.HandleFunc("POST /api/v1/agents/{id}/executions/{executionID}", s.handleExecutionTransition)
 	mux.HandleFunc("GET /api/v1/agents/{id}/tasks/next", s.handleClaimTask)
 	mux.HandleFunc("POST /api/v1/agents/{id}/tasks/{taskID}/lease", s.handleRenewTaskLease)
 	mux.HandleFunc("POST /api/v1/agents/{id}/decommission/start", s.handleStartAgentDecommission)
@@ -344,14 +356,18 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func decodeJSON(request *http.Request, target any) error {
+	return decodeJSONLimit(request, target, controlplane.MaxJSONPayload)
+}
+
+func decodeJSONLimit(request *http.Request, target any, limit int) error {
 	if !strings.HasPrefix(request.Header.Get("Content-Type"), "application/json") {
 		return errors.New("center: Content-Type must be application/json")
 	}
-	content, err := io.ReadAll(io.LimitReader(request.Body, controlplane.MaxJSONPayload+1))
+	content, err := io.ReadAll(io.LimitReader(request.Body, int64(limit)+1))
 	if err != nil {
 		return fmt.Errorf("center: read JSON: %w", err)
 	}
-	if len(content) > controlplane.MaxJSONPayload {
+	if len(content) > limit {
 		return errors.New("center: JSON request exceeds the allowed size")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))

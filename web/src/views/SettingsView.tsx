@@ -17,6 +17,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { SystemDomainSettings } from "./SystemDomainSettings";
+import { ExecutionSettings } from "./ExecutionSettings";
 
 export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onLogout, onRefresh }: { data: AppData; language: Language; mutate: Mutate; onCenterUpdateStatus: (status: CenterUpdateStatus) => void; onLogout: () => Promise<void>; onRefresh: () => Promise<void> }) {
   const [adding, setAdding] = useState(false);
@@ -35,6 +36,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
       </Card>
       <SystemDomainSettings domain={data.systemDomain} language={language} />
       <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} status={data.centerUpdate} />
+      <ExecutionSettings agents={data.agents} language={language} />
       <AssistantProviderSettings language={language} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "数据与故障排查", "Data & troubleshooting")}</CardTitle><CardDescription>{copy(language, "备份 Center 配置，或下载不含密钥的诊断信息。", "Back up Center configuration or download diagnostics that contain no secret values.")}</CardDescription></CardHeader>

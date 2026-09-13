@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -14,6 +15,53 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+func TestThreeXUIControllerRetainedPromotionNeverResumes(t *testing.T) {
+	for _, phase := range []string{"prepared", "imported", "api_ready", "role_configured", "applied"} {
+		t.Run(phase, func(t *testing.T) {
+			var calls atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			endpoint, _ := url.Parse(server.URL)
+			port, _ := strconv.Atoi(endpoint.Port())
+			store, err := Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			ctx := context.Background()
+			installation := AppliedInstallation{InstanceID: "test", ApplicationID: "target", AppKey: threeXUIKey, Version: "3.7.0", ServiceAddress: endpoint.Hostname(), Config: json.RawMessage(`{"timezone":"UTC","panel_port":` + strconv.Itoa(port) + `}`), Secrets: json.RawMessage(`{"api_token":"original"}`)}
+			if _, err := store.RecordApplied(ctx, installation); err != nil {
+				t.Fatal(err)
+			}
+			command := ThreeXUIControllerCommandTask{Action: "promote", MigrationID: "test-migration", ApplicationID: "target", SourceApplicationID: "source", SourceAddress: endpoint.Hostname(), SourcePanelPort: port, SourceRemoteNodeID: 1, BackupRevision: 1, SourceAPIToken: "replacement"}
+			backup := []byte("protected-original-database")
+			if _, err := store.BeginThreeXUIControllerPromotion(ctx, "task", command, threeXUIControllerPromotionRecovery{OriginalDatabase: backup, TransformedDB: []byte("protected-candidate-database"), OriginalSecrets: installation.Secrets, OldToken: "original", NewToken: "replacement"}); err != nil {
+				t.Fatal(err)
+			}
+			previous := "prepared"
+			for _, next := range []string{"imported", "api_ready", "role_configured", "applied"} {
+				if previous == phase {
+					break
+				}
+				if err := store.AdvanceThreeXUIControllerPromotion(ctx, previous, next); err != nil {
+					t.Fatal(err)
+				}
+				previous = next
+			}
+			if _, err := (Client{}).promoteThreeXUIController(ctx, store, "task", command); err == nil {
+				t.Fatal("retained promotion resumed")
+			}
+			promotion, found, err := store.ThreeXUIControllerPromotion(ctx)
+			if err != nil || !found || promotion.Phase != phase || !bytes.Equal(promotion.Recovery.OriginalDatabase, backup) || calls.Load() != 0 {
+				t.Fatalf("retained evidence changed or requests replayed: found=%v phase=%s calls=%d err=%v", found, promotion.Phase, calls.Load(), err)
+			}
+		})
+	}
+}
 
 func TestDemoteThreeXUIControllerPersistsWorkerRole(t *testing.T) {
 	var restarted atomic.Bool
@@ -131,7 +179,7 @@ func TestTransformThreeXUIControllerDatabaseSwapsLocalAndTargetInbounds(t *testi
 	}
 }
 
-func TestThreeXUIControllerPromotionSurvivesRestartUntilCompletionAcknowledged(t *testing.T) {
+func TestThreeXUIControllerPromotionPreservesBackupWithoutResuming(t *testing.T) {
 	dir := t.TempDir()
 	store, err := Open(dir)
 	if err != nil {
@@ -143,9 +191,6 @@ func TestThreeXUIControllerPromotionSurvivesRestartUntilCompletionAcknowledged(t
 		BackupRevision: 1, SourceAPIToken: "new-token",
 	}
 	task := DeploymentTask{ID: "task-1", Attempt: 1, Kind: "application.command", ControllerCommand: &command}
-	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
-		t.Fatalf("prepare task receipt: completion=%#v err=%v", completion, err)
-	}
 	originalSecrets, _ := json.Marshal(map[string]string{"api_token": "old-token"})
 	database := append([]byte("SQLite format 3\x00"), []byte("durable test state")...)
 	promotion, err := store.BeginThreeXUIControllerPromotion(context.Background(), task.ID, command, threeXUIControllerPromotionRecovery{
@@ -167,28 +212,18 @@ func TestThreeXUIControllerPromotionSurvivesRestartUntilCompletionAcknowledged(t
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
-		t.Fatalf("resume task receipt: completion=%#v err=%v", completion, err)
+	retained, found, err := store.ThreeXUIControllerPromotion(context.Background())
+	if err != nil || !found || retained.Phase != "prepared" || !bytes.Equal(retained.Recovery.OriginalDatabase, database) || !bytes.Equal(retained.Recovery.OriginalSecrets, originalSecrets) {
+		t.Fatalf("restart changed retained backup or advanced promotion: found=%t err=%v", found, err)
 	}
-	for _, transition := range [][2]string{{"prepared", "imported"}, {"imported", "api_ready"}, {"api_ready", "role_configured"}, {"role_configured", "applied"}} {
-		if err := store.AdvanceThreeXUIControllerPromotion(context.Background(), transition[0], transition[1]); err != nil {
-			t.Fatal(err)
-		}
+	if err := store.ClearThreeXUIControllerPromotion(context.Background(), "another-migration"); err == nil {
+		t.Fatal("cleared backup for a different migration")
 	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{
-		TaskID: task.ID, Attempt: task.Attempt,
-		Result: ApplicationTaskResult{ControllerCommand: &ThreeXUIControllerCommandResult{Action: "promote", BackupRevision: 1, SourceRemoteNodeID: 7}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, found, err := store.ThreeXUIControllerPromotion(context.Background()); err != nil || !found {
-		t.Fatalf("promotion before acknowledgement: found=%t err=%v", found, err)
-	}
-	if err := store.AcknowledgeTaskCompletion(context.Background(), task.ID); err != nil {
+	if err := store.ClearThreeXUIControllerPromotion(context.Background(), command.MigrationID); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := store.ThreeXUIControllerPromotion(context.Background()); err != nil || found {
-		t.Fatalf("promotion after acknowledgement: found=%t err=%v", found, err)
+		t.Fatalf("backup remained after explicit cleanup: found=%t err=%v", found, err)
 	}
 }
 

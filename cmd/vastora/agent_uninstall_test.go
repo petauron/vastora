@@ -65,6 +65,130 @@ func TestAgentUninstallRetainsOwnershipUntilAllBinariesAreRemoved(t *testing.T) 
 	}
 }
 
+func TestAgentUninstallStopsOnTailscaleCommandFailure(t *testing.T) {
+	for _, failure := range []string{"logout", "disable"} {
+		t.Run(failure, func(t *testing.T) {
+			environment := newAgentUninstallFixture(t)
+			statePath := filepath.Join(environment.dataDir, agent.HostInstallStateName)
+			if err := os.WriteFile(statePath, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP=managed\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			failed, afterFailure := false, 0
+			environment.run = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if failed {
+					afterFailure++
+				}
+				if (failure == "logout" && name == "tailscale") || (failure == "disable" && name == "systemctl" && strings.Join(args, " ") == "disable --now tailscaled.service") {
+					failed = true
+					return nil, errors.New("injected command failure")
+				}
+				return nil, nil
+			}
+			if err := uninstallAgentHostWithEnvironment(context.Background(), true, true, false, environment); err == nil || !failed || afterFailure != 0 {
+				t.Fatalf("failure did not stop cleanup: failed=%v following=%d err=%v", failed, afterFailure, err)
+			}
+			for _, path := range append([]string{statePath, environment.unitPath}, environment.binaryPaths...) {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("failure discarded remaining file %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestHostDecommissionHelperDoesNotAutostart(t *testing.T) {
+	unit := hostDecommissionServiceUnit()
+	if !strings.Contains(unit, "Restart=no\n") || strings.Contains(unit, "WantedBy=") || strings.Contains(unit, "RestartSec=") {
+		t.Fatal("helper can restart or run at boot without authorization")
+	}
+}
+
+func TestAgentUninstallCancellationStopsFollowingMutations(t *testing.T) {
+	for _, phase := range []string{"before-start", "stop-agent", "runtime", "logout", "stop-tailscale", "purge-tailscale"} {
+		t.Run(phase, func(t *testing.T) {
+			environment := newAgentUninstallFixture(t)
+			statePath := filepath.Join(environment.dataDir, agent.HostInstallStateName)
+			if err := os.WriteFile(statePath, []byte("HOST_STATE_VERSION=1\nTAILSCALE_OWNERSHIP=managed\nTAILSCALE_ENROLLED=1\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			afterCancel := 0
+			environment.run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				if ctx.Err() != nil {
+					afterCancel++
+				}
+				command := name + " " + strings.Join(args, " ")
+				if (phase == "stop-agent" && command == "systemctl disable --now vastora-agent.service") || (phase == "logout" && name == "tailscale") || (phase == "stop-tailscale" && command == "systemctl disable --now tailscaled.service") || (phase == "purge-tailscale" && name == "apt-get") {
+					cancel()
+				}
+				return nil, nil
+			}
+			environment.purgeRuntime = func(ctx context.Context, _ bool) error {
+				if ctx.Err() != nil {
+					afterCancel++
+				}
+				if phase == "runtime" {
+					cancel()
+				}
+				return nil
+			}
+			if phase == "before-start" {
+				cancel()
+			}
+			err := uninstallAgentHostWithEnvironment(ctx, true, false, false, environment)
+			if !errors.Is(err, context.Canceled) || afterCancel != 0 {
+				t.Fatalf("cancellation ignored: err=%v following=%d", err, afterCancel)
+			}
+			for _, path := range append([]string{statePath, environment.unitPath}, environment.binaryPaths...) {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("cancelled cleanup removed %s: %v", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentUninstallStopsBeforeUnauthorizedStage(t *testing.T) {
+	for _, denied := range []string{"command", "runtime", "files"} {
+		t.Run(denied, func(t *testing.T) {
+			environment := newAgentUninstallFixture(t)
+			refused, following := false, 0
+			denial := errors.New("Center rejected cleanup stage")
+			environment.authorize = func(_ context.Context, phase string) error {
+				if refused {
+					following++
+				}
+				if phase == denied {
+					refused = true
+					return denial
+				}
+				return nil
+			}
+			environment.run = func(context.Context, string, ...string) ([]byte, error) {
+				if refused {
+					following++
+				}
+				return nil, nil
+			}
+			environment.purgeRuntime = func(context.Context, bool) error {
+				if refused {
+					following++
+				}
+				return nil
+			}
+			if err := uninstallAgentHostWithEnvironment(context.Background(), true, false, false, environment); !errors.Is(err, denial) || !refused || following != 0 {
+				t.Fatalf("unauthorized continuation: refused=%v following=%d err=%v", refused, following, err)
+			}
+			for _, path := range append([]string{environment.dataDir, environment.unitPath}, environment.binaryPaths...) {
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("unauthorized removal: %s %v", path, err)
+				}
+			}
+		})
+	}
+}
+
 func TestAgentUninstallRetriesReloadAfterFilesAreRemoved(t *testing.T) {
 	environment := newAgentUninstallFixture(t)
 	reloads := 0

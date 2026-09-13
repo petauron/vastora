@@ -115,16 +115,6 @@ func safeThreeXUISnapshotPath(value string) (string, error) {
 	return cleaned, nil
 }
 
-func restoreThreeXUIDatabase(ctx context.Context, docker threeXUIContainerEngine, containerID string, snapshot []byte) error {
-	if len(snapshot) == 0 {
-		return errors.New("3x-ui database snapshot is empty")
-	}
-	_, err := docker.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
-		DestinationPath: "/etc", Content: bytes.NewReader(snapshot), AllowOverwriteDirWithFile: false, CopyUIDGID: true,
-	})
-	return err
-}
-
 func persistThreeXUIDatabaseSnapshot(ctx context.Context, docker threeXUIContainerEngine, containerID string, snapshot []byte) error {
 	archive, err := relocateThreeXUIDatabaseSnapshot(snapshot, strings.TrimPrefix(threeXUIDurableSnapshot, "/"))
 	if err != nil {
@@ -172,17 +162,4 @@ func relocateThreeXUIDatabaseSnapshot(snapshot []byte, root string) ([]byte, err
 		return nil, err
 	}
 	return output.Bytes(), nil
-}
-
-func loadDurableThreeXUIDatabaseSnapshot(ctx context.Context, docker threeXUIContainerEngine, containerID string) ([]byte, error) {
-	archive, err := docker.CopyFromContainer(ctx, containerID, client.CopyFromContainerOptions{SourcePath: threeXUIDurableSnapshot + "/x-ui"})
-	if err != nil {
-		return nil, err
-	}
-	defer archive.Content.Close()
-	data, err := readThreeXUISnapshotArchive(archive.Content)
-	if err != nil {
-		return nil, err
-	}
-	return normalizeThreeXUIDatabaseSnapshot(data)
 }

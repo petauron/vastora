@@ -188,6 +188,45 @@ func TestGatewayHealthFailureDoesNotAdvanceLastKnownGood(t *testing.T) {
 	if persisted.Desired.Revision != 1 {
 		t.Fatalf("health failure advanced last-known-good state: %#v", persisted)
 	}
+	if states := driver.appliedStates(); len(states) != 2 || states[1].Revision != 2 {
+		t.Fatalf("health failure performed a follow-up rollback mutation: %+v", states)
+	}
+}
+
+func TestGatewayCancellationDuringApplyDoesNotPersistOrRollback(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	driver := &fakeGatewayDriver{blockRevision: 2, applyStarted: make(chan struct{}), releaseApply: make(chan struct{})}
+	if err := applyGatewayDesiredState(context.Background(), store, driver, gatewayState(1, 3000), nil); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- applyGatewayDesiredState(ctx, store, driver, gatewayState(2, 3100), nil) }()
+	select {
+	case <-driver.applyStarted:
+	case <-time.After(time.Second):
+		close(driver.releaseApply)
+		t.Fatal("apply did not start")
+	}
+	cancel()
+	// Simulate a runtime which applied the command but delivered its reply after
+	// cancellation. Do not mistake that reply for authorization to keep mutating.
+	close(driver.releaseApply)
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled apply returned %v", err)
+	}
+	persisted, err := store.GatewayState(context.Background())
+	if err != nil || persisted.Desired.Revision != 1 {
+		t.Fatalf("canceled apply advanced persisted state: %+v, %v", persisted, err)
+	}
+	if states := driver.appliedStates(); len(states) != 2 {
+		t.Fatalf("canceled apply issued another mutation: %+v", states)
+	}
 }
 
 func TestGatewayRevisionIsIdempotentAndFailureKeepsLastKnownGood(t *testing.T) {
@@ -220,101 +259,11 @@ func TestGatewayRevisionIsIdempotentAndFailureKeepsLastKnownGood(t *testing.T) {
 	}
 }
 
-func TestGatewayRestoresAfterAgentOrCaddyRestartWithoutCenter(t *testing.T) {
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	ctx := context.Background()
-	initial := &fakeGatewayDriver{}
-	if err := applyGatewayDesiredState(ctx, store, initial, gatewayState(7, 3000), nil); err != nil {
-		t.Fatal(err)
-	}
-	restarted := &fakeGatewayDriver{}
-	if err := restoreGatewayState(ctx, store, restarted); err != nil {
-		t.Fatal(err)
-	}
-	if len(restarted.applied) != 1 || restarted.applied[0].Revision != 7 {
-		t.Fatalf("restart did not restore persisted state: %#v", restarted.applied)
-	}
+func TestGatewayConcurrentRevisionsAreSerialized(t *testing.T) {
+	assertGatewayMutationSerialization(t, gatewayState(7, 3000), nil, gatewayState(8, 3100), nil)
 }
 
-func TestGatewayStartupWithoutAppliedStateDoesNotRequireRuntime(t *testing.T) {
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	driver := &fakeGatewayDriver{healthFail: true}
-	if err := restoreGatewayState(context.Background(), store, driver); err != nil {
-		t.Fatalf("unused gateway capability required a running gateway: %v", err)
-	}
-	if err := store.requireGatewayStartup(); err != nil {
-		t.Fatalf("unused gateway capability blocked the control plane: %v", err)
-	}
-}
-
-func TestGatewayStartupPreservesHealthyProtectedSystemGatewayWhenPersistedStateIsStale(t *testing.T) {
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if _, err := store.RecordGatewayState(context.Background(), gatewayState(29, 3000), nil); err != nil {
-		t.Fatal(err)
-	}
-	admin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/config/" {
-			t.Fatalf("unexpected Caddy request: %s %s", request.Method, request.URL.Path)
-		}
-		writer.WriteHeader(http.StatusOK)
-	}))
-	defer admin.Close()
-	driver, err := NewCaddyGatewayDriver(admin.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	driver.SystemGateway = staticSystemGatewayInspector{"center", "headscale"}
-	if err := restoreGatewayState(context.Background(), store, driver); err != nil {
-		t.Fatalf("healthy protected gateway was not preserved: %v", err)
-	}
-	if err := store.requireGatewayStartup(); err != nil {
-		t.Fatalf("stale persisted state blocked Center reconciliation: %v", err)
-	}
-}
-
-func TestGatewayStartupFailsClosedWhenProtectedSystemGatewayCannotBeVerified(t *testing.T) {
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if _, err := store.RecordGatewayState(context.Background(), gatewayState(29, 3000), nil); err != nil {
-		t.Fatal(err)
-	}
-	admin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer admin.Close()
-	driver, err := NewCaddyGatewayDriver(admin.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	driver.SystemGateway = staticSystemGatewayInspector{"center", "headscale"}
-	if err := restoreGatewayState(context.Background(), store, driver); err == nil || !strings.Contains(err.Error(), "verify preserved protected system gateway") {
-		t.Fatalf("unhealthy protected gateway did not fail closed: %v", err)
-	}
-	if err := store.requireGatewayStartup(); err == nil {
-		t.Fatal("failed protected gateway verification did not fence the control plane")
-	}
-}
-
-func TestGatewayStartupRestoreFencesNewerRevisionUntilRestoreFinishes(t *testing.T) {
-	assertGatewayStartupFence(t, gatewayState(7, 3000), nil, gatewayState(8, 3100), nil)
-}
-
-func TestGatewayStartupFenceCoversRouteCertificateSharedHTTPSAndPortMutations(t *testing.T) {
+func TestGatewayMutationLockCoversRoutesCertificatesSharedHTTPSAndPorts(t *testing.T) {
 	base := gatewayState(7, 3000)
 	updated := gatewayState(8, 3100)
 	added := gatewayState(8, 3000)
@@ -353,12 +302,12 @@ func TestGatewayStartupFenceCoversRouteCertificateSharedHTTPSAndPortMutations(t 
 		{name: "change Caddy ports", initial: base, desired: portChanged},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			assertGatewayStartupFence(t, test.initial, test.initialCerts, test.desired, test.desiredCerts)
+			assertGatewayMutationSerialization(t, test.initial, test.initialCerts, test.desired, test.desiredCerts)
 		})
 	}
 }
 
-func assertGatewayStartupFence(t *testing.T, initial gateway.DesiredState, initialCertificates []gateway.Certificate, desired gateway.DesiredState, desiredCertificates []gateway.Certificate) {
+func assertGatewayMutationSerialization(t *testing.T, initial gateway.DesiredState, initialCertificates []gateway.Certificate, desired gateway.DesiredState, desiredCertificates []gateway.Certificate) {
 	t.Helper()
 	store, err := Open(t.TempDir())
 	if err != nil {
@@ -367,23 +316,20 @@ func assertGatewayStartupFence(t *testing.T, initial gateway.DesiredState, initi
 	defer store.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := store.RecordGatewayState(ctx, initial, initialCertificates); err != nil {
-		t.Fatal(err)
-	}
 	started := make(chan struct{})
 	driver := &fakeGatewayDriver{blockRevision: initial.Revision, applyStarted: started, releaseApply: make(chan struct{})}
 	restored := make(chan error, 1)
-	go func() { restored <- (Client{GatewayDriver: driver}).PrepareGatewayStartup(ctx, store) }()
+	go func() { restored <- applyGatewayDesiredState(ctx, store, driver, initial, initialCertificates) }()
 	select {
 	case <-started:
 	case <-ctx.Done():
-		t.Fatal("startup restore did not reach the gated driver")
+		t.Fatal("initial authorized change did not reach the gated driver")
 	}
 	applied := make(chan error, 1)
 	go func() { applied <- applyGatewayDesiredState(ctx, store, driver, desired, desiredCertificates) }()
 	select {
 	case err := <-applied:
-		t.Fatalf("revision %d bypassed the startup restore fence: %v", desired.Revision, err)
+		t.Fatalf("revision %d bypassed an in-flight gateway change: %v", desired.Revision, err)
 	case <-time.After(50 * time.Millisecond):
 	}
 	close(driver.releaseApply)
@@ -541,7 +487,7 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 	}
 }
 
-func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
+func TestFailedShared443StopsWithoutRestoringCaddy(t *testing.T) {
 	var loaded [][]byte
 	admin := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPost || request.URL.Path != "/load" {
@@ -573,12 +519,15 @@ func TestFailedShared443RestoresCaddyToPublic443(t *testing.T) {
 	if err := driver.ApplyConfiguration(context.Background(), state, nil); err == nil {
 		t.Fatal("failed HAProxy transition was accepted")
 	}
-	if len(loaded) != 2 {
-		t.Fatalf("Caddy was not restored after HAProxy failure: %d loads", len(loaded))
+	if len(loaded) != 1 {
+		t.Fatalf("Caddy was mutated after HAProxy failure: %d loads", len(loaded))
 	}
 	last := string(loaded[len(loaded)-1])
-	if !strings.Contains(last, `"listen":["0.0.0.0:443"]`) || len(runtime.states) != 2 || runtime.states[1].SharedHTTPS != nil {
-		t.Fatalf("Caddy runtime did not return ownership of public 443: %s states=%#v", last, runtime.states)
+	if !strings.Contains(last, `"listen":["0.0.0.0:443"]`) || len(runtime.states) != 1 || runtime.states[0].SharedHTTPS == nil {
+		t.Fatalf("unexpected Caddy changes after frontend failure: %s states=%#v", last, runtime.states)
+	}
+	if current, _ := driver.CurrentConfiguration(); current.Revision != 0 {
+		t.Fatalf("failed transition was recorded as committed: %+v", current)
 	}
 }
 
@@ -631,20 +580,6 @@ func TestGatewayRemovesLegacyHAProxyUnlessNodeListenerOwnsIt(t *testing.T) {
 	migrated, _, migratedRuntime := newDriver()
 	legacyState := state
 	legacyState.SharedHTTPS = &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{{ID: "legacy-reality", Hostname: "reality.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}}}}
-	rollback, _, rollbackRuntime := newDriver()
-	if err := rollback.ApplyConfiguration(context.Background(), legacyState, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := rollback.PrepareNodeListener(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := rollback.RestoreGatewayAfterNodeListenerFailure(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rollbackCurrent, _ := rollback.CurrentConfiguration()
-	if rollbackCurrent.SharedHTTPS == nil || len(rollbackCurrent.SharedHTTPS.Routes) != 1 || len(rollbackRuntime.states) != 3 || rollbackRuntime.states[2].SharedHTTPS == nil || len(rollbackRuntime.states[2].SharedHTTPS.Routes) != 1 {
-		t.Fatalf("failed node-listener handoff did not restore the legacy Gateway state: current=%#v runtime=%#v", rollbackCurrent, rollbackRuntime.states)
-	}
 	if err := migrated.ApplyConfiguration(context.Background(), legacyState, nil); err != nil {
 		t.Fatal(err)
 	}

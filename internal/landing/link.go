@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"sync"
 	"time"
 )
 
@@ -65,13 +66,61 @@ type pingResult struct {
 	IsLocalIP      bool
 }
 
-type LinkChecker struct{ HTTPClient *http.Client }
+type LinkChecker struct {
+	HTTPClient  *http.Client
+	mu          sync.Mutex
+	closed      bool
+	nextRequest uint64
+	requests    map[uint64]context.CancelFunc
+	active      sync.WaitGroup
+}
 
 func NewLinkChecker() *LinkChecker {
 	transport := &http.Transport{Proxy: nil, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", DefaultSocket)
-	}}
+		return (&net.Dialer{Timeout: CheckTimeout}).DialContext(ctx, "unix", DefaultSocket)
+	}, MaxConnsPerHost: 8, MaxIdleConns: 8, MaxIdleConnsPerHost: 8, IdleConnTimeout: 30 * time.Second, ResponseHeaderTimeout: CheckTimeout}
 	return &LinkChecker{HTTPClient: &http.Client{Transport: transport, Timeout: CheckTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+}
+
+// Close ends this checker's ownership: cancel requests, wait for their bodies
+// to close, then drain idle connections. No new request may race the drain.
+func (c *LinkChecker) Close() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.closed = true
+	for _, cancel := range c.requests {
+		cancel()
+	}
+	c.mu.Unlock()
+	c.active.Wait()
+	if c.HTTPClient != nil {
+		c.HTTPClient.CloseIdleConnections()
+	}
+}
+
+func (c *LinkChecker) requestContext(ctx context.Context) (context.Context, func(), error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, nil, errors.New("landing: local checker is closed")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	if c.requests == nil {
+		c.requests = make(map[uint64]context.CancelFunc)
+	}
+	c.nextRequest++
+	id := c.nextRequest
+	c.requests[id] = cancel
+	c.active.Add(1)
+	return ctx, func() {
+		cancel()
+		c.mu.Lock()
+		delete(c.requests, id)
+		c.mu.Unlock()
+		c.active.Done()
+	}, nil
 }
 
 // SelfIdentity is reported by the landing Agent through its authenticated
@@ -186,6 +235,11 @@ func (c *LinkChecker) read(ctx context.Context, method, path string, target any)
 	if c == nil || c.HTTPClient == nil {
 		return errors.New("landing: local checker is unavailable")
 	}
+	ctx, done, err := c.requestContext(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
 	request, err := http.NewRequestWithContext(ctx, method, "http://local-tailscaled.sock"+path, nil)
 	if err != nil {
 		return errors.New("landing: local request is invalid")

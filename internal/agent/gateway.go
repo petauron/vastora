@@ -21,6 +21,9 @@ type GatewayDriver interface {
 func applyGatewayDesiredState(ctx context.Context, store *Store, driver GatewayDriver, desired gateway.DesiredState, certificates []gateway.Certificate) error {
 	store.gatewayMutationMu.Lock()
 	defer store.gatewayMutationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if driver == nil {
 		return errors.New("agent: gateway capability is not configured")
 	}
@@ -49,82 +52,18 @@ func applyGatewayDesiredState(ctx context.Context, store *Store, driver GatewayD
 		return err
 	}
 	if err := driver.ApplyConfiguration(ctx, desired.Sorted(), certificates); err != nil {
-		return fmt.Errorf("agent: apply gateway revision %d: %w", desired.Revision, err)
+		return uncertainTaskOutcome(fmt.Errorf("agent: apply gateway revision %d: %w", desired.Revision, err))
+	}
+	if err := ctx.Err(); err != nil {
+		return uncertainTaskOutcome(err)
 	}
 	if err := driver.Health(ctx); err != nil {
-		return rollbackGatewayMutation(ctx, driver, current, hasCurrent, fmt.Errorf("agent: verify gateway revision %d: %w", desired.Revision, err))
+		return uncertainTaskOutcome(fmt.Errorf("agent: verify gateway revision %d: %w", desired.Revision, err))
 	}
 	if _, err = store.RecordGatewayState(ctx, desired, certificates); err != nil {
-		return rollbackGatewayMutation(ctx, driver, current, hasCurrent, err)
+		return uncertainTaskOutcome(err)
 	}
 	return nil
-}
-
-func restoreGatewayState(ctx context.Context, store *Store, driver GatewayDriver) error {
-	store.gatewayMutationMu.Lock()
-	defer store.gatewayMutationMu.Unlock()
-	var restoreErr error
-	if driver == nil {
-		return nil
-	}
-	state, err := store.GatewayState(ctx)
-	if err != nil {
-		if errors.Is(err, errNoAppliedGatewayState) {
-			// Gateway capability only means this node may be selected as an
-			// entry later. Until the first desired state is applied there is no
-			// managed Caddy runtime to restore or health-check.
-			return nil
-		}
-		restoreErr = err
-		return restoreErr
-	}
-	if err := driver.ApplyConfiguration(ctx, state.Desired, state.Certificates); err != nil {
-		if errors.Is(err, errProtectedSystemGatewayStateIncomplete) {
-			// A protected system gateway is recreated by the Center deployment
-			// before the Agent starts. Keep that healthy live configuration when
-			// the Agent's persisted state predates a required system route, then
-			// let the authoritative Center revision reconcile it over the control
-			// plane. The rejected stale state is never applied.
-			healthErr := driver.Health(ctx)
-			if healthErr == nil {
-				return nil
-			}
-			restoreErr = errors.Join(
-				fmt.Errorf("agent: restore last known good gateway configuration: %w", err),
-				fmt.Errorf("agent: verify preserved protected system gateway: %w", healthErr),
-			)
-			return restoreErr
-		}
-		restoreErr = fmt.Errorf("agent: restore last known good gateway configuration: %w", err)
-		return restoreErr
-	}
-	restoreErr = driver.Health(ctx)
-	return restoreErr
-}
-
-func (c Client) PrepareGatewayStartup(ctx context.Context, store *Store) error {
-	err := restoreGatewayState(ctx, store, c.GatewayDriver)
-	store.setGatewayStartupResult(err)
-	return err
-}
-
-func (s *Store) setGatewayStartupResult(err error) {
-	s.gatewayStartupMu.Lock()
-	s.gatewayStartupErr = err
-	s.gatewayStartupOK = err == nil
-	s.gatewayStartupMu.Unlock()
-}
-
-func (s *Store) requireGatewayStartup() error {
-	s.gatewayStartupMu.RLock()
-	defer s.gatewayStartupMu.RUnlock()
-	if s.gatewayStartupOK {
-		return nil
-	}
-	if s.gatewayStartupErr != nil {
-		return fmt.Errorf("agent: gateway startup restore failed closed: %w", s.gatewayStartupErr)
-	}
-	return errors.New("agent: gateway startup restore has not completed")
 }
 
 func gatewayRuntimeStatus(ctx context.Context, store *Store, driver GatewayDriver) (bool, int64, string) {
@@ -151,17 +90,4 @@ func gatewayRuntimeStatus(ctx context.Context, store *Store, driver GatewayDrive
 		return false, live.Revision, liveHash
 	}
 	return persisted.Desired.Revision == live.Revision && persisted.ConfigHash == liveHash, live.Revision, liveHash
-}
-
-func rollbackGatewayMutation(ctx context.Context, driver GatewayDriver, previous GatewayAppliedState, available bool, cause error) error {
-	if !available {
-		return cause
-	}
-	if err := driver.ApplyConfiguration(ctx, previous.Desired, previous.Certificates); err != nil {
-		return errors.Join(cause, fmt.Errorf("agent: restore gateway revision %d: %w", previous.Desired.Revision, err))
-	}
-	if err := driver.Health(ctx); err != nil {
-		return errors.Join(cause, fmt.Errorf("agent: verify restored gateway revision %d: %w", previous.Desired.Revision, err))
-	}
-	return cause
 }

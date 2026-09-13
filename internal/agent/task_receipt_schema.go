@@ -7,9 +7,8 @@ import (
 	"path/filepath"
 )
 
-// Keep these predicates aligned with the receipt queries. Partial indexes keep
-// acknowledged history out of the hot outbox/startup paths. Index only metadata,
-// not encrypted completion payloads, to keep their memory and disk footprint small.
+// Released schema 19 migration. The outbox implementation has been removed;
+// these historical indexes remain part of the forward-only upgrade sequence.
 const taskReceiptIndexesSQL = `
 	CREATE INDEX task_receipts_pending_completion ON task_receipts(updated_at, task_id)
 		WHERE state IN ('completed', 'reconciliation_required');

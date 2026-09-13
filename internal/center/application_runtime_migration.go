@@ -2,12 +2,10 @@ package center
 
 import (
 	"context"
-	"crypto/ed25519"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
@@ -35,7 +33,8 @@ func (s *Store) queueApplicationRuntimeMigration(ctx context.Context, tx *sql.Tx
 	}
 	var gatewayGeneration int64
 	result, err := tx.ExecContext(ctx, `UPDATE gateway_components SET generation = generation + 1, status = 'pending', attempt = 0, lease_expires_at = '', last_error = '', updated_at = ?
-		WHERE gateway_node_id = ? AND desired_status = 'running'`, now.Format(time.RFC3339Nano), agentID)
+		WHERE gateway_node_id = ? AND desired_status = 'running' AND status = 'ready' AND generation=applied_generation
+		AND NOT EXISTS(SELECT 1 FROM gateway_states g WHERE g.gateway_node_id=gateway_components.gateway_node_id AND (g.status<>'ready' OR g.desired_revision<>g.applied_revision))`, now.Format(time.RFC3339Nano), agentID)
 	if err != nil {
 		return fmt.Errorf("center: queue gateway runtime migration: %w", err)
 	}
@@ -51,7 +50,7 @@ func (s *Store) queueApplicationRuntimeMigration(ctx context.Context, tx *sql.Tx
 		}
 	}
 	var nodeListenerExists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ?)`, agentID).Scan(&nodeListenerExists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id = ? AND status='ready' AND desired_revision=applied_revision)`, agentID).Scan(&nodeListenerExists); err != nil {
 		return err
 	}
 	if nodeListenerExists {
@@ -60,7 +59,7 @@ func (s *Store) queueApplicationRuntimeMigration(ctx context.Context, tx *sql.Tx
 		}
 	}
 	var tunnelExists bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cloudflare_tunnels WHERE agent_id = ?)`, agentID).Scan(&tunnelExists); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cloudflare_tunnels WHERE agent_id = ? AND status='ready' AND desired_revision=applied_revision)`, agentID).Scan(&tunnelExists); err != nil {
 		return err
 	}
 	if tunnelExists {
@@ -76,10 +75,11 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		FROM applications a
 		JOIN deployments d ON d.rowid = (
 			SELECT previous.rowid FROM deployments previous
-			WHERE previous.application_id = a.id AND previous.state = 'succeeded' AND previous.operation IN ('install', 'upgrade', 'configure')
+			WHERE previous.application_id = a.id
 			ORDER BY previous.updated_at DESC, previous.rowid DESC LIMIT 1
 		)
-		WHERE a.node_id = ? AND a.status IN ('running', 'pending', 'failed') AND a.runtime_generation < ?
+		WHERE a.node_id = ? AND a.status = 'running' AND a.runtime_generation < ?
+		AND d.state = 'succeeded' AND d.operation IN ('install', 'upgrade', 'configure')
 		AND NOT EXISTS (
 			SELECT 1 FROM deployments active WHERE active.application_id = a.id
 			AND (active.state IN ('pending', 'running') OR active.reconciliation_required = 1)
@@ -105,17 +105,6 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		return err
 	}
 	for _, app := range applications {
-		if app.appKey == komariAppKey {
-			manifest, err := s.currentCatalogManifest(ctx, tx, app.appKey)
-			if err != nil {
-				return err
-			}
-			app.manifestJSON, err = json.Marshal(manifest)
-			if err != nil {
-				return err
-			}
-			app.appVersion = manifest.Version
-		}
 		if app.registryCredentialID.Valid {
 			var manifest catalog.AppManifest
 			if err := json.Unmarshal(app.manifestJSON, &manifest); err != nil {
@@ -149,7 +138,7 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'configure', 0, 'pending', '', ?, ?, ?, ?)`, deploymentID, agentID, app.appKey, app.appVersion, app.manifestJSON, app.configJSON, app.serviceAddress, newSecretID, nullableSQLString(app.registryCredentialID), formattedNow, formattedNow, app.applicationID, generation); err != nil {
 			return fmt.Errorf("center: queue application runtime migration: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', runtime = CASE WHEN app_key = ? THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, komariAppKey, formattedNow, app.applicationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', updated_at = ? WHERE id = ?`, formattedNow, app.applicationID); err != nil {
 			return err
 		}
 		if err := s.recordTaskEvent(ctx, tx, deploymentID, agentID, "application.apply", applicationTaskRevision, "queued", fmt.Sprintf("application runtime generation %d", generation)); err != nil {
@@ -157,29 +146,4 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		}
 	}
 	return nil
-}
-
-func (s *Store) currentCatalogManifest(ctx context.Context, tx *sql.Tx, appKey string) (catalog.AppManifest, error) {
-	sourceID, appID, ok := strings.Cut(appKey, "/")
-	if !ok || sourceID == "" || appID == "" {
-		return catalog.AppManifest{}, errors.New("center: invalid application key during runtime migration")
-	}
-	var envelopeJSON, publicKey []byte
-	if err := tx.QueryRowContext(ctx, `SELECT cache.envelope, source.public_key FROM catalog_cache cache JOIN catalog_sources source ON source.id = cache.source_id WHERE source.id = ? AND source.enabled = 1`, sourceID).Scan(&envelopeJSON, &publicKey); err != nil {
-		return catalog.AppManifest{}, fmt.Errorf("center: read current catalog for runtime migration: %w", err)
-	}
-	envelope, err := catalog.ParseEnvelope(envelopeJSON)
-	if err != nil {
-		return catalog.AppManifest{}, err
-	}
-	verified, _, err := catalog.Verify(envelope, ed25519.PublicKey(publicKey))
-	if err != nil {
-		return catalog.AppManifest{}, fmt.Errorf("center: verify current catalog for runtime migration: %w", err)
-	}
-	for _, manifest := range verified.Apps {
-		if manifest.ID == appID {
-			return manifest, nil
-		}
-	}
-	return catalog.AppManifest{}, errors.New("center: application is unavailable in the current catalog during runtime migration")
 }

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -109,7 +110,7 @@ func TestStaleGatewayCompletionIsAcknowledgedAfterDesiredStateAdvances(t *testin
 		WHERE gateway_node_id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.CompleteGatewayState(ctx, node.ID, node.Credential, 35, 1164, true, ""); err != nil {
+	if err := store.CompleteGatewayState(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, 35, 1164, true, ""); err != nil {
 		t.Fatalf("superseded gateway completion was not acknowledged: %v", err)
 	}
 
@@ -121,7 +122,7 @@ func TestStaleGatewayCompletionIsAcknowledgedAfterDesiredStateAdvances(t *testin
 	if desired != 36 || applied != 33 || status != "pending" || attempt != 1164 {
 		t.Fatalf("superseded completion changed current gateway state: desired=%d applied=%d status=%q attempt=%d", desired, applied, status, attempt)
 	}
-	if err := store.CompleteGatewayState(ctx, node.ID, node.Credential, 37, 1164, true, ""); err == nil || !strings.Contains(err.Error(), "stale gateway result") {
+	if err := store.CompleteGatewayState(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, 37, 1164, true, ""); err == nil || !strings.Contains(err.Error(), "stale gateway result") {
 		t.Fatalf("future gateway completion was accepted: %v", err)
 	}
 }
@@ -250,10 +251,10 @@ func TestAgentRuntimeGenerationFencesClaimsAndResultEvidence(t *testing.T) {
 	}
 	task := claimTask(t, store, node)
 	result := cpaApplicationResult("10.0.0.83")
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false); err == nil || !strings.Contains(err.Error(), "missing application runtime generation") {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false); err == nil || !strings.Contains(err.Error(), "missing application runtime generation") {
 		t.Fatalf("result without executor generation was accepted: %v", err)
 	}
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, 0); err == nil || !strings.Contains(err.Error(), "runtime generation") {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, 0); err == nil || !strings.Contains(err.Error(), "runtime generation") {
 		t.Fatalf("generation-zero result was accepted: %v", err)
 	}
 	var state string
@@ -261,7 +262,7 @@ func TestAgentRuntimeGenerationFencesClaimsAndResultEvidence(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT state, executed_runtime_generation FROM deployments WHERE id = ?`, deployment.ID).Scan(&state, &executedGeneration); err != nil || state != "running" || executedGeneration.Valid {
 		t.Fatalf("rejected result changed deployment: state=%q executed=%#v err=%v", state, executedGeneration, err)
 	}
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT state, executed_runtime_generation FROM deployments WHERE id = ?`, deployment.ID).Scan(&state, &executedGeneration); err != nil || state != "succeeded" || !executedGeneration.Valid || executedGeneration.Int64 != platform.ApplicationRuntimeGeneration {
@@ -286,7 +287,7 @@ func TestNewerAgentCompletesOlderPendingRuntimeTaskAtExecutedGeneration(t *testi
 		t.Fatalf("required runtime generation = %d", task.RequiredRuntimeGeneration)
 	}
 	result := cpaApplicationResult("10.0.0.85")
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, false, platform.ApplicationRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	var generation int
@@ -295,7 +296,7 @@ func TestNewerAgentCompletesOlderPendingRuntimeTaskAtExecutedGeneration(t *testi
 	}
 }
 
-func TestAgentRuntimeMigrationRetriesOnLaterHeartbeatAfterBlockedQueue(t *testing.T) {
+func TestAgentRuntimeMigrationDoesNotReplaceFailedOperation(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -318,12 +319,17 @@ func TestAgentRuntimeMigrationRetriesOnLaterHeartbeatAfterBlockedQueue(t *testin
 	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET state = 'failed' WHERE id = ?`, blocker.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Even if the old application still runs, a later failed configuration
+	// cannot be silently replaced with the last successful configuration.
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET status='running' WHERE id=?`, applicationID); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, heartbeat); err != nil {
 		t.Fatal(err)
 	}
 	var queued int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE application_id = ? AND state = 'pending' AND runtime_generation = ?`, applicationID, platform.ApplicationRuntimeGeneration).Scan(&queued); err != nil || queued != 1 {
-		t.Fatalf("level-triggered runtime migrations = %d, err=%v", queued, err)
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE application_id = ? AND state = 'pending' AND runtime_generation = ?`, applicationID, platform.ApplicationRuntimeGeneration).Scan(&queued); err != nil || queued != 0 {
+		t.Fatalf("failed operation replaced by runtime migration: %d, err=%v", queued, err)
 	}
 }
 
@@ -333,6 +339,7 @@ func TestAgentRuntimeGenerationRecreatesGateway(t *testing.T) {
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "runtime-gateway", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.82", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.82", LANAddress: "10.0.0.82", EnabledKinds: []string{networking.KindLAN}})
 	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	completeNextTask(t, store, node, "gateway.routes.apply", nil)
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET runtime_generation = 0 WHERE id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +355,7 @@ func TestAgentRuntimeGenerationRecreatesGateway(t *testing.T) {
 	}
 }
 
-func TestAgentRuntimeGenerationMovesKomariToNativeArtifact(t *testing.T) {
+func TestAgentRuntimeGenerationPreservesInstalledKomariManifest(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -361,7 +368,7 @@ func TestAgentRuntimeGenerationMovesKomariToNativeArtifact(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET runtime_generation = 0 WHERE id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0, runtime = 'docker' WHERE id = ?`, deployment.ApplicationID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET runtime_generation = 0 WHERE id = ?`, deployment.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
@@ -372,7 +379,7 @@ func TestAgentRuntimeGenerationMovesKomariToNativeArtifact(t *testing.T) {
 	}
 	task := claimTask(t, store, node)
 	if task.AppKey != komariAppKey || task.Operation != "configure" || len(task.Manifest.Images) != 0 || len(task.Manifest.Artifacts) != 2 {
-		t.Fatalf("Komari was not migrated to its native artifact manifest: %#v", task.Manifest)
+		t.Fatalf("runtime update changed Komari's installed native contract: %#v", task.Manifest)
 	}
 }
 
@@ -483,7 +490,7 @@ func TestShared443RejectsAnApplicationAlreadyUsing443(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
-	node := enrollOrchestrationNode(t, store, "public-gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{{Address: "10.0.0.20", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.20", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.20", LANAddress: "10.0.0.20", PublicAddress: "203.0.113.20", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	node := enrollOrchestrationNode(t, store, "public-gateway", NodeCapabilities{Gateway: true, Docker: true}, []networking.Candidate{{Address: "10.0.0.20", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.20", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.20", LANAddress: "10.0.0.20", PublicAddress: "203.0.113.20", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Public", Code: "public", Timezone: "UTC", GatewayNodes: []string{node.ID}}); err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +558,7 @@ func TestUninstallRemovesManagedHeadscaleDNS(t *testing.T) {
 	}
 }
 
-func TestFailedPublicationCleanupIsPersistedAndRetried(t *testing.T) {
+func TestFailedPublicationCleanupIsPersistedWithoutRetry(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -577,29 +584,29 @@ func TestFailedPublicationCleanupIsPersistedAndRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.dataDir = blocker
-	if err := store.StopPublication(ctx, publication.ID); err != nil {
-		t.Fatalf("durably queued cleanup should not fail the stop operation: %v", err)
+	if err := store.StopPublication(ctx, publication.ID); err == nil {
+		t.Fatal("cleanup failure was hidden")
 	}
 	var pending, attempt int
 	var retryAt string
 	if err := store.db.QueryRowContext(ctx, `SELECT cleanup_pending, cleanup_attempt, cleanup_retry_at FROM publications WHERE id = ?`, publication.ID).Scan(&pending, &attempt, &retryAt); err != nil {
 		t.Fatal(err)
 	}
-	if pending != 1 || attempt != 1 || retryAt == "" {
+	if pending != 1 || attempt != 1 || retryAt != "" {
 		t.Fatalf("failed cleanup was not scheduled: pending=%d attempt=%d retryAt=%q", pending, attempt, retryAt)
 	}
 
 	store.dataDir = originalDataDir
 	future := time.Now().UTC().Add(2 * time.Minute)
 	store.now = func() time.Time { return future }
-	if err := store.retryPublicationCleanups(ctx); err != nil {
+	if err := store.cleanupStoppedPublications(ctx, []publicationCleanup{{ID: publication.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT cleanup_pending, cleanup_attempt, cleanup_retry_at FROM publications WHERE id = ?`, publication.ID).Scan(&pending, &attempt, &retryAt); err != nil {
 		t.Fatal(err)
 	}
-	if pending != 0 || attempt != 0 || retryAt != "" {
-		t.Fatalf("successful cleanup retry was not finalized: pending=%d attempt=%d retryAt=%q", pending, attempt, retryAt)
+	if pending != 1 || attempt != 1 || retryAt != "" {
+		t.Fatalf("failed cleanup was retried: pending=%d attempt=%d retryAt=%q", pending, attempt, retryAt)
 	}
 }
 
@@ -1030,8 +1037,60 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 		t.Fatalf("unexpected subscription settings: %#v", task.SubscriptionCommand)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{SubscriptionCommand: &SubscriptionCommandResult{Domain: task.SubscriptionCommand.Domain, BaseURI: task.SubscriptionCommand.BaseURI}})
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
+	session := "subscription-confirmation-original-session"
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
 		t.Fatal(err)
+	}
+	auth, err := store.PersistExecutionAuthorization(ctx, node.ID, session, *task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, result, true, false, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, "subscription-confirmation-replacement-session", controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	cookie, _, err := store.CreateFirstAdmin(ctx, "subscription-confirmation-admin", "test-only-strong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminID, err := store.SessionAdminID(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := controlplane.ExecutionDisposition{Action: "confirm-completed", ExecutionStopped: true, Note: "Verified stopped executor and subscription configuration."}
+	if _, err := store.db.Exec(`CREATE TRIGGER reject_subscription_confirmation BEFORE UPDATE ON task_executions WHEN NEW.disposition='confirm-completed' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmExecution(ctx, auth.ID, adminID, decision); err == nil {
+		t.Fatal("confirmation ignored failed audit")
+	}
+	var failedProjectionState, failedProjectionResult, failedDisposition string
+	if err := store.db.QueryRow(`SELECT state,result_json FROM application_commands WHERE id=?`, task.ID).Scan(&failedProjectionState, &failedProjectionResult); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT disposition FROM task_executions WHERE id=?`, auth.ID).Scan(&failedDisposition); err != nil {
+		t.Fatal(err)
+	}
+	if failedProjectionState != "running" || failedProjectionResult != "{}" || failedDisposition != "" {
+		t.Fatal("failed confirmation left partial command projection")
+	}
+	if _, err := store.db.Exec(`DROP TRIGGER reject_subscription_confirmation`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfirmExecution(ctx, auth.ID, adminID, decision); err != nil {
+		t.Fatal(err)
+	}
+	var historyState, disposition string
+	if err := store.db.QueryRow(`SELECT state,disposition FROM task_executions WHERE id=?`, auth.ID).Scan(&historyState, &disposition); err != nil {
+		t.Fatal(err)
+	}
+	if historyState != "unknown" || disposition != "confirm-completed" {
+		t.Fatal("manual confirmation rewrote historical execution")
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
 	if err != nil || completed.State != "succeeded" || completed.PublicationID == "" {
@@ -1041,9 +1100,44 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if err != nil || publication.ServiceID != "three-x-ui-subscription" || publication.TLSEnabled != true {
 		t.Fatalf("subscription publication = %#v, err=%v", publication, err)
 	}
-	resync, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", Hostname: publication.Hostname, Kind: publicationPublic, DNSProvider: "manual"})
+	resyncInput := SubscriptionCommandInput{ApplicationID: "three-x-ui-subscription", GatewayNodeID: node.ID, Hostname: publication.Hostname, Kind: publicationPublic, DNSProvider: "manual"}
+	resync, err := store.CreateSubscriptionCommand(ctx, resyncInput)
 	if err != nil || resync.PublicationID != publication.ID {
 		t.Fatalf("subscription resync = %#v, err=%v", resync, err)
+	}
+	// A failed configuration task must not revoke a previously working entry.
+	snapshot := func() string {
+		var value string
+		if err := store.db.QueryRow(`SELECT json_object('status',status,'desired',desired_revision,'applied',applied_revision,'updated',updated_at) FROM publications WHERE id=?`, publication.ID).Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	before := snapshot()
+	failedTask := claimTask(t, store, node)
+	if failedTask.ID != resync.ID {
+		t.Fatalf("wrong resync task: %s", failedTask.Kind)
+	}
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, failedTask.ID, failedTask.Attempt, false, "subscription API failed", nil, failedTask.RequiredRuntimeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if after := snapshot(); after != before {
+		t.Fatalf("failed task changed publication: %s -> %s", before, after)
+	}
+	failed, err := store.ApplicationCommand(ctx, resync.ID)
+	if err != nil || failed.State != "failed" {
+		t.Fatalf("failure not recorded: %s %v", failed.State, err)
+	}
+	// Failure while recording another explicit command must likewise not undo
+	// the reused publication. No compensation is authorized by a database error.
+	if _, err := store.db.Exec(`CREATE TRIGGER reject_subscription_insert BEFORE INSERT ON application_commands WHEN NEW.kind='3xui.subscription.configure' BEGIN SELECT RAISE(ABORT,'command storage unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateSubscriptionCommand(ctx, resyncInput); err == nil {
+		t.Fatal("injected command failure was ignored")
+	}
+	if after := snapshot(); after != before {
+		t.Fatalf("failed command creation changed publication: %s -> %s", before, after)
 	}
 	var subscriptionPublications int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE service_id = 'three-x-ui-subscription' AND status <> 'stopped'`).Scan(&subscriptionPublications); err != nil {

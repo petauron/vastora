@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 
-	"github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/dockerruntime"
@@ -27,7 +25,6 @@ const (
 	keeperKey                    = "vastora-official/keeper"
 	keeperContainer              = "vastora-cpa-usage-keeper"
 	komariKey                    = "vastora-official/komari-agent"
-	komariContainer              = "vastora-komari-agent"
 	applicationDeploymentIDLabel = "io.vastora.application.deployment-id"
 )
 
@@ -41,10 +38,6 @@ var applicationVolumes = map[string][]string{
 type HostApplicationManager interface {
 	ApplyKomari(context.Context, DeploymentTask) error
 	RemoveKomari(context.Context) error
-}
-
-type HostApplicationRestorer interface {
-	RestoreKomari(context.Context, DeploymentTask) error
 }
 
 type ApplicationExecutor struct {
@@ -74,13 +67,10 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 			return ApplicationTaskResult{}, errors.New("agent: host application capability is not configured")
 		}
 		if task.Operation == "uninstall" {
-			return ApplicationTaskResult{}, errors.Join(e.Host.RemoveKomari(ctx), e.removeLegacyKomariContainer(ctx))
+			return ApplicationTaskResult{}, e.Host.RemoveKomari(ctx)
 		}
 		if err := e.Host.ApplyKomari(ctx, task); err != nil {
 			return ApplicationTaskResult{}, err
-		}
-		if err := e.removeLegacyKomariContainer(ctx); err != nil {
-			return ApplicationTaskResult{}, errors.Join(err, e.Host.RemoveKomari(ctx))
 		}
 		return ApplicationTaskResult{}, nil
 	}
@@ -103,13 +93,6 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	if err := waitForBindAddress(ctx, bindAddress); err != nil {
 		return ApplicationTaskResult{}, err
 	}
-	if task.OfflineRestore && task.AppKey == threeXUIKey {
-		if _, exists, err := inspectThreeXUIVolume(ctx, docker, threeXUIDatabaseVolume); err != nil {
-			return ApplicationTaskResult{}, fmt.Errorf("agent: inspect retained 3x-ui state: %w", err)
-		} else if !exists {
-			return ApplicationTaskResult{}, errors.New("agent: offline restore requires the retained 3x-ui database volume")
-		}
-	}
 	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
 		return ApplicationTaskResult{}, err
 	}
@@ -121,7 +104,7 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	case threeXUIKey:
 		var apiToken string
 		apiToken, deployErr = deployThreeXUI(ctx, docker, task, bindAddress)
-		if deployErr == nil {
+		if apiToken != "" {
 			generatedSecrets["api_token"] = apiToken
 		}
 	case cpaKey:
@@ -132,12 +115,12 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 		return ApplicationTaskResult{}, errors.New("agent: unsupported official app package")
 	}
 	if deployErr != nil {
-		return ApplicationTaskResult{}, deployErr
+		return ApplicationTaskResult{GeneratedSecrets: generatedSecrets}, deployErr
 	}
 	result, err := reportedServices(ctx, task, bindAddress)
 	if err != nil {
 		if task.AppKey == threeXUIKey {
-			return ApplicationTaskResult{GeneratedSecrets: generatedSecrets}, deferTaskUntilReconciled(err)
+			return ApplicationTaskResult{GeneratedSecrets: generatedSecrets}, uncertainTaskOutcome(err)
 		}
 		return ApplicationTaskResult{}, err
 	}
@@ -246,192 +229,6 @@ func validateApplicationTask(task DeploymentTask) error {
 	return nil
 }
 
-// Maintain cleans committed rollback artifacts and restores an interrupted
-// replacement transaction whose canonical container is absent.
-func (e ApplicationExecutor) Maintain(ctx context.Context) error {
-	socket := e.DockerSocket
-	if socket == "" {
-		socket = "unix:///var/run/docker.sock"
-	}
-	if path, ok := strings.CutPrefix(socket, "unix://"); ok {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-	}
-	docker, err := client.New(client.WithHost(socket))
-	if err != nil {
-		return fmt.Errorf("agent: connect Docker for maintenance: %w", err)
-	}
-	defer docker.Close()
-	return maintainThreeXUIContainers(ctx, docker)
-}
-
-// Restore starts the encrypted last-known-good application state before the
-// Agent claims new Center work. It never pulls images or downloads artifacts:
-// offline recovery is limited to digest-pinned images and managed host files
-// that are already present on this machine.
-func (e ApplicationExecutor) Restore(ctx context.Context, store *Store) error {
-	store.landingMutationMu.Lock()
-	defer store.landingMutationMu.Unlock()
-	installations, err := store.RestorableInstallations(ctx)
-	if err != nil {
-		return err
-	}
-	var failures []error
-	for _, installation := range installations {
-		if installation.AppKey == threeXUIKey {
-			state, err := store.landingRuntime(ctx)
-			if err != nil {
-				failures = append(failures, recoveryFailure(installation, "restore_failed", err))
-				continue
-			}
-			if state != nil && state.Route != nil {
-				// restoreLandingProxy owns this instance and its boot fence.
-				continue
-			}
-		}
-		task := DeploymentTask{
-			Kind: "application.apply", ID: installation.InstanceID, Attempt: 1,
-			ApplicationID: installation.ApplicationID,
-			AppKey:        installation.AppKey, Manifest: installation.Manifest,
-			Config: installation.Config, Secrets: installation.Secrets,
-			Operation: "install", ServiceAddress: installation.ServiceAddress,
-			ApplicationRole: installation.ApplicationRole, OfflineRestore: true,
-		}
-		if installation.Manifest.ID == "" {
-			failures = append(failures, recoveryFailure(installation, "state_incomplete", fmt.Errorf("agent: legacy %s state cannot be restored offline; reconcile it with Center", installation.AppKey)))
-			continue
-		}
-		if strings.TrimSpace(installation.ApplicationID) == "" {
-			failures = append(failures, recoveryFailure(installation, "state_incomplete", fmt.Errorf("agent: %s state has no proven application ownership; reconcile it with Center", installation.AppKey)))
-			continue
-		}
-		if installation.AppKey == komariKey {
-			restorer, ok := e.Host.(HostApplicationRestorer)
-			if !ok {
-				failures = append(failures, recoveryFailure(installation, "restore_failed", errors.New("agent: host application recovery capability is not configured")))
-				continue
-			}
-			if err := restorer.RestoreKomari(ctx, task); err != nil {
-				failures = append(failures, recoveryFailure(installation, "restore_failed", fmt.Errorf("agent: restore %s: %w", installation.AppKey, err)))
-			}
-			continue
-		}
-		if installation.AppKey == pulse.AgentKey {
-			restorer, ok := e.Host.(interface {
-				RestorePulse(context.Context, DeploymentTask) error
-			})
-			if !ok {
-				failures = append(failures, recoveryFailure(installation, "restore_failed", errors.New("agent: Pulse recovery capability is not configured")))
-				continue
-			}
-			if err := restorer.RestorePulse(ctx, task); err != nil {
-				failures = append(failures, recoveryFailure(installation, "restore_failed", err))
-			}
-			continue
-		}
-		containerName, ok := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer, pulse.ServiceKey: pulseContainer}[installation.AppKey]
-		if !ok {
-			failures = append(failures, recoveryFailure(installation, "restore_failed", fmt.Errorf("agent: persisted application %s is unsupported", installation.AppKey)))
-			continue
-		}
-		running, err := e.containerMatchesInstallation(ctx, containerName, installation)
-		if err != nil {
-			failures = append(failures, recoveryFailure(installation, "restore_failed", err))
-			continue
-		}
-		if running {
-			bindAddress := "127.0.0.1"
-			if installation.ServiceAddress != "" {
-				bindAddress = installation.ServiceAddress
-			}
-			if _, err := reportedServices(ctx, task, bindAddress); err != nil {
-				failures = append(failures, recoveryFailure(installation, "health_check_failed", fmt.Errorf("agent: verify restored %s health: %w", installation.AppKey, err)))
-			}
-			continue
-		}
-		if _, err := e.Deploy(ctx, task); err != nil {
-			failures = append(failures, recoveryFailure(installation, "restore_failed", fmt.Errorf("agent: restore %s: %w", installation.AppKey, err)))
-		}
-	}
-	return errors.Join(failures...)
-}
-
-func (e ApplicationExecutor) containerMatchesInstallation(ctx context.Context, containerName string, installation AppliedInstallation) (bool, error) {
-	socket := e.DockerSocket
-	if socket == "" {
-		socket = "unix:///var/run/docker.sock"
-	}
-	docker, err := client.New(client.WithHost(socket))
-	if err != nil {
-		return false, fmt.Errorf("agent: connect Docker for offline restore: %w", err)
-	}
-	defer docker.Close()
-	component := strings.TrimPrefix(installation.AppKey, "vastora-official/")
-	inspection, exists, err := inspectOwnedApplicationContainer(ctx, docker, containerName, installation.AppKey, component, installation.ApplicationID, installation.InstanceID)
-	if !exists && err == nil {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("agent: verify %s ownership for offline restore: %w", installation.AppKey, err)
-	}
-	imageName := map[string]string{threeXUIKey: "3x-ui", cpaKey: "cli-proxy-api", keeperKey: "keeper", pulse.ServiceKey: "pulse"}[installation.AppKey]
-	expectedImage, err := declaredImage(installation.Manifest, imageName)
-	if err != nil {
-		return false, err
-	}
-	if inspection.Container.Config.Image != expectedImage {
-		return false, nil
-	}
-	bindAddress := installation.ServiceAddress
-	if bindAddress == "" {
-		bindAddress = "127.0.0.1"
-	}
-	if inspection.Container.HostConfig == nil || len(inspection.Container.HostConfig.PortBindings) == 0 {
-		return false, errors.New("agent: retained application has no proven private port bindings")
-	}
-	for _, bindings := range inspection.Container.HostConfig.PortBindings {
-		for _, binding := range bindings {
-			if binding.HostIP.String() != bindAddress {
-				return false, errors.New("agent: retained application binding differs from its recorded private address")
-			}
-		}
-	}
-	if err := waitForBindAddress(ctx, bindAddress); err != nil {
-		return false, err
-	}
-	if installation.AppKey == pulse.ServiceKey {
-		// Pulse is deployed on Docker's default bridge, not the managed CPA
-		// or Xray bridges. Preserve that topology and its private port binding.
-		mode := string(inspection.Container.HostConfig.NetworkMode)
-		if mode != "default" && mode != "bridge" && mode != "" {
-			return false, errors.New("agent: retained Pulse container has an unexpected network mode")
-		}
-		if inspection.Container.State == nil || !inspection.Container.State.Running {
-			if _, err := docker.ContainerStart(ctx, inspection.Container.ID, client.ContainerStartOptions{}); err != nil && !errdefs.IsNotModified(err) {
-				return false, fmt.Errorf("agent: restart retained Pulse container: %w", err)
-			}
-		}
-		return true, nil
-	}
-	networkName, networkComponent := cpaNetwork, "cpa-network"
-	if installation.AppKey == threeXUIKey {
-		networkName, networkComponent = dockerruntime.NetworkName, "runtime-network"
-	}
-	if err := dockerruntime.EnsureBridgeNetwork(ctx, docker, networkName, networkComponent); err != nil {
-		return false, err
-	}
-	if inspection.Container.State == nil || !inspection.Container.State.Running {
-		if _, err := docker.ContainerStart(ctx, inspection.Container.ID, client.ContainerStartOptions{}); err != nil && !errdefs.IsNotModified(err) {
-			return false, fmt.Errorf("agent: restart retained application container: %w", err)
-		}
-	}
-	if err := dockerruntime.RecoverAttachment(ctx, docker, inspection.Container.ID, networkName, networkComponent, containerName); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 type appUninstallEngine interface {
 	ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
 	ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
@@ -458,9 +255,7 @@ func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, 
 			return err
 		}
 		if !deleteData {
-			// Keep-data uninstall never starts a stopped service. It only quiesces
-			// the authoritative container and restores a durable rollback snapshot
-			// when that is the only safe copy of the retained database.
+			// Stop volume writers without restoring snapshots or starting services.
 			if err := prepareThreeXUIKeepDataUninstall(ctx, transactionalDocker); err != nil {
 				return fmt.Errorf("agent: preserve 3x-ui data before uninstall: %w", err)
 			}
@@ -482,27 +277,6 @@ func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, 
 		if err := removeOwnedApplicationVolume(ctx, docker, volume, appKey, applicationVolumeComponent(volume), applicationID); err != nil {
 			return fmt.Errorf("agent: remove %s data volume: %w", appKey, err)
 		}
-	}
-	return nil
-}
-
-func (e ApplicationExecutor) removeLegacyKomariContainer(ctx context.Context) error {
-	socket := e.DockerSocket
-	if socket == "" {
-		socket = "unix:///var/run/docker.sock"
-	}
-	if path, ok := strings.CutPrefix(socket, "unix://"); ok {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-	}
-	docker, err := client.New(client.WithHost(socket))
-	if err != nil {
-		return fmt.Errorf("agent: connect Docker to remove legacy Komari container: %w", err)
-	}
-	defer docker.Close()
-	if _, err := docker.ContainerRemove(ctx, komariContainer, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
-		return fmt.Errorf("agent: remove legacy Komari container: %w", err)
 	}
 	return nil
 }

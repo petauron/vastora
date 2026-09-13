@@ -374,7 +374,7 @@ func TestTunnelCompletionWaitsForHTTPSVerification(t *testing.T) {
 			return store.markPublicationReady(verifyCtx, id, revision)
 		}
 	}
-	if err := store.completeTunnelState(ctx, node.ID, 2, 1, true, ""); err != nil {
+	if err := store.completeTunnelState(ctx, commitProjectionOnlyForTest, node.ID, 2, 1, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -424,7 +424,7 @@ func TestTunnelCompletionAcknowledgesSupersededAgentOutboxResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := store.completeTunnelState(ctx, node.ID, 1, 1, true, ""); err != nil {
+	if err := store.completeTunnelState(ctx, commitProjectionOnlyForTest, node.ID, 1, 1, true, ""); err != nil {
 		t.Fatalf("superseded completion was not acknowledged: %v", err)
 	}
 	var desired, applied, attempt int64

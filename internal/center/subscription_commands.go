@@ -76,29 +76,22 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	encoded, _ := json.Marshal(task)
 	token, err := randomToken(18)
 	if err != nil {
-		_ = s.StopPublication(context.WithoutCancel(ctx), publication.ID)
 		return ApplicationCommandView{}, err
 	}
 	id := "application-command-" + token
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		_ = s.StopPublication(context.WithoutCancel(ctx), publication.ID)
 		return ApplicationCommandView{}, err
 	}
 	defer tx.Rollback()
 	now := s.now().UTC()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, id, input.ApplicationID, agentID, input.GatewayNodeID, subscriptionCommandKind, encoded, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
-		_ = tx.Rollback()
-		_ = s.StopPublication(context.WithoutCancel(ctx), publication.ID)
 		return ApplicationCommandView{}, fmt.Errorf("center: create subscription operation: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "3x-ui public subscription configuration queued"); err != nil {
-		_ = tx.Rollback()
-		_ = s.StopPublication(context.WithoutCancel(ctx), publication.ID)
 		return ApplicationCommandView{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		_ = s.StopPublication(context.WithoutCancel(ctx), publication.ID)
 		return ApplicationCommandView{}, err
 	}
 	return s.ApplicationCommand(ctx, id)

@@ -155,21 +155,59 @@ func TestLocalCleanupCancellationRejectsUnrelatedState(t *testing.T) {
 	}
 }
 
-func TestLocalCleanupCancellationAcceptsMissingInactiveService(t *testing.T) {
+func TestLocalCleanupCancellationDoesNotIgnoreStopFailure(t *testing.T) {
 	environment, dataDir := newHostCancellationFixture(t)
 	environment.run = func(_ context.Context, name string, arguments ...string) ([]byte, error) {
 		if name == "systemctl" && arguments[0] == "stop" {
 			return nil, errors.New("unit not loaded")
 		}
 		if name == "systemctl" && arguments[0] == "show" {
-			return []byte("LoadState=not-found\nActiveState=inactive\n"), nil
+			t.Fatal("stop error triggered a fallback request")
 		}
 		return nil, nil
 	}
-	if err := cancelHostHelper(context.Background(), dataDir, environment); err != nil {
+	if err := cancelHostHelper(context.Background(), dataDir, environment); err == nil {
+		t.Fatal("stop failure ignored")
+	}
+	for _, path := range []string{environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestHostHelperCancellationStopsAtEveryAuthorizationBoundary(t *testing.T) {
+	baseline, dataDir := newHostCancellationFixture(t)
+	boundaries := 0
+	baseline.authorize = func(context.Context, string) error { boundaries++; return nil }
+	if err := cancelHostHelper(context.Background(), dataDir, baseline); err != nil {
 		t.Fatal(err)
 	}
-	assertUninstallPathsAbsent(t, environment.directory, environment.unitPath, environment.enabledLink, environment.generatorPath)
+	if boundaries < 8 {
+		t.Fatalf("too few guarded cleanup operations: %d", boundaries)
+	}
+	for denied := 1; denied <= boundaries; denied++ {
+		environment, dataDir := newHostCancellationFixture(t)
+		calls, afterFailure := 0, 0
+		failure := errors.New("authorization unavailable")
+		environment.authorize = func(context.Context, string) error {
+			calls++
+			if calls >= denied {
+				return failure
+			}
+			return nil
+		}
+		run := environment.run
+		environment.run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			if calls >= denied {
+				afterFailure++
+			}
+			return run(ctx, name, args...)
+		}
+		if err := cancelHostHelper(context.Background(), dataDir, environment); !errors.Is(err, failure) || calls != denied || afterFailure != 0 {
+			t.Fatalf("boundary %d: calls=%d following=%d err=%v", denied, calls, afterFailure, err)
+		}
+	}
 }
 
 func newHostCancellationFixture(t *testing.T) (hostHelperCancellationEnvironment, string) {
@@ -179,7 +217,7 @@ func newHostCancellationFixture(t *testing.T) (hostHelperCancellationEnvironment
 		t.Fatal(err)
 	}
 	dataDir := filepath.Join(t.TempDir(), "agent")
-	operation := hostDecommissionOperation{Version: 2, TaskID: "agent-decommission-fixture", AgentID: "fixture", Attempt: 1, DataDir: dataDir, CenterURL: "http://127.0.0.1:1", Credential: "synthetic-offline-credential", CallbackURL: "http://127.0.0.1:1/api/v1/agent-decommission-results/agent-decommission-fixture", CallbackToken: "synthetic-callback-token"}
+	operation := hostDecommissionOperation{ExecutionID: "test-execution", SessionID: "test-session", Version: 2, TaskID: "agent-decommission-fixture", AgentID: "fixture", Attempt: 1, DataDir: dataDir, CenterURL: "http://127.0.0.1:1", Credential: "synthetic-offline-credential", CallbackURL: "http://127.0.0.1:1/api/v1/agent-decommission-results/agent-decommission-fixture", CallbackToken: "synthetic-callback-token"}
 	raw, err := json.Marshal(operation)
 	if err != nil {
 		t.Fatal(err)

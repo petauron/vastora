@@ -3,11 +3,11 @@ package center
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
@@ -175,71 +175,34 @@ func TestCenterBackupRejectsChangedOrMixedRootKeys(t *testing.T) {
 
 func makeLegacyUnboundCenter(t *testing.T, directory string) {
 	t.Helper()
-	store, err := Open(directory)
+	// Build the released schema through its actual migration sequence rather
+	// than relabeling today's schema as v35.
+	store := legacyMigrationStore(t, directory, 35)
+	if _, err := store.db.Exec(`DROP TABLE storage_key_binding`); err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(filepath.Join(directory, "center.key"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	store.key = key
+	store.now = time.Now
 	tx, err := store.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tx.Rollback()
 	secretID, err := store.putSecret(context.Background(), tx, []byte("legacy-secret"), "official-catalog-signing-key")
 	if err == nil {
 		_, err = tx.Exec(`INSERT INTO settings(key, value) VALUES('official_catalog_signing_key', ?)`, secretID)
 	}
-	if err == nil {
-		err = tx.Commit()
-	} else {
-		_ = tx.Rollback()
-	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Close(); err != nil {
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	restoreLegacyInboundPlanSchemaForTest(t, db)
-	if _, err := db.Exec(`DROP TRIGGER secret_deliveries_delete_with_deployment;
-		DROP TRIGGER secret_deliveries_delete_with_application_command;
-		DROP TABLE assistant_audit_events;
-		DROP TABLE assistant_events;
-		DROP TABLE change_approvals;
-		DROP TABLE change_proposals;
-		DROP TABLE assistant_tool_calls;
-		DROP TABLE assistant_runs;
-		DROP TABLE assistant_messages;
-		DROP TABLE assistant_conversations;
-		DROP TABLE assistant_model_providers;
-		DROP INDEX deployments_change_proposal_idx;
-		DROP TABLE secret_deliveries;
-		DROP TABLE storage_key_binding;
-		DROP TABLE agent_updates;
-		ALTER TABLE publications DROP COLUMN access_application_id;
-		ALTER TABLE deployments DROP COLUMN change_proposal_id;
-		ALTER TABLE deployments DROP COLUMN pre_dispatch_application_status;
-		ALTER TABLE deployments DROP COLUMN executed_runtime_generation;
-		ALTER TABLE application_commands DROP COLUMN reconciliation_requested;
-		DROP INDEX agent_enrollment_one_reconnect_idx;
-		ALTER TABLE agent_enrollment_tokens DROP COLUMN target_agent_id;
-		ALTER TABLE agent_enrollment_tokens DROP COLUMN ca_certificate_pem;
-		ALTER TABLE agent_network_profiles DROP COLUMN public_verified_at;
-		ALTER TABLE agent_network_profiles DROP COLUMN public_mode;
-		ALTER TABLE agent_network_profiles DROP COLUMN public_bind_address;
-		ALTER TABLE agents DROP COLUMN remote_update_supported;
-		ALTER TABLE agents DROP COLUMN public_egress_observed_at;
-		ALTER TABLE agents DROP COLUMN public_egress_mode;
-		ALTER TABLE agents DROP COLUMN public_egress_bind_address;
-		ALTER TABLE agents DROP COLUMN public_egress_address;
-		DELETE FROM goose_db_version WHERE version_id > 35;
-		PRAGMA user_version = 35`); err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
+	if err := store.db.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

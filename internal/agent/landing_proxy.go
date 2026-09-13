@@ -192,7 +192,7 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		if err := waitLandingRoutes(ctx, routes); err != nil {
 			return err
 		}
-		if err := verifyLocalLandingPlan(ctx, routes, desired); err != nil {
+		if err := s.verifyLocalLandingPlan(ctx, routes, desired); err != nil {
 			return err
 		}
 		raw, _, err := routes.Read(ctx)
@@ -215,7 +215,7 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		if err := ensureLandingPackage(ctx); err != nil {
 			return err
 		}
-		if err := verifyLocalLandingPlan(ctx, routes, desired); err != nil {
+		if err := s.verifyLocalLandingPlan(ctx, routes, desired); err != nil {
 			return err
 		}
 		if err := waitLandingPeers(ctx, desired); err != nil {
@@ -427,23 +427,20 @@ func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 							}
 						}
 						if len(selected.Clients.Grants) > 0 {
-							if err := verifyLocalLandingPlan(checkCtx, routes, selected); err != nil {
+							if err := s.verifyLocalLandingPlan(checkCtx, routes, selected); err != nil {
 								return landing.BusinessResult{}, err
 							}
 						}
 					}
 					return (landing.Probe{TCPOnly: use.TCPOnly}).Check(checkCtx, peer, revision)
 				}
-				monitor := landing.Monitor{Gate: gate, Links: landing.NewLinkChecker(), TCPOnly: use.TCPOnly, CheckBusiness: checkBusiness,
+				checker := landing.NewLinkChecker()
+				monitor := landing.Monitor{Gate: gate, Links: checker, TCPOnly: use.TCPOnly, CheckBusiness: checkBusiness,
 					StopConnections: stopConnections, Report: func(status landing.MonitorStatus) {
 						s.landingStatusMu.Lock()
 						if state.Desired.Proxy != nil && use.Peer == state.Desired.Proxy.Peer {
 							s.landingStatus = status
 						}
-						if s.landingClientStatuses == nil {
-							s.landingClientStatuses = map[string]landing.MonitorStatus{}
-						}
-						s.landingClientStatuses[use.Peer.ID] = status
 						s.landingStatusMu.Unlock()
 					},
 				}
@@ -453,10 +450,6 @@ func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 					if state.Desired.Proxy != nil && use.Peer == state.Desired.Proxy.Peer {
 						s.landingStatus = blocked
 					}
-					if s.landingClientStatuses == nil {
-						s.landingClientStatuses = map[string]landing.MonitorStatus{}
-					}
-					s.landingClientStatuses[use.Peer.ID] = blocked
 					s.landingStatusMu.Unlock()
 				}
 			}()
@@ -496,7 +489,7 @@ func waitLandingPeers(ctx context.Context, state landing.DesiredState) error {
 	return nil
 }
 
-func verifyLocalLandingPlan(ctx context.Context, routes threeXUILandingRoutes, state landing.DesiredState) error {
+func (s *Store) verifyLocalLandingPlan(ctx context.Context, routes threeXUILandingRoutes, state landing.DesiredState) error {
 	if err := verifyLocalLandingInbounds(ctx, routes, state.Inbounds()); err != nil {
 		return err
 	}
@@ -504,7 +497,7 @@ func verifyLocalLandingPlan(ctx context.Context, routes threeXUILandingRoutes, s
 		return nil
 	}
 	if slices.ContainsFunc(state.Clients.Grants, func(grant landing.ClientGrant) bool { return grant.Enabled }) {
-		self, err := landing.NewLinkChecker().SelfIdentity(ctx, state.Clients.Source.Address)
+		self, err := s.linkChecker.SelfIdentity(ctx, state.Clients.Source.Address)
 		if err != nil {
 			return errors.New("agent: entry private identity is unavailable")
 		}

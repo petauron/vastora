@@ -733,30 +733,36 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
-	if heartbeat.ApplicationEndpointsObserved {
+	// Observation may continue while management is fenced, but a heartbeat
+	// must not synthesize a replacement intent for interrupted work.
+	var executionBlocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, id).Scan(&executionBlocked); err != nil {
+		return err
+	}
+	if !executionBlocked && heartbeat.ApplicationEndpointsObserved {
 		if err := s.reconcileApplicationEndpoints(ctx, tx, id, heartbeat.ApplicationEndpoints, now, &publicationCleanups); err != nil {
 			return err
 		}
 	}
-	if heartbeat.ApplicationRuntimeGeneration > previousRuntimeGeneration {
+	if !executionBlocked && heartbeat.ApplicationRuntimeGeneration > previousRuntimeGeneration {
 		if err := s.queueApplicationRuntimeMigration(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
 			return err
 		}
-	} else if heartbeat.ApplicationRuntimeGeneration > 0 {
+	} else if !executionBlocked && heartbeat.ApplicationRuntimeGeneration > 0 {
 		if err := s.queueRuntimeApplicationDeployments(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
 			return err
 		}
 	}
-	if heartbeat.Capabilities.Gateway && !heartbeat.GatewayHealthy {
+	if !executionBlocked && heartbeat.Capabilities.Gateway && !heartbeat.GatewayHealthy {
 		if err := s.queueUnhealthyGatewayReconcile(ctx, tx, id, now); err != nil {
 			return err
 		}
-	} else if heartbeat.Capabilities.Gateway {
+	} else if !executionBlocked && heartbeat.Capabilities.Gateway {
 		if err := s.queueMismatchedGatewayReconcile(ctx, tx, id, heartbeat.GatewayRevision, heartbeat.GatewayConfigHash, now); err != nil {
 			return err
 		}
 	}
-	if heartbeat.Capabilities.Gateway && reportedHeadscaleAddress {
+	if !executionBlocked && heartbeat.Capabilities.Gateway && reportedHeadscaleAddress {
 		needsPrivateListener, err := gatewayStateNeedsReportedHeadscaleListener(ctx, tx, id, heartbeat.NetworkCandidates)
 		if err != nil {
 			return err
@@ -771,21 +777,27 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		if err := recordLandingClientRuntime(ctx, tx, id, heartbeat.LandingClientRuntime, now); err != nil {
 			return err
 		}
-		if err := s.reconcileClientLandingSourcesForNode(ctx, tx, id); err != nil {
-			return err
-		}
-		if err := s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now); err != nil {
-			return err
+		if !executionBlocked {
+			if err := s.reconcileClientLandingSourcesForNode(ctx, tx, id); err != nil {
+				return err
+			}
+			if err := s.reconcileLandingSubscriptionOrigin(ctx, tx, id, now); err != nil {
+				return err
+			}
 		}
 		if err := recordLandingHealth(ctx, tx, id, heartbeat.LandingHealth, now); err != nil {
 			return err
 		}
-		if err := s.queueMismatchedNodeListenerReconcile(ctx, tx, id, heartbeat.NodeListenerHealthy, heartbeat.NodeListenerRevision, heartbeat.NodeListenerConfigHash, now); err != nil {
-			return err
+		if !executionBlocked {
+			if err := s.queueMismatchedNodeListenerReconcile(ctx, tx, id, heartbeat.NodeListenerHealthy, heartbeat.NodeListenerRevision, heartbeat.NodeListenerConfigHash, now); err != nil {
+				return err
+			}
 		}
 	}
-	if err := s.queueScheduledThreeXUIBackup(ctx, tx, id, now); err != nil {
-		return err
+	if !executionBlocked {
+		if err := s.queueScheduledThreeXUIBackup(ctx, tx, id, now); err != nil {
+			return err
+		}
 	}
 	if heartbeat.Startup {
 		if err := expireAgentProcessTaskLeases(ctx, tx, id, now); err != nil {
@@ -815,7 +827,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 }
 
 // expireAgentProcessTaskLeases marks work owned by the previous Agent process
-// for immediate recovery. Host update and decommission tasks are deliberately
+// for immediate verification, never automatic replay. Host update and decommission tasks are deliberately
 // excluded because their durable system helpers survive an Agent restart.
 func expireAgentProcessTaskLeases(ctx context.Context, tx *sql.Tx, agentID string, now time.Time) error {
 	nowText := now.UTC().Format(time.RFC3339Nano)

@@ -76,6 +76,7 @@ function tagFor(routePath) {
     diagnostics: "System",
     system: "System",
     tasks: "Agents",
+    executions: "Agents",
     "three-x-ui-migrations": "Applications",
     "three-x-ui": "Applications",
     actions: "System",
@@ -370,7 +371,7 @@ for (const route of routes) {
     },
   };
   if (parameters.length > 0) operation.parameters = parameters;
-  if (source.includes("decodeJSON(request")) {
+  if (/decodeJSON(?:Limit)?\(\s*(?:request|r)\s*,/.test(source)) {
     operation.requestBody = {
       required: true,
       description: "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
@@ -389,6 +390,73 @@ for (const route of routes) {
       schema: { type: "string", const: "no-store" },
     },
   };
+  if (["handleGetExecutionClaimControl", "handleSetExecutionClaimControl"].includes(route.handler)) {
+    operation.responses[status].headers = noStoreHeaders;
+    operation.description = "Administrator-only persisted control of new task claims and authorization issuance. Pausing does not cancel previously authorized executions or stop heartbeats, session registration or read-only observation. Resuming does not dispose unresolved executions or replay failed tasks.";
+    if (route.handler === "handleGetExecutionClaimControl") {
+      operation.responses[status].content["application/json"].schema = schemaForGoType("ExecutionClaimControl");
+    } else {
+      operation.requestBody.content["application/json"].schema.required = ["paused"];
+      operation.requestBody.content["application/json"].schema.properties.paused = {type:"boolean"};
+    }
+  }
+  if (["handleExecutionSession", "handleExecutionTransition", "handleReexecuteExecution", "handleAbandonExecution", "handleConfirmExecution", "handleDisposeHelperExecution", "handleDisposeLegacyReceipt", "handleListExecutions", "handleInspectLegacyReceipt"].includes(route.handler)) {
+    operation.responses[status].headers = noStoreHeaders;
+    if (route.handler === "handleInspectLegacyReceipt") {
+      operation.description = "Administrator-only inspection of one bounded legacy receipt archive. Returns original task identity and evidence availability, never completion contents or credentials. Does not resolve, replay or delete evidence.";
+      operation.responses[status].content["application/json"].schema = schemaForGoType("LegacyReceiptView");
+      operation.responses["409"] = { $ref: "#/components/responses/Error" };
+    } else if (route.handler === "handleListExecutions") {
+      operation.description = "Administrator-only execution history. Reports persisted phases, errors and dispositions, never sealed task or result evidence. A successful heartbeat does not imply execution success.";
+      operation.parameters ||= [];
+      operation.parameters.push({name:"before",in:"query",required:false,schema:{type:"integer",minimum:1},description:"Exclusive insertion cursor from nextCursor. Omit for the newest page; each page contains at most 100 records."});
+      operation.responses[status].content["application/json"].schema = schemaForGoType("ExecutionPage");
+    } else {
+      const schema = operation.requestBody.content["application/json"].schema;
+      if (route.handler === "handleExecutionSession") {
+        schema.required = ["sessionId", "protocol"];
+        schema.properties.protocol.const = 2;
+        operation.responses["403"] = { $ref: "#/components/responses/Error" };
+        operation.description = "Register a process-local session for execution protocol 2. Unsupported protocols and retired sessions are rejected; replacing a session leaves unfinished Agent executions unknown. This request does not authorize a command.";
+      } else if (route.handler === "handleExecutionTransition") {
+        schema.required = ["sessionId", "action"];
+        schema.properties.action.enum = ["start", "step", "renew", "stop", "helper-step", "helper-observe"];
+        schema.oneOf = [
+          { properties: { action: { const: "start" } }, required: ["digest"] },
+          { properties: { action: { enum: ["step", "helper-step"] } }, required: ["phase"] },
+          { properties: { action: { enum: ["renew", "stop", "helper-observe"] } } },
+        ];
+        operation.description = "Consume or inspect an execution bound to the authenticated Agent and session. Lost replies are unknown, not permission to repeat mutations. helper-observe is read-only and returns ready; other transitions return recorded. Expired, stopped, disposed or mismatched executions fail closed.";
+        operation.responses[status].content["application/json"].schema = { oneOf: ["ready", "recorded"].map((key) => ({ type: "object", additionalProperties: false, required: [key], properties: { [key]: { type: "boolean" } } })) };
+      } else {
+        schema.required = ["action", "executionStopped", "note"];
+        schema.properties.action.enum = route.handler === "handleReexecuteExecution" ? ["reexecute"] : ["handleAbandonExecution", "handleDisposeLegacyReceipt"].includes(route.handler) ? ["abandon"] : route.handler === "handleConfirmExecution" ? ["confirm-completed"] : ["confirm-completed", "abandon"];
+        schema.properties.executionStopped.const = true;
+        schema.properties.note.minLength = 1;
+        schema.properties.note.maxLength = 1024;
+        operation.description = route.handler === "handleReexecuteExecution"
+          ? "Explicit administrator decision for a failed or unknown execution after verifying it stopped. Records the audit disposition and queues the exact task revision; a later claim creates a new attempt and authorization. Does not replay the old execution."
+          : route.handler === "handleAbandonExecution"
+          ? "Explicitly abandon a stopped application or runtime execution. Atomically terminates its exact business attempt and records the operator decision while retaining evidence and existing effects. Does not queue, undo or replay commands. Helpers and imported legacy receipts require their dedicated resolution workflow."
+          : route.handler === "handleDisposeLegacyReceipt"
+          ? "Explicitly abandon an unresolved imported application or runtime receipt after verifying its executor stopped. Terminates only its matching business attempt and records the administrator disposition atomically. Preserves the complete encrypted archive, including generated credentials, and continues acknowledging identical migration uploads. No replay or remote cleanup. Rejects superseded attempts/revisions and unsupported legacy helpers. Confirmation and reexecution of legacy receipts are not yet supported."
+          : route.handler === "handleConfirmExecution"
+          ? "Confirm an uncertain application deployment/command, landing server/proxy, gateway routes/component, node listener or tunnel using retained successful result evidence. Application deployment also requires original runtime generation evidence. Applies the normal result validation and business projection atomically with the administrator disposition, retaining historical state and evidence. Rejects missing, invalid or unknown result evidence and superseded attempts or revisions. Does not invoke the Agent executor. Imported receipts are not yet supported; helpers use their dedicated resolution endpoint."
+          : "Resolve an Agent update or decommission helper without issuing a command. Update confirmation requires a fresh target-version heartbeat. Decommission confirmation is an explicit administrator attestation of actual cleanup, never inferred from offline status. Records the stopped-execution confirmation, administrator and verification note; old helper permissions and callbacks remain rejected.";
+      }
+    }
+  }
+  if (route.handler === "handleClaimTask") {
+    operation.parameters ||= [];
+    operation.parameters.push({ name: "X-Vastora-Execution-Session", in: "header", required: true, schema: { type: "string", minLength: 1 } });
+    operation.description = "Claim only after registering the current execution session. Center persists the content digest and single-use authorization before returning an encrypted task. Only one wait query parameter is accepted; recovery and historical task selectors are rejected. Unresolved executions fence further claims.";
+  }
+  if (route.handler === "handleImportLegacyReceipt") {
+    operation.description = "One-time legacy evidence transfer, not task execution or result replay. Authenticated Agent and current process session are required. Identical evidence is acknowledged only after encrypted archival; conflicts fail closed. Unacknowledged legacy outcomes fence new work until operator disposition. Original acknowledged receipts retain their historical status without applying business effects.";
+    operation.requestBody.description = "One strict JSON object, bounded to 3 MiB with a completion bounded to 2 MiB. May contain generated credentials; never log or expose the body.";
+    operation.requestBody.content["application/json"].schema.required = ["sessionId", "digest", "receipt"];
+    operation.responses["200"].headers = noStoreHeaders;
+  }
   if (route.handler === "handleListSources" || route.handler === "handleListApps") {
     const sources = route.handler === "handleListSources";
     const field = sources ? "sources" : "apps";

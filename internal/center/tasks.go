@@ -237,43 +237,53 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 	if len(expired) == 0 {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET state = 'pending', lease_expires_at = '', error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET state = 'failed', reconciliation_required = 1, lease_expires_at = '', error = 'Execution interrupted; manual verification required', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', lease_expires_at = '', error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', reconciliation_required = 1, lease_expires_at = '', error = 'Execution interrupted; manual verification required', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', updated_at = ? WHERE id IN (
-		SELECT application_id FROM deployments WHERE agent_id = ? AND state = 'pending' AND error = 'task lease expired; queued for retry'
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'failed', updated_at = ? WHERE id IN (
+		SELECT application_id FROM deployments WHERE agent_id = ? AND state = 'failed' AND error = 'Execution interrupted; manual verification required'
 	)`, now.Format(time.RFC3339Nano), agentID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE gateway_components SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE gateway_components SET status = 'failed', lease_expires_at = '', last_error = 'Execution interrupted; manual verification required', updated_at = ? WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE gateway_states SET status = 'failed', lease_expires_at = '', last_error = 'Execution interrupted; manual verification required', updated_at = ? WHERE gateway_node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='failed',lease_expires_at='',last_error='Configuration interrupted; queued for retry.',updated_at=? WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE landing_proxy_states SET status='failed',lease_expires_at='',last_error='Execution interrupted; manual verification required',updated_at=? WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET status='failed',lease_expires_at='',last_error='Configuration interrupted; queued for retry.',updated_at=? WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET status='failed',lease_expires_at='',last_error='Execution interrupted; manual verification required',updated_at=? WHERE node_id=? AND status='applying' AND lease_expires_at<>'' AND lease_expires_at<=?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE node_listener_states SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE node_listener_states SET status = 'failed', lease_expires_at = '', last_error = 'Execution interrupted; manual verification required', updated_at = ? WHERE node_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'failed', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE cloudflare_tunnels SET status = 'failed', lease_expires_at = '', last_error = 'Execution interrupted; manual verification required', updated_at = ? WHERE agent_id = ? AND status = 'applying' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'pending', callback_token_hash = X'', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'failed', lease_expires_at = '', last_error = 'Execution interrupted; manual verification required', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE agent_updates SET state = 'pending', lease_expires_at = '', last_error = 'task lease expired; queued for retry', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+	// A missing handoff response does not prove that the helper was never
+	// started. Preserve this attempt for inspection instead of scheduling it
+	// again and competing with its host-local recovery state.
+	if _, err := tx.ExecContext(ctx, `UPDATE agent_updates SET state = 'failed', lease_expires_at = '', last_error = 'Agent update interrupted; manual verification required', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
 	for _, task := range expired {
-		if err := s.recordTaskEvent(ctx, tx, task.id, agentID, task.kind, task.revision, "lease_expired", "task lease expired; queued for retry"); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE task_executions SET state='unknown',last_error='Execution interrupted; manual verification required',updated_at=? WHERE agent_id=? AND task_id=? AND disposition='' AND state IN ('offered','running')`, now.Format(time.RFC3339Nano), agentID, task.id); err != nil {
+			return err
+		}
+		message := "Execution interrupted; manual verification required"
+		if task.kind == "agent.update" {
+			message = "Agent update interrupted; manual verification required"
+		}
+		if err := s.recordTaskEvent(ctx, tx, task.id, agentID, task.kind, task.revision, "lease_expired", message); err != nil {
 			return err
 		}
 	}

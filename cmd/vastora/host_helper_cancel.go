@@ -12,6 +12,7 @@ import (
 )
 
 type hostHelperCancellationEnvironment struct {
+	authorize              func(context.Context, string) error
 	directory              string
 	unitName               string
 	unitPath               string
@@ -46,10 +47,32 @@ func uninstallAgentHostLocally(ctx context.Context, dataDir string, deleteData, 
 	}); err != nil {
 		return err
 	}
-	return uninstallAgentHost(ctx, dataDir, deleteData, runtimeCleaned, keepBinary)
+	return uninstallAgentHost(ctx, dataDir, deleteData, runtimeCleaned, keepBinary, nil)
 }
 
 func cancelHostHelper(ctx context.Context, dataDir string, environment hostHelperCancellationEnvironment) error {
+	check := func(phase string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if environment.authorize != nil {
+			if err := environment.authorize(ctx, phase); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
+	}
+	run := environment.run
+	environment.run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if err := check("command"); err != nil {
+			return nil, err
+		}
+		output, err := run(ctx, name, args...)
+		if err != nil {
+			return output, err
+		}
+		return output, ctx.Err()
+	}
 	unitExists, err := ownedHostCleanupFile(environment.unitPath, environment.unitContents)
 	if err != nil {
 		return err
@@ -105,13 +128,22 @@ func cancelHostHelper(ctx context.Context, dataDir string, environment hostHelpe
 		if directoryExists {
 			// Only an empty directory can remain after the final unlink was
 			// interrupted. Never recurse into state without ownership proof.
+			if err := check("files"); err != nil {
+				return err
+			}
 			if err := os.Remove(environment.directory); err != nil {
 				return fmt.Errorf("agent: refusing to remove unproven host cleanup state: %w", err)
 			}
 		}
 		return nil
 	}
+	if err := check("files"); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(environment.directory, 0o700); err != nil {
+		return err
+	}
+	if err := check("files"); err != nil {
 		return err
 	}
 	if err := writeRootFileAtomic(cancelledPath, []byte("cancelled\n"), 0o600); err != nil {
@@ -121,17 +153,16 @@ func cancelHostHelper(ctx context.Context, dataDir string, environment hostHelpe
 		return fmt.Errorf("agent: persist local host cleanup cancellation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	if output, err := environment.run(ctx, "systemctl", "stop", environment.unitName); err != nil {
-		status, statusErr := environment.run(ctx, "systemctl", "show", "--property=LoadState", "--property=ActiveState", environment.unitName)
-		lines := "\n" + strings.TrimSpace(string(status)) + "\n"
-		if statusErr != nil || !strings.Contains(lines, "\nLoadState=not-found\n") || !strings.Contains(lines, "\nActiveState=inactive\n") {
-			return fmt.Errorf("agent: stop pending host cleanup before local uninstall: %s: %w", strings.TrimSpace(string(output)), err)
-		}
+		return fmt.Errorf("agent: stop pending host cleanup before local uninstall: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	// Keep the cancellation marker until all restart mechanisms have been
 	// removed and synced. A crash must not reactivate a cancelled operation.
 	for _, path := range []string{environment.generatorPath, environment.enabledLink, environment.unitPath} {
 		if path == "" {
 			continue
+		}
+		if err := check("files"); err != nil {
+			return err
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("agent: remove cancelled host cleanup service: %w", err)
@@ -147,11 +178,17 @@ func cancelHostHelper(ctx context.Context, dataDir string, environment hostHelpe
 		return fmt.Errorf("agent: reload systemd after local cleanup cancellation: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	for _, name := range []string{"result.json", "operation.json", "completed", "vastora"} {
+		if err := check("files"); err != nil {
+			return err
+		}
 		if err := os.Remove(filepath.Join(environment.directory, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("agent: remove cancelled host cleanup state: %w", err)
 		}
 	}
 	if environment.cleanupAdditionalState != nil {
+		if err := check("files"); err != nil {
+			return err
+		}
 		if err := environment.cleanupAdditionalState(); err != nil {
 			return fmt.Errorf("agent: remove cancelled host cleanup recovery state: %w", err)
 		}
@@ -166,7 +203,13 @@ func cancelHostHelper(ctx context.Context, dataDir string, environment hostHelpe
 	if output, err := environment.run(ctx, "sync", "-f", environment.directory); err != nil {
 		return fmt.Errorf("agent: sync cancelled host cleanup state removal: %s: %w", strings.TrimSpace(string(output)), err)
 	}
+	if err := check("files"); err != nil {
+		return err
+	}
 	if err := os.Remove(cancelledPath); err != nil {
+		return err
+	}
+	if err := check("files"); err != nil {
 		return err
 	}
 	if err := os.Remove(environment.directory); err != nil {

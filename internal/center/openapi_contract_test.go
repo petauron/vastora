@@ -25,6 +25,46 @@ type registeredAPIRoute struct {
 	mutation bool
 }
 
+func TestOpenAPIExecutionRequestsRequireAuthorizationAndDisposition(t *testing.T) {
+	document, err := openapi3.NewLoader().LoadFromFile(filepath.Join("..", "..", "docs", "openapi.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		path, payload string
+		valid         bool
+	}{
+		{"/api/v1/agents/{id}/execution-session", `{"sessionId":"session","protocol":2}`, true},
+		{"/api/v1/agents/{id}/execution-session", `{"sessionId":"session","protocol":1}`, false},
+		{"/api/v1/agents/{id}/execution-session", `{"protocol":2}`, false},
+		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"start","digest":"digest"}`, true},
+		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"start"}`, false},
+		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"helper-observe"}`, true},
+		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"helper-step"}`, false},
+		{"/api/v1/agents/{id}/executions/{executionID}", `{"sessionId":"session","action":"replay"}`, false},
+		{"/api/v1/executions/{executionID}/reexecute", `{"action":"reexecute","executionStopped":true,"note":"checked"}`, true},
+		{"/api/v1/executions/{executionID}/reexecute", `{"action":"reexecute","executionStopped":false,"note":"checked"}`, false},
+		{"/api/v1/executions/{executionID}/resolve-helper", `{"action":"abandon","executionStopped":true,"note":"checked"}`, true},
+		{"/api/v1/executions/{executionID}/resolve-helper", `{"action":"reexecute","executionStopped":true,"note":"checked"}`, false},
+		{"/api/v1/executions/{executionID}/confirm-completed", `{"action":"confirm-completed","executionStopped":true,"note":"checked"}`, true},
+		{"/api/v1/executions/{executionID}/confirm-completed", `{"action":"abandon","executionStopped":true,"note":"checked"}`, false},
+	}
+	for _, tc := range cases {
+		operation := document.Paths.Value(tc.path).Post
+		if operation.RequestBody == nil {
+			t.Fatalf("missing strict request: %s", tc.path)
+		}
+		var value any
+		if err := json.Unmarshal([]byte(tc.payload), &value); err != nil {
+			t.Fatal(err)
+		}
+		err := operation.RequestBody.Value.Content["application/json"].Schema.Value.VisitJSON(value)
+		if (err == nil) != tc.valid {
+			t.Errorf("%s payload %s validity=%v err=%v", tc.path, tc.payload, tc.valid, err)
+		}
+	}
+}
+
 func TestOpenAPIContractIsValidAndMatchesRegisteredRoutes(t *testing.T) {
 	contractPath := filepath.Join("..", "..", "docs", "openapi.json")
 	document, err := openapi3.NewLoader().LoadFromFile(contractPath)

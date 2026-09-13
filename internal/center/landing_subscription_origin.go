@@ -74,6 +74,17 @@ func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sq
 		return err
 	}
 	for _, id := range ids {
+		// Observation of one source must not rewrite failed or unresolved
+		// desired state on a different node. Explicit edits use their own path.
+		var blocked bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')
+			OR EXISTS(SELECT 1 FROM landing_server_states WHERE node_id=? AND status='failed')`, id, id).Scan(&blocked); err != nil {
+			return err
+		}
+		if blocked {
+			continue
+		}
 		if err := s.refreshClientLandingSources(ctx, tx, id); err != nil {
 			return err
 		}

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/gateway"
-	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/secret"
 )
 
@@ -209,19 +208,15 @@ func TestAgentSchemaV8PurgesOnlyUnrestorableLegacyState(t *testing.T) {
 	}
 }
 
-func TestAgentSchemaV10PreservesPendingCompletionOutbox(t *testing.T) {
+func TestAgentSchemaV10PreservesCompletionForArchival(t *testing.T) {
 	directory := t.TempDir()
 	store, err := Open(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	task := DeploymentTask{Kind: "application.apply", ID: "schema-v10-outbox", Attempt: 1, AppKey: cpaKey, Operation: "uninstall"}
-	if completion, err := store.PrepareTaskReceipt(context.Background(), task); err != nil || completion != nil {
-		t.Fatalf("prepare receipt = %#v, err=%v", completion, err)
-	}
-	if err := store.RecordTaskCompletion(context.Background(), TaskCompletion{TaskID: task.ID, Attempt: task.Attempt, Error: "stored failure", ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration}); err != nil {
-		t.Fatal(err)
-	}
+	original := json.RawMessage(`{"taskId":"schema-v10-outbox","attempt":1,"error":"stored failure"}`)
+	seedLegacyReceipt(t, store, task, "completed", original)
 	if _, err := store.db.Exec(`CREATE TABLE task_receipts_v9 (
 		task_id TEXT PRIMARY KEY,
 		task_kind TEXT NOT NULL,
@@ -253,8 +248,8 @@ func TestAgentSchemaV10PreservesPendingCompletionOutbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	pending, err := store.PendingTaskCompletion(context.Background())
-	if err != nil || pending == nil || pending.TaskID != task.ID || pending.Error != "stored failure" {
-		t.Fatalf("migrated completion = %#v, err=%v", pending, err)
+	pending, _, err := store.NextLegacyReceipt(context.Background(), "")
+	if err != nil || pending == nil || pending.TaskID != task.ID || string(pending.Completion) != string(original) {
+		t.Fatalf("migrated archival evidence missing or altered: %v", err)
 	}
 }

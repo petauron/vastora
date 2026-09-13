@@ -51,7 +51,10 @@ type Monitor struct {
 	TCPOnly         bool
 }
 
+// Run owns Links for this monitor's lifetime, including validation and setup
+// failures. A checker passed here must not be shared with another monitor.
 func (m *Monitor) Run(ctx context.Context) error {
+	defer m.Links.Close()
 	if m.Gate == nil || m.Links == nil || m.CheckBusiness == nil || m.StopConnections == nil {
 		return errors.New("landing: incomplete runtime monitor")
 	}

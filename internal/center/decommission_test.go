@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,8 +10,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 )
+
+func authorizeDecommissionForTest(t *testing.T, store *Store, node AgentCredential, task AgentTask) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	session := "decommission-test-process-session"
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := store.PersistExecutionAuthorization(ctx, node.ID, session, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CheckExecutionStep(ctx, node.ID, session, auth.ID, "handoff"); err != nil {
+		t.Fatal(err)
+	}
+	return auth.ID, session
+}
 
 func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 	for _, deleteData := range []bool{false, true} {
@@ -40,10 +62,14 @@ func TestDecommissionApplicationsUsesNormalAgentLifecycle(t *testing.T) {
 			if hostTask.Kind != "agent.decommission" || hostTask.DeleteData != deleteData || hostTask.DecommissionCallbackURL == "" || hostTask.DecommissionCallbackToken == "" {
 				t.Fatal("Agent host cleanup task is missing its callback binding")
 			}
-			if err := store.beginAgentDecommission(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt); err != nil {
+			executionID, sessionID := authorizeDecommissionForTest(t, store, node, *hostTask)
+			if err := store.beginAgentDecommission(ctx, node.ID, node.Credential, hostTask.ID, hostTask.Attempt, executionID, sessionID); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.completeAgentDecommissionCallback(ctx, hostTask.ID, hostTask.DecommissionCallbackToken, hostTask.Attempt); err != nil {
+			if err := store.AuthorizeDecommissionStep(ctx, hostTask.ID, hostTask.DecommissionCallbackToken, hostTask.Attempt, 1, "done"); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.completeAgentDecommissionCallback(ctx, hostTask.ID, hostTask.DecommissionCallbackToken, hostTask.Attempt, ""); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-finished; err != nil {
@@ -81,11 +107,12 @@ func TestAgentDecommissionRequiresDurableCleanupHandoff(t *testing.T) {
 	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, 0); err == nil {
 		t.Fatal("scheduled cleanup was accepted as completed before helper handoff")
 	}
-	if err := store.beginAgentDecommission(context.Background(), node.ID, node.Credential, task.ID, task.Attempt); err != nil {
+	executionID, sessionID := authorizeDecommissionForTest(t, store, node, *task)
+	if err := store.beginAgentDecommission(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, executionID, sessionID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.beginAgentDecommission(context.Background(), node.ID, node.Credential, task.ID, task.Attempt); err != nil {
-		t.Fatalf("duplicate helper handoff was not idempotent: %v", err)
+	if err := store.beginAgentDecommission(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, executionID, sessionID); !errors.Is(err, errExecutionAuthorization) {
+		t.Fatalf("duplicate helper handoff was accepted: %v", err)
 	}
 	var state, lease string
 	if err := store.db.QueryRow(`SELECT state, lease_expires_at FROM agent_decommissions WHERE agent_id = ?`, node.ID).Scan(&state, &lease); err != nil {
@@ -94,7 +121,10 @@ func TestAgentDecommissionRequiresDurableCleanupHandoff(t *testing.T) {
 	if state != "cleaning" || lease != "" {
 		t.Fatalf("durable cleanup state = %q lease=%q", state, lease)
 	}
-	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, "wrong-token", task.Attempt); err == nil {
+	if err := store.AuthorizeDecommissionStep(context.Background(), task.ID, task.DecommissionCallbackToken, task.Attempt, 1, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, "wrong-token", task.Attempt, ""); err == nil {
 		t.Fatal("invalid callback token was accepted")
 	}
 	request := httptest.NewRequest(http.MethodPost, task.DecommissionCallbackURL, strings.NewReader(fmt.Sprintf(`{"attempt":%d}`, task.Attempt)))
@@ -105,8 +135,8 @@ func TestAgentDecommissionRequiresDurableCleanupHandoff(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("public cleanup callback status=%d body=%s", response.Code, response.Body.String())
 	}
-	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, task.DecommissionCallbackToken, task.Attempt); err != nil {
-		t.Fatalf("duplicate final callback was not idempotent: %v", err)
+	if err := store.completeAgentDecommissionCallback(context.Background(), task.ID, task.DecommissionCallbackToken, task.Attempt, ""); err == nil {
+		t.Fatal("duplicate final callback was accepted")
 	}
 }
 
@@ -119,11 +149,31 @@ func TestAgentDecommissionScheduleFailureRotatesCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := waitForDecommissionTask(t, store, node)
-	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, first.ID, first.Attempt, false, "persistent helper could not start", nil, 0); err != nil {
+	executionID, sessionID := authorizeDecommissionForTest(t, store, node, *first)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+node.ID+"/tasks/"+first.ID+"/result", strings.NewReader(fmt.Sprintf(`{"attempt":%d,"executionId":%q,"sessionId":%q,"succeeded":false,"error":"persistent helper could not start","result":{}}`, first.Attempt, executionID, sessionID)))
+	request.Header.Set("Authorization", "Bearer "+node.Credential)
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	NewServer(store, "", false).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("schedule failure result rejected: %d", response.Code)
+	}
+	if err := store.completeAgentDecommissionCallback(context.Background(), first.ID, first.DecommissionCallbackToken, first.Attempt, ""); err == nil {
+		t.Fatal("failed claim retained an active callback token")
+	}
+	if next, err := store.ClaimNextTask(context.Background(), node.ID, node.Credential); !errors.Is(err, errExecutionBlocked) || next != nil {
+		t.Fatalf("failed helper automatically retried: %v", err)
+	}
+	cookie, _, err := store.CreateFirstAdmin(context.Background(), "operator", "test-only-strong-password")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.completeAgentDecommissionCallback(context.Background(), first.ID, first.DecommissionCallbackToken, first.Attempt); err == nil {
-		t.Fatal("failed claim retained an active callback token")
+	adminID, err := store.SessionAdminID(context.Background(), cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReexecuteExecution(context.Background(), executionID, adminID, controlplane.ExecutionDisposition{Action: "reexecute", ExecutionStopped: true, Note: "Verified helper never started; explicitly retry"}); err != nil {
+		t.Fatal(err)
 	}
 	second := waitForDecommissionTask(t, store, node)
 	if second.Attempt != first.Attempt+1 || second.DecommissionCallbackToken == first.DecommissionCallbackToken {

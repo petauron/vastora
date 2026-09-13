@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,6 +94,9 @@ func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	store.now = func() time.Time { return time.Unix(0, clock.Load()) }
 	server := httptest.NewServer(NewServer(store, "", false).Handler())
 	defer server.Close()
 	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "correct-horse-battery-staple"})
@@ -123,6 +127,7 @@ func TestCredentialsCanCreateOnlyOneAdministrator(t *testing.T) {
 		t.Fatalf("wrong username got status %d, want %d", response.StatusCode, http.StatusUnauthorized)
 	}
 
+	clock.Add(int64(loginBackoff(1) + time.Second))
 	response, err = http.Post(server.URL+"/api/v1/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)

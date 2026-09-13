@@ -17,9 +17,8 @@ type recordingNodeListener struct {
 }
 
 type recordingNodeListenerCoordinator struct {
-	prepared   int
-	restored   int
-	rolledBack int
+	prepared int
+	restored int
 }
 
 func (coordinator *recordingNodeListenerCoordinator) PrepareNodeListener(context.Context) error {
@@ -32,11 +31,6 @@ func (coordinator *recordingNodeListenerCoordinator) RestoreGatewayPublicBinding
 	return nil
 }
 
-func (coordinator *recordingNodeListenerCoordinator) RestoreGatewayAfterNodeListenerFailure(context.Context) error {
-	coordinator.rolledBack++
-	return nil
-}
-
 func (listener *recordingNodeListener) Apply(_ context.Context, desired gateway.SharedHTTPS) error {
 	listener.applied = append(listener.applied, desired)
 	err := listener.apply
@@ -44,14 +38,14 @@ func (listener *recordingNodeListener) Apply(_ context.Context, desired gateway.
 	return err
 }
 
-func TestNodeListenerFailureRestoresPreviousListener(t *testing.T) {
+func TestNodeListenerFailureStopsWithoutRestoringPreviousListener(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(ctx, Connection{AgentID: "node-a", CenterURL: "https://center.example.com", Credential: "credential", CACertificatePEM: "certificate"}); err != nil {
+	if err := store.SaveConnection(ctx, testConnection(t, "node-a", "node-a", "https://center.example.com", "credential")); err != nil {
 		t.Fatal(err)
 	}
 	listener := &recordingNodeListener{}
@@ -66,23 +60,23 @@ func TestNodeListenerFailureRestoresPreviousListener(t *testing.T) {
 	if err := applyNodeListenerState(ctx, store, listener, nil, next); err == nil || !strings.Contains(err.Error(), "replacement failed") {
 		t.Fatalf("expected replacement failure, got %v", err)
 	}
-	if len(listener.applied) != 3 || listener.applied[2].Routes[0].Hostname != "old.example.com" {
-		t.Fatalf("previous listener was not restored: %+v", listener.applied)
+	if len(listener.applied) != 2 || listener.removed != 0 {
+		t.Fatalf("failure performed another mutation: %+v, removals=%d", listener.applied, listener.removed)
 	}
 	persisted, err := store.NodeListenerState(ctx)
 	if err != nil || persisted.Desired.Revision != 1 {
-		t.Fatalf("persisted listener changed after rollback: %+v %v", persisted, err)
+		t.Fatalf("persisted listener changed after failure: %+v %v", persisted, err)
 	}
 }
 
-func TestFirstNodeListenerFailureRestoresLegacyGatewayState(t *testing.T) {
+func TestFirstNodeListenerFailureStopsWithoutGatewayRollback(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SaveConnection(ctx, Connection{AgentID: "node-a", CenterURL: "https://center.example.com", Credential: "credential", CACertificatePEM: "certificate"}); err != nil {
+	if err := store.SaveConnection(ctx, testConnection(t, "node-a", "node-a", "https://center.example.com", "credential")); err != nil {
 		t.Fatal(err)
 	}
 	listener := &recordingNodeListener{apply: errors.New("replacement failed")}
@@ -91,8 +85,8 @@ func TestFirstNodeListenerFailureRestoresLegacyGatewayState(t *testing.T) {
 	if err := applyNodeListenerState(ctx, store, listener, coordinator, desired); err == nil || !strings.Contains(err.Error(), "replacement failed") {
 		t.Fatalf("expected replacement failure, got %v", err)
 	}
-	if coordinator.prepared != 1 || coordinator.rolledBack != 1 || coordinator.restored != 0 {
-		t.Fatalf("failed handoff rollback = prepared:%d legacy-restores:%d public-restores:%d", coordinator.prepared, coordinator.rolledBack, coordinator.restored)
+	if coordinator.prepared != 1 || coordinator.restored != 0 || listener.removed != 0 || len(listener.applied) != 1 {
+		t.Fatalf("failed handoff performed another mutation: coordinator=%+v listener=%+v", coordinator, listener)
 	}
 	if _, err := store.NodeListenerState(ctx); !errors.Is(err, errNoAppliedNodeListenerState) {
 		t.Fatalf("failed first listener persisted state: %v", err)
@@ -159,6 +153,12 @@ func TestNodeListenerRejectsCrossNodeStateAndPersistsLastAppliedRevision(t *test
 		t.Fatalf("persisted state = %#v, err = %v", persisted, err)
 	}
 	listener.health = errors.New("HAProxy stopped")
+	if err := applyNodeListenerState(ctx, store, listener, nil, state); err == nil {
+		t.Fatal("unhealthy same revision was accepted")
+	}
+	if len(listener.applied) != 1 {
+		t.Fatal("health failure triggered an automatic reapply")
+	}
 	healthy, revision, hash := nodeListenerRuntimeStatus(ctx, store, listener)
 	if healthy || revision != 1 || hash == "" {
 		t.Fatalf("runtime status = healthy:%v revision:%d hash:%q", healthy, revision, hash)

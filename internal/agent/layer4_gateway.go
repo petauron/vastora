@@ -84,16 +84,10 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 	if err := desired.Validate(); err != nil {
 		return err
 	}
-	driver.mu.RLock()
-	previous := driver.state.Sorted()
-	previousCertificates := append([]gateway.Certificate(nil), driver.certificates...)
-	driver.mu.RUnlock()
 	if err := driver.apply(ctx, desired.Sorted(), certificates); err != nil {
-		if previous.Revision > 0 {
-			if rollbackErr := driver.apply(ctx, previous, previousCertificates); rollbackErr != nil {
-				return errors.Join(err, fmt.Errorf("agent: restore previous gateway revision %d: %w", previous.Revision, rollbackErr))
-			}
-		}
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	driver.mu.Lock()
@@ -104,6 +98,9 @@ func (driver *ManagedGatewayDriver) ApplyConfiguration(ctx context.Context, desi
 }
 
 func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.DesiredState, certificates []gateway.Certificate) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if desired.SharedHTTPS == nil {
 		runtimeDesired := desired
 		driver.mu.RLock()
@@ -119,7 +116,13 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 		} else if err := driver.Layer4.Remove(ctx); err != nil {
 			return fmt.Errorf("agent: remove retired shared HTTPS frontend: %w", err)
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := driver.Runtime.Reconcile(ctx, runtimeDesired); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		return driver.Caddy.ApplyConfiguration(ctx, desired, certificates)
@@ -128,18 +131,16 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 	if err := driver.Runtime.Reconcile(ctx, desired); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := driver.Caddy.ApplyConfiguration(ctx, desired, certificates); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := driver.Layer4.Apply(ctx, *desired.SharedHTTPS); err != nil {
-		fallback := desired
-		fallback.SharedHTTPS = nil
-		if runtimeErr := driver.Runtime.Reconcile(ctx, fallback); runtimeErr != nil {
-			return errors.Join(fmt.Errorf("agent: apply shared 443 frontend: %w", err), fmt.Errorf("agent: restore Caddy port bindings: %w", runtimeErr))
-		}
-		if restoreErr := driver.Caddy.ApplyConfiguration(ctx, fallback, certificates); restoreErr != nil {
-			return errors.Join(fmt.Errorf("agent: apply shared 443 frontend: %w", err), fmt.Errorf("agent: restore Caddy to public 443: %w", restoreErr))
-		}
 		return fmt.Errorf("agent: apply shared 443 frontend: %w", err)
 	}
 	return nil
@@ -148,6 +149,9 @@ func (driver *ManagedGatewayDriver) apply(ctx context.Context, desired gateway.D
 func (driver *ManagedGatewayDriver) PrepareNodeListener(ctx context.Context) error {
 	driver.mutationMu.Lock()
 	defer driver.mutationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	driver.mu.RLock()
 	current := driver.state.Sorted()
 	certificates := append([]gateway.Certificate(nil), driver.certificates...)
@@ -172,6 +176,9 @@ func (driver *ManagedGatewayDriver) PrepareNodeListener(ctx context.Context) err
 	if err := driver.Runtime.Reconcile(ctx, runtimeState); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := driver.Caddy.ApplyConfiguration(ctx, current, certificates); err != nil {
 		return err
 	}
@@ -182,6 +189,9 @@ func (driver *ManagedGatewayDriver) PrepareNodeListener(ctx context.Context) err
 func (driver *ManagedGatewayDriver) RestoreGatewayPublicBindings(ctx context.Context) error {
 	driver.mutationMu.Lock()
 	defer driver.mutationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	driver.mu.RLock()
 	current := driver.state.Sorted()
 	certificates := append([]gateway.Certificate(nil), driver.certificates...)
@@ -195,6 +205,9 @@ func (driver *ManagedGatewayDriver) RestoreGatewayPublicBindings(ctx context.Con
 	if err := driver.Runtime.Reconcile(ctx, current); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := driver.Caddy.ApplyConfiguration(ctx, current, certificates); err != nil {
 		return err
 	}
@@ -204,24 +217,6 @@ func (driver *ManagedGatewayDriver) RestoreGatewayPublicBindings(ctx context.Con
 		driver.mu.Unlock()
 	}
 	return nil
-}
-
-// RestoreGatewayAfterNodeListenerFailure rolls back a failed first handoff to
-// the exact previously applied Gateway state. Unlike an intentional empty
-// node-listener revision, a failed cutover must retain legacy shared-443 routes
-// until Center has verified their replacements.
-func (driver *ManagedGatewayDriver) RestoreGatewayAfterNodeListenerFailure(ctx context.Context) error {
-	driver.mutationMu.Lock()
-	defer driver.mutationMu.Unlock()
-	driver.mu.RLock()
-	current := driver.state.Sorted()
-	certificates := append([]gateway.Certificate(nil), driver.certificates...)
-	driver.mu.RUnlock()
-	driver.setNodeListenerActive(false)
-	if current.Revision == 0 {
-		return nil
-	}
-	return driver.apply(ctx, current, certificates)
 }
 
 func (driver *ManagedGatewayDriver) setNodeListenerActive(active bool) {

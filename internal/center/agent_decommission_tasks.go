@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/petauron/vastora/internal/controlplane"
+	"github.com/petauron/vastora/internal/secret"
 	"net/url"
 	"strings"
 	"time"
@@ -28,12 +31,15 @@ func (s *Store) queueAgentDecommission(ctx context.Context, agentID string, dele
 	return s.recordStandaloneTaskEvent(ctx, agentDecommissionTaskID(agentID), agentID, "agent.decommission", 1, "queued", "host cleanup queued")
 }
 
-func (s *Store) beginAgentDecommission(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64) error {
+func (s *Store) beginAgentDecommission(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64, executionID, sessionID string) error {
 	if taskID != agentDecommissionTaskID(agentID) || expectedAttempt <= 0 {
 		return errStaleTaskLease
 	}
 	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
 		return err
+	}
+	if executionID == "" || sessionID == "" {
+		return errExecutionAuthorization
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -41,18 +47,23 @@ func (s *Store) beginAgentDecommission(ctx context.Context, agentID, credential,
 	}
 	defer tx.Rollback()
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	result, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'cleaning', lease_expires_at = '', updated_at = ?
-		WHERE agent_id = ? AND state = 'running' AND attempt = ?`, now, agentID, expectedAttempt)
+	result, err := tx.ExecContext(ctx, `UPDATE task_executions SET state='helper_running',phase='cleanup',updated_at=?,expires_at=?
+	 WHERE id=? AND agent_id=? AND task_id=? AND attempt=? AND session_id=? AND kind='agent.decommission'
+	 AND state='running' AND phase='handoff' AND disposition='' AND expires_at>?
+	 AND EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)`, now, s.now().Add(30*time.Minute).UTC().Format(time.RFC3339Nano), executionID, agentID, taskID, expectedAttempt, sessionID, now, agentID, sessionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return errExecutionAuthorization
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'cleaning', lease_expires_at = '', updated_at = ?
+		WHERE agent_id = ? AND state = 'running' AND attempt = ? AND lease_expires_at>?`, now, agentID, expectedAttempt, now)
 	if err != nil {
 		return fmt.Errorf("center: begin Agent host cleanup handoff: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		var state string
-		var attempt int64
-		if err := tx.QueryRowContext(ctx, `SELECT state, attempt FROM agent_decommissions WHERE agent_id = ?`, agentID).Scan(&state, &attempt); err != nil || attempt != expectedAttempt || (state != "cleaning" && state != "succeeded") {
-			return errStaleTaskLease
-		}
-		return tx.Commit()
+		return errStaleTaskLease
 	}
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "agent.decommission", 1, "claimed", fmt.Sprintf("persistent host cleanup helper started attempt %d", expectedAttempt)); err != nil {
 		return err
@@ -63,7 +74,7 @@ func (s *Store) beginAgentDecommission(ctx context.Context, agentID, credential,
 func (s *Store) claimAgentDecommission(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
 	var deleteData bool
 	var attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT delete_data, attempt FROM agent_decommissions WHERE agent_id = ? AND state IN ('pending', 'failed')`, agentID).Scan(&deleteData, &attempt)
+	err := tx.QueryRowContext(ctx, `SELECT delete_data, attempt FROM agent_decommissions WHERE agent_id = ? AND state = 'pending'`, agentID).Scan(&deleteData, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -81,7 +92,7 @@ func (s *Store) claimAgentDecommission(ctx context.Context, tx *sql.Tx, agentID 
 	}
 	now := s.now().UTC()
 	result, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'running', attempt = attempt + 1, callback_token_hash = ?, lease_expires_at = ?, last_error = '', updated_at = ?
-		WHERE agent_id = ? AND state IN ('pending', 'failed') AND attempt = ?`, tokenHash(callbackToken), now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, attempt)
+		WHERE agent_id = ? AND state = 'pending' AND attempt = ?`, tokenHash(callbackToken), now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, attempt)
 	if err != nil {
 		return nil, fmt.Errorf("center: claim Agent host cleanup: %w", err)
 	}
@@ -112,49 +123,72 @@ func (s *Store) agentDecommissionCallbackURL(ctx context.Context, tx *sql.Tx, ta
 	return strings.TrimRight(endpoint, "/") + "/api/v1/agent-decommission-results/" + url.PathEscape(taskID), nil
 }
 
-func (s *Store) completeAgentDecommissionCallback(ctx context.Context, taskID, token string, expectedAttempt int64) error {
+func (s *Store) completeAgentDecommissionCallback(ctx context.Context, taskID, token string, expectedAttempt int64, taskError string) error {
 	taskID = strings.TrimSpace(taskID)
 	token = strings.TrimSpace(token)
 	if taskID == "" || token == "" || expectedAttempt <= 0 {
 		return errors.New("center: invalid Agent host cleanup callback")
 	}
-	var agentID, state string
-	var attempt int64
-	var expectedTokenHash []byte
-	err := s.db.QueryRowContext(ctx, `SELECT agent_id, state, attempt, callback_token_hash FROM agent_decommissions
-		WHERE 'agent-decommission-' || agent_id = ?`, taskID).Scan(&agentID, &state, &attempt, &expectedTokenHash)
-	if err != nil || attempt != expectedAttempt || (state != "cleaning" && state != "succeeded") || subtle.ConstantTimeCompare(expectedTokenHash, tokenHash(token)) != 1 {
-		return errors.New("center: invalid Agent host cleanup callback")
-	}
-	return s.completeAgentDecommission(ctx, agentID, expectedAttempt)
-}
-
-func (s *Store) completeAgentDecommission(ctx context.Context, agentID string, expectedAttempt int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = 'succeeded', lease_expires_at = '', last_error = '', updated_at = ?
-		WHERE agent_id = ? AND state = 'cleaning' AND attempt = ?`, s.now().UTC().Format(time.RFC3339Nano), agentID, expectedAttempt)
+	var agentID, state string
+	var attempt int64
+	var expectedTokenHash []byte
+	err = tx.QueryRowContext(ctx, `SELECT agent_id, state, attempt, callback_token_hash FROM agent_decommissions
+		WHERE 'agent-decommission-' || agent_id = ?`, taskID).Scan(&agentID, &state, &attempt, &expectedTokenHash)
+	if err != nil || attempt != expectedAttempt || state != "cleaning" || subtle.ConstantTimeCompare(expectedTokenHash, tokenHash(token)) != 1 {
+		return errors.New("center: invalid Agent host cleanup callback")
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	executionState, businessState, phase := "succeeded", "succeeded", "completed"
+	if taskError != "" {
+		executionState, businessState, phase = "unknown", "failed", "cleanup"
+		taskError = controlplane.SafeError(taskError)
+	}
+	var executionID, previousPhase string
+	if err := tx.QueryRowContext(ctx, `SELECT id,phase FROM task_executions WHERE agent_id=? AND task_id=? AND attempt=? AND kind='agent.decommission' AND state='helper_running' AND (phase='cleanup' OR phase LIKE 'cleanup:%') AND disposition='' AND expires_at>?`, agentID, taskID, expectedAttempt, now).Scan(&executionID, &previousPhase); err != nil {
+		return errExecutionAuthorization
+	}
+	if taskError == "" && !strings.HasSuffix(previousPhase, ":done") {
+		return errExecutionAuthorization
+	}
+	if taskError != "" {
+		phase = previousPhase
+	}
+	evidence, err := json.Marshal(map[string]any{"result": map[string]any{"attempt": expectedAttempt, "error": taskError}, "succeeded": taskError == "", "unknown": taskError != ""})
+	if err != nil {
+		return err
+	}
+	sealed, err := secret.Seal(s.key, evidence, []byte("execution-result:"+executionID))
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE task_executions SET state=?,phase=?,last_error=?,sealed_result=?,updated_at=?
+	 WHERE id=? AND state='helper_running' AND phase=? AND disposition='' AND expires_at>?`, executionState, phase, taskError, sealed, now, executionID, previousPhase, now)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return errExecutionAuthorization
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE agent_decommissions SET state = ?, lease_expires_at = '', last_error = ?, updated_at = ?
+		WHERE agent_id = ? AND state = 'cleaning' AND attempt = ?`, businessState, taskError, now, agentID, expectedAttempt)
 	if err != nil {
 		return fmt.Errorf("center: complete Agent host cleanup: %w", err)
 	}
 	if changed, _ := result.RowsAffected(); changed != 1 {
-		var existingState string
-		var attempt int64
-		if err := tx.QueryRowContext(ctx, `SELECT state, attempt FROM agent_decommissions WHERE agent_id = ?`, agentID).Scan(&existingState, &attempt); err != nil || attempt != expectedAttempt || existingState != "succeeded" {
-			return errors.New("center: Agent host cleanup task is stale")
-		}
-		return tx.Commit()
+		return errors.New("center: Agent host cleanup task is stale")
 	}
-	if err := s.recordTaskEvent(ctx, tx, agentDecommissionTaskID(agentID), agentID, "agent.decommission", 1, "succeeded", ""); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, agentDecommissionTaskID(agentID), agentID, "agent.decommission", 1, businessState, taskError); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *Store) failAgentDecommissionClaim(ctx context.Context, agentID string, expectedAttempt int64, taskError string) error {
+func (s *Store) failAgentDecommissionClaim(ctx context.Context, commit projectionCommit, agentID string, expectedAttempt int64, taskError string) error {
 	taskError = strings.TrimSpace(taskError)
 	if taskError == "" {
 		taskError = "Agent could not start its persistent host cleanup helper"
@@ -178,12 +212,12 @@ func (s *Store) failAgentDecommissionClaim(ctx context.Context, agentID string, 
 		if err := tx.QueryRowContext(ctx, `SELECT state, attempt FROM agent_decommissions WHERE agent_id = ?`, agentID).Scan(&state, &attempt); err != nil || attempt != expectedAttempt || state != "failed" {
 			return errStaleTaskLease
 		}
-		return tx.Commit()
+		return commit(tx)
 	}
 	if err := s.recordTaskEvent(ctx, tx, agentDecommissionTaskID(agentID), agentID, "agent.decommission", 1, "failed", taskError); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }
 
 func (s *Store) waitForAgentDecommissions(ctx context.Context, agents []AgentView, progress func(string)) error {

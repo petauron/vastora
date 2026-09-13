@@ -107,8 +107,8 @@ func TestHostDecommissionFinalizerActivationRetainsIndependentUnit(t *testing.T)
 			if err := activateHostDecommissionFinalizer(context.Background(), unitPath, generatorPath, generator, run); err != nil {
 				t.Fatalf("finalizer activation did not resume: %v", err)
 			}
-			if strings.Contains(finalizer, "ExecStopPost=") || strings.Contains(finalizer, " agent ") || !strings.Contains(finalizer, "Type=oneshot\n") || !strings.Contains(finalizer, "Restart=on-failure\n") {
-				t.Fatal("finalizer still depends on the Agent binary or has no ordered retry")
+			if strings.Contains(finalizer, "ExecStopPost=") || strings.Contains(finalizer, " agent ") || !strings.Contains(finalizer, "Type=oneshot\n") || !strings.Contains(finalizer, "Restart=no\n") || strings.Contains(finalizer, "WantedBy=") {
+				t.Fatal("finalizer depends on the Agent binary or automatically retries")
 			}
 			if strings.Count(finalizer, "ExecStart=") != len(hostDecommissionFinalizerCommands(directory, unitPath, enabledLink, generatorPath)) {
 				t.Fatal("finalizer omitted a cleanup command")
@@ -209,8 +209,6 @@ func verifyHostFinalizerGenerator(t *testing.T, generatorPath, finalizer string)
 	if got, err := os.ReadFile(generatedPath); err != nil || string(got) != finalizer {
 		t.Fatalf("restart did not recover the same finalizer: %v", err)
 	}
-	if target, err := filepath.EvalSymlinks(filepath.Join(early, "multi-user.target.wants", hostDecommissionUnitName)); err != nil || target != generatedPath {
-		t.Fatalf("restart did not enable the finalizer: %v", err)
-	}
+	assertUninstallPathsAbsent(t, filepath.Join(early, "multi-user.target.wants"))
 	assertUninstallPathsAbsent(t, normal, late)
 }

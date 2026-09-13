@@ -126,12 +126,14 @@ func (s *Store) RecordNodeListenerState(ctx context.Context, desired gateway.Nod
 type NodeListenerCoordinator interface {
 	PrepareNodeListener(context.Context) error
 	RestoreGatewayPublicBindings(context.Context) error
-	RestoreGatewayAfterNodeListenerFailure(context.Context) error
 }
 
 func applyNodeListenerState(ctx context.Context, store *Store, provisioner NodeListenerProvisioner, coordinator NodeListenerCoordinator, desired gateway.NodeListenerState) error {
 	store.gatewayMutationMu.Lock()
 	defer store.gatewayMutationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if provisioner == nil {
 		return errors.New("agent: node listener provisioning is not configured")
 	}
@@ -148,10 +150,6 @@ func applyNodeListenerState(ctx context.Context, store *Store, provisioner NodeL
 	current, currentErr := store.NodeListenerState(ctx)
 	if currentErr == nil && desired.Revision < current.Desired.Revision {
 		return nil
-	}
-	var previous *NodeListenerAppliedState
-	if currentErr == nil {
-		previous = &current
 	}
 	if currentErr == nil && desired.Revision == current.Desired.Revision {
 		hash, err := nodeListenerHash(desired)
@@ -173,9 +171,13 @@ func applyNodeListenerState(ctx context.Context, store *Store, provisioner NodeL
 			}
 			return nil
 		}
-		if provisioner.Health(ctx) == nil && verifyNodeListenerReadBack(ctx, provisioner, desired.Listener) == nil {
-			return nil
+		if err := provisioner.Health(ctx); err != nil {
+			return uncertainTaskOutcome(err)
 		}
+		if err := verifyNodeListenerReadBack(ctx, provisioner, desired.Listener); err != nil {
+			return uncertainTaskOutcome(err)
+		}
+		return nil
 	}
 	if currentErr != nil && !errors.Is(currentErr, errNoAppliedNodeListenerState) {
 		return currentErr
@@ -188,60 +190,39 @@ func applyNodeListenerState(ctx context.Context, store *Store, provisioner NodeL
 			return err
 		}
 		if coordinator != nil {
+			if err := ctx.Err(); err != nil {
+				return uncertainTaskOutcome(err)
+			}
 			if err := coordinator.RestoreGatewayPublicBindings(ctx); err != nil {
-				return rollbackNodeListener(ctx, provisioner, coordinator, previous, err)
+				return uncertainTaskOutcome(err)
 			}
 		}
 	} else {
 		if coordinator != nil {
 			if err := coordinator.PrepareNodeListener(ctx); err != nil {
-				return err
+				return uncertainTaskOutcome(err)
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return uncertainTaskOutcome(err)
+		}
 		if err := provisioner.Apply(ctx, desired.Listener); err != nil {
-			return rollbackNodeListener(ctx, provisioner, coordinator, previous, err)
+			return uncertainTaskOutcome(err)
+		}
+		if err := ctx.Err(); err != nil {
+			return uncertainTaskOutcome(err)
 		}
 		if err := provisioner.Health(ctx); err != nil {
-			return rollbackNodeListener(ctx, provisioner, coordinator, previous, err)
+			return uncertainTaskOutcome(err)
 		}
 		if err := verifyNodeListenerReadBack(ctx, provisioner, desired.Listener); err != nil {
-			return rollbackNodeListener(ctx, provisioner, coordinator, previous, err)
+			return uncertainTaskOutcome(err)
 		}
 	}
 	if err := store.RecordNodeListenerState(ctx, desired); err != nil {
-		return rollbackNodeListener(ctx, provisioner, coordinator, previous, err)
+		return uncertainTaskOutcome(err)
 	}
 	return nil
-}
-
-func rollbackNodeListener(ctx context.Context, provisioner NodeListenerProvisioner, coordinator NodeListenerCoordinator, previous *NodeListenerAppliedState, cause error) error {
-	var rollbackErr error
-	if previous != nil && len(previous.Desired.Listener.Routes) > 0 {
-		if coordinator != nil {
-			rollbackErr = coordinator.PrepareNodeListener(ctx)
-		}
-		if rollbackErr == nil {
-			rollbackErr = provisioner.Apply(ctx, previous.Desired.Listener)
-		}
-		if rollbackErr == nil {
-			rollbackErr = provisioner.Health(ctx)
-		}
-		if rollbackErr == nil {
-			rollbackErr = verifyNodeListenerReadBack(ctx, provisioner, previous.Desired.Listener)
-		}
-	} else {
-		rollbackErr = provisioner.Remove(ctx)
-		if rollbackErr == nil {
-			rollbackErr = provisioner.Absent(ctx)
-		}
-		if rollbackErr == nil && coordinator != nil {
-			rollbackErr = coordinator.RestoreGatewayAfterNodeListenerFailure(ctx)
-		}
-	}
-	if rollbackErr != nil {
-		return errors.Join(cause, fmt.Errorf("agent: restore previous ingress after node-listener failure: %w", rollbackErr))
-	}
-	return cause
 }
 
 func restoreNodeListenerState(ctx context.Context, store *Store, provisioner NodeListenerProvisioner, coordinator NodeListenerCoordinator) error {
@@ -286,8 +267,4 @@ func restoreNodeListenerState(ctx context.Context, store *Store, provisioner Nod
 		return err
 	}
 	return verifyNodeListenerReadBack(ctx, provisioner, state.Desired.Listener)
-}
-
-func RestoreNodeListenerStartup(ctx context.Context, store *Store, provisioner NodeListenerProvisioner, coordinator NodeListenerCoordinator) error {
-	return restoreNodeListenerState(ctx, store, provisioner, coordinator)
 }

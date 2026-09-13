@@ -102,7 +102,7 @@ func TestRealityGuardRecoveryPreservesReadyPublication(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_components SET status = 'applying', attempt = 1 WHERE gateway_node_id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.completeGatewayComponent(ctx, node.ID, gatewayGeneration, 1, true, ""); err != nil {
+	if err := store.completeGatewayComponent(ctx, commitProjectionOnlyForTest, node.ID, gatewayGeneration, 1, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	var dualRoleJSON []byte

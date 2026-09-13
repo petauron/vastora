@@ -1,7 +1,7 @@
 package center
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -287,6 +287,15 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
+	if err := s.store.authenticateAgent(request.Context(), request.PathValue("id"), credential); err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	sessionID := request.Header.Get("X-Vastora-Execution-Session")
+	if err := s.store.executionClaimAllowed(request.Context(), request.PathValue("id"), sessionID); err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
 	wait := time.Duration(0)
 	if value := strings.TrimSpace(request.URL.Query().Get("wait")); value != "" {
 		wait, err = time.ParseDuration(value)
@@ -295,21 +304,13 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 			return
 		}
 	}
-	requiredTaskID := strings.TrimSpace(request.URL.Query().Get("taskId"))
-	if len(requiredTaskID) > 128 || strings.ContainsAny(requiredTaskID, "\r\n\t ") {
-		writeError(writer, http.StatusBadRequest, errors.New("center: reconciliation task ID is invalid"))
-		return
-	}
-	var recovery *controlplane.RecoveryScope
-	if raw := request.URL.Query().Get("recovery"); raw != "" {
-		var scope controlplane.RecoveryScope
-		if len(raw) > 8192 || json.Unmarshal([]byte(raw), &scope) != nil || scope.Validate() != nil || requiredTaskID != "" {
-			writeError(writer, http.StatusBadRequest, errors.New("center: invalid recovery claim scope"))
+	for key, values := range request.URL.Query() {
+		if key != "wait" || len(values) != 1 {
+			writeError(writer, http.StatusBadRequest, errors.New("center: unsupported task claim parameter"))
 			return
 		}
-		recovery = &scope
 	}
-	task, err := s.store.waitAndClaimTask(request.Context(), request.PathValue("id"), credential, wait, requiredTaskID, recovery)
+	task, err := s.store.claimExecutionTask(request.Context(), request.PathValue("id"), credential, sessionID, wait)
 	if err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
@@ -320,24 +321,18 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 	}
 	if task.Kind == "landing.server.apply" || task.Kind == "landing.proxy.apply" && task.LandingProxyState != nil && task.LandingProxyState.Active() {
 		if err := s.syncLandingAccess(request.Context()); err != nil {
-			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 10*time.Second)
-			releaseErr := s.store.releaseClaimedTask(releaseCtx, request.PathValue("id"), *task)
-			cancel()
-			writeError(writer, http.StatusServiceUnavailable, errors.Join(err, releaseErr))
+			// Keep the offered execution fenced: the access change may already
+			// have reached an external service. Never put it back in the queue.
+			writeError(writer, http.StatusServiceUnavailable, err)
 			return
 		}
 	}
 	encrypted, err := s.store.EncryptAgentTask(request.Context(), request.PathValue("id"), *task)
 	if err != nil {
-		releaseContext, cancel := context.WithTimeout(context.WithoutCancel(request.Context()), 10*time.Second)
-		releaseErr := s.store.releaseClaimedTask(releaseContext, request.PathValue("id"), *task)
-		cancel()
-		if releaseErr != nil {
-			err = errors.Join(err, releaseErr)
-		}
 		writeError(writer, http.StatusServiceUnavailable, err)
 		return
 	}
+	encrypted.Authorization = task.Authorization
 	writeJSON(writer, http.StatusOK, map[string]any{"task": encrypted})
 }
 
@@ -348,6 +343,8 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	var input struct {
+		ExecutionID                  string          `json:"executionId"`
+		SessionID                    string          `json:"sessionId"`
 		Attempt                      int64           `json:"attempt"`
 		Succeeded                    bool            `json:"succeeded"`
 		Error                        string          `json:"error"`
@@ -359,16 +356,51 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
+	agentID := request.PathValue("id")
+	if err := s.store.authenticateAgent(request.Context(), agentID, credential); err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var matches bool
+	if err := s.store.db.QueryRowContext(request.Context(), `SELECT EXISTS(SELECT 1 FROM task_executions WHERE id=? AND agent_id=? AND task_id=? AND attempt=? AND session_id=?)`, input.ExecutionID, agentID, request.PathValue("taskID"), input.Attempt, input.SessionID).Scan(&matches); err != nil || !matches {
+		writeError(writer, http.StatusConflict, errExecutionAuthorization)
+		return
+	}
+	if len(input.Result) == 0 {
+		input.Result = json.RawMessage(`{}`)
+	}
+	if err := s.store.StoreExecutionResult(request.Context(), agentID, input.SessionID, input.ExecutionID, input.Result, input.Succeeded, input.ReconciliationRequired, input.Error, input.ApplicationRuntimeGeneration); err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
 	executedRuntimeGenerations := []int{}
 	if input.ApplicationRuntimeGeneration != nil {
 		executedRuntimeGenerations = append(executedRuntimeGenerations, *input.ApplicationRuntimeGeneration)
 	}
-	if err := s.store.completeTaskWithDisposition(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, executedRuntimeGenerations...); err != nil {
+	committed := false
+	commit := func(tx *sql.Tx) error {
+		if err := validateExecutionProjection(request.Context(), tx, input.ExecutionID, input.Succeeded); err != nil {
+			return err
+		}
+		if err := s.store.finalizeExecution(request.Context(), tx, agentID, input.SessionID, input.ExecutionID); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		committed = true
+		return nil
+	}
+	if err := s.store.completeTaskWithDisposition(request.Context(), commit, request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, executedRuntimeGenerations...); err != nil {
 		if errors.Is(err, errInvalidReconciliationDisposition) {
 			writeError(writer, http.StatusBadRequest, err)
 			return
 		}
-		writeError(writer, http.StatusUnauthorized, err)
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	if !committed {
+		writeError(writer, http.StatusConflict, errExecutionAuthorization)
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]bool{"completed": true})
@@ -381,17 +413,38 @@ func (s *Server) handleCompleteAgentDecommissionCallback(writer http.ResponseWri
 		return
 	}
 	var input struct {
-		Attempt int64 `json:"attempt"`
+		Action   string `json:"action,omitempty"`
+		Sequence int64  `json:"sequence,omitempty"`
+		Phase    string `json:"phase,omitempty"`
+		Attempt  int64  `json:"attempt"`
+		Error    string `json:"error,omitempty"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.completeAgentDecommissionCallback(request.Context(), request.PathValue("taskID"), token, input.Attempt); err != nil {
+	if input.Action == "step" {
+		if input.Error != "" {
+			writeError(writer, http.StatusBadRequest, errExecutionAuthorization)
+			return
+		}
+		if err := s.store.AuthorizeDecommissionStep(request.Context(), request.PathValue("taskID"), token, input.Attempt, input.Sequence, input.Phase); err != nil {
+			writeError(writer, http.StatusConflict, err)
+			return
+		}
+		writer.Header().Set("Cache-Control", "no-store")
+		writeJSON(writer, http.StatusOK, map[string]bool{"recorded": true})
+		return
+	}
+	if input.Action != "" || input.Sequence != 0 || input.Phase != "" {
+		writeError(writer, http.StatusBadRequest, errExecutionAuthorization)
+		return
+	}
+	if err := s.store.completeAgentDecommissionCallback(request.Context(), request.PathValue("taskID"), token, input.Attempt, input.Error); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]bool{"completed": true})
+	writeJSON(writer, http.StatusOK, map[string]bool{"completed": input.Error == "", "recorded": true})
 }
 
 func (s *Server) handleStartAgentDecommission(writer http.ResponseWriter, request *http.Request) {
@@ -401,15 +454,17 @@ func (s *Server) handleStartAgentDecommission(writer http.ResponseWriter, reques
 		return
 	}
 	var input struct {
-		TaskID  string `json:"taskId"`
-		Attempt int64  `json:"attempt"`
+		ExecutionID string `json:"executionId"`
+		SessionID   string `json:"sessionId"`
+		TaskID      string `json:"taskId"`
+		Attempt     int64  `json:"attempt"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.beginAgentDecommission(request.Context(), request.PathValue("id"), credential, input.TaskID, input.Attempt); err != nil {
-		if errors.Is(err, errStaleTaskLease) {
+	if err := s.store.beginAgentDecommission(request.Context(), request.PathValue("id"), credential, input.TaskID, input.Attempt, input.ExecutionID, input.SessionID); err != nil {
+		if errors.Is(err, errStaleTaskLease) || errors.Is(err, errExecutionAuthorization) {
 			writeError(writer, http.StatusConflict, err)
 			return
 		}
@@ -435,13 +490,15 @@ func (s *Server) handleBeginAgentUpdate(writer http.ResponseWriter, request *htt
 		return
 	}
 	var input struct {
-		Attempt int64 `json:"attempt"`
+		ExecutionID string `json:"executionId"`
+		SessionID   string `json:"sessionId"`
+		Attempt     int64  `json:"attempt"`
 	}
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.beginAgentUpdate(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt); err != nil {
+	if err := s.store.beginAgentUpdateExecution(request.Context(), request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.ExecutionID, input.SessionID); err != nil {
 		if errors.Is(err, errStaleTaskLease) {
 			writeError(writer, http.StatusConflict, err)
 			return

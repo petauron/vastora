@@ -217,7 +217,7 @@ func TestVersion56MigrationSeparatesNodeDirectIngressAndFailsClosedOnCrossNodeRo
 	if _, err := migrated.db.ExecContext(ctx, `UPDATE node_listener_states SET status = 'applying', attempt = 1 WHERE node_id = 'node-v55-a'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrated.completeNodeListenerState(ctx, "node-v55-a", revision, 1, true, ""); err != nil {
+	if err := migrated.completeNodeListenerState(ctx, commitProjectionOnlyForTest, "node-v55-a", revision, 1, true, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM node_listener_migration_cutovers`).Scan(&cutovers); err != nil || cutovers != 1 {
@@ -1381,6 +1381,11 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	defer tx.Rollback()
 	for _, statement := range []string{
 		`DROP TABLE agent_removals`,
+		`DROP TABLE execution_events`,
+		`DROP TABLE execution_claim_control_events`,
+		`DROP TABLE task_executions`,
+		`DROP TABLE agent_execution_sessions`,
+		`DROP TABLE agent_execution_session_history`,
 		`DROP TABLE landing_client_blocks`,
 		`DROP TABLE landing_client_grants`,
 		`DROP TABLE landing_client_capabilities`,

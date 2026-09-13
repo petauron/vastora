@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -40,6 +41,9 @@ func (b interruptedAgentBody) Read(p []byte) (int, error) {
 func (b interruptedAgentBody) Close() error { *b.closed = true; return nil }
 
 func TestAgentUpdateDownloadRetriesInterruptedBodyAndRevalidatesCandidate(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Agent update candidates require a Linux build target")
+	}
 	directory := t.TempDir()
 	binary := "#!/bin/sh\nprintf '0.2.0\\n'\n"
 	digest := sha256.Sum256([]byte(binary))
@@ -73,13 +77,27 @@ func TestAgentUpdateDownloadRetriesInterruptedBodyAndRevalidatesCandidate(t *tes
 }
 
 func TestAgentUpdateDownloadBoundsRetriesAndHonorsCancellation(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Agent update candidates require a Linux build target")
+	}
 	for _, cancelDuringWait := range []bool{false, true} {
 		t.Run(fmt.Sprint(cancelDuringWait), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				if cancelDuringWait {
-					go func() { time.Sleep(time.Second); cancel() }()
+					timer := time.NewTimer(time.Second)
+					defer timer.Stop()
+					done := make(chan struct{})
+					go func() {
+						defer close(done)
+						select {
+						case <-timer.C:
+							cancel()
+						case <-ctx.Done():
+						}
+					}()
+					defer func() { cancel(); <-done }()
 				}
 				calls := 0
 				client := &http.Client{Transport: agentUpdateRoundTrip(func(r *http.Request) (*http.Response, error) {
@@ -104,6 +122,9 @@ func TestAgentUpdateDownloadBoundsRetriesAndHonorsCancellation(t *testing.T) {
 }
 
 func TestAgentUpdateDownloadDoesNotRetryPermanentFailures(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Agent update candidates require a Linux build target")
+	}
 	for _, scenario := range []string{"unauthorized", "metadata", "digest", "disk", "certificate"} {
 		t.Run(scenario, func(t *testing.T) {
 			directory := t.TempDir()

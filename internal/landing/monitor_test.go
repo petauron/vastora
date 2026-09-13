@@ -3,11 +3,163 @@ package landing
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestConcurrentPeerMonitorsReleaseConnectionsAcrossGroupReplacement(t *testing.T) {
+	base, open, accepted := unixChecker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("peers") == "false" {
+			w.Write([]byte(`{"BackendState":"Running","Self":{"ID":"self","PublicKey":"key","TailscaleIPs":["100.64.0.1"]}}`))
+			return
+		}
+		w.Write([]byte(`{"BackendState":"Stopped"}`))
+	}))
+	dial := base.HTTPClient.Transport.(*http.Transport).DialContext
+	base.Close()
+	baseline := runtime.NumGoroutine()
+	for batch := range 10 {
+		ctx, cancel := context.WithCancel(context.Background())
+		var group sync.WaitGroup
+		defer func() { cancel(); group.Wait() }()
+		reports := make(chan struct{}, 8)
+		checkers := make([]*LinkChecker, 0, 8)
+		for index := range 8 {
+			checker := NewLinkChecker()
+			defer checker.Close()
+			checker.HTTPClient.Transport.(*http.Transport).DialContext = dial
+			if _, err := checker.SelfIdentity(ctx, "100.64.0.1"); err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			checkers = append(checkers, checker)
+			gate, err := NewBridgeGate(PeerIdentity{ID: fmt.Sprintf("peer-%d-%d", batch, index), PublicKey: fmt.Sprintf("nodekey:peer%d", index), Address: fmt.Sprintf("100.64.0.%d", index+10)}, "br-owned", uint64(batch+1))
+			if err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			document, err := json.Marshal(fixtureNFT(t, gate))
+			if err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			gate.run = func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+				if input != nil {
+					return nil, nil
+				}
+				return document, nil
+			}
+			var reportOnce sync.Once
+			monitor := Monitor{Gate: gate, Links: checker, CheckBusiness: func(context.Context, PeerIdentity, uint64) (BusinessResult, error) {
+				return BusinessResult{}, errors.New("unexpected business probe")
+			}, StopConnections: func(context.Context) error { return nil }, Report: func(MonitorStatus) {
+				reportOnce.Do(func() { reports <- struct{}{} })
+			}}
+			group.Add(1)
+			go func() { defer group.Done(); _ = monitor.Run(ctx) }()
+		}
+		for range 8 {
+			select {
+			case <-reports:
+			case <-time.After(2 * time.Second):
+				cancel()
+				group.Wait()
+				t.Fatal("peer monitor did not report")
+			}
+		}
+		if count := open.Load(); count != 8 {
+			cancel()
+			group.Wait()
+			t.Fatalf("group has %d connections, want 8", count)
+		}
+		cancel()
+		group.Wait()
+		awaitNoConnections(t, open)
+		for _, checker := range checkers {
+			if _, err := checker.SelfIdentity(context.Background(), "100.64.0.1"); err == nil {
+				t.Fatal("retired group retained usable checker")
+			}
+		}
+		deadline := time.Now().Add(time.Second)
+		for runtime.NumGoroutine() > baseline+6 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if count := runtime.NumGoroutine(); count > baseline+6 {
+			t.Fatalf("goroutines accumulated: baseline=%d now=%d", baseline, count)
+		}
+	}
+	if count := accepted.Load(); count != 80 {
+		t.Fatalf("unexpected reconnects or retained pools: %d", count)
+	}
+}
+
+func TestMonitorOwnsUnixConnectionsAcrossReplacementAndSetupFailure(t *testing.T) {
+	for _, mode := range []string{"cancel", "invalid", "setup-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			base, open, accepted := unixChecker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("peers") == "false" {
+					w.Write([]byte(`{"BackendState":"Running","Self":{"ID":"self","PublicKey":"key","TailscaleIPs":["100.64.0.1"]}}`))
+					return
+				}
+				w.Write([]byte(`{"BackendState":"Stopped"}`))
+			}))
+			dial := base.HTTPClient.Transport.(*http.Transport).DialContext
+			base.Close()
+			for range 20 {
+				checker := NewLinkChecker()
+				checker.HTTPClient.Transport.(*http.Transport).DialContext = dial
+				// Warm an idle connection before Run so even validation failures
+				// must release a real Unix FD, not just an unused transport.
+				if _, err := checker.SelfIdentity(context.Background(), "100.64.0.1"); err != nil {
+					t.Fatal(err)
+				}
+				gate := fixtureGate(t)
+				document, err := json.Marshal(fixtureNFT(t, gate))
+				if err != nil {
+					t.Fatal(err)
+				}
+				gate.run = func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+					if mode == "setup-failure" {
+						return nil, errors.New("simulated nft failure")
+					}
+					if input != nil {
+						return nil, nil
+					}
+					return document, nil
+				}
+				ctx, cancel := context.WithCancel(context.Background())
+				monitor := Monitor{Gate: gate, Links: checker,
+					CheckBusiness: func(context.Context, PeerIdentity, uint64) (BusinessResult, error) {
+						return BusinessResult{}, errors.New("unexpected probe")
+					},
+					StopConnections: func(context.Context) error { return nil },
+					Report:          func(MonitorStatus) { cancel() },
+				}
+				if mode == "invalid" {
+					monitor.Gate = nil
+				}
+				err = monitor.Run(ctx)
+				cancel()
+				if err == nil {
+					t.Fatal("expected cancellation or initialization failure")
+				}
+				awaitNoConnections(t, open)
+				if _, err := checker.SelfIdentity(context.Background(), "100.64.0.1"); err == nil {
+					t.Fatal("terminated monitor left its checker usable")
+				}
+			}
+			if accepted.Load() != 20 {
+				t.Fatalf("connections accumulated across replacements: %d", accepted.Load())
+			}
+		})
+	}
+}
 
 func TestMonitorDoesNotRepeatCallerCutoverAndStillStopsOnExit(t *testing.T) {
 	gate := fixtureGate(t)

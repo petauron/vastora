@@ -19,6 +19,7 @@ func NewPublicEgressObserver() PublicEgressObserver {
 		if err != nil {
 			return nil, err
 		}
+		defer client.CloseIdleConnections()
 		return networking.DetectPublicEgress(ctx, client, normalizedEndpoint, candidates, now)
 	})
 }
