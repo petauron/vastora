@@ -27,6 +27,11 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 		return err
 	}
 	defer tx.Rollback()
+	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
+		return err
+	} else if paused {
+		return errors.New("center: task execution is paused; resume task execution before changing exits")
+	}
 	if err := s.configureLandingProxy(ctx, tx, applicationID, input); err != nil {
 		return err
 	}
@@ -64,6 +69,13 @@ func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicati
 	}
 	if revision != input.Revision {
 		return errors.New("center: landing settings changed; refresh and retry")
+	}
+	var blocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id IN (?,?,?) AND disposition='' AND state<>'succeeded')`, nodeID, input.LandingNodeID, owner).Scan(&blocked); err != nil {
+		return err
+	}
+	if blocked {
+		return errors.New("center: a related node has an unresolved execution; resolve it before changing exits")
 	}
 	var previous landing.DesiredState
 	if len(encoded) > 0 && (json.Unmarshal(encoded, &previous) != nil || previous.Validate() != nil) {

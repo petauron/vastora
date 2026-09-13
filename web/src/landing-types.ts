@@ -25,33 +25,17 @@ export type LandingLatencyEvent = {
 
 export type LandingLatencySnapshot = { revision: number; samples: LandingLatencyView[] };
 
+export type NodeExitPolicy = { applicationId: string; ownExit: boolean; landingNodeIds: string[]; revision: number; status?: "saved" | "applying" | "failed"; requiresOwnExit?: boolean };
+export type NodeExitInput = Pick<NodeExitPolicy, "ownExit" | "landingNodeIds" | "revision"> & { confirmSessionReset: boolean };
+
 export type LandingView = {
+  nodeExits?: NodeExitPolicy[];
+  tasksPaused?: boolean;
+  blockedNodeIds?: string[];
   nodeIds: string[];
   revision: number;
   servers: Array<{ nodeId: string; name: string; status: "pending" | "applying" | "ready" | "failed" | "stopped" | "offline"; inUse: boolean }>;
   candidates: Array<{ nodeId: string; name: string }>;
   proxies: LandingProxyView[];
   latencies: LandingLatencyView[];
-};
-
-export type LandingPublishingMode = "fixed";
-export type LandingClientGrant = {
-  id: string;
-  parentId: string;
-  applicationId: string;
-  serviceId: string;
-  landingNodeId: string;
-  mode: LandingPublishingMode;
-  enabled: boolean;
-  revision: number;
-  appliedRevision: number;
-  status: "preparing" | "prepared" | "configuring" | "activating" | "ready" | "paused" | "revoking" | "revoked" | "failed";
-  error?: string;
-};
-export type LandingClientGrantInput = Pick<LandingClientGrant, "parentId" | "serviceId" | "landingNodeId" | "mode" | "enabled" | "revision"> & { confirmSessionReset: boolean };
-export type LandingClientCombinationsInput = {
-  parentId: string;
-  serviceId: string;
-  targets: Array<{ landingNodeId: string; revision: number }>;
-  confirmSessionReset: boolean;
 };

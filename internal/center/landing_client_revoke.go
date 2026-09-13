@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
@@ -13,6 +14,14 @@ func (s *Store) revokeClientLanding(ctx context.Context, input LandingClientGran
 		return LandingClientGrantView{}, err
 	}
 	defer tx.Rollback()
+	view, err := s.revokeClientLandingTx(ctx, tx, input)
+	if err != nil {
+		return view, err
+	}
+	return view, tx.Commit()
+}
+
+func (s *Store) revokeClientLandingTx(ctx context.Context, tx *sql.Tx, input LandingClientGrantInput) (LandingClientGrantView, error) {
 	var id string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM landing_client_grants WHERE parent_id=? AND service_id=? AND landing_node_id=?`, input.ParentID, input.ServiceID, input.LandingNodeID).Scan(&id); err != nil {
 		return LandingClientGrantView{}, errors.New("center: landing grant was not found")
@@ -46,9 +55,6 @@ func (s *Store) revokeClientLanding(ctx context.Context, input LandingClientGran
 		return LandingClientGrantView{}, err
 	}
 	if err := s.queueClientLandingRoutes(ctx, tx, record.ApplicationID); err != nil {
-		return LandingClientGrantView{}, err
-	}
-	if err := tx.Commit(); err != nil {
 		return LandingClientGrantView{}, err
 	}
 	return record.LandingClientGrantView, nil

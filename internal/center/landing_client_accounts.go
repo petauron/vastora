@@ -63,5 +63,41 @@ func (s *Store) observeLandingAccounts(ctx context.Context, tx *sql.Tx, commandI
 			return errors.New("center: client belongs to another subscription controller; reconcile ownership first")
 		}
 	}
+	inbounds, err := threeXUIClientInbounds(ctx, tx, controllerID)
+	if err != nil {
+		return err
+	}
+	// Inventory is authoritative even when a landing is temporarily unavailable.
+	// Roll back only derived topology work and expose a retryable sync status.
+	for _, entry := range inbounds {
+		p, err := readNodeExitPolicy(ctx, tx, entry.ApplicationID)
+		if err != nil {
+			return err
+		}
+		if p.Revision == 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, "SAVEPOINT node_exit_sync"); err != nil {
+			return err
+		}
+		syncErr := s.syncNodeExitClients(ctx, tx, controllerID, inbounds, entry.ApplicationID, true)
+		if syncErr != nil {
+			if _, err := tx.ExecContext(ctx, "ROLLBACK TO node_exit_sync"); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "RELEASE node_exit_sync"); err != nil {
+			return err
+		}
+		if syncErr != nil {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,'failed') ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "node-exits-error:"+entry.ApplicationID); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, "node-exits-error:"+entry.ApplicationID); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }

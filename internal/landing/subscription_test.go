@@ -14,6 +14,39 @@ func subscriptionFixture() SubscriptionGrant {
 	return SubscriptionGrant{Grant: grant, EntryName: "入口 A", LandingName: "落地 A", BaseLink: "vless://11111111-2222-4333-8444-555555555555@entry.example.test:443" + query + "#original", FixedLink: "vless://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@entry.example.test:443" + query}
 }
 
+func TestNodeExitSelectionOmitsOwnExit(t *testing.T) {
+	item := subscriptionFixture()
+	item.Grant.HideBase = true
+	out, err := ComposeLinks([]byte(item.BaseLink+"\n"), item.Grant.ParentID, FixedMode, []SubscriptionGrant{item}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "11111111-2222-4333-8444-555555555555") || strings.Count(string(out), "vless://") != 1 {
+		t.Fatal("own exit remained in subscription")
+	}
+	out, err = ComposeMihomo([]byte(subscriptionRealityFixture), item.Grant.ParentID, FixedMode, []SubscriptionGrant{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "11111111-2222-4333-8444-555555555555") {
+		t.Fatal("own exit remained in Mihomo")
+	}
+	var config map[string]any
+	if err := yaml.Unmarshal(out, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config["proxies"].([]any)) != 1 {
+		t.Fatal("expected only the selected fixed exit")
+	}
+	for _, value := range config["proxy-groups"].([]any) {
+		for _, member := range value.(map[string]any)["proxies"].([]any) {
+			if member == "Original" {
+				t.Fatal("dangling original group member")
+			}
+		}
+	}
+}
+
 func TestFixedSubscriptionPreservesNativeAndDistinctCredentials(t *testing.T) {
 	item := subscriptionFixture()
 	native := item.BaseLink + "\n"

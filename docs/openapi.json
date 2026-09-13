@@ -1928,97 +1928,13 @@
         "description": "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations."
       }
     },
-    "/api/v1/three-x-ui/client-landing": {
-      "get": {
-        "tags": [
-          "Applications"
-        ],
-        "summary": "Landing Client Grants",
-        "operationId": "landingClientGrants_get",
-        "x-vastora-audience": "browser-admin",
-        "security": [
-          {
-            "AdminSession": []
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Accepted.",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "500": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "parentId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "parentId": {
-                    "type": "string"
-                  },
-                  "serviceId": {
-                    "type": "string"
-                  },
-                  "landingNodeId": {
-                    "type": "string"
-                  },
-                  "mode": {
-                    "type": "object",
-                    "additionalProperties": true
-                  },
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "revision": {
-                    "type": "integer"
-                  },
-                  "confirmSessionReset": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
+    "/api/v1/applications/{id}/exits": {
       "put": {
         "tags": [
           "Applications"
         ],
-        "summary": "Landing Client Grants",
-        "operationId": "landingClientGrants_put",
+        "summary": "Configure Node Exits",
+        "operationId": "configureNodeExits_put",
         "x-vastora-audience": "browser-admin",
         "security": [
           {
@@ -2027,8 +1943,8 @@
           }
         ],
         "responses": {
-          "202": {
-            "description": "Accepted.",
+          "200": {
+            "description": "Successful response.",
             "content": {
               "application/json": {
                 "schema": {}
@@ -2053,11 +1969,12 @@
         },
         "parameters": [
           {
-            "name": "parentId",
-            "in": "query",
-            "required": false,
+            "name": "id",
+            "in": "path",
+            "required": true,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "minLength": 1
             }
           }
         ],
@@ -2070,103 +1987,17 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "parentId": {
-                    "type": "string"
-                  },
-                  "serviceId": {
-                    "type": "string"
-                  },
-                  "landingNodeId": {
-                    "type": "string"
-                  },
-                  "mode": {
-                    "type": "object",
-                    "additionalProperties": true
-                  },
-                  "enabled": {
+                  "ownExit": {
                     "type": "boolean"
+                  },
+                  "landingNodeIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "revision": {
                     "type": "integer"
-                  },
-                  "confirmSessionReset": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/three-x-ui/client-landing/combinations": {
-      "post": {
-        "tags": [
-          "Applications"
-        ],
-        "summary": "Landing Client Combinations",
-        "operationId": "landingClientCombinations_post",
-        "x-vastora-audience": "browser-admin",
-        "security": [
-          {
-            "AdminSession": [],
-            "AdminCSRF": []
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Accepted.",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "500": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "parentId": {
-                    "type": "string"
-                  },
-                  "serviceId": {
-                    "type": "string"
-                  },
-                  "targets": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "properties": {
-                        "landingNodeId": {
-                          "type": "string"
-                        },
-                        "revision": {
-                          "type": "integer"
-                        }
-                      }
-                    }
                   },
                   "confirmSessionReset": {
                     "type": "boolean"
@@ -2220,84 +2051,6 @@
           }
         },
         "description": "Administrator-only live latency stream. The first event and each reconnect send a reset snapshot; subsequent events contain only changed or expired source/landing pairs. Each sample includes its measurement time. The stream renews periodically to revalidate the session."
-      }
-    },
-    "/api/v1/applications/{id}/landing": {
-      "put": {
-        "tags": [
-          "Applications"
-        ],
-        "summary": "Configure Landing Proxy",
-        "operationId": "configureLandingProxy_put",
-        "x-vastora-audience": "browser-admin",
-        "security": [
-          {
-            "AdminSession": [],
-            "AdminCSRF": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LandingView"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "500": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "enabled": {
-                    "type": "boolean"
-                  },
-                  "landingNodeId": {
-                    "type": "string"
-                  },
-                  "revision": {
-                    "type": "integer"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "description": "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations."
       }
     },
     "/api/v1/applications/{id}/credentials/reveal": {
@@ -10276,6 +10029,45 @@
           },
           "revision": {
             "type": "integer"
+          },
+          "nodeExits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "applicationId": {
+                  "type": "string"
+                },
+                "ownExit": {
+                  "type": "boolean"
+                },
+                "landingNodeIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "revision": {
+                  "type": "integer"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "requiresOwnExit": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "tasksPaused": {
+            "type": "boolean"
+          },
+          "blockedNodeIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "servers": {
             "type": "array",

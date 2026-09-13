@@ -4,10 +4,11 @@ import type { LandingLatencyEvent, LandingLatencySnapshot, LandingView } from ".
 import type { Language } from "../translations";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet, FieldLegend } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { ServerIcon } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ServerIcon, SlidersHorizontalIcon } from "lucide-react";
 import { copy } from "./shared";
 import { landingLatencyColor, landingLatencyPreview } from "./landingLatency";
 import { applyLandingLatencyEvent, freshLandingLatencies } from "./landingLatencyEvents";
@@ -17,7 +18,7 @@ type LandingContextValue = {
   busy: boolean;
   failed: boolean;
   refresh: () => void;
-  change: (operation: (signal: AbortSignal) => Promise<LandingView>) => Promise<void>;
+  change: (operation: (signal: AbortSignal) => Promise<LandingView>) => Promise<boolean>;
 };
 
 const LandingContext = createContext<LandingContextValue | null>(null);
@@ -53,6 +54,7 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
       }
     } catch {
       if (mounted.current && generation.current === current) setFailed(true);
+      return false;
     } finally {
       window.clearTimeout(timeout);
       if (reading.current === controller) reading.current = null;
@@ -99,7 +101,7 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
   }, [enabled, refresh]);
 
   const change = async (operation: (signal: AbortSignal) => Promise<LandingView>) => {
-    if (!mounted.current || writing.current) return;
+    if (!mounted.current || writing.current) return false;
     writing.current = true;
     const current = ++generation.current;
     reading.current?.abort();
@@ -111,10 +113,12 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
     try {
       const next = await operation(controller.signal);
       if (mounted.current && generation.current === current) adoptView(next);
+      return true;
     } catch {
       // The server may have accepted a request whose reply was lost. Require
       // a new overview before allowing another revision-sensitive mutation.
       if (mounted.current && generation.current === current) setFailed(true);
+      return false;
     } finally {
       window.clearTimeout(timeout);
       writing.current = false;
@@ -142,7 +146,7 @@ export function LandingManager({ language }: { language: Language }) {
     <SheetContent className="apps-workspace apps-landing-sheet">
       <SheetHeader>
         <SheetTitle>{copy(language, "管理落地机", "Landing servers")}</SheetTitle>
-        <SheetDescription>{copy(language, "可添加多台，每个节点选择一台连接。", "Add multiple servers. Each node uses one exit.")}</SheetDescription>
+        <SheetDescription>{copy(language, "可添加多台，在节点列表中勾选一个或多个出口。", "Add servers, then select one or more exits in each node row.")}</SheetDescription>
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-5 pb-5">
         <LandingNotice language={language} />
@@ -206,87 +210,73 @@ function latencyLabel(language: Language, latency: LandingView["latencies"][numb
   return latency?.state === "unavailable" ? copy(language, "无法直连", "Unavailable") : copy(language, "待检测", "Pending");
 }
 
-// Select treats an empty value as unselected; keep the API's empty exit value at the boundary.
-const ownExitValue = "__own_exit__";
-
 export function LandingExitSelect({ applicationId, nodeId, name, locked, language }: { applicationId: string; nodeId: string; name: string; locked: boolean; language: Language }) {
   const state = useContext(LandingContext);
   const id = useId();
-  const [confirmation, setConfirmation] = useState<{ target: string; revision: number } | null>(null);
+  const [draft, setDraft] = useState<{ ownExit: boolean; landingNodeIds: string[]; revision: number } | null>(null);
   if (!state) return null;
   const { view, busy, failed } = state;
-  const proxy = view?.proxies.find((item) => item.applicationId === applicationId);
-  const selected = proxy?.enabled ? proxy.landingNodeId : "";
-  const pending = proxy?.status === "pending" || proxy?.status === "applying";
-  const configurationFailed = proxy?.status === "failed";
+  const policy = view?.nodeExits?.find((item) => item.applicationId === applicationId);
   const servers = view?.servers.filter((server) => server.nodeId !== nodeId) ?? [];
-  const items = [{ value: ownExitValue, label: copy(language, "本机出口", "Own exit") }, ...servers.map((server) => ({ value: server.nodeId, label: server.name }))];
-  if (selected && !items.some((item) => item.value === selected)) items.push({ value: selected, label: copy(language, "当前落地机（不可用）", "Current exit (unavailable)") });
-  const disabled = locked || busy || failed || !view || pending;
-  const applied = proxy?.applied;
-  const exitName = (target: string) => target
-    ? view?.servers.find((server) => server.nodeId === target)?.name ?? copy(language, "原落地机", "Previous landing server")
-    : copy(language, "原出口规则", "Original exit rules");
-  const showApplied = pending || configurationFailed || Boolean(proxy?.enabled && proxy.connection !== "healthy");
-  const confirmationStale = confirmation !== null && confirmation.revision !== (proxy?.revision ?? 0);
-  const targetReady = !confirmation?.target || servers.some((server) => server.nodeId === confirmation.target && server.status === "ready");
-  const confirmDisabled = disabled || confirmationStale || !targetReady;
-  const status = pending ? copy(language, "正在切换…", "Switching…")
-    : configurationFailed ? copy(language, "切换失败", "Change failed")
-    : proxy?.enabled ? proxy.connection === "healthy" ? copy(language, "已连接", "Connected") : copy(language, "连接不可用", "Unavailable")
-    : null;
-  return <><FieldGroup className="gap-1">
-    <Field className="gap-1">
-      <FieldLabel className="sr-only" htmlFor={id}>{copy(language, `${name} 的出口`, `Exit for ${name}`)}</FieldLabel>
-      <Select items={items} value={view ? selected || ownExitValue : null} disabled={disabled} onValueChange={(value) => {
-        if (typeof value !== "string") return;
-        const target = value === ownExitValue ? "" : value;
-        if (target !== selected) setConfirmation({ target, revision: proxy?.revision ?? 0 });
-      }}>
-        <SelectTrigger id={id} className="w-full" aria-describedby={status ? `${id}-status` : undefined}><SelectValue placeholder={failed ? copy(language, "状态未知", "Unknown") : copy(language, "正在读取…", "Loading…")} /></SelectTrigger>
-        <SelectContent className="apps-workspace">
-          <SelectGroup>{items.map((item) => {
-            const ownExit = item.value === ownExitValue;
-            const server = servers.find((server) => server.nodeId === item.value);
-            const latency = view?.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === item.value);
-            return <SelectItem key={item.value} value={item.value} disabled={!ownExit && (server?.status !== "ready" || configurationFailed)}>
-              <span className="flex w-full items-center gap-6"><span className="min-w-0 flex-1 truncate">{item.label}</span>
-                {!ownExit ? <span className={`shrink-0 text-xs tabular-nums ${landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}`}>{server?.status === "ready" ? latencyLabel(language, latency) : copy(language, "未就绪", "Not ready")}</span> : null}
-              </span>
-            </SelectItem>;
-          })}</SelectGroup>
-        </SelectContent>
-      </Select>
-      {status ? <FieldDescription id={`${id}-status`} aria-live="polite" className={configurationFailed || proxy?.connection === "unhealthy" ? "text-destructive" : undefined}>{status}</FieldDescription> : null}
-      {showApplied ? <FieldDescription>{applied
-        ? copy(language, `上次应用：${exitName(applied.landingNodeId)}`, `Last applied: ${exitName(applied.landingNodeId)}`)
-        : copy(language, "尚无已应用记录", "No confirmed configuration yet")}</FieldDescription> : null}
-    </Field>
-    {configurationFailed ? <Button type="button" variant="outline" size="sm" disabled={disabled} aria-label={copy(language, `重试 ${name} 的出口设置`, `Retry exit settings for ${name}`)} onClick={() => setConfirmation({ target: selected, revision: proxy.revision })}>{copy(language, "重试", "Retry")}</Button> : null}
-  </FieldGroup>
-    <Sheet open={confirmation !== null} onOpenChange={(open) => { if (!open) setConfirmation(null); }}>
-      <SheetContent finalFocus={() => document.getElementById(id)}>
+  const blocked = Boolean(view?.tasksPaused || view?.blockedNodeIds?.includes(nodeId));
+  const disabled = locked || busy || failed || !view || blocked || policy?.status === "applying";
+  const ownName = copy(language, "本机出口", "Own exit");
+  const exitName = (target: string) => servers.find((server) => server.nodeId === target)?.name ?? copy(language, "不可用落地机", "Unavailable exit");
+  const previous = view?.proxies.find((item) => item.applicationId === applicationId && item.enabled);
+  const names = [...(policy?.ownExit !== false ? [ownName] : []), ...(policy?.landingNodeIds ?? []).map(exitName)];
+  const stale = draft !== null && draft.revision !== (policy?.revision ?? 0);
+  const invalid = !draft || (!draft.ownExit && draft.landingNodeIds.length === 0) || draft.landingNodeIds.some((target) => view?.blockedNodeIds?.includes(target) || !servers.some((server) => server.nodeId === target && server.status === "ready"));
+  const status = view?.tasksPaused ? copy(language, "任务已暂停，等待恢复", "Tasks paused; waiting to resume")
+    : blocked ? copy(language, "节点任务待处理", "Node task needs attention")
+    : policy?.status === "applying" ? copy(language, "正在同步组合…", "Syncing combinations…")
+    : policy?.status === "failed" ? copy(language, "同步失败，请重新保存", "Sync failed; save again to retry")
+    : policy?.revision ? copy(language, "出口配置已保存", "Exit configuration saved") : null;
+  return <div className="flex min-w-0 flex-col gap-1">
+    <Button id={id} variant="outline" className="w-full justify-between" disabled={disabled} aria-label={copy(language, `配置 ${name} 的出口`, `Configure exits for ${name}`)} title={names.join(" · ")} onClick={() => setDraft({ ownExit: policy?.ownExit ?? true, landingNodeIds: [...(policy?.landingNodeIds ?? [])], revision: policy?.revision ?? 0 })}>
+      <span className="truncate">{failed ? copy(language, "状态未知", "Unknown") : view ? !policy?.revision && previous ? copy(language, `原单出口：${exitName(previous.landingNodeId)}`, `Previous exit: ${exitName(previous.landingNodeId)}`) : names.join(" · ") : copy(language, "读取出口", "Loading exits")}</span><SlidersHorizontalIcon data-icon="inline-end" />
+    </Button>
+    {status ? <p role="status" className="text-xs text-muted-foreground">{status}</p> : null}
+    <Sheet open={draft !== null} onOpenChange={(open) => { if (!open && !busy) setDraft(null); }}>
+      <SheetContent className="apps-workspace" finalFocus={() => document.getElementById(id)}>
         <SheetHeader>
-          <SheetTitle>{copy(language, `切换 ${name} 的出口`, `Change the exit for ${name}`)}</SheetTitle>
-          <SheetDescription>{copy(language, "此节点现有的代理连接会短暂中断，订阅地址保持不变。", "Existing proxy connections on this node will briefly disconnect. Subscription addresses stay unchanged.")}</SheetDescription>
+          <SheetTitle>{copy(language, `${name} · 出口组合`, `${name} · Exit combinations`)}</SheetTitle>
+          <SheetDescription>{copy(language, "每个勾选项生成一个独立订阅节点。同步给已接入此节点的客户端，后续新增客户端也会继承。", "Each selected exit generates a separate subscription node for clients attached to this entry, including future clients.")}</SheetDescription>
         </SheetHeader>
-        <FieldGroup className="px-4">
-          <Field><FieldLabel>{copy(language, "切换到", "Change to")}</FieldLabel><FieldDescription>{exitName(confirmation?.target ?? "")}</FieldDescription></Field>
-          {!confirmation?.target ? <FieldDescription>{copy(language, "将恢复启用落地前的出口规则；原有的自定义代理仍会保留。", "Restores the exit rules from before landing was enabled, including any existing custom proxy.")}</FieldDescription> : null}
-          {confirmationStale || !targetReady ? <FieldDescription role="alert">{copy(language, "节点状态已变化，请取消后重新选择。", "The node state changed. Cancel and select again.")}</FieldDescription> : null}
-        </FieldGroup>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4">
+          <FieldSet disabled={busy}>
+            <FieldLegend>{copy(language, "选择出口", "Choose exits")}</FieldLegend>
+            <FieldDescription>{copy(language, "至少选择一项；保存可能短暂中断此节点连接，订阅地址不变。", "Choose at least one. Saving may briefly interrupt this entry; subscription URLs stay unchanged.")}</FieldDescription>
+            <FieldGroup>
+              <Field orientation="horizontal" data-disabled={policy?.requiresOwnExit}>
+                <Checkbox id={id + "-own"} checked={draft?.ownExit ?? true} disabled={policy?.requiresOwnExit} onCheckedChange={(checked) => setDraft((value) => value ? { ...value, ownExit: checked } : value)} />
+                <FieldLabel htmlFor={id + "-own"}>{ownName}</FieldLabel>
+              </Field>
+              {servers.map((server) => {
+                const selected = draft?.landingNodeIds.includes(server.nodeId) ?? false;
+                const unavailable = server.status !== "ready" || view?.blockedNodeIds?.includes(server.nodeId);
+                const latency = view?.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === server.nodeId);
+                return <Field key={server.nodeId} orientation="horizontal" data-disabled={!selected && unavailable}>
+                  <Checkbox id={id + server.nodeId} checked={selected} disabled={!selected && unavailable} onCheckedChange={(checked) => setDraft((value) => value ? { ...value, landingNodeIds: checked ? [...value.landingNodeIds, server.nodeId] : value.landingNodeIds.filter((target) => target !== server.nodeId) } : value)} />
+                  <FieldLabel className="min-w-0 flex-1" htmlFor={id + server.nodeId}>{server.name}</FieldLabel>
+                  <span className={landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}>{unavailable ? copy(language, "未就绪", "Not ready") : latencyLabel(language, latency)}</span>
+                </Field>;
+              })}
+            </FieldGroup>
+            {policy?.requiresOwnExit ? <FieldDescription>{copy(language, "HY2 当前仅支持本机出口；落地组合使用 VLESS，因此需保留本机出口。", "HY2 currently uses the own exit. Landing combinations use VLESS, so keep the own exit enabled.")}</FieldDescription> : null}
+            {stale ? <FieldDescription role="alert">{copy(language, "配置已变化，请关闭后重新打开。", "Configuration changed. Close and reopen.")}</FieldDescription> : null}
+            <LandingNotice language={language} />
+          </FieldSet>
+        </div>
         <SheetFooter>
-          <Button variant="outline" onClick={() => setConfirmation(null)}>{copy(language, "取消", "Cancel")}</Button>
-          <Button disabled={confirmDisabled} onClick={() => {
-            if (!confirmation || confirmDisabled) return;
-            const { target, revision } = confirmation;
-            setConfirmation(null);
-            void state.change((signal) => api.configureLandingProxy(applicationId, target, revision, signal));
-          }}>{copy(language, "确认切换", "Confirm change")}</Button>
+          <Button variant="outline" disabled={busy} onClick={() => setDraft(null)}>{copy(language, "取消", "Cancel")}</Button>
+          <Button disabled={disabled || stale || invalid} onClick={() => {
+            if (!draft || disabled || stale || invalid) return;
+            void state.change((signal) => api.configureNodeExits(applicationId, { ...draft, confirmSessionReset: true }, signal)).then((saved) => { if (saved) setDraft(null); });
+          }}>{busy ? copy(language, "正在保存…", "Saving…") : copy(language, "保存出口组合", "Save exit combinations")}</Button>
         </SheetFooter>
       </SheetContent>
     </Sheet>
-  </>;
+  </div>;
 }
 
 // Keep a useful preview when a node still uses its own exit. Never mistake a
@@ -295,6 +285,17 @@ export function LandingLatency({ applicationId, nodeId, language }: { applicatio
   const state = useContext(LandingContext);
   const view = state?.view;
   if (!state || !view || state.failed) return <span className="text-muted-foreground">—</span>;
+  const policy = view.nodeExits?.find((item) => item.applicationId === applicationId);
+  if (policy?.landingNodeIds.length) return <div className="flex min-w-0 flex-col gap-2">
+    {policy.landingNodeIds.map((target) => {
+      const server = view.servers.find((item) => item.nodeId === target);
+      const latency = view.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === target);
+      return <div key={target} className="flex min-w-0 flex-col gap-1">
+        <span className={landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}>{server?.status === "ready" ? latencyLabel(language, latency) : copy(language, "未就绪", "Not ready")}</span>
+        <span className="truncate text-xs text-muted-foreground">{server?.name ?? copy(language, "不可用落地机", "Unavailable exit")}</span>
+      </div>;
+    })}
+  </div>;
   const { selected, server, latency } = landingLatencyPreview(view, nodeId, applicationId);
   if (!server) return <span className="text-muted-foreground">—</span>;
   return <div className="flex min-w-0 flex-col gap-1">

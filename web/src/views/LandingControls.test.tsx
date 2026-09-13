@@ -51,125 +51,33 @@ it("previews the best exit without selecting it and never borrows another pair's
   expect(landingLatencyPreview(view, "source-one", "app-one").server?.nodeId).toBe("b");
 });
 
-it.each(["zh-CN", "en"] as const)("shows own exit after an empty overview loads (%s)", async (language) => {
-  let resolveRead!: (view: LandingView) => void;
-  vi.spyOn(api, "landing").mockReturnValue(new Promise<LandingView>((resolve) => { resolveRead = resolve; }));
-  const update = vi.spyOn(api, "configureLandingProxy");
-  const container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="Node one" locked={false} language={language} /></LandingProvider>); });
-  const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"]');
-  expect(trigger?.textContent).toContain(language === "zh-CN" ? "正在读取…" : "Loading…");
-  expect(trigger?.disabled).toBe(true);
-  await act(async () => { resolveRead({ nodeIds: [], revision: 0, servers: [], candidates: [], proxies: [], latencies: [] }); });
-  expect(trigger?.textContent).toContain(language === "zh-CN" ? "本机出口" : "Own exit");
-  expect(trigger?.hasAttribute("data-placeholder")).toBe(false);
-  expect(trigger?.disabled).toBe(false);
-  await act(async () => { trigger?.click(); });
-  const option = document.querySelector<HTMLElement>('[role="option"]');
-  expect(option?.textContent).toBe(language === "zh-CN" ? "本机出口" : "Own exit");
-  expect(option?.getAttribute("aria-disabled")).not.toBe("true");
-  await act(async () => { option?.click(); });
-  expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(update).not.toHaveBeenCalled();
-});
 
-it("does not mistake a failed initial read for an empty exit configuration", async () => {
-  vi.spyOn(api, "landing").mockRejectedValue(new Error("unavailable"));
-  const container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
-  const trigger = container.querySelector<HTMLButtonElement>('[role="combobox"]');
-  expect(trigger?.textContent).toContain("状态未知");
-  expect(trigger?.textContent).not.toContain("本机出口");
-  expect(trigger?.disabled).toBe(true);
-});
-
-it("shares one overview and sends a specific exit with the observed revision", async () => {
+it("saves multiple exits from the node row without client-specific configuration", async () => {
   const view = overview();
+  view.nodeExits = [{ applicationId: "app-one", ownExit: true, landingNodeIds: [], revision: 2 }];
   const read = vi.spyOn(api, "landing").mockResolvedValue(view);
-  const update = vi.spyOn(api, "configureLandingProxy").mockResolvedValue({ ...view, proxies: [{ ...view.proxies[0], enabled: true, landingNodeId: "b", revision: 3, status: "pending" }] });
-  const container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => {
-    root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /><LandingLatency applicationId="app-one" nodeId="source-one" language="zh-CN" /><LandingLatency applicationId="app-two" nodeId="source-two" language="zh-CN" /></LandingProvider>);
-  });
+  const update = vi.spyOn(api, "configureNodeExits").mockResolvedValue({ ...view, nodeExits: [{ ...view.nodeExits[0], landingNodeIds: ["a", "b"], revision: 3, status: "applying" }] });
+  const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
   expect(read).toHaveBeenCalledTimes(1);
-  expect(container.textContent).toContain("12 ms");
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("本机出口");
-  expect(container.querySelector('[role="combobox"]')?.hasAttribute("data-placeholder")).toBe(false);
-  await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
-  expect(document.body.textContent).toContain("88 ms");
-  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("落地 B"));
-  expect(option).toBeDefined();
-  await act(async () => { option?.click(); });
+  await act(async () => { container.querySelector<HTMLButtonElement>('button')?.click(); });
+  const checks = [...document.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+  expect(checks).toHaveLength(3);
+  await act(async () => { checks[1].click(); });
+  await act(async () => { checks[2].click(); });
   expect(update).not.toHaveBeenCalled();
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("代理连接会短暂中断");
-  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "确认切换")?.click(); });
-  expect(update).toHaveBeenCalledWith("app-one", "b", 2, expect.any(AbortSignal));
-  expect(container.textContent).toContain("正在切换");
-  expect(container.textContent).toContain("上次应用：原出口规则");
-  expect(container.querySelector<HTMLButtonElement>('[role="combobox"]')?.disabled).toBe(true);
+  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === "保存出口组合")?.click(); });
+  expect(update).toHaveBeenCalledWith("app-one", { ownExit: true, landingNodeIds: ["a", "b"], revision: 2, confirmSessionReset: true }, expect.any(AbortSignal));
+  expect(container.textContent).toContain("正在同步组合");
 });
 
-it("sends the API's empty exit value only after confirming restoration", async () => {
-  const view = overview();
-  view.proxies[0] = { ...view.proxies[0], enabled: true, landingNodeId: "b", status: "ready", connection: "healthy" };
-  vi.spyOn(api, "landing").mockResolvedValue(view);
-  const update = vi.spyOn(api, "configureLandingProxy").mockResolvedValue({ ...view, proxies: [{ ...view.proxies[0], enabled: false, landingNodeId: "", revision: 3, status: "stopped", connection: "disabled" }] });
-  const container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+it.each(["paused", "failed"] as const)("does not allow an unsafe write when %s", async (condition) => {
+  const view = overview(); view.tasksPaused = condition === "paused";
+  vi.spyOn(api, "landing").mockImplementation(() => condition === "failed" ? Promise.reject(new Error("offline")) : Promise.resolve(view));
+  const update = vi.spyOn(api, "configureNodeExits");
+  const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("落地 B");
-  await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
-  await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("本机出口"))?.click(); });
-  expect(update).not.toHaveBeenCalled();
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("将恢复启用落地前的出口规则");
-  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "确认切换")?.click(); });
-  expect(update).toHaveBeenCalledWith("app-one", "", 2, expect.any(AbortSignal));
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("本机出口");
-  expect(container.querySelector('[role="combobox"]')?.hasAttribute("data-placeholder")).toBe(false);
-});
-
-it("keeps a failed desired exit separate from the last applied exit and cancels restoration without writing", async () => {
-  const view = overview();
-  view.proxies[0] = { ...view.proxies[0], enabled: true, landingNodeId: "b", status: "failed", connection: "unhealthy", revision: 3, applied: { revision: 2, landingNodeId: "a" } };
-  vi.spyOn(api, "landing").mockResolvedValue(view);
-  const update = vi.spyOn(api, "configureLandingProxy").mockResolvedValue(view);
-  const container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="Node one" locked={false} language="en" /></LandingProvider>); });
-  expect(container.textContent).toContain("Change failed");
-  expect(container.textContent).toContain("Last applied: 落地 A");
-  expect(container.textContent).not.toContain("Connected");
-  await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
-  await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("Own exit"))?.click(); });
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("including any existing custom proxy");
-  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "Cancel")?.click(); });
-  expect(update).not.toHaveBeenCalled();
-  expect(container.querySelector('[role="combobox"]')?.textContent).toContain("落地 B");
-});
-
-it("requires a fresh selection if the configuration revision changes while confirmation is open", async () => {
-  vi.useFakeTimers();
-  const view = overview();
-  vi.spyOn(api, "landing").mockResolvedValueOnce(view).mockResolvedValue({ ...view, proxies: [{ ...view.proxies[0], revision: 3 }] });
-  const update = vi.spyOn(api, "configureLandingProxy").mockResolvedValue(view);
-  const container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
-  await act(async () => { container.querySelector<HTMLButtonElement>('[role="combobox"]')?.click(); });
-  await act(async () => { [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("落地 B"))?.click(); });
-  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("节点状态已变化");
-  const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((button) => button.textContent === "确认切换");
-  expect(confirm?.disabled).toBe(true);
+  expect(container.querySelector<HTMLButtonElement>("button")?.disabled).toBe(true);
   expect(update).not.toHaveBeenCalled();
 });
 

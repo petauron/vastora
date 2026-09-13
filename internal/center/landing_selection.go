@@ -26,11 +26,14 @@ type LandingCandidate struct {
 }
 
 type LandingView struct {
+	NodeExits []NodeExitPolicy `json:"nodeExits"`
 	LandingSelection
-	Servers    []LandingServerView  `json:"servers"`
-	Candidates []LandingCandidate   `json:"candidates"`
-	Proxies    []LandingProxyView   `json:"proxies"`
-	Latencies  []LandingLatencyView `json:"latencies"`
+	TasksPaused    bool                 `json:"tasksPaused"`
+	BlockedNodeIDs []string             `json:"blockedNodeIds"`
+	Servers        []LandingServerView  `json:"servers"`
+	Candidates     []LandingCandidate   `json:"candidates"`
+	Proxies        []LandingProxyView   `json:"proxies"`
+	Latencies      []LandingLatencyView `json:"latencies"`
 }
 
 type LandingServerView struct {
@@ -84,6 +87,28 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		return LandingView{}, err
 	}
 	view := LandingView{LandingSelection: selection, Servers: []LandingServerView{}, Candidates: []LandingCandidate{}, Proxies: []LandingProxyView{}}
+	view.TasksPaused, err = executionClaimsPaused(ctx, tx)
+	if err != nil {
+		return view, err
+	}
+	view.BlockedNodeIDs = []string{}
+	blockedRows, err := tx.QueryContext(ctx, `SELECT DISTINCT agent_id FROM task_executions WHERE disposition='' AND state<>'succeeded' ORDER BY agent_id`)
+	if err != nil {
+		return view, err
+	}
+	for blockedRows.Next() {
+		var id string
+		if err := blockedRows.Scan(&id); err != nil {
+			blockedRows.Close()
+			return view, err
+		}
+		view.BlockedNodeIDs = append(view.BlockedNodeIDs, id)
+	}
+	err = blockedRows.Err()
+	blockedRows.Close()
+	if err != nil {
+		return view, err
+	}
 	view.Latencies = s.landingLatencyViews(selection)
 	for _, nodeID := range selection.NodeIDs {
 		server := LandingServerView{NodeID: nodeID}
@@ -98,6 +123,11 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		if !active || s.now().Sub(seen) > 2*time.Minute {
 			server.Status = "offline"
 		}
+		var configured bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM settings p JOIN applications app ON p.key='node-exits:'||app.id JOIN json_each(p.value,'$.landingNodeIds') target WHERE target.value=?)`, nodeID).Scan(&configured); err != nil {
+			return view, err
+		}
+		server.InUse = server.InUse || configured
 		view.Servers = append(view.Servers, server)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.name,p.headscale_address FROM agents a JOIN agent_network_profiles p ON p.agent_id=a.id
@@ -141,7 +171,48 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		proxy.Connection = landingConnectionStatus(proxy.Enabled, proxy.Status, proxy.Revision, healthRevision, healthy, checked, received, s.now().UTC())
 		view.Proxies = append(view.Proxies, proxy)
 	}
-	return view, proxies.Err()
+	if err := proxies.Err(); err != nil {
+		return view, err
+	}
+	proxies.Close()
+	view.NodeExits = []NodeExitPolicy{}
+	controller, _, err := runningGlobalThreeXUIController(ctx, tx)
+	if err == nil {
+		inbounds, err := threeXUIClientInbounds(ctx, tx, controller)
+		if err != nil {
+			return view, err
+		}
+		for _, entry := range inbounds {
+			p, err := readNodeExitPolicy(ctx, tx, entry.ApplicationID)
+			if err != nil {
+				return view, err
+			}
+			p.RequiresOwnExit = entry.HY2InboundID != 0
+			if p.Revision > 0 {
+				p.Status = "saved"
+				var failed, pending bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_client_grants WHERE application_id=? AND status IN ('failed','paused')) OR EXISTS(SELECT 1 FROM settings WHERE key=?), EXISTS(SELECT 1 FROM landing_client_grants WHERE application_id=? AND status NOT IN ('ready','revoked','failed','paused'))`, entry.ApplicationID, "node-exits-error:"+entry.ApplicationID, entry.ApplicationID).Scan(&failed, &pending); err != nil {
+					return view, err
+				}
+				if failed {
+					p.Status = "failed"
+				} else if pending {
+					p.Status = "applying"
+				}
+			}
+			for _, proxy := range view.Proxies {
+				if proxy.ApplicationID == entry.ApplicationID && p.Revision > 0 {
+					if proxy.Status == "failed" {
+						p.Status = "failed"
+					} else if (proxy.Status == "pending" || proxy.Status == "applying") && p.Status != "failed" {
+						p.Status = "applying"
+					}
+				}
+			}
+			view.NodeExits = append(view.NodeExits, p)
+		}
+	}
+	return view, nil
 }
 
 // Selection stores only managed node identity. Address resolution and task
@@ -196,6 +267,13 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 		if slices.Contains(input.NodeIDs, nodeID) {
 			continue
 		}
+		var configured bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM settings p JOIN applications app ON p.key='node-exits:'||app.id JOIN json_each(p.value,'$.landingNodeIds') target WHERE target.value=?)`, nodeID).Scan(&configured); err != nil {
+			return err
+		}
+		if configured {
+			return errors.New("center: deselect this landing server from node exits before removing it")
+		}
 		var encoded []byte
 		if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, nodeID).Scan(&encoded); err != nil {
 			return err
@@ -239,19 +317,6 @@ func (s *Server) handleSelectLanding(writer http.ResponseWriter, request *http.R
 		return
 	}
 	if err := s.store.SelectLanding(request.Context(), input); err != nil {
-		writeError(writer, http.StatusConflict, err)
-		return
-	}
-	s.handleLanding(writer, request)
-}
-
-func (s *Server) handleConfigureLandingProxy(writer http.ResponseWriter, request *http.Request) {
-	var input LandingProxyInput
-	if err := decodeJSON(request, &input); err != nil {
-		writeError(writer, http.StatusBadRequest, err)
-		return
-	}
-	if err := s.store.ConfigureLandingProxy(request.Context(), request.PathValue("id"), input); err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
 	}
