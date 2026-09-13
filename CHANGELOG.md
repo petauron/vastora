@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.127](https://github.com/petauron/vastora/compare/v0.1.0-alpha.126...v0.1.0-alpha.127) (2026-09-13)
+
+
+### Bug Fixes
+
+* **nodes:** 修复离线节点移除并精简 Alpha 发布检查 ([#421](https://github.com/petauron/vastora/issues/421)) ([e450c86](https://github.com/petauron/vastora/commit/e450c86d3436d5acc3fed4854d150ff8b4ccc75d))
+
 ## [0.1.0-alpha.126](https://github.com/petauron/vastora/compare/v0.1.0-alpha.125...v0.1.0-alpha.126) (2026-09-12)
 
 
