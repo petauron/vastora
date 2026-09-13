@@ -120,6 +120,20 @@ func (s *Store) resumeThreeXUIControllerConvergence(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
+	// A stopped or uncertain execution is not permission to start an unrelated
+	// controller conversion. Preserve its resources until explicit disposition.
+	var unresolvedExecutions bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+	 SELECT 1 FROM task_executions execution
+	 WHERE execution.disposition='' AND execution.state<>'succeeded' AND (
+	  EXISTS(SELECT 1 FROM deployments deployment WHERE deployment.id=execution.task_id AND deployment.app_key=?) OR
+	  EXISTS(SELECT 1 FROM application_commands command JOIN applications application ON application.id=command.application_id WHERE command.id=execution.task_id AND application.app_key=?)
+	 ))`, threeXUIAppKey, threeXUIAppKey).Scan(&unresolvedExecutions); err != nil {
+		return err
+	}
+	if unresolvedExecutions {
+		return nil
+	}
 
 	var activeMigrations int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM three_x_ui_migrations WHERE state IN ('backing_up', 'restoring', 'switching')`).Scan(&activeMigrations); err != nil {
@@ -599,7 +613,7 @@ func (s *Store) ThreeXUIMigrationBackup(ctx context.Context, agentID, credential
 	return secret.Open(s.key, sealed, threeXUIBackupAAD(sourceApplicationID, revision))
 }
 
-func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input ThreeXUIControllerCommandTask
 	if json.Unmarshal(inputJSON, &input) != nil || input.ApplicationID == "" {
 		return errors.New("center: stored 3x-ui controller operation is invalid")
@@ -696,7 +710,7 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, tx *sql.T
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }
 
 // RetryThreeXUIControllerMigrationCleanup retries only the old controller

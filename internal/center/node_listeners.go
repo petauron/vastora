@@ -74,7 +74,7 @@ func (s *Store) claimNodeListenerTask(ctx context.Context, tx *sql.Tx, nodeID st
 	var encoded []byte
 	var revision, attempt int64
 	err := tx.QueryRowContext(ctx, `SELECT desired_revision, desired_json, attempt FROM node_listener_states
-		WHERE node_id = ? AND desired_revision > applied_revision AND status IN ('pending', 'failed')`, nodeID).Scan(&revision, &encoded, &attempt)
+		WHERE node_id = ? AND desired_revision > applied_revision AND status = 'pending'`, nodeID).Scan(&revision, &encoded, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -86,7 +86,7 @@ func (s *Store) claimNodeListenerTask(ctx context.Context, tx *sql.Tx, nodeID st
 		return nil, errors.New("center: invalid stored node listener desired state")
 	}
 	now := s.now().UTC()
-	claimed, err := tx.ExecContext(ctx, `UPDATE node_listener_states SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE node_id = ? AND desired_revision = ? AND attempt = ? AND status IN ('pending', 'failed')`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), nodeID, revision, attempt)
+	claimed, err := tx.ExecContext(ctx, `UPDATE node_listener_states SET status = 'applying', attempt = attempt + 1, lease_expires_at = ?, updated_at = ? WHERE node_id = ? AND desired_revision = ? AND attempt = ? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), nodeID, revision, attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -372,16 +372,21 @@ func finishNodeListenerMigration(ctx context.Context, tx *sql.Tx) error {
 	return err
 }
 
-func (s *Store) completeNodeListenerState(ctx context.Context, agentID string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
-	taskError = strings.TrimSpace(taskError)
-	if len(taskError) > 1024 {
-		taskError = taskError[:1024]
-	}
+func (s *Store) completeNodeListenerState(ctx context.Context, commit projectionCommit, agentID string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	return s.projectNodeListenerState(ctx, tx, commit, agentID, revision, expectedAttempt, succeeded, taskError)
+}
+
+func (s *Store) projectNodeListenerState(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID string, revision, expectedAttempt int64, succeeded bool, taskError string) error {
+	taskError = strings.TrimSpace(taskError)
+	if len(taskError) > 1024 {
+		taskError = taskError[:1024]
+	}
+	var err error
 	var desired, applied, attempt int64
 	var status string
 	if err := tx.QueryRowContext(ctx, `SELECT desired_revision, applied_revision, status, attempt FROM node_listener_states WHERE node_id = ?`, agentID).Scan(&desired, &applied, &status, &attempt); err != nil {
@@ -431,7 +436,7 @@ func (s *Store) completeNodeListenerState(ctx context.Context, agentID string, r
 	if err := s.recordTaskEvent(ctx, tx, nodeListenerTaskID(agentID, revision), agentID, "node.listener.apply", revision, event, taskError); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(tx); err != nil {
 		return err
 	}
 	for _, target := range verificationTargets {

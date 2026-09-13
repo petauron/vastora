@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -263,20 +264,20 @@ func (engine *fakeThreeXUIContainerEngine) VolumeRemove(_ context.Context, name 
 
 func acceptThreeXUIPromotion(string, string) error { return nil }
 
-func TestOfflineThreeXUIRestoreCannotCreateFreshDatabase(t *testing.T) {
+func TestThreeXUIChangeRequiringExistingDatabaseCannotCreateFreshState(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), false, func(string) (string, error) {
 		return "", nil
 	}, acceptThreeXUIPromotion)
-	if err == nil || !strings.Contains(err.Error(), "cannot create a new 3x-ui database") {
-		t.Fatalf("offline restore error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "requires an existing 3x-ui database") {
+		t.Fatalf("missing database error = %v", err)
 	}
 	if engine.volumeExists || engine.startCalls != 0 {
-		t.Fatal("offline restore created fresh 3x-ui state")
+		t.Fatal("change requiring an existing database created fresh 3x-ui state")
 	}
 }
 
-func TestReplaceThreeXUIContainerRollsBackContainerAndDatabase(t *testing.T) {
+func TestReplaceThreeXUIContainerPreservesContainerAndDatabaseOnFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
 		return "", errors.New("configuration failed")
@@ -284,15 +285,29 @@ func TestReplaceThreeXUIContainerRollsBackContainerAndDatabase(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "configuration failed") {
 		t.Fatalf("replace error = %v", err)
 	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old" || !current.running {
+	current, resolveErr := engine.resolve(threeXUIBackupContainer)
+	if resolveErr != nil || current.id != "old" || current.running {
 		t.Fatalf("previous container was not restored: %#v, err=%v", current, resolveErr)
 	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
+	if _, err := engine.resolve(threeXUICandidateContainer); err != nil {
 		t.Fatalf("failed candidate was retained: %v", err)
 	}
-	if len(engine.persisted) == 0 || len(engine.restored) == 0 {
+	if len(engine.persisted) == 0 || len(engine.restored) != 0 {
 		t.Fatal("shared 3x-ui database was not durably snapshotted and restored before restarting the old container")
+	}
+}
+
+func TestReplaceThreeXUIContainerPreservesTokenWhenValidationFails(t *testing.T) {
+	engine := newFakeThreeXUIContainerEngine(t, true)
+	cause := errors.New("subscription configuration failed")
+	token, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
+		return "generated-test-token", cause
+	}, func(string, string) error { t.Fatal("promotion continued after validation failure"); return nil })
+	if token != "generated-test-token" || !errors.Is(err, cause) || !taskOutcomeIsUncertain(err) {
+		t.Fatalf("partial result lost: retained=%t error=%v", token != "", err)
+	}
+	if len(engine.restored) != 0 {
+		t.Fatal("failure restored database")
 	}
 }
 
@@ -335,18 +350,18 @@ func TestReplaceThreeXUIContainerKeepsRollbackUntilPostPromotionHealthPasses(t *
 		t.Fatalf("post-promotion health error = %v", err)
 	}
 	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old" || !current.running {
+	if resolveErr != nil || current.id != "candidate-id" || current.running {
 		t.Fatalf("post-promotion failure lost the last known-good service: %#v err=%v", current, resolveErr)
 	}
-	if _, err := engine.resolve("candidate-id"); !errdefs.IsNotFound(err) {
+	if _, err := engine.resolve("candidate-id"); err != nil {
 		t.Fatalf("failed promoted candidate survived rollback: %v", err)
 	}
-	if len(engine.restored) == 0 {
+	if len(engine.restored) != 0 {
 		t.Fatal("post-promotion failure did not restore the durable database snapshot")
 	}
 }
 
-func TestReplaceThreeXUIContainerRestoresRetainedVolumeAfterPostPromotionFailure(t *testing.T) {
+func TestReplaceThreeXUIContainerPreservesRetainedVolumeAfterPostPromotionFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.volumeExists = true
 	_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
@@ -355,15 +370,15 @@ func TestReplaceThreeXUIContainerRestoresRetainedVolumeAfterPostPromotionFailure
 	if err == nil || !strings.Contains(err.Error(), "promoted API unavailable") {
 		t.Fatalf("post-promotion verification error = %v", err)
 	}
-	if _, err := engine.resolve(threeXUIContainer); !errdefs.IsNotFound(err) {
+	if _, err := engine.resolve(threeXUIContainer); err != nil {
 		t.Fatalf("failed retained-data reinstall left a live container: %v", err)
 	}
-	if !engine.volumeExists || len(engine.restored) == 0 {
+	if !engine.volumeExists || len(engine.restored) != 0 || len(engine.persisted) == 0 {
 		t.Fatalf("retained database was not restored: volume=%t restored=%d", engine.volumeExists, len(engine.restored))
 	}
 }
 
-func TestReplaceThreeXUIContainerRemovesFreshVolumeAfterPostPromotionFailure(t *testing.T) {
+func TestReplaceThreeXUIContainerPreservesFreshVolumeAfterPostPromotionFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
 		return "new-token", nil
@@ -371,21 +386,21 @@ func TestReplaceThreeXUIContainerRemovesFreshVolumeAfterPostPromotionFailure(t *
 	if err == nil {
 		t.Fatal("fresh post-promotion verification unexpectedly succeeded")
 	}
-	if _, err := engine.resolve(threeXUIContainer); !errdefs.IsNotFound(err) {
+	if _, err := engine.resolve(threeXUIContainer); err != nil {
 		t.Fatalf("failed fresh install left a live container: %v", err)
 	}
-	if engine.volumeExists {
+	if !engine.volumeExists {
 		t.Fatal("failed fresh install retained its newly created database volume")
 	}
 }
 
-func TestReplaceThreeXUIContainerTreatsLostPromotionResponseAsCommitted(t *testing.T) {
+func TestReplaceThreeXUIContainerRetainsUnknownPromotion(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failRenameAfterName = threeXUIContainer
 	token, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-2"), true, func(string) (string, error) {
 		return "new-token", nil
 	}, acceptThreeXUIPromotion)
-	if err != nil || token != "new-token" {
+	if !taskOutcomeIsUncertain(err) || token != "new-token" {
 		t.Fatalf("lost promotion response was not reconciled: token=%q err=%v", token, err)
 	}
 	current, resolveErr := engine.resolve(threeXUIContainer)
@@ -395,7 +410,7 @@ func TestReplaceThreeXUIContainerTreatsLostPromotionResponseAsCommitted(t *testi
 	if len(engine.restored) != 0 {
 		t.Fatal("lost promotion response restored the old database after commit")
 	}
-	if _, resolveErr := engine.resolve(threeXUIBackupContainer); !errdefs.IsNotFound(resolveErr) {
+	if _, resolveErr := engine.resolve(threeXUIBackupContainer); resolveErr != nil {
 		t.Fatalf("old rollback container survived a reconciled commit: %v", resolveErr)
 	}
 }
@@ -447,19 +462,6 @@ func TestReplaceThreeXUIContainerRejectsAnotherApplicationWithoutMutation(t *tes
 	}
 }
 
-func TestRecoverInterruptedThreeXUIDeployRejectsUnownedCandidateWithoutMutation(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, true)
-	engine.containers["candidate-id"].labels = nil
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err == nil {
-		t.Fatal("unowned recovery marker was accepted")
-	}
-	candidate, err := engine.resolve(threeXUICandidateContainer)
-	if err != nil || !candidate.running || engine.startCalls != 0 {
-		t.Fatalf("unowned recovery marker was mutated: %#v err=%v starts=%d", candidate, err, engine.startCalls)
-	}
-}
-
 func TestReplaceThreeXUIContainerRejectsUnownedDatabaseWithoutMutation(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.volumeLabels = nil
@@ -477,39 +479,19 @@ func TestReplaceThreeXUIContainerRejectsUnownedDatabaseWithoutMutation(t *testin
 	}
 }
 
-func TestReplaceThreeXUIContainerStartFailureRestoresCurrent(t *testing.T) {
+func TestReplaceThreeXUIContainerStartFailurePreservesBackup(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failStartName = threeXUICandidateContainer
 	if _, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) { return "", nil }, acceptThreeXUIPromotion); err == nil || !strings.Contains(err.Error(), "start 3x-ui candidate") {
 		t.Fatalf("candidate start error = %v", err)
 	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old" || !current.running || len(engine.restored) == 0 {
+	current, resolveErr := engine.resolve(threeXUIBackupContainer)
+	if resolveErr != nil || current.id != "old" || current.running || len(engine.restored) != 0 {
 		t.Fatalf("start failure did not restore current container and database: %#v, err=%v", current, resolveErr)
 	}
 }
 
-func TestRecoverInterruptedThreeXUIDeployRestoresDurableBackup(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("old", threeXUIBackupContainer, false)
-	engine.add("candidate-id", threeXUICandidateContainer, true)
-	engine.persisted = []byte("durable-snapshot-marker")
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old" || !current.running {
-		t.Fatalf("durable backup was not restored: %#v, err=%v", current, resolveErr)
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("interrupted candidate was retained: %v", err)
-	}
-	if len(engine.restored) == 0 {
-		t.Fatal("durable database snapshot was not restored")
-	}
-}
-
-func TestReplaceThreeXUIContainerRestoresRetainedVolumeWithoutCurrentContainer(t *testing.T) {
+func TestReplaceThreeXUIContainerPreservesRetainedVolumeWithoutCurrentContainer(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.volumeExists = true
 	_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
@@ -518,27 +500,11 @@ func TestReplaceThreeXUIContainerRestoresRetainedVolumeWithoutCurrentContainer(t
 	if err == nil || !strings.Contains(err.Error(), "configuration failed") {
 		t.Fatalf("replace error = %v", err)
 	}
-	if len(engine.persisted) == 0 || len(engine.restored) == 0 {
+	if len(engine.persisted) == 0 || len(engine.restored) != 0 {
 		t.Fatal("retained database volume was not snapshotted and restored")
 	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
+	if _, err := engine.resolve(threeXUICandidateContainer); err != nil {
 		t.Fatalf("failed retained-data candidate was not removed: %v", err)
-	}
-}
-
-func TestRecoverInterruptedRetainedVolumeCandidateBeforeRemoval(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.volumeExists = true
-	engine.add("candidate-id", threeXUICandidateContainer, true)
-	engine.persisted = []byte("durable-snapshot-marker")
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if len(engine.restored) == 0 {
-		t.Fatal("interrupted retained database volume was not restored")
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("restored retained-data candidate was not removed: %v", err)
 	}
 }
 
@@ -548,7 +514,7 @@ func TestReplaceThreeXUIContainerDoesNotHideCommittedBackupCleanupFailure(t *tes
 	token, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
 		return "new-token", nil
 	}, acceptThreeXUIPromotion)
-	if err != nil || token != "new-token" {
+	if !taskOutcomeIsUncertain(err) || token != "new-token" {
 		t.Fatalf("committed deployment was reported as failed: token=%q err=%v", token, err)
 	}
 	current, resolveErr := engine.resolve(threeXUIContainer)
@@ -560,30 +526,52 @@ func TestReplaceThreeXUIContainerDoesNotHideCommittedBackupCleanupFailure(t *tes
 	}
 }
 
-func TestThreeXUIMaintenanceCleansCommitAndRestoresInterruptedRollback(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("current-id", threeXUIContainer, false)
-	engine.add("backup-id", threeXUICleanupContainer, false)
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
+func TestThreeXUIInterruptedDeploymentRequiresReviewWithoutMutation(t *testing.T) {
+	for _, name := range []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUICleanupContainer} {
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeThreeXUIContainerEngine(t, true)
+			engine.add("interrupted", name, true)
+			_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("new"), true, func(string) (string, error) {
+				t.Fatal("validation started despite unresolved replacement")
+				return "", nil
+			}, acceptThreeXUIPromotion)
+			if !taskOutcomeIsUncertain(err) || engine.startCalls != 0 || len(engine.restored) != 0 || len(engine.removedVolumes) != 0 {
+				t.Fatalf("interrupted replacement mutated state: %v", err)
+			}
+			for _, id := range []string{"old", "interrupted"} {
+				value, err := engine.resolve(id)
+				if err != nil || !value.running {
+					t.Fatalf("retained container changed: %s: %v", id, err)
+				}
+			}
+		})
 	}
-	if _, err := engine.resolve(threeXUICleanupContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("committed rollback survived maintenance: %v", err)
-	}
-	current, err := engine.resolve(threeXUIContainer)
-	if err != nil || current.running {
-		t.Fatalf("maintenance changed current service state: %#v err=%v", current, err)
-	}
+}
 
-	rollbackOnly := newFakeThreeXUIContainerEngine(t, false)
-	rollbackOnly.add("backup-id", threeXUIBackupContainer, false)
-	rollbackOnly.persisted = []byte("durable-snapshot-marker")
-	if err := maintainThreeXUIContainers(context.Background(), rollbackOnly); err != nil {
-		t.Fatal(err)
-	}
-	restored, err := rollbackOnly.resolve(threeXUIContainer)
-	if err != nil || !restored.running || len(rollbackOnly.restored) == 0 {
-		t.Fatalf("interrupted rollback was not restored by maintenance: %#v err=%v", restored, err)
+func TestThreeXUIKeepDataUninstallStopsWithoutRestoring(t *testing.T) {
+	for _, failStop := range []bool{false, true} {
+		t.Run(strconv.FormatBool(failStop), func(t *testing.T) {
+			engine := newFakeThreeXUIContainerEngine(t, true)
+			engine.add("candidate-id", threeXUICandidateContainer, true)
+			engine.add("backup-id", threeXUIBackupContainer, true)
+			engine.persisted = []byte("retained-backup")
+			if failStop {
+				engine.failStopAfter = threeXUICandidateContainer
+			}
+			err := prepareThreeXUIKeepDataUninstall(context.Background(), engine)
+			if (err != nil) != failStop {
+				t.Fatalf("stop error=%v", err)
+			}
+			if engine.startCalls != 0 || len(engine.restored) != 0 || !engine.volumeExists || string(engine.persisted) != "retained-backup" {
+				t.Fatal("keep-data preparation changed retained state")
+			}
+			for _, id := range []string{"old", "backup-id"} {
+				value, err := engine.resolve(id)
+				if err != nil || value.running != failStop {
+					t.Fatalf("unexpected state after stop failure: %s: %v", id, err)
+				}
+			}
+		})
 	}
 }
 
@@ -619,48 +607,6 @@ func TestThreeXUIKeepDataUninstallNeverStartsStoppedCurrent(t *testing.T) {
 	}
 }
 
-func TestThreeXUIKeepDataUninstallRemovesRecoveryMarkersBeforeStoppingCurrent(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, true)
-	engine.add("candidate-id", threeXUICandidateContainer, false)
-	engine.add("rollback-id", threeXUIBackupContainer, false)
-
-	// Model an Agent exit after the keep-data preparation commits but before
-	// the outer uninstall removes the canonical container.
-	if err := prepareThreeXUIKeepDataUninstall(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, err := engine.resolve(threeXUIContainer)
-	if err != nil || current.running {
-		t.Fatalf("keep-data preparation did not leave only a stopped current: %#v err=%v", current, err)
-	}
-	for _, marker := range []string{threeXUICandidateContainer, threeXUIBackupContainer} {
-		if _, err := engine.resolve(marker); !errdefs.IsNotFound(err) {
-			t.Fatalf("recovery marker %q survived before the authoritative stop: %v", marker, err)
-		}
-	}
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if engine.startCalls != 0 || current.running {
-		t.Fatalf("maintenance reversed a committed keep-data stop: starts=%d current=%#v", engine.startCalls, current)
-	}
-}
-
-func TestThreeXUIKeepDataUninstallDoesNotStopCurrentWhenMarkerCleanupFails(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, true)
-	engine.add("candidate-id", threeXUICandidateContainer, false)
-	engine.failRemoveName = threeXUICandidateContainer
-
-	err := prepareThreeXUIKeepDataUninstall(context.Background(), engine)
-	if err == nil || !strings.Contains(err.Error(), "remove stale 3x-ui candidate") {
-		t.Fatalf("candidate cleanup error = %v", err)
-	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || !current.running {
-		t.Fatalf("failed marker cleanup stopped the live service: %#v err=%v", current, resolveErr)
-	}
-}
-
 func TestThreeXUIDeleteDataUninstallIgnoresBrokenRollbackState(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.add("candidate-id", threeXUICandidateContainer, true)
@@ -683,124 +629,6 @@ func TestThreeXUIDeleteDataUninstallIgnoresBrokenRollbackState(t *testing.T) {
 	}
 }
 
-func TestThreeXUIKeepDataUninstallRecoversRollbackBeforeRemovingMarkers(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, true)
-	engine.add("rollback-id", threeXUIBackupContainer, false)
-	engine.persisted = []byte("durable-snapshot-marker")
-	engine.volumeExists = true
-	if err := uninstallDockerApp(context.Background(), engine, threeXUIKey, threeXUITestApplicationID, false); err != nil {
-		t.Fatal(err)
-	}
-	if len(engine.restored) == 0 {
-		t.Fatal("keep-data uninstall discarded the only rollback snapshot")
-	}
-	for _, name := range []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUIContainer} {
-		if _, err := engine.resolve(name); !errdefs.IsNotFound(err) {
-			t.Fatalf("transactional container %q survived recovered uninstall: %v", name, err)
-		}
-	}
-	if !engine.volumeExists {
-		t.Fatal("keep-data uninstall removed the recovered database volume")
-	}
-}
-
-func TestThreeXUIKeepDataUninstallNormalizesRollbackBeforeCommittedStop(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, true)
-	engine.add("rollback-id", threeXUIBackupContainer, false)
-	engine.persisted = []byte("durable-snapshot-marker")
-	engine.volumeExists = true
-
-	if err := prepareThreeXUIKeepDataUninstall(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, err := engine.resolve(threeXUIContainer)
-	if err != nil || current.running {
-		t.Fatalf("rollback was not normalized to a stopped canonical container: %#v err=%v", current, err)
-	}
-	for _, marker := range []string{threeXUICandidateContainer, threeXUIBackupContainer} {
-		if _, err := engine.resolve(marker); !errdefs.IsNotFound(err) {
-			t.Fatalf("rollback marker %q survived committed stop: %v", marker, err)
-		}
-	}
-	startsAfterPrepare := engine.startCalls
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if engine.startCalls != startsAfterPrepare || current.running {
-		t.Fatalf("maintenance reversed normalized uninstall stop: starts=%d before=%d current=%#v", engine.startCalls, startsAfterPrepare, current)
-	}
-}
-
-func TestThreeXUIKeepDataUninstallRemovesRestoredCandidateBeforeReturning(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, true)
-	engine.setVolumeState("candidate-id", "retained")
-	engine.persisted = []byte("durable-snapshot-marker")
-	engine.volumeExists = true
-
-	if err := prepareThreeXUIKeepDataUninstall(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("restored candidate marker survived committed preparation: %v", err)
-	}
-	startsAfterPrepare := engine.startCalls
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if engine.startCalls != startsAfterPrepare {
-		t.Fatalf("maintenance started a service after candidate-only uninstall: starts=%d before=%d", engine.startCalls, startsAfterPrepare)
-	}
-	if !engine.volumeExists {
-		t.Fatal("candidate-only uninstall removed retained data")
-	}
-}
-
-func TestRecoverInterruptedFreshCandidateRemovesEmptyVolume(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, false)
-	engine.setVolumeState("candidate-id", "fresh")
-	engine.volumeExists = true
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("fresh interrupted candidate was retained: %v", err)
-	}
-	if engine.volumeExists {
-		t.Fatal("empty database volume from interrupted first install was retained")
-	}
-}
-
-func TestRecoverInterruptedFreshCandidateRetainsMarkerUntilVolumeRemovalSucceeds(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, false)
-	engine.setVolumeState("candidate-id", "fresh")
-	engine.volumeExists = true
-	engine.failVolumeRemove = true
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err == nil || !strings.Contains(err.Error(), "remove interrupted fresh") {
-		t.Fatalf("fresh volume removal error = %v", err)
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); err != nil {
-		t.Fatalf("failed volume cleanup lost its retry marker: %v", err)
-	}
-	if !engine.volumeExists {
-		t.Fatal("failed volume cleanup reported the volume as removed")
-	}
-	engine.failVolumeRemove = false
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("successful maintenance retained the cleanup marker: %v", err)
-	}
-	if engine.volumeExists {
-		t.Fatal("successful maintenance retained the interrupted fresh volume")
-	}
-}
-
 func TestThreeXUIKeepDataUninstallPreservesStartedFreshCandidateVolume(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.add("candidate-id", threeXUICandidateContainer, true)
@@ -817,49 +645,13 @@ func TestThreeXUIKeepDataUninstallPreservesStartedFreshCandidateVolume(t *testin
 	}
 }
 
-func TestThreeXUIKeepDataUninstallRenamesSnapshotlessCandidateBeforeStopping(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, true)
-	engine.setVolumeState("candidate-id", "fresh")
-	engine.volumeExists = true
-	engine.failRenameName = threeXUIContainer
-
-	err := prepareThreeXUIKeepDataUninstall(context.Background(), engine)
-	if err == nil || !strings.Contains(err.Error(), "retain 3x-ui candidate") {
-		t.Fatalf("candidate rename error = %v", err)
-	}
-	candidate, resolveErr := engine.resolve(threeXUICandidateContainer)
-	if resolveErr != nil || !candidate.running {
-		t.Fatalf("failed canonical rename stopped the only retained candidate: %#v err=%v", candidate, resolveErr)
-	}
-	if !engine.volumeExists {
-		t.Fatal("failed canonical rename removed the only retained database")
-	}
-}
-
-func TestRecoverInterruptedRetainedCandidateKeepsVolumeWithoutSnapshot(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUICandidateContainer, false)
-	engine.setVolumeState("candidate-id", "retained")
-	engine.volumeExists = true
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("retained interrupted candidate was retained: %v", err)
-	}
-	if !engine.volumeExists {
-		t.Fatal("retained database volume was removed without a durable snapshot")
-	}
-}
-
 func TestReplaceThreeXUIContainerNeverRestoresWhileCandidateMayBeRunning(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failStopName = threeXUICandidateContainer
 	_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
 		return "", errors.New("configuration failed")
 	}, acceptThreeXUIPromotion)
-	if err == nil || !strings.Contains(err.Error(), "stop failed 3x-ui candidate") {
+	if err == nil || !strings.Contains(err.Error(), "configuration failed") {
 		t.Fatalf("rollback stop error = %v", err)
 	}
 	if len(engine.restored) != 0 {
@@ -873,129 +665,7 @@ func TestReplaceThreeXUIContainerNeverRestoresWhileCandidateMayBeRunning(t *test
 	}
 }
 
-func TestRecoverInterruptedThreeXUIDeployRestartsStoppedCurrentBeforeSnapshot(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("old", threeXUIContainer, false)
-	engine.add("candidate-id", threeXUICandidateContainer, false)
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old" || !current.running {
-		t.Fatalf("pre-snapshot crash did not restart the previous container: %#v, err=%v", current, resolveErr)
-	}
-	if _, err := engine.resolve(threeXUICandidateContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("interrupted candidate was retained: %v", err)
-	}
-}
-
-func TestRecoverInterruptedThreeXUIDeployNeverRollsBackOrRestartsPromotedCurrent(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("promoted-id", threeXUIContainer, false)
-	engine.add("old-id", threeXUICleanupContainer, false)
-	engine.persisted = []byte("old-durable-snapshot")
-	if err := recoverInterruptedThreeXUIDeploy(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "promoted-id" || current.running {
-		t.Fatalf("committed promoted container state was not retained: %#v, err=%v", current, resolveErr)
-	}
-	if _, err := engine.resolve(threeXUICleanupContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("committed rollback container was retained: %v", err)
-	}
-	if len(engine.restored) != 0 {
-		t.Fatal("old database snapshot overwrote a committed deployment")
-	}
-}
-
-func TestRecoverInterruptedThreeXUIDeployFinishesLegacyLostRenameRollback(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUIContainer, false)
-	engine.containers["candidate-id"].labels = threeXUITestLabels("new-deployment")
-	engine.add("old-id", threeXUIBackupContainer, true)
-	engine.persisted = []byte("old-durable-snapshot")
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.id != "old-id" || !current.running {
-		t.Fatalf("legacy mixed rollback was not completed: %#v err=%v", current, resolveErr)
-	}
-	if len(engine.restored) == 0 {
-		t.Fatal("legacy mixed rollback did not restore its durable database snapshot")
-	}
-	if _, err := engine.resolve("candidate-id"); !errdefs.IsNotFound(err) {
-		t.Fatalf("legacy promoted candidate survived rollback: %v", err)
-	}
-}
-
-func TestRecoverInterruptedLegacyRollbackRemainsRecoverableAfterBackupStopFailure(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUIContainer, false)
-	engine.add("old-id", threeXUIBackupContainer, true)
-	engine.persisted = []byte("old-durable-snapshot")
-	engine.failStopName = threeXUIBackupContainer
-	if err := maintainThreeXUIContainers(context.Background(), engine); err == nil || !strings.Contains(err.Error(), "stop 3x-ui rollback") {
-		t.Fatalf("rollback stop error = %v", err)
-	}
-	if _, err := engine.resolve(threeXUIContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("ambiguous current name survived entry into durable rollback: %v", err)
-	}
-	if _, err := engine.resolve(threeXUIBackupContainer); err != nil {
-		t.Fatalf("durable rollback marker was lost after stop failure: %v", err)
-	}
-	engine.failStopName = ""
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, err := engine.resolve(threeXUIContainer)
-	if err != nil || current.id != "old-id" || !current.running || len(engine.restored) == 0 {
-		t.Fatalf("durable rollback did not recover on retry: %#v err=%v", current, err)
-	}
-}
-
-func TestRecoverInterruptedRollbackRetainsMarkerUntilRestartSucceeds(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUIContainer, false)
-	engine.add("old-id", threeXUIBackupContainer, false)
-	engine.persisted = []byte("old-durable-snapshot")
-	engine.failStartName = threeXUIBackupContainer
-	if err := maintainThreeXUIContainers(context.Background(), engine); err == nil || !strings.Contains(err.Error(), "restart restored") {
-		t.Fatalf("rollback restart error = %v", err)
-	}
-	if _, err := engine.resolve(threeXUIBackupContainer); err != nil {
-		t.Fatalf("failed restart lost its durable rollback marker: %v", err)
-	}
-	if _, err := engine.resolve(threeXUIContainer); !errdefs.IsNotFound(err) {
-		t.Fatalf("failed restart exposed a stopped canonical container: %v", err)
-	}
-	engine.failStartName = ""
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, err := engine.resolve(threeXUIContainer)
-	if err != nil || current.id != "old-id" || !current.running {
-		t.Fatalf("rollback did not recover after restart became available: %#v err=%v", current, err)
-	}
-}
-
-func TestRecoverInterruptedRollbackAcceptsLostFinalRenameResponse(t *testing.T) {
-	engine := newFakeThreeXUIContainerEngine(t, false)
-	engine.add("candidate-id", threeXUIContainer, false)
-	engine.add("old-id", threeXUIBackupContainer, false)
-	engine.persisted = []byte("old-durable-snapshot")
-	engine.failRenameAfterName = threeXUIContainer
-	if err := maintainThreeXUIContainers(context.Background(), engine); err != nil {
-		t.Fatal(err)
-	}
-	current, err := engine.resolve(threeXUIContainer)
-	if err != nil || current.id != "old-id" || !current.running {
-		t.Fatalf("lost rename response was not reconciled: %#v err=%v", current, err)
-	}
-}
-
-func TestReplaceThreeXUIContainerRecreatesImplicitEmptyVolume(t *testing.T) {
+func TestReplaceThreeXUIContainerPreservesUnexpectedEmptyVolume(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, false)
 	engine.volumeExists = true
 	engine.volumeLabels = applicationResourceLabels(threeXUIKey, applicationVolumeComponent(threeXUIDatabaseVolume), threeXUITestApplicationID, "")
@@ -1003,14 +673,14 @@ func TestReplaceThreeXUIContainerRecreatesImplicitEmptyVolume(t *testing.T) {
 	token, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
 		return "token", nil
 	}, acceptThreeXUIPromotion)
-	if err != nil || token != "token" {
+	if !errors.Is(err, errThreeXUIVolumeEmpty) || token != "" {
 		t.Fatalf("replace result token=%q err=%v", token, err)
 	}
-	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || current.labels[threeXUIVolumeStateLabel] != "fresh" {
+	current, resolveErr := engine.resolve(threeXUICandidateContainer)
+	if resolveErr != nil || current.labels[threeXUIVolumeStateLabel] != "retained" {
 		t.Fatalf("empty implicit volume was not recreated as fresh: %#v, err=%v", current, resolveErr)
 	}
-	if len(engine.removedVolumes) == 0 || engine.removedVolumes[0] != threeXUIDatabaseVolume {
+	if len(engine.removedVolumes) != 0 || !engine.volumeExists {
 		t.Fatalf("empty implicit database volume was not removed: %#v", engine.removedVolumes)
 	}
 }
@@ -1031,7 +701,7 @@ func TestReplaceThreeXUIContainerNeverDeletesPartiallyPopulatedRetainedVolume(t 
 	}
 }
 
-func TestReplaceThreeXUIContainerRestartsCurrentAfterLostStopResponse(t *testing.T) {
+func TestReplaceThreeXUIContainerNeverRestartsAfterLostStopResponse(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
 	engine.failStopAfter = threeXUIContainer
 	_, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-1"), true, func(string) (string, error) {
@@ -1041,7 +711,7 @@ func TestReplaceThreeXUIContainerRestartsCurrentAfterLostStopResponse(t *testing
 		t.Fatalf("lost stop response error = %v", err)
 	}
 	current, resolveErr := engine.resolve(threeXUIContainer)
-	if resolveErr != nil || !current.running {
+	if resolveErr != nil || current.running {
 		t.Fatalf("current service remained stopped after a lost Stop response: %#v err=%v", current, resolveErr)
 	}
 }

@@ -202,7 +202,7 @@ func (s *Store) queueRealityGuardHardening(ctx context.Context, serviceID string
 	return s.ApplicationCommand(ctx, id)
 }
 
-func (s *Store) completeRealityHardenCommand(ctx context.Context, tx *sql.Tx, taskID, agentID, applicationID, gatewayID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeRealityHardenCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID, applicationID, gatewayID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input RealityCommandTask
 	var envelope ApplicationTaskResult
 	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "harden" || input.ServiceID == "" || input.GuardRevision < 1 {
@@ -259,7 +259,7 @@ func (s *Store) completeRealityHardenCommand(ctx context.Context, tx *sql.Tx, ta
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", input.GuardRevision, event, message); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil || !succeeded {
+	if err := commit(tx); err != nil || !succeeded {
 		return err
 	}
 	if input.ConnectHostname == "" {

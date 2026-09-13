@@ -47,7 +47,7 @@ func (c Client) applyNodeProtocols(ctx context.Context, store *Store, task nodep
 			}
 			select {
 			case <-verifyCtx.Done():
-				return result, deferTaskUntilReconciled(errors.New("agent: node protocols have not converged"))
+				return result, uncertainTaskOutcome(errors.New("agent: node protocols have not converged"))
 			case <-ticker.C:
 			}
 		}
@@ -68,7 +68,7 @@ func (c Client) applyNodeProtocols(ctx context.Context, store *Store, task nodep
 	if err != nil {
 		// Each write uses stable tags and preserves clients. Reconcile a lost
 		// response instead of reporting a false success or creating duplicates.
-		return result, deferTaskUntilReconciled(errors.New("agent: node protocol update needs reconciliation"))
+		return result, uncertainTaskOutcome(errors.New("agent: node protocol update needs reconciliation"))
 	}
 	return result, nil
 }

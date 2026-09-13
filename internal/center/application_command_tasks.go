@@ -292,16 +292,20 @@ func (s *Store) failUnclaimableApplicationCommand(ctx context.Context, tx *sql.T
 	return s.recordTaskEvent(ctx, tx, commandID, agentID, "application.command", revision, "failed", message)
 }
 
-func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool) error {
-	taskError = strings.TrimSpace(taskError)
-	if len(taskError) > 1024 {
-		taskError = taskError[:1024]
-	}
+func (s *Store) completeApplicationCommand(ctx context.Context, commit projectionCommit, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	return s.projectApplicationCommand(ctx, tx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
+}
+
+func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commit projectionCommit, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, rawResult json.RawMessage, reconciliationRequired bool) error {
+	taskError = strings.TrimSpace(taskError)
+	if len(taskError) > 1024 {
+		taskError = taskError[:1024]
+	}
 	var applicationID, gatewayID, kind, currentState, appKey string
 	var inputJSON []byte
 	var attempt int64
@@ -337,48 +341,48 @@ func (s *Store) completeApplicationCommand(ctx context.Context, agentID, taskID 
 		if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, "failed", taskError); err != nil {
 			return err
 		}
-		return tx.Commit()
+		return commit(tx)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required = 0, reconciliation_requested = 0 WHERE id = ?`, taskID); err != nil {
 		return err
 	}
 	if kind == subscriptionCommandKind {
-		return s.completeSubscriptionCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeSubscriptionCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == pulse.EnrollmentKind {
-		return s.completePulseEnrollment(ctx, tx, taskID, agentID, inputJSON, succeeded, rawResult)
+		return s.completePulseEnrollment(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, rawResult)
 	}
 	if kind == nodeprotocol.CommandKind {
-		return s.completeNodeProtocolCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeNodeProtocolCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == clientCommandKind {
-		return s.completeThreeXUIClientCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeThreeXUIClientCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == nodeCommandKind {
-		return s.completeThreeXUINodeCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeThreeXUINodeCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == controllerCommandKind {
-		return s.completeThreeXUIControllerCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeThreeXUIControllerCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == realityVerifyCommandKind {
-		return s.completeRealityVerifyCommand(ctx, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeRealityVerifyCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == realityHardenCommandKind {
-		return s.completeRealityHardenCommand(ctx, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeRealityHardenCommand(ctx, commit, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == realityRenameCommandKind {
-		return s.completeRealityRenameCommand(ctx, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeRealityRenameCommand(ctx, commit, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == realityRemoveCommandKind {
-		return s.completeRealityRemoveCommand(ctx, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
+		return s.completeRealityRemoveCommand(ctx, commit, tx, taskID, agentID, applicationID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind != realityCommandKind {
 		return errors.New("center: stored application operation kind is invalid")
 	}
-	return s.completeRealityCreateCommand(ctx, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
+	return s.completeRealityCreateCommand(ctx, commit, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
 }
 
-func (s *Store) completeRealityVerifyCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeRealityVerifyCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input RealityCommandTask
 	var envelope ApplicationTaskResult
 	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "verify" {
@@ -413,7 +417,7 @@ func (s *Store) completeRealityVerifyCommand(ctx context.Context, tx *sql.Tx, ta
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }
 
 func (s *Store) resumeSucceededRealityPublications(ctx context.Context) error {
@@ -465,7 +469,7 @@ func (s *Store) resumeSucceededRealityPublications(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) completeRealityRenameCommand(ctx context.Context, tx *sql.Tx, taskID, agentID, applicationID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeRealityRenameCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID, applicationID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input RealityCommandTask
 	if json.Unmarshal(inputJSON, &input) != nil || input.Action != "rename" || input.InboundID < 1 || !validRegionPrefixedRealityName(input.RegionCode, input.DisplayName) {
 		return errors.New("center: stored REALITY rename operation is invalid")
@@ -509,7 +513,7 @@ func (s *Store) completeRealityRenameCommand(ctx context.Context, tx *sql.Tx, ta
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }
 
 func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gatewayID string, input RealityCommandTask, sniHostname string) error {
@@ -551,7 +555,7 @@ func (s *Store) ensureRealityPublication(ctx context.Context, serviceID, gateway
 	return createErr
 }
 
-func (s *Store) completeSubscriptionCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeSubscriptionCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input SubscriptionCommandTask
 	if json.Unmarshal(inputJSON, &input) != nil || input.PublicationID == "" {
 		return errors.New("center: stored subscription operation is invalid")
@@ -584,14 +588,7 @@ func (s *Store) completeSubscriptionCommand(ctx context.Context, tx *sql.Tx, tas
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, event, message); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	if succeeded {
-		return nil
-	}
-	if err := s.StopPublication(context.WithoutCancel(ctx), input.PublicationID); err != nil && !strings.Contains(err.Error(), "already stopped") {
-		return errors.Join(errors.New(taskError), err)
-	}
-	return nil
+	// Preserve the observed publication on failure. Disabling it is a separate
+	// operator-authorized change, not an automatic compensation for this task.
+	return commit(tx)
 }

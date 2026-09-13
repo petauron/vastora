@@ -128,7 +128,7 @@ func (s *Store) checkClientLandingIdentity(ctx context.Context, tx *sql.Tx, reco
 	return nil
 }
 
-func (s *Store) completeLandingClientCommand(ctx context.Context, tx *sql.Tx, taskID, nodeID string, input ThreeXUIClientCommandTask, succeeded bool, raw json.RawMessage) error {
+func (s *Store) completeLandingClientCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, nodeID string, input ThreeXUIClientCommandTask, succeeded bool, raw json.RawMessage) error {
 	record, err := readLandingGrant(ctx, tx, input.GrantID)
 	if err != nil {
 		return err
@@ -223,7 +223,7 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, tx *sql.Tx, ta
 			return err
 		}
 	}
-	return tx.Commit()
+	return commit(tx)
 }
 
 func (s *Store) queueClientLandingRoutes(ctx context.Context, tx *sql.Tx, applicationID string) error {

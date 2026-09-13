@@ -11,7 +11,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/petauron/vastora/internal/catalog"
@@ -273,7 +275,35 @@ func TestSystemdKomariRemoveRetriesDaemonReload(t *testing.T) {
 	}
 }
 
-func TestSystemdKomariApplyRollsBackFiles(t *testing.T) {
+func TestHostBackupsRespectCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "configuration")
+	if err := os.WriteFile(path, []byte("existing"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := captureHostFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := preserveHostFiles(ctx, []hostFileSnapshot{snapshot}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("backup after cancel: %v", err)
+	}
+	if _, err := os.Stat(path + ".previous"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("cancelled backup wrote a file")
+	}
+	if err := os.WriteFile(path+".previous", []byte("backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := discardHostFileBackups(ctx, []hostFileSnapshot{snapshot}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cleanup after cancel: %v", err)
+	}
+	if raw, err := os.ReadFile(path + ".previous"); err != nil || string(raw) != "backup" {
+		t.Fatal("cancelled cleanup discarded backup")
+	}
+}
+
+func TestSystemdKomariApplyPreservesBackupWithoutRollback(t *testing.T) {
 	t.Parallel()
 	binary := testArtifactELF(t, "amd64")
 	digest := sha256.Sum256(binary)
@@ -303,9 +333,9 @@ func TestSystemdKomariApplyRollsBackFiles(t *testing.T) {
 		t.Fatalf("expected service restart failure, got %v", err)
 	}
 	for path, want := range old {
-		got, err := os.ReadFile(manager.path(path))
+		got, err := os.ReadFile(manager.path(path) + ".previous")
 		if err != nil || !reflect.DeepEqual(got, want) {
-			t.Fatalf("%s was not restored: %q, err=%v", path, got, err)
+			t.Fatalf("%s backup was not retained: err=%v", path, err)
 		}
 	}
 }
@@ -382,6 +412,41 @@ func TestApplicationExecutorUsesNativeKomariWithoutDocker(t *testing.T) {
 	}
 }
 
+func TestApplicationExecutorKomariNeverMutatesLegacyDocker(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"install", "uninstall"} {
+		for _, hostFails := range []bool{false, true} {
+			t.Run(operation+"/host-fails="+strconv.FormatBool(hostFails), func(t *testing.T) {
+				var requests atomic.Int64
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					requests.Add(1)
+					http.Error(w, "Docker must not be used", http.StatusInternalServerError)
+				}))
+				defer server.Close()
+				host := &fakeHostApplicationManager{}
+				if hostFails {
+					host.err = errors.New("host operation failed")
+				}
+				task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
+				task.Operation = operation
+				_, err := (ApplicationExecutor{Host: host, DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}).Deploy(context.Background(), task)
+				if !errors.Is(err, host.err) {
+					t.Fatalf("error = %v, want %v", err, host.err)
+				}
+				if requests.Load() != 0 {
+					t.Fatalf("performed %d obsolete Docker requests", requests.Load())
+				}
+				if operation == "install" && (host.applied != 1 || host.removed != 0) {
+					t.Fatalf("install performed compensation: %+v", host)
+				}
+				if operation == "uninstall" && (host.removed != 1 || host.applied != 0) {
+					t.Fatalf("unexpected uninstall operations: %+v", host)
+				}
+			})
+		}
+	}
+}
+
 func komariTestTask(downloadURL, digest string) DeploymentTask {
 	return DeploymentTask{
 		ID: "komari-install", ApplicationID: "komari-application", AppKey: komariKey, Operation: "install",
@@ -410,43 +475,17 @@ func (handler *testHTTPHandler) ServeHTTP(writer http.ResponseWriter, _ *http.Re
 	_, _ = writer.Write(handler.content)
 }
 
-type fakeHostApplicationManager struct{ applied, restored, removed int }
+type fakeHostApplicationManager struct {
+	applied, removed int
+	err              error
+}
 
 func (manager *fakeHostApplicationManager) ApplyKomari(context.Context, DeploymentTask) error {
 	manager.applied++
-	return nil
+	return manager.err
 }
 
 func (manager *fakeHostApplicationManager) RemoveKomari(context.Context) error {
 	manager.removed++
-	return nil
-}
-
-func (manager *fakeHostApplicationManager) RestoreKomari(context.Context, DeploymentTask) error {
-	manager.restored++
-	return nil
-}
-
-func TestApplicationRestoreContinuesPastLegacyState(t *testing.T) {
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	ctx := context.Background()
-	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: "legacy", AppKey: "aaa/legacy", Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}); err != nil {
-		t.Fatal(err)
-	}
-	task := komariTestTask("https://example.invalid/komari-agent", strings.Repeat("0", 64))
-	if _, err := store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Manifest: task.Manifest, Config: task.Config, Secrets: task.Secrets}); err != nil {
-		t.Fatal(err)
-	}
-	host := &fakeHostApplicationManager{}
-	err = (ApplicationExecutor{Host: host}).Restore(ctx, store)
-	if err == nil || !strings.Contains(err.Error(), "legacy aaa/legacy") {
-		t.Fatalf("restore error = %v", err)
-	}
-	if host.restored != 1 {
-		t.Fatalf("later valid installation restore calls = %d, want 1", host.restored)
-	}
+	return manager.err
 }

@@ -55,7 +55,4 @@ func TestLandingServerTaskIdentityAndNativeExecution(t *testing.T) {
 	if provisioner.applied != 1 || provisioner.removed != 1 {
 		t.Fatal("unexpected host operations")
 	}
-	if !taskReconcilesCompleteDesiredState(task.Kind) {
-		t.Fatal("interrupted landing tasks cannot resume")
-	}
 }

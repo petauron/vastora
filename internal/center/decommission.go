@@ -170,9 +170,6 @@ func (s *Store) waitForDecommissionInfrastructure(ctx context.Context) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if err := s.retryPublicationCleanups(ctx); err != nil {
-			return fmt.Errorf("center: remove application DNS and tunnel records: %w", err)
-		}
 		var commandFailure string
 		err := s.db.QueryRowContext(ctx, `SELECT error FROM application_commands WHERE reconciliation_required = 1 LIMIT 1`).Scan(&commandFailure)
 		if err == nil {
@@ -187,6 +184,9 @@ func (s *Store) waitForDecommissionInfrastructure(ctx context.Context) error {
 		var publicationCleanup, gatewayPending, tunnelPending, commandPending int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications WHERE status = 'stopped' AND cleanup_pending = 1`).Scan(&publicationCleanup); err != nil {
 			return fmt.Errorf("center: inspect publication cleanup: %w", err)
+		}
+		if publicationCleanup != 0 {
+			return errors.New("center: publication cleanup is incomplete; explicit review is required")
 		}
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM gateway_states WHERE status IN ('pending', 'applying')`).Scan(&gatewayPending); err != nil {
 			return fmt.Errorf("center: inspect gateway cleanup: %w", err)

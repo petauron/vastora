@@ -25,6 +25,13 @@ func (s *Store) RetryTaskReconciliation(ctx context.Context, taskID string) (Tas
 		return TaskReconciliationRetry{}, err
 	}
 	defer tx.Rollback()
+	var authorizedExecution bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE task_id=?)`, taskID).Scan(&authorizedExecution); err != nil {
+		return TaskReconciliationRetry{}, err
+	}
+	if authorizedExecution {
+		return TaskReconciliationRetry{}, errors.New("center: verify the execution and record an explicit operator decision")
+	}
 
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if strings.HasPrefix(taskID, "application-command-") {

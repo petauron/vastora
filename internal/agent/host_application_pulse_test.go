@@ -227,9 +227,6 @@ func TestPulseNativeLifecyclePreservesIdentity(t *testing.T) {
 	if bytes.Contains(environment, []byte("PULSE_INTERVAL_SECONDS=")) {
 		t.Fatal("upgrade must not retain or replace the previous metrics interval override")
 	}
-	if err := manager.RestorePulse(context.Background(), task); err != nil {
-		t.Fatal(err)
-	}
 	if err := manager.RemovePulse(context.Background(), "another-application", true); err == nil {
 		t.Fatal("cross-application removal accepted")
 	}
@@ -277,7 +274,7 @@ func TestPulseRetainsOnlySupportedLocationOverrides(t *testing.T) {
 	}
 }
 
-func TestPulseInstallBeforeStartupFailureCleansManagedFiles(t *testing.T) {
+func TestPulseInstallBeforeStartupFailurePreservesManagedFiles(t *testing.T) {
 	archive := testPulseArchive(t, "pulse-v0.1.0-alpha.2-linux-x86_64/pulse-agent", tar.TypeReg, false)
 	digest := sha256.Sum256(archive)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(archive) }))
@@ -305,9 +302,12 @@ func TestPulseInstallBeforeStartupFailureCleansManagedFiles(t *testing.T) {
 		t.Fatalf("failed installation lost its cause or blamed networking: %v", err)
 	}
 	for _, path := range []string{pulseBinary, pulseEnv, pulseUnitPath, pulseDigest, pulseToken, pulseArchive} {
-		if _, err := os.Lstat(manager.path(path)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("partial installation retained %s: %v", path, err)
+		if _, err := os.Lstat(manager.path(path)); err != nil {
+			t.Fatalf("partial installation lost %s: %v", path, err)
 		}
+	}
+	if reloads != 1 {
+		t.Fatal("failure caused compensating reload")
 	}
 }
 

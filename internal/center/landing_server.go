@@ -76,7 +76,7 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 	var encoded []byte
 	var revision, attempt int64
 	err := tx.QueryRowContext(ctx, `SELECT desired_revision,desired_json,attempt FROM landing_server_states
- WHERE node_id=? AND desired_revision>applied_revision AND status IN ('pending','failed')`, nodeID).Scan(&revision, &encoded, &attempt)
+ WHERE node_id=? AND desired_revision>applied_revision AND status = 'pending'`, nodeID).Scan(&revision, &encoded, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -89,7 +89,7 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 	}
 	now := s.now().UTC()
 	result, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET status='applying',attempt=attempt+1,lease_expires_at=?,updated_at=?
- WHERE node_id=? AND desired_revision=? AND attempt=? AND status IN ('pending','failed')`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), nodeID, revision, attempt)
+ WHERE node_id=? AND desired_revision=? AND attempt=? AND status = 'pending'`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), nodeID, revision, attempt)
 	if err != nil {
 		return nil, err
 	}
@@ -103,12 +103,16 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 	return task, nil
 }
 
-func (s *Store) completeLandingServer(ctx context.Context, nodeID string, revision, attempt int64, succeeded bool, peer *landing.PeerIdentity) error {
+func (s *Store) completeLandingServer(ctx context.Context, commit projectionCommit, nodeID string, revision, attempt int64, succeeded bool, peer *landing.PeerIdentity) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	return s.projectLandingServer(ctx, tx, commit, nodeID, revision, attempt, succeeded, peer)
+}
+
+func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit projectionCommit, nodeID string, revision, attempt int64, succeeded bool, peer *landing.PeerIdentity) error {
 	var desired, applied, currentAttempt int64
 	var status string
 	var encoded []byte
@@ -154,5 +158,5 @@ func (s *Store) completeLandingServer(ctx context.Context, nodeID string, revisi
 			return err
 		}
 	}
-	return tx.Commit()
+	return commit(tx)
 }

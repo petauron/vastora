@@ -29,8 +29,8 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 		return err
 	}
 	defer docker.Close()
-	if err := recoverInterruptedThreeXUIDeploy(ctx, docker); err != nil {
-		return deferTaskUntilReconciled(err)
+	if err := requireNoInterruptedThreeXUIDeploy(ctx, docker); err != nil {
+		return uncertainTaskOutcome(err)
 	}
 	if err := validateThreeXUIOwnership(ctx, docker, applicationID); err != nil {
 		return err
@@ -92,7 +92,7 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 		}
 	}, func(string, string) error { return check() })
 	if err != nil {
-		return deferTaskUntilReconciled(err)
+		return uncertainTaskOutcome(err)
 	}
 	return nil
 }

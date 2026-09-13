@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, taskID, agentID, applicationID, gatewayID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeRealityCreateCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID, applicationID, gatewayID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	now := s.now().UTC()
 	var serviceID string
 	var input RealityCommandTask
@@ -145,7 +145,7 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, tx *sql.Tx, ta
 			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(tx); err != nil {
 		return err
 	}
 	if !succeeded {

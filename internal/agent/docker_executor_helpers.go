@@ -24,7 +24,7 @@ func reportedServices(ctx context.Context, task DeploymentTask, bindAddress stri
 		// Center verifies the published subscription independently. During
 		// startup recovery, a disabled or unhealthy subscription must not block
 		// the Agent from receiving the role-reconciliation task that repairs it.
-		if task.AppKey == threeXUIKey && service.Name == "subscription" && (task.ApplicationRole == "worker" || task.OfflineRestore) {
+		if task.AppKey == threeXUIKey && service.Name == "subscription" && task.ApplicationRole == "worker" {
 			continue
 		}
 		hostPort, err := serviceHostPort(task.Config, service)
@@ -131,12 +131,6 @@ func pullDeclaredImage(ctx context.Context, docker *client.Client, task Deployme
 	imageReference, err := declaredImage(task.Manifest, name)
 	if err != nil {
 		return "", err
-	}
-	if task.OfflineRestore {
-		if _, err := docker.ImageInspect(ctx, imageReference); err != nil {
-			return "", offlineImageUnavailableError{fmt.Errorf("agent: offline restore requires cached image %s: %w", imageReference, err)}
-		}
-		return imageReference, nil
 	}
 	options, err := declaredImagePullOptions(task, imageReference)
 	if err != nil {

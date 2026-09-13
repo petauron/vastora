@@ -103,10 +103,10 @@ func TestLocalRealityRemovalRetainsControllerAndFencesStaleHeartbeat(t *testing.
 		t.Fatalf("lost removal retry entry: %s %v", status, err)
 	}
 	raw, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "remove", InboundID: 9, InboundTag: "local-node"}})
-	if err := store.completeApplicationCommand(ctx, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
+	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.completeApplicationCommand(ctx, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
+	if err := store.completeApplicationCommand(ctx, commitProjectionOnlyForTest, node.ID, task.ID, task.Attempt, true, "", raw, false); err != nil {
 		t.Fatal(err)
 	}
 	stale := []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-9", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Listen: "10.0.0.90", Port: 443, Enabled: true, InboundTag: "local-node"}}

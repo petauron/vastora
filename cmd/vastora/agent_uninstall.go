@@ -41,13 +41,14 @@ func (d systemHostDecommissioner) ScheduleFinalRemoval(ctx context.Context, requ
 		return fmt.Errorf("agent: resolve decommission executable: %w", err)
 	}
 	operation := hostDecommissionOperation{
+		ExecutionID: request.ExecutionID, SessionID: request.SessionID,
 		Version: 2, TaskID: request.TaskID, Attempt: request.Attempt, DeleteData: request.DeleteData, DataDir: d.dataDir, CallbackURL: request.CallbackURL, CallbackToken: request.CallbackToken,
 		AgentID: request.Connection.AgentID, CenterURL: request.Connection.CenterURL, Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint, CACertificatePEM: request.Connection.CACertificatePEM,
 	}
 	if err := persistHostDecommission(executable, operation); err != nil {
 		return err
 	}
-	for _, arguments := range [][]string{{"daemon-reload"}, {"enable", "--now", hostDecommissionUnitName}} {
+	for _, arguments := range [][]string{{"daemon-reload"}, {"disable", hostDecommissionUnitName}, {"start", hostDecommissionUnitName}} {
 		output, err := exec.CommandContext(ctx, "systemctl", arguments...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("agent: start persistent host cleanup: %s: %w", strings.TrimSpace(string(output)), err)
@@ -57,6 +58,8 @@ func (d systemHostDecommissioner) ScheduleFinalRemoval(ctx context.Context, requ
 }
 
 type hostDecommissionOperation struct {
+	ExecutionID      string `json:"executionId"`
+	SessionID        string `json:"sessionId"`
 	Version          int    `json:"version"`
 	TaskID           string `json:"taskId"`
 	Attempt          int64  `json:"attempt"`
@@ -72,7 +75,7 @@ type hostDecommissionOperation struct {
 }
 
 func persistHostDecommission(executable string, operation hostDecommissionOperation) error {
-	if operation.Version != 2 || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" || strings.TrimSpace(operation.CallbackURL) == "" || strings.TrimSpace(operation.CallbackToken) == "" {
+	if operation.Version != 2 || operation.ExecutionID == "" || operation.SessionID == "" || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" || strings.TrimSpace(operation.CallbackURL) == "" || strings.TrimSpace(operation.CallbackToken) == "" {
 		return errors.New("agent: invalid persistent host cleanup operation")
 	}
 	if _, err := safeAgentDataDir(operation.DataDir); err != nil {
@@ -116,7 +119,17 @@ func runPersistentHostDecommission(ctx context.Context, operationPath string) er
 		return errors.New("agent: host cleanup must use its managed operation path")
 	}
 	if err := runHostDecommission(ctx, operationPath, agent.Client{}, func(ctx context.Context, operation hostDecommissionOperation) error {
-		return uninstallAgentHost(ctx, operation.DataDir, operation.DeleteData, false, false)
+		var sequence int64
+		authorize := func(ctx context.Context, phase string) error {
+			sequence++
+			requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			return (agent.Client{}).AuthorizeHostDecommissionStep(requestContext, operation.CallbackURL, operation.CallbackToken, operation.TaskID, operation.Attempt, sequence, phase)
+		}
+		if err := uninstallAgentHost(ctx, operation.DataDir, operation.DeleteData, false, false, authorize); err != nil {
+			return err
+		}
+		return authorize(ctx, "done")
 	}); err != nil {
 		if errors.Is(err, errHostDecommissionCancelled) {
 			return nil
@@ -163,13 +176,17 @@ func runHostDecommission(ctx context.Context, operationPath string, client agent
 	connection := agent.Connection{AgentID: operation.AgentID, CenterURL: operation.CenterURL, Credential: operation.Credential, CAFingerprint: operation.CAFingerprint, CACertificatePEM: operation.CACertificatePEM}
 	if !cleaned {
 		requestContext, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err = client.BeginHostDecommission(requestContext, connection, operation.TaskID, operation.Attempt)
+		err = client.BeginHostDecommission(requestContext, connection, operation.TaskID, operation.Attempt, operation.ExecutionID, operation.SessionID)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("agent: transfer host cleanup responsibility to Center: %w", err)
 		}
 		if err := cleanup(ctx, operation); err != nil {
-			return err
+			// A fresh, bounded context is only for failure evidence. No cleanup
+			// or compensation can continue after the original context failed.
+			reportContext, stopReport := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer stopReport()
+			return errors.Join(err, client.ReportHostDecommissionFailure(reportContext, operation.CallbackURL, operation.CallbackToken, operation.TaskID, operation.Attempt, err))
 		}
 		raw, err := json.Marshal(hostDecommissionResult{Version: 1, TaskID: operation.TaskID, Attempt: operation.Attempt})
 		if err != nil {
@@ -227,7 +244,7 @@ func readHostDecommissionOperation(path string) (hostDecommissionOperation, erro
 	var operation hostDecommissionOperation
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&operation) != nil || decoder.Decode(&struct{}{}) != io.EOF || operation.Version != 2 || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" || strings.TrimSpace(operation.CallbackURL) == "" || strings.TrimSpace(operation.CallbackToken) == "" {
+	if decoder.Decode(&operation) != nil || decoder.Decode(&struct{}{}) != io.EOF || operation.Version != 2 || operation.ExecutionID == "" || operation.SessionID == "" || operation.TaskID != "agent-decommission-"+operation.AgentID || operation.Attempt <= 0 || strings.TrimSpace(operation.Credential) == "" || strings.TrimSpace(operation.CallbackURL) == "" || strings.TrimSpace(operation.CallbackToken) == "" {
 		return hostDecommissionOperation{}, errors.New("agent: invalid persistent host cleanup operation")
 	}
 	if _, err := safeAgentDataDir(operation.DataDir); err != nil {
@@ -294,14 +311,15 @@ func writeRootFileAtomic(path string, content []byte, mode os.FileMode) error {
 	return directory.Sync()
 }
 
-func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtimeCleaned, keepBinary bool) error {
+func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtimeCleaned, keepBinary bool, authorize func(context.Context, string) error) error {
 	dataDir, err := safeAgentDataDir(dataDir)
 	if err != nil {
 		return err
 	}
 	return uninstallAgentHostWithEnvironment(ctx, deleteData, runtimeCleaned, keepBinary, agentUninstallEnvironment{
-		dataDir:  dataDir,
-		unitPath: vastoraAgentUnitPath,
+		authorize: authorize,
+		dataDir:   dataDir,
+		unitPath:  vastoraAgentUnitPath,
 		pendingUpdate: &hostHelperCancellationEnvironment{
 			directory: hostUpdateDir, unitName: hostUpdateUnitName, unitPath: hostUpdateUnit, unitContents: hostUpdateServiceUnit(),
 			enabledLink: hostUpdateEnabledLink, operationDataDir: hostUpdateDataDir, run: runHostCommand,
@@ -317,8 +335,10 @@ func uninstallAgentHost(ctx context.Context, dataDir string, deleteData, runtime
 			"/etc/systemd/system/tailscaled.service.d/91-vastora-endpoint.conf",
 		},
 		tailscaleHostsPath: "/etc/hosts",
-		purgeRuntime:       agent.PurgeManagedRuntime,
-		run:                runHostCommand,
+		purgeRuntime: func(ctx context.Context, deleteData bool) error {
+			return agent.PurgeManagedRuntime(ctx, deleteData, authorize)
+		},
+		run: runHostCommand,
 	})
 }
 
@@ -342,6 +362,7 @@ func safeAgentDataDir(value string) (string, error) {
 }
 
 type agentUninstallEnvironment struct {
+	authorize              func(context.Context, string) error
 	dataDir                string
 	unitPath               string
 	pendingUpdate          *hostHelperCancellationEnvironment
@@ -359,6 +380,32 @@ func runHostCommand(ctx context.Context, name string, arguments ...string) ([]by
 }
 
 func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeCleaned, keepBinary bool, environment agentUninstallEnvironment) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	run := environment.run
+	authorize := func(ctx context.Context, phase string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if environment.authorize != nil {
+			if err := environment.authorize(ctx, phase); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
+	}
+	environment.run = func(commandContext context.Context, name string, args ...string) ([]byte, error) {
+		if err := authorize(commandContext, "command"); err != nil {
+			return nil, err
+		}
+		output, err := run(commandContext, name, args...)
+		if err != nil {
+			return output, err
+		}
+		// A late successful command response does not authorize the next step.
+		return output, commandContext.Err()
+	}
 	state, err := agent.ReadHostInstallState(environment.dataDir)
 	if err != nil {
 		return err
@@ -374,7 +421,12 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 		return err
 	}
 	if environment.pendingUpdate != nil {
-		if err := cancelHostHelper(ctx, environment.dataDir, *environment.pendingUpdate); err != nil {
+		if err := authorize(ctx, "cancel-update"); err != nil {
+			return err
+		}
+		pending := *environment.pendingUpdate
+		pending.authorize = authorize
+		if err := cancelHostHelper(ctx, environment.dataDir, pending); err != nil {
 			return fmt.Errorf("cancel Agent update before uninstall: %w", err)
 		}
 		// The updater may have restarted the Agent after our first stop.
@@ -384,27 +436,41 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 		}
 	}
 	if !runtimeCleaned {
+		if err := authorize(ctx, "runtime"); err != nil {
+			return err
+		}
 		if err := environment.purgeRuntime(ctx, deleteData); err != nil {
 			return fmt.Errorf("remove managed Agent runtime: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 	}
 	if state.TailscaleEnrolled {
 		output, logoutErr := environment.run(ctx, "tailscale", "logout")
-		if logoutErr != nil && state.TailscaleOwnership != "managed" && !errors.Is(logoutErr, exec.ErrNotFound) {
+		if logoutErr != nil {
 			return fmt.Errorf("disconnect the external Tailscale installation from Vastora: %s: %w", strings.TrimSpace(string(output)), logoutErr)
 		}
 	}
 	if state.TailscaleOwnership == "managed" {
-		_, _ = environment.run(ctx, "systemctl", "disable", "--now", "tailscaled.service")
+		if output, err := environment.run(ctx, "systemctl", "disable", "--now", "tailscaled.service"); err != nil {
+			return fmt.Errorf("stop Vastora-managed Tailscale: %s: %w", strings.TrimSpace(string(output)), err)
+		}
 		if output, err := environment.run(ctx, "apt-get", "purge", "-y", "tailscale", "tailscale-archive-keyring"); err != nil {
 			return fmt.Errorf("remove Vastora-managed Tailscale: %s: %w", strings.TrimSpace(string(output)), err)
 		}
 		for _, path := range environment.tailscalePaths {
+			if err := authorize(ctx, "files"); err != nil {
+				return err
+			}
 			if err := os.RemoveAll(path); err != nil {
 				return fmt.Errorf("remove Vastora-managed Tailscale state %s: %w", path, err)
 			}
 		}
 		for _, path := range environment.tailscaleEndpointPaths {
+			if err := authorize(ctx, "files"); err != nil {
+				return err
+			}
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove Vastora-managed Tailscale endpoint state %s: %w", path, err)
 			}
@@ -412,6 +478,9 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 	}
 	if environment.tailscalePrivacyPath != "" {
 		for _, path := range []string{environment.tailscalePrivacyPath, tailscalePrivacyAppliedPath(environment.tailscalePrivacyPath)} {
+			if err := authorize(ctx, "files"); err != nil {
+				return err
+			}
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove Vastora Tailscale privacy state %s: %w", path, err)
 			}
@@ -419,6 +488,9 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 		_ = os.Remove(filepath.Dir(environment.tailscalePrivacyPath))
 	}
 	if environment.tailscaleHostsPath != "" {
+		if err := authorize(ctx, "files"); err != nil {
+			return err
+		}
 		if _, err := removeTailscaleControlHosts(environment.tailscaleHostsPath); err != nil {
 			return fmt.Errorf("remove Vastora Headscale resolver pin: %w", err)
 		}
@@ -427,15 +499,24 @@ func uninstallAgentHostWithEnvironment(ctx context.Context, deleteData, runtimeC
 	// A failed deletion must not make the next attempt skip the remaining files.
 	if !keepBinary && (unitOwned || stateRecorded) {
 		for _, path := range environment.binaryPaths {
+			if err := authorize(ctx, "files"); err != nil {
+				return err
+			}
 			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return fmt.Errorf("remove Agent command %s: %w", path, err)
 			}
 		}
 	}
+	if err := authorize(ctx, "files"); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(environment.dataDir); err != nil {
 		return fmt.Errorf("remove Agent state: %w", err)
 	}
 	if unitOwned {
+		if err := authorize(ctx, "files"); err != nil {
+			return err
+		}
 		if err := os.Remove(environment.unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove Agent service: %w", err)
 		}

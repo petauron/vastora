@@ -110,7 +110,7 @@ func (s *Store) queuePulseEnrollment(ctx context.Context, tx *sql.Tx, deployment
 	return s.recordTaskEvent(ctx, tx, id, serviceAgentID, "application.command", 1, "queued", "Prepare Pulse collector enrollment")
 }
 
-func (s *Store) completePulseEnrollment(ctx context.Context, tx *sql.Tx, commandID, agentID string, inputJSON []byte, succeeded bool, rawResult json.RawMessage) error {
+func (s *Store) completePulseEnrollment(ctx context.Context, commit projectionCommit, tx *sql.Tx, commandID, agentID string, inputJSON []byte, succeeded bool, rawResult json.RawMessage) error {
 	var input pulse.EnrollmentTask
 	var result struct {
 		Enrollment *pulse.EnrollmentResult `json:"pulseEnrollment"`
@@ -161,5 +161,5 @@ func (s *Store) completePulseEnrollment(ctx context.Context, tx *sql.Tx, command
 	if err := s.recordTaskEvent(ctx, tx, commandID, agentID, "application.command", 1, commandState, message); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }

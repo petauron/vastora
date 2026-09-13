@@ -206,7 +206,6 @@ WantedBy=multi-user.target
 }
 
 // Ownership is independent of the unit template, which may change on upgrade.
-// RestorePulse still checks the full current unit before starting retained files.
 func pulseUnitOwnedBy(unit []byte, applicationID string) bool {
 	return applicationID != "" && !strings.ContainsAny(applicationID, "\r\n") &&
 		bytes.HasPrefix(unit, []byte("# Managed by Vastora\n# Application: "+applicationID+"\n"))
@@ -277,6 +276,9 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 	if credentials == nil && (len(secrets.Token) < 16 || len(secrets.Token) > 512 || strings.ContainsAny(secrets.Token, " \t\r\n")) {
 		return ApplicationTaskResult{}, errors.New("agent: Pulse enrollment is unavailable; retry installation")
 	}
+	if err := preserveHostFiles(ctx, snapshots); err != nil {
+		return ApplicationTaskResult{}, err
+	}
 	if manager.run(ctx, "getent", "passwd", pulseUser) != nil {
 		if err := manager.run(ctx, "useradd", "--system", "--user-group", "--home-dir", pulseState, "--no-create-home", "--shell", "/usr/sbin/nologin", pulseUser); err != nil {
 			return ApplicationTaskResult{}, errors.New("agent: could not create Pulse service account")
@@ -291,20 +293,16 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 	// Retain the upstream archive, including its license and third-party notices.
 	contents := [][]byte{binary, pulseEnvironment(config), unit, proof, token, archive}
 	modes := []os.FileMode{0o755, 0o600, 0o644, 0o600, 0o600, 0o644}
-	enableAttempted, restartAttempted := false, false
 	for index, path := range paths {
+		if err = ctx.Err(); err != nil {
+			break
+		}
 		if err = writeHostFileAtomic(manager.path(path), contents[index], modes[index]); err != nil {
 			break
 		}
 	}
 	if err == nil {
 		for _, args := range [][]string{{"daemon-reload"}, {"enable", pulseUnitName}, {"restart", pulseUnitName}} {
-			if args[0] == "enable" {
-				enableAttempted = true
-			}
-			if args[0] == "restart" {
-				restartAttempted = true
-			}
 			if err = manager.run(ctx, "systemctl", args...); err != nil {
 				break
 			}
@@ -314,35 +312,23 @@ func (manager SystemdHostApplicationManager) ApplyPulse(ctx context.Context, tas
 		err = manager.waitPulseEnrollment(ctx, config.ServiceURL)
 	}
 	if err != nil {
-		// Stop before restoring files. Keep any newly issued identity: a token
-		// cannot safely be used twice after successful enrollment.
-		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if restartAttempted {
-			if stopErr := manager.run(rollbackCtx, "systemctl", "stop", pulseUnitName); stopErr != nil {
-				return ApplicationTaskResult{}, errors.New("agent: Pulse installation failed; service could not be stopped")
-			}
-		}
-		var rollbackErr error
-		if enableAttempted && !snapshots[2].Exists {
-			rollbackErr = manager.run(rollbackCtx, "systemctl", "disable", pulseUnitName)
-		}
-		rollbackErr = errors.Join(rollbackErr, restoreHostFiles(snapshots))
-		rollbackErr = errors.Join(rollbackErr, manager.run(rollbackCtx, "systemctl", "daemon-reload"))
-		if snapshots[2].Exists && restartAttempted && rollbackErr == nil {
-			rollbackErr = errors.Join(rollbackErr, manager.run(rollbackCtx, "systemctl", "restart", pulseUnitName))
-		}
-		return ApplicationTaskResult{}, errors.Join(fmt.Errorf("agent: Pulse installation failed: %w", err), rollbackErr)
+		return ApplicationTaskResult{}, uncertainTaskOutcome(fmt.Errorf("agent: Pulse installation failed: %w", err))
 	}
 	// Leave an empty credential source so reboot works without retaining the
 	// one-time token. Existing agent credentials are owned by Pulse itself.
+	if err := ctx.Err(); err != nil {
+		return ApplicationTaskResult{}, uncertainTaskOutcome(err)
+	}
 	if err := writeHostFileAtomic(manager.path(pulseToken), []byte{}, 0o600); err != nil {
 		return ApplicationTaskResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ApplicationTaskResult{}, uncertainTaskOutcome(err)
 	}
 	if err := removeHostFile(manager.path(pulseRuntimeToken)); err != nil {
 		return ApplicationTaskResult{}, err
 	}
-	return ApplicationTaskResult{}, nil
+	return ApplicationTaskResult{}, discardHostFileBackups(ctx, snapshots)
 }
 
 func (manager SystemdHostApplicationManager) pulseCredentials(serviceURL string) ([]byte, error) {
@@ -391,54 +377,6 @@ func (manager SystemdHostApplicationManager) waitPulseEnrollment(ctx context.Con
 		case <-ticker.C:
 		}
 	}
-}
-
-func (manager SystemdHostApplicationManager) RestorePulse(ctx context.Context, task DeploymentTask) error {
-	var config pulse.AgentConfig
-	if json.Unmarshal(task.Config, &config) != nil || config.Validate() != nil {
-		return errors.New("agent: invalid retained Pulse configuration")
-	}
-	target, err := manager.pulseTarget()
-	if err != nil {
-		return err
-	}
-	artifact, err := declaredArtifact(task.Manifest, "pulse-agent", target)
-	if err != nil {
-		return err
-	}
-	contents := map[string][]byte{}
-	for _, path := range []string{pulseBinary, pulseDigest, pulseEnv, pulseUnitPath} {
-		file, err := captureHostFile(manager.path(path))
-		if err != nil || !file.Exists {
-			return errors.New("agent: retained Pulse installation is incomplete")
-		}
-		contents[path] = file.Data
-	}
-	var proof pulsePackageProof
-	digest := sha256.Sum256(contents[pulseBinary])
-	config, err = pulseRetainLocation(config, contents[pulseEnv])
-	if err != nil {
-		return err
-	}
-	if json.Unmarshal(contents[pulseDigest], &proof) != nil || proof.Version != task.Manifest.Version || proof.ArchiveSHA256 != artifact.SHA256 || proof.BinarySHA256 != hex.EncodeToString(digest[:]) || !bytes.Equal(contents[pulseEnv], pulseEnvironment(config)) || !bytes.Equal(contents[pulseUnitPath], pulseUnit(task.ApplicationID)) {
-		return errors.New("agent: retained Pulse installation was modified")
-	}
-	credentials, err := manager.pulseCredentials(config.ServiceURL)
-	if err != nil || credentials == nil {
-		return errors.New("agent: retained Pulse identity is unavailable")
-	}
-	if err := writeHostFileAtomic(manager.path(pulseToken), []byte{}, 0o600); err != nil {
-		return err
-	}
-	if manager.run(ctx, "systemctl", "is-active", "--quiet", pulseUnitName) == nil {
-		return nil
-	}
-	for _, args := range [][]string{{"daemon-reload"}, {"enable", pulseUnitName}, {"start", pulseUnitName}} {
-		if err := manager.run(ctx, "systemctl", args...); err != nil {
-			return err
-		}
-	}
-	return manager.run(ctx, "systemctl", "is-active", "--quiet", pulseUnitName)
 }
 
 func (manager SystemdHostApplicationManager) RemovePulse(ctx context.Context, applicationID string, deleteData bool) error {

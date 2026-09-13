@@ -137,7 +137,7 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 			t.Fatal("missing server task")
 		}
 		peer := &landing.PeerIdentity{ID: node, PublicKey: "key-" + node, Address: task.LandingServerState.Plan.Address}
-		if err := store.completeLandingServer(ctx, node, task.Revision, task.Attempt, true, peer); err != nil {
+		if err := store.completeLandingServer(ctx, commitProjectionOnlyForTest, node, task.Revision, task.Attempt, true, peer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -177,7 +177,7 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 		if task == nil {
 			t.Fatal("missing proxy task")
 		}
-		if err := store.completeLandingProxy(ctx, config.node, task.Revision, task.Attempt, true); err != nil {
+		if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, config.node, task.Revision, task.Attempt, true); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -218,7 +218,7 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if task == nil {
 		t.Fatal("missing switch task")
 	}
-	if err := store.completeLandingProxy(ctx, source, task.Revision, task.Attempt, false); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, source, task.Revision, task.Attempt, false); err != nil {
 		t.Fatal(err)
 	}
 	assertApplied(1, a)
@@ -235,14 +235,14 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if retry == nil {
 		t.Fatal("missing retry")
 	}
-	if err := store.completeLandingProxy(ctx, source, task.Revision, task.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, source, task.Revision, task.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	assertApplied(1, a)
 	if grants(a) != 1 {
 		t.Fatal("stale attempt revoked source")
 	}
-	if err := store.completeLandingProxy(ctx, source, retry.Revision, retry.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, source, retry.Revision, retry.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	assertApplied(2, b)
@@ -256,11 +256,11 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if stop == nil {
 		t.Fatal("missing own-exit task")
 	}
-	if err := store.completeLandingProxy(ctx, source, stop.Revision, stop.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, source, stop.Revision, stop.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	assertApplied(3, "")
-	if err := store.completeLandingProxy(ctx, source, retry.Revision, retry.Attempt, true); err != nil {
+	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, source, retry.Revision, retry.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
 	assertApplied(3, "")

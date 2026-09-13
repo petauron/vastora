@@ -13,6 +13,7 @@ func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
+	originalSiteID := testSiteID(t, store)
 	master := enrollOrchestrationNode(t, store, "subscription-controller", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.90", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", PublicAddress: "203.0.113.90", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	worker := enrollOrchestrationNode(t, store, "vless-worker", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.91", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", PublicAddress: "203.0.113.91", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	remoteSite, err := store.CreateSite(ctx, SiteInput{Name: "Remote", Code: "remote", Timezone: "UTC"})
@@ -118,7 +119,10 @@ func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
 	if observedPlan.TotalBytes != 2147483648 || observedPlan.ResetDay != 15 || observedPlan.Revision != 2 {
 		t.Fatalf("heartbeat overwrote a Center-managed REALITY plan: %#v", observedPlan)
 	}
-	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC", GatewayNodes: []string{master.ID, worker.ID}}); err != nil {
+	if _, err := store.UpdateSite(ctx, originalSiteID, SiteInput{Name: "Test", Code: "test", Timezone: "UTC", GatewayNodes: []string{master.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateSite(ctx, remoteSite.ID, SiteInput{Name: "Remote", Code: "remote", Timezone: "UTC", GatewayNodes: []string{worker.ID}}); err != nil {
 		t.Fatal(err)
 	}
 	// Retire the previously observed unmanaged inbound before asking Vastora to

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -62,16 +61,6 @@ func TestThreeXUIRealityStreamSettingsUsesMinimumClientVersionAndProxyProtocol(t
 	settings, _ := reality["settings"].(map[string]any)
 	if !ok || reality["minClientVer"] != threeXUIRealityMinClientVersion || reality["maxClientVer"] != "" || reality["maxTimediff"] != 0 || settings["spiderX"] != "/" || !realityStreamAcceptsProxyProtocol(stream) {
 		t.Fatalf("REALITY anti-fingerprinting settings = %#v", reality)
-	}
-}
-
-func TestUncertainRealityRecoveryQuarantinesAtRetryLimit(t *testing.T) {
-	cause := errors.New("cleanup outcome is unknown")
-	if err := deferUncertainRealityTask(1, cause); !taskCompletionShouldBeDeferred(err, 1) || !errors.Is(err, cause) {
-		t.Fatalf("first uncertain recovery error = %v", err)
-	}
-	if err := deferUncertainRealityTask(maxDeferredTaskAttempts, cause); taskCompletionShouldBeDeferred(err, maxDeferredTaskAttempts) || !taskCompletionRequiresReconciliation(err, maxDeferredTaskAttempts) || !errors.Is(err, cause) {
-		t.Fatalf("persistent recovery error = %v", err)
 	}
 }
 
@@ -178,7 +167,7 @@ func TestRenameThreeXUIRealityInboundPreservesConfiguration(t *testing.T) {
 	}
 }
 
-func TestApplyRealityRenameReconcilesLostUpdateResponseWithSameCommand(t *testing.T) {
+func TestApplyRealityRenameStopsAfterLostUpdateResponse(t *testing.T) {
 	updated := false
 	loseReadback := false
 	updateCalls := 0
@@ -216,12 +205,11 @@ func TestApplyRealityRenameReconcilesLostUpdateResponseWithSameCommand(t *testin
 	defer store.Close()
 	command := RealityCommandTask{Action: "rename", DisplayName: "US Oracle", InboundID: 9}
 
-	if _, err := applyRealityCommand(context.Background(), store, "application-command-rename-lost", 1, command); !taskCompletionShouldBeDeferred(err, 1) {
+	if _, err := applyRealityCommand(context.Background(), store, "application-command-rename-lost", 1, command); !taskOutcomeIsUncertain(err) {
 		t.Fatalf("lost rename response was not deferred for same-ID reconciliation: %v", err)
 	}
-	result, err := applyRealityCommand(context.Background(), store, "application-command-rename-lost", 2, command)
-	if err != nil || result.Action != "rename" || result.DisplayName != "US Oracle" || updateCalls != 1 {
-		t.Fatalf("replayed rename result=%#v updates=%d err=%v", result, updateCalls, err)
+	if !updated || !loseReadback || updateCalls != 1 {
+		t.Fatalf("rename continued after error: updated=%t readback-pending=%t updates=%d", updated, loseReadback, updateCalls)
 	}
 }
 
@@ -238,8 +226,8 @@ func TestApplyRealityRenameMissingTargetFailsWithoutReconciliation(t *testing.T)
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
 
-	_, err := applyRealityCommand(context.Background(), store, "application-command-rename-missing", maxDeferredTaskAttempts, RealityCommandTask{Action: "rename", DisplayName: "US Oracle", InboundID: 9})
-	if err == nil || taskCompletionShouldBeDeferred(err, maxDeferredTaskAttempts) || taskCompletionRequiresReconciliation(err, maxDeferredTaskAttempts) {
+	_, err := applyRealityCommand(context.Background(), store, "application-command-rename-missing", 99, RealityCommandTask{Action: "rename", DisplayName: "US Oracle", InboundID: 9})
+	if err == nil || taskOutcomeIsUncertain(err) {
 		t.Fatalf("missing rename target should be terminal, got %v", err)
 	}
 }
@@ -270,6 +258,41 @@ func TestSyncThreeXUIRealityHostUpdatesOnlyManagedGroup(t *testing.T) {
 	}
 }
 
+func TestSyncThreeXUIRealityHostStopsAfterMutationError(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(strconv.FormatBool(existing), func(t *testing.T) {
+			reads, writes := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method == http.MethodGet {
+					reads++
+					if existing {
+						_, _ = w.Write([]byte(`{"success":true,"obj":[{"groupId":"vastora-public-9","hosts":["old.example.test"]}]}`))
+					} else {
+						_, _ = w.Write([]byte(`{"success":true,"obj":[]}`))
+					}
+					return
+				}
+				writes++
+				want := "/panel/api/hosts/add"
+				if existing {
+					want = "/panel/api/hosts/update/vastora-public-9"
+				}
+				if r.Method != http.MethodPost || r.URL.Path != want {
+					t.Errorf("unexpected mutation: %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = w.Write([]byte(`{"success":false,"msg":"response lost"}`))
+			}))
+			defer server.Close()
+			err := syncThreeXUIRealityHost(context.Background(), server.URL, "test-token", 9, "new.example.test", "sni.example.test")
+			if !realityMutationOutcomeUncertain(err) || reads != 1 || writes != 1 {
+				t.Fatalf("error=%v reads=%d writes=%d", err, reads, writes)
+			}
+		})
+	}
+}
+
 func TestSyncThreeXUIRealityHostKeepsMatchingGroup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet || request.URL.Path != "/panel/api/hosts/byInbound/9" {
@@ -293,6 +316,8 @@ func TestAttachAllThreeXUIClientsToInboundKeepsClientIdentity(t *testing.T) {
 		switch request.Method + " " + request.URL.Path {
 		case "GET /panel/api/clients/list/paged":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","inboundIds":[7]},{"email":"Router","inboundIds":[7,9]}],"total":2}}`))
+		case "GET /panel/api/clients/get/MacBook":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","subId":"existing-subscription"},"inboundIds":[7]}}`))
 		case "POST /panel/api/clients/bulkAttach":
 			var payload struct {
 				Emails     []string `json:"emails"`
@@ -317,7 +342,7 @@ func TestAttachAllThreeXUIClientsToInboundKeepsClientIdentity(t *testing.T) {
 	}
 }
 
-func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
+func TestApplyRealityCommandPreservesIncompleteCreation(t *testing.T) {
 	installRealityGuardTestSeams(t)
 	commandID := "application-command-compensate1234"
 	clientEmail := threeXUIClientEmail("Phone", commandID)
@@ -382,7 +407,7 @@ func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "subscription host") {
 		t.Fatalf("creation error = %v", err)
 	}
-	if !deletedInbound || !deletedClient {
+	if deletedInbound || deletedClient {
 		t.Fatalf("compensation deleted inbound=%t client=%t", deletedInbound, deletedClient)
 	}
 	if createdSubID == "" {
@@ -390,7 +415,7 @@ func TestApplyRealityCommandCompensatesIncompleteCreation(t *testing.T) {
 	}
 }
 
-func TestApplyRealityCommandRecoversLostAddResponse(t *testing.T) {
+func TestApplyRealityCommandStopsAfterLostAddResponse(t *testing.T) {
 	installRealityGuardTestSeams(t)
 	commandID := "application-command-lostresponse1234"
 	tag := threeXUIRealityTag(commandID)
@@ -435,15 +460,15 @@ func TestApplyRealityCommandRecoversLostAddResponse(t *testing.T) {
 		Action: "create", VerifiedTarget: verifiedRealityTestTarget(), DisplayName: "US node", ConnectHostname: "reality.example.test",
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, TargetNodeID: 7, TargetAPIToken: "remote-token", InboundTag: tag,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("lost response was treated as success")
 	}
-	if addCalls != 1 || result.InboundID != 9 || result.InboundTag != "n7-"+tag || result.Port != threeXUIRealityPort {
+	if addCalls != 1 || result.InboundID != 0 {
 		t.Fatalf("lost response recovery result=%#v add calls=%d", result, addCalls)
 	}
 }
 
-func TestApplyRealityCommandRecreatesLostAddHalfStateWithInitialClient(t *testing.T) {
+func TestApplyRealityCommandPreservesLostAddHalfState(t *testing.T) {
 	installRealityGuardTestSeams(t)
 	commandID := "application-command-lostclient1234"
 	tag := threeXUIRealityTag(commandID)
@@ -512,15 +537,15 @@ func TestApplyRealityCommandRecreatesLostAddHalfStateWithInitialClient(t *testin
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, TargetNodeID: 7, TargetAPIToken: "remote-token",
 		CreateInitialClient: true, InboundTag: tag,
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("partial creation was treated as success")
 	}
-	if addCalls != 2 || deleteCalls != 1 || !result.ClientCreated || result.ShareURI == "" {
+	if addCalls != 1 || deleteCalls != 0 || result.ClientCreated {
 		t.Fatalf("half-state recovery result=%#v add calls=%d delete calls=%d", result, addCalls, deleteCalls)
 	}
 }
 
-func TestApplyRealityCommandRollsBackExpiredExistingInbound(t *testing.T) {
+func TestApplyRealityCommandPreservesExpiredExistingInbound(t *testing.T) {
 	installRealityGuardTestSeams(t)
 	commandID := "application-command-expired-replay"
 	tag := threeXUIRealityTag(commandID)
@@ -566,15 +591,15 @@ func TestApplyRealityCommandRollsBackExpiredExistingInbound(t *testing.T) {
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, CreateInitialClient: true, InboundTag: tag,
 		ClientResetDays: 30, ClientExpiryTime: store.now().Add(-time.Hour).UnixMilli(),
 	})
-	if err == nil || !strings.Contains(err.Error(), "parameters are invalid") {
+	if err == nil || !strings.Contains(err.Error(), "explicit review") {
 		t.Fatalf("expired replay error = %v", err)
 	}
-	if !deleted || clientExists || taskCompletionShouldBeDeferred(err, 2) || taskCompletionRequiresReconciliation(err, 2) {
+	if deleted || !clientExists {
 		t.Fatalf("expired replay deleted=%t clientExists=%t err=%v", deleted, clientExists, err)
 	}
 }
 
-func TestApplyRealityCommandRollsBackKnownFailureAtRetryLimit(t *testing.T) {
+func TestApplyRealityCommandNeverRollsBackAtRetryLimit(t *testing.T) {
 	installRealityGuardTestSeams(t)
 	commandID := "application-command-rollback-limit"
 	tag := threeXUIRealityTag(commandID)
@@ -614,15 +639,15 @@ func TestApplyRealityCommandRollsBackKnownFailureAtRetryLimit(t *testing.T) {
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
 
-	_, err = applyRealityCommand(context.Background(), store, commandID, maxDeferredTaskAttempts, RealityCommandTask{
+	_, err = applyRealityCommand(context.Background(), store, commandID, 99, RealityCommandTask{
 		Action: "create", VerifiedTarget: verifiedRealityTestTarget(), DisplayName: "US node", ConnectHostname: "reality.example.test",
 		TargetAddress: host, TargetPublicAddress: "198.51.100.10", TargetHost: "www.example.com", ServerName: "www.example.com", TargetPanelPort: port, InboundTag: tag,
 	})
-	if err == nil || !strings.Contains(err.Error(), "attach existing clients") {
+	if err == nil || !strings.Contains(err.Error(), "explicit review") {
 		t.Fatalf("retry-limit error = %v", err)
 	}
-	if !deleted || taskCompletionShouldBeDeferred(err, maxDeferredTaskAttempts) || taskCompletionRequiresReconciliation(err, maxDeferredTaskAttempts) {
-		t.Fatalf("rollback deleted=%t deferred=%t reconciliation=%t err=%v", deleted, taskCompletionShouldBeDeferred(err, maxDeferredTaskAttempts), taskCompletionRequiresReconciliation(err, maxDeferredTaskAttempts), err)
+	if deleted || !taskOutcomeIsUncertain(err) {
+		t.Fatalf("rollback deleted=%t deferred=%t reconciliation=%t err=%v", deleted, taskOutcomeIsUncertain(err), taskOutcomeIsUncertain(err), err)
 	}
 }
 

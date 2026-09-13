@@ -79,12 +79,16 @@ func (s *Store) claimLandingProxyTask(ctx context.Context, tx *sql.Tx, nodeID st
 	return task, nil
 }
 
-func (s *Store) completeLandingProxy(ctx context.Context, nodeID string, revision, attempt int64, succeeded bool) error {
+func (s *Store) completeLandingProxy(ctx context.Context, commit projectionCommit, nodeID string, revision, attempt int64, succeeded bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	return s.projectLandingProxy(ctx, tx, commit, nodeID, revision, attempt, succeeded)
+}
+
+func (s *Store) projectLandingProxy(ctx context.Context, tx *sql.Tx, commit projectionCommit, nodeID string, revision, attempt int64, succeeded bool) error {
 	var desired, applied, currentAttempt int64
 	var status string
 	var encoded []byte
@@ -132,5 +136,5 @@ func (s *Store) completeLandingProxy(ctx context.Context, nodeID string, revisio
 	if err := s.completeClientLandingRoutes(ctx, tx, nodeID, uint64(revision), succeeded); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }

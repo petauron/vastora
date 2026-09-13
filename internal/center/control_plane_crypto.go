@@ -11,9 +11,10 @@ import (
 )
 
 type AgentTaskEnvelope struct {
-	ID       string                `json:"id"`
-	Attempt  int64                 `json:"attempt"`
-	Envelope controlplane.Envelope `json:"envelope"`
+	Authorization controlplane.ExecutionAuthorization `json:"authorization"`
+	ID            string                              `json:"id"`
+	Attempt       int64                               `json:"attempt"`
+	Envelope      controlplane.Envelope               `json:"envelope"`
 }
 
 func (s *Store) EncryptAgentTask(ctx context.Context, agentID string, task AgentTask) (AgentTaskEnvelope, error) {

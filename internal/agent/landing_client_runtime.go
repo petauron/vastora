@@ -17,7 +17,7 @@ func (s *Store) observeLandingClientRuntime(ctx context.Context) *landing.Client
 	if !ready {
 		return nil
 	}
-	peer, err := landing.NewLinkChecker().SelfIdentity(ctx, installation.ServiceAddress)
+	peer, err := s.linkChecker.SelfIdentity(ctx, installation.ServiceAddress)
 	if err != nil {
 		return nil
 	}

@@ -45,7 +45,7 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 	if err := validateThreeXUIOwnership(ctx, docker, task.ApplicationID); err != nil {
 		return "", err
 	}
-	if err := recoverInterruptedThreeXUIDeploy(ctx, docker); err != nil {
+	if err := requireNoInterruptedThreeXUIDeploy(ctx, docker); err != nil {
 		// Cleanup of a stale candidate/rollback marker can fail after this exact
 		// deployment was already promoted. Do not false-fail the committed task:
 		// the immutable deployment label lets the token fast path reconcile it,
@@ -54,20 +54,20 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 		if inspectErr != nil || !committed {
 			cause := errors.Join(err, inspectErr)
 			if task.Attempt > 1 {
-				return "", deferTaskUntilReconciled(cause)
+				return "", uncertainTaskOutcome(cause)
 			}
 			return "", cause
 		}
 	}
 	if token, committed, err := committedThreeXUIDeploymentToken(ctx, docker, task.ID, bindAddress, settings.PanelPort); err != nil {
-		return "", deferTaskUntilReconciled(err)
+		return "", uncertainTaskOutcome(err)
 	} else if committed {
 		baseURL := "http://" + net.JoinHostPort(bindAddress, strconv.Itoa(settings.PanelPort))
 		if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/all", token, map[string]any{}); err != nil {
-			return "", deferTaskUntilReconciled(fmt.Errorf("agent: verify reconciled 3x-ui API: %w", err))
+			return "", uncertainTaskOutcome(fmt.Errorf("agent: verify reconciled 3x-ui API: %w", err))
 		}
 		if _, err := reportedServices(ctx, task, bindAddress); err != nil {
-			return "", deferTaskUntilReconciled(err)
+			return "", uncertainTaskOutcome(err)
 		}
 		return token, nil
 	}
@@ -113,7 +113,7 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 	if err := ensureOwnedApplicationVolumes(ctx, docker, applicationVolumes[threeXUIKey][1:], threeXUIKey, task.ApplicationID); err != nil {
 		return "", err
 	}
-	return replaceThreeXUIContainer(ctx, docker, createOptions, !task.OfflineRestore, func(containerID string) (string, error) {
+	return replaceThreeXUIContainer(ctx, docker, createOptions, true, func(containerID string) (string, error) {
 		if err := configureThreeXUI(ctx, docker, containerID, bindAddress, settings.PanelPort, credentials); err != nil {
 			return "", err
 		}
@@ -122,7 +122,7 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 			return "", err
 		}
 		if err := configureThreeXUISubscriptionRole(ctx, bindAddress, settings.PanelPort, apiToken, task.ApplicationRole); err != nil {
-			return "", err
+			return apiToken, err
 		}
 		return apiToken, nil
 	}, func(containerID, apiToken string) error {

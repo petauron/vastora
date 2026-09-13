@@ -261,7 +261,7 @@ func (s *Store) validateNodeProtocolPreconditions(ctx context.Context, q network
 	return nil
 }
 
-func (s *Store) completeNodeProtocolCommand(ctx context.Context, tx *sql.Tx, id, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeNodeProtocolCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, id, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var task nodeprotocol.Task
 	var envelope struct {
 		ProtocolCommand *nodeprotocol.Result `json:"protocolCommand"`
@@ -295,7 +295,7 @@ func (s *Store) completeNodeProtocolCommand(ctx context.Context, tx *sql.Tx, id,
 		if err := s.recordTaskEvent(ctx, tx, nextID, nextAgent, "application.command", 1, "queued", "Updating node protocols"); err != nil {
 			return err
 		}
-		return tx.Commit()
+		return commit(tx)
 	}
 	state := "failed"
 	if succeeded {
@@ -310,7 +310,7 @@ func (s *Store) completeNodeProtocolCommand(ctx context.Context, tx *sql.Tx, id,
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, state, taskError); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }
 
 func (s *Store) renewNodeProtocolCertificates(ctx context.Context) error {

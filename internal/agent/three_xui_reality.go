@@ -77,31 +77,7 @@ func realityMutationOutcomeUncertain(err error) bool {
 	return errors.As(err, &uncertain)
 }
 
-func deferUncertainRealityTask(_ int64, cause error) error {
-	if cause == nil {
-		return nil
-	}
-	return deferTaskUntilReconciled(cause)
-}
-
-func deferOrRollbackKnownRealityTask(ctx context.Context, attempt int64, cause error, baseURL, token string, inboundID int, inboundTag string, nodeID int, clientEmail string, clientCreated bool) error {
-	if cause == nil {
-		return nil
-	}
-	if attempt < maxDeferredTaskAttempts {
-		return deferTaskUntilReconciled(cause)
-	}
-	if rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, token, inboundID, inboundTag, nodeID, clientEmail, clientCreated); rollbackErr != nil {
-		return deferTaskUntilReconciled(errors.Join(cause, rollbackErr))
-	}
-	return cause
-}
-
 func applyRealityCommand(ctx context.Context, store *Store, commandID string, attempt int64, command RealityCommandTask) (RealityCommandResult, error) {
-	return applyRealityCommandWithRecovery(ctx, store, commandID, attempt, command, false)
-}
-
-func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandID string, attempt int64, command RealityCommandTask, recreatedRecoveredHalfState bool) (RealityCommandResult, error) {
 	if command.Action == "verify" {
 		if command.Recommend {
 			candidates, err := suggestRealityTargets(ctx, command.TargetPublicAddress)
@@ -113,7 +89,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	baseURL, masterToken, err := threeXUIClientAPIConnection(ctx, store)
 	if err != nil {
 		if attempt > 1 {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, err)
+			return RealityCommandResult{}, uncertainTaskOutcome(err)
 		}
 		return RealityCommandResult{}, err
 	}
@@ -124,7 +100,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 				// Both mutations can commit before a response is lost. Preserve this
 				// command ID only when their read-back is also inconclusive; explicit
 				// precondition failures (for example a deleted inbound) are terminal.
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, renameErr)
+				return RealityCommandResult{}, uncertainTaskOutcome(renameErr)
 			}
 			return RealityCommandResult{}, renameErr
 		}
@@ -133,7 +109,7 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	if command.Action == "remove" {
 		result, removeErr := removeThreeXUIRealityInbound(ctx, baseURL, masterToken, command)
 		if realityMutationOutcomeUncertain(removeErr) {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, removeErr)
+			return RealityCommandResult{}, uncertainTaskOutcome(removeErr)
 		}
 		return result, removeErr
 	}
@@ -143,18 +119,18 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		}
 		inbound, found, findErr := findRealityInbound(ctx, baseURL, masterToken, command.InboundTag, command.TargetNodeID)
 		if findErr != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, findErr)
+			return RealityCommandResult{}, uncertainTaskOutcome(findErr)
 		}
 		if !found || inbound.ID != command.InboundID {
 			return RealityCommandResult{}, errors.New("agent: REALITY inbound selected for hardening no longer exists")
 		}
 		disabledUpdate, disableErr := readThreeXUIInboundUpdate(ctx, baseURL, masterToken, inbound.ID)
 		if disableErr != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, disableErr)
+			return RealityCommandResult{}, uncertainTaskOutcome(disableErr)
 		}
 		disabledUpdate["enable"] = false
 		if disableErr := writeThreeXUIInboundUpdate(ctx, baseURL, masterToken, inbound.ID, disabledUpdate); disableErr != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, disableErr)
+			return RealityCommandResult{}, uncertainTaskOutcome(disableErr)
 		}
 		if !networking.IsPrivateServiceAddress(command.TargetAddress) {
 			return RealityCommandResult{}, errors.New("agent: disabled REALITY inbound because the node has no valid private service address")
@@ -168,11 +144,11 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 		}
 		inbound, verifyErr = ensureThreeXUIRealityRuntimeRequirements(ctx, baseURL, masterToken, inbound.ID)
 		if verifyErr != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, verifyErr)
+			return RealityCommandResult{}, uncertainTaskOutcome(verifyErr)
 		}
 		hardened, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, command.InboundTag, verification)
 		if hardenErr != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, hardenErr)
+			return RealityCommandResult{}, uncertainTaskOutcome(hardenErr)
 		}
 		result, resultErr := realityResultFromInbound(hardened, hardened.Tag, command.ConnectHostname, command.DisplayName, "", "")
 		if resultErr != nil {
@@ -203,66 +179,10 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	verification := *command.VerifiedTarget
 	clientEmail := threeXUIClientEmail(command.ClientName, commandID)
 	inboundTag := command.InboundTag
-	if existing, ok, err := findRealityInbound(ctx, baseURL, masterToken, inboundTag, command.TargetNodeID); err != nil {
-		// The same command may be replaying after an Agent crash that occurred
-		// immediately after the remote add committed. A failed deterministic tag
-		// probe therefore has an unknown external outcome and cannot be terminal.
-		if attempt <= 1 {
-			return RealityCommandResult{}, err
-		}
-		return RealityCommandResult{}, deferUncertainRealityTask(attempt, err)
-	} else if ok {
-		existing, err = updateThreeXUIRealityInbound(ctx, baseURL, masterToken, existing.ID, command.TargetNodeID, command.DisplayName, &command.InboundTotalBytes)
-		if err != nil {
-			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
-		}
-		existing, err = ensureThreeXUIRealityRuntimeRequirements(ctx, baseURL, masterToken, existing.ID)
-		if err != nil {
-			return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
-		}
-		existing, hardenErr := realityInboundHardener(ctx, baseURL, masterToken, existing, command.TargetNodeID, inboundTag, verification)
-		if hardenErr != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, hardenErr)
-		}
-		result, err := realityResultFromInbound(existing, existing.Tag, command.ConnectHostname, command.DisplayName, command.ClientName, clientEmail)
-		if err != nil {
-			rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, existing.ID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
-			if rollbackErr != nil {
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, errors.Join(err, rollbackErr))
-			}
-			return RealityCommandResult{}, err
-		}
-		result = guardedRealityResult(result, verification)
-		result.Listen = listen
-		if command.CreateInitialClient && command.ClientResetDays > 0 && command.ClientExpiryTime <= store.now().UTC().UnixMilli() {
-			cause := errors.New("agent: REALITY creation parameters are invalid")
-			if rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, true); rollbackErr != nil {
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, errors.Join(cause, rollbackErr))
-			}
-			return RealityCommandResult{}, cause
-		}
-		if command.CreateInitialClient && !result.ClientCreated {
-			// A prior compensation can delete the global client while failing to
-			// delete the inbound. Reusing that half-state would make Center reject
-			// the result and strand the active inbound, so remove it and recreate
-			// the deterministic pair atomically.
-			if rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, true); rollbackErr != nil {
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, rollbackErr)
-			}
-		} else {
-			if err := syncThreeXUIRealityHost(ctx, baseURL, masterToken, result.InboundID, result.ConnectHostname, result.ServerName); err != nil {
-				return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
-			}
-			if err := attachAllThreeXUIClientsToInbound(ctx, baseURL, masterToken, result.InboundID); err != nil {
-				return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, command.CreateInitialClient)
-			}
-			if command.CreateInitialClient && result.ClientCreated {
-				if err := attachThreeXUIClientToAllManagedRealityInbounds(ctx, baseURL, masterToken, clientEmail); err != nil {
-					return RealityCommandResult{}, deferOrRollbackKnownRealityTask(ctx, attempt, err, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, true)
-				}
-			}
-			return result, nil
-		}
+	if _, found, err := findRealityInbound(ctx, baseURL, masterToken, inboundTag, command.TargetNodeID); err != nil {
+		return RealityCommandResult{}, err
+	} else if found {
+		return RealityCommandResult{}, uncertainTaskOutcome(errors.New("agent: REALITY inbound already exists; explicit review is required before a new execution"))
 	}
 	if command.CreateInitialClient && command.ClientResetDays > 0 && command.ClientExpiryTime <= store.now().UTC().UnixMilli() {
 		return RealityCommandResult{}, errors.New("agent: REALITY creation parameters are invalid")
@@ -271,15 +191,6 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	if err := ensureRealityPortAvailable(ctx, baseURL, masterToken, command.TargetNodeID, port); err != nil {
 		return RealityCommandResult{}, err
 	}
-	// The client name is derived from the command ID. If the deterministic
-	// inbound no longer exists, a same-name client can only be residue from an
-	// interrupted compensation and must not be reused with new credentials.
-	if command.CreateInitialClient {
-		if err := deleteThreeXUIClientIfExists(ctx, baseURL, masterToken, clientEmail); err != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, fmt.Errorf("agent: clean incomplete REALITY client: %w", err))
-		}
-	}
-
 	keys, err := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/server/getNewX25519Cert", masterToken, "", nil)
 	if err != nil {
 		return RealityCommandResult{}, fmt.Errorf("agent: generate REALITY keys: %w", err)
@@ -325,69 +236,27 @@ func applyRealityCommandWithRecovery(ctx context.Context, store *Store, commandI
 	}
 	added, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/add", masterToken, "application/json", payload)
 	var inbound threeXUIRealityInbound
-	addResponseValid := err == nil && json.Unmarshal(added, &inbound) == nil && inbound.ID > 0
-	recoveredAfterAdd := false
-	if !addResponseValid {
-		recovered, found, recoveryErr := findRealityInbound(ctx, baseURL, masterToken, inboundTag, command.TargetNodeID)
-		if recoveryErr != nil {
-			if err != nil {
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, errors.Join(fmt.Errorf("agent: create 3x-ui REALITY inbound: %w", err), recoveryErr))
-			}
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, errors.Join(errors.New("agent: 3x-ui returned an invalid REALITY inbound"), recoveryErr))
-		}
-		if !found {
-			if err != nil {
-				return RealityCommandResult{}, fmt.Errorf("agent: create 3x-ui REALITY inbound: %w", err)
-			}
-			return RealityCommandResult{}, errors.New("agent: 3x-ui returned an invalid REALITY inbound")
-		}
-		inbound = recovered
-		recoveredAfterAdd = true
+	if err != nil {
+		return RealityCommandResult{}, uncertainTaskOutcome(fmt.Errorf("agent: create 3x-ui REALITY inbound: %w", err))
+	}
+	if json.Unmarshal(added, &inbound) != nil || inbound.ID < 1 {
+		return RealityCommandResult{}, uncertainTaskOutcome(errors.New("agent: 3x-ui returned an invalid REALITY inbound"))
 	}
 	if strings.TrimSpace(inbound.Tag) == "" {
 		inbound.Tag = command.InboundTag
 	}
-	result := RealityCommandResult{}
-	if recoveredAfterAdd {
-		result, err = realityResultFromInbound(inbound, inbound.Tag, command.ConnectHostname, command.DisplayName, command.ClientName, clientEmail)
-		if err != nil {
-			rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, inbound.ID, inboundTag, command.TargetNodeID, clientEmail, clientCreated)
-			if rollbackErr != nil {
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, errors.Join(err, rollbackErr))
-			}
-			return RealityCommandResult{}, err
-		}
-		if command.CreateInitialClient && !result.ClientCreated {
-			rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, true)
-			if rollbackErr != nil {
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, rollbackErr)
-			}
-			if recreatedRecoveredHalfState {
-				return RealityCommandResult{}, deferUncertainRealityTask(attempt, errors.New("agent: recovered REALITY inbound did not contain its initial client after recreation"))
-			}
-			// The add may have committed only the inbound before its response was
-			// lost. After verified compensation, recreate the deterministic pair in
-			// the same task so Center never receives a success missing its client.
-			return applyRealityCommandWithRecovery(ctx, store, commandID, attempt, command, true)
-		}
-	} else {
-		result = RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, ServerName: verification.ServerName, ConnectHostname: command.ConnectHostname, InboundTag: inbound.Tag, ClientCreated: clientCreated, InboundTotalBytes: command.InboundTotalBytes, ProxyProtocol: true}
-		if clientCreated {
-			result.ShareURI = realityShareURI(clientID, command.ConnectHostname, command.DisplayName, verification.ServerName, keyPair.PublicKey, shortID)
-		}
+	result := RealityCommandResult{Action: "create", InboundID: inbound.ID, DisplayName: command.DisplayName, ClientName: command.ClientName, Listen: listen, Port: port, ServerName: verification.ServerName, ConnectHostname: command.ConnectHostname, InboundTag: inbound.Tag, ClientCreated: clientCreated, InboundTotalBytes: command.InboundTotalBytes, ProxyProtocol: true}
+	if clientCreated {
+		result.ShareURI = realityShareURI(clientID, command.ConnectHostname, command.DisplayName, verification.ServerName, keyPair.PublicKey, shortID)
 	}
 	result = guardedRealityResult(result, verification)
 	result.Listen = listen
 	if err := completeThreeXUIRealityCreation(ctx, baseURL, masterToken, result, clientEmail); err != nil {
-		rollbackErr := rollbackThreeXUIRealityCreation(ctx, baseURL, masterToken, result.InboundID, inboundTag, command.TargetNodeID, clientEmail, clientCreated)
-		if rollbackErr != nil {
-			return RealityCommandResult{}, deferUncertainRealityTask(attempt, errors.Join(err, rollbackErr))
-		}
-		return RealityCommandResult{}, err
+		return result, uncertainTaskOutcome(err)
 	}
 	hardened, err := realityInboundHardener(ctx, baseURL, masterToken, inbound, command.TargetNodeID, inboundTag, verification)
 	if err != nil {
-		return RealityCommandResult{}, deferUncertainRealityTask(attempt, err)
+		return result, uncertainTaskOutcome(err)
 	}
 	result.InboundTag = hardened.Tag
 	result = guardedRealityResult(result, verification)
@@ -409,24 +278,6 @@ func completeThreeXUIRealityCreation(ctx context.Context, baseURL, token string,
 	return nil
 }
 
-func rollbackThreeXUIRealityCreation(ctx context.Context, baseURL, token string, inboundID int, inboundTag string, nodeID int, clientEmail string, clientCreated bool) error {
-	failures := []error{}
-	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/del/"+strconv.Itoa(inboundID), token, "application/json", map[string]any{}); err != nil {
-		_, found, verifyErr := findRealityInbound(ctx, baseURL, token, inboundTag, nodeID)
-		if verifyErr != nil {
-			failures = append(failures, errors.Join(fmt.Errorf("agent: remove incomplete REALITY inbound: %w", err), fmt.Errorf("agent: verify incomplete REALITY inbound cleanup: %w", verifyErr)))
-		} else if found {
-			failures = append(failures, fmt.Errorf("agent: remove incomplete REALITY inbound: %w", err))
-		}
-	}
-	if clientCreated {
-		if err := deleteThreeXUIClientIfExists(ctx, baseURL, token, clientEmail); err != nil {
-			failures = append(failures, fmt.Errorf("agent: remove incomplete REALITY client: %w", err))
-		}
-	}
-	return errors.Join(failures...)
-}
-
 func renameThreeXUIRealityInbound(ctx context.Context, baseURL, token string, command RealityCommandTask) (RealityCommandResult, error) {
 	if command.InboundID < 1 || !validRealityDisplayName(command.DisplayName) {
 		return RealityCommandResult{}, errors.New("agent: REALITY rename parameters are invalid")
@@ -440,9 +291,8 @@ func renameThreeXUIRealityInbound(ctx context.Context, baseURL, token string, co
 	}
 	if command.ConnectHostname != "" || command.ServerName != "" {
 		if err := syncThreeXUIRealityHost(ctx, baseURL, token, command.InboundID, command.ConnectHostname, command.ServerName); err != nil {
-			// The inbound rename is already committed at this point. Even an
-			// explicit host-update rejection cannot make the overall two-stage
-			// command terminal: replay the same ID until both resources converge.
+			// The inbound rename is already committed. Retain the uncertain
+			// two-stage outcome for explicit review, without replaying mutations.
 			return RealityCommandResult{}, uncertainRealityMutation(err)
 		}
 	}
@@ -509,26 +359,7 @@ func updateThreeXUIRealityInbound(ctx context.Context, baseURL, token string, in
 	delete(update, "clientStats")
 	delete(update, "fallbackParent")
 	if _, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/inbounds/update/"+strconv.Itoa(inboundID), token, "application/json", update); err != nil {
-		cause := fmt.Errorf("agent: rename 3x-ui REALITY inbound: %w", err)
-		// A failed mutation response is ambiguous until the same resource is read
-		// back. A confirmed old value is a normal terminal failure; an unavailable
-		// read-back retains the command for same-ID reconciliation.
-		observedPayload, observeErr := threeXUIAPI(ctx, http.MethodGet, baseURL+"/panel/api/inbounds/get/"+strconv.Itoa(inboundID), token, "", nil)
-		if observeErr != nil {
-			return threeXUIRealityInbound{}, uncertainRealityMutation(errors.Join(cause, fmt.Errorf("agent: verify 3x-ui REALITY rename: %w", observeErr)))
-		}
-		var observed threeXUIRealityInbound
-		if json.Unmarshal(observedPayload, &observed) != nil || observed.ID != inboundID {
-			return threeXUIRealityInbound{}, uncertainRealityMutation(errors.Join(cause, errors.New("agent: 3x-ui returned invalid REALITY rename verification")))
-		}
-		matches := observed.Remark == displayName && observed.TrafficReset == "never" && observed.TrafficResetDay == 1
-		if totalBytes != nil {
-			matches = matches && observed.Total == *totalBytes
-		}
-		if matches {
-			return observed, nil
-		}
-		return threeXUIRealityInbound{}, cause
+		return threeXUIRealityInbound{}, uncertainRealityMutation(fmt.Errorf("agent: rename 3x-ui REALITY inbound: %w", err))
 	}
 	inbound.Remark = displayName
 	inbound.TrafficReset = "never"
@@ -756,17 +587,7 @@ func syncThreeXUIRealityHost(ctx context.Context, baseURL, token string, inbound
 		break
 	}
 	if _, err := threeXUIAPI(ctx, http.MethodPost, endpoint, token, "application/json", desired); err != nil {
-		cause := fmt.Errorf("agent: synchronize 3x-ui REALITY subscription host: %w", err)
-		observed, observeErr := threeXUIRealityHostGroups(ctx, baseURL, token, inboundID)
-		if observeErr != nil {
-			return uncertainRealityMutation(errors.Join(cause, fmt.Errorf("agent: verify 3x-ui REALITY subscription host: %w", observeErr)))
-		}
-		for _, group := range observed {
-			if group.GroupID == groupID && threeXUIRealityHostMatches(group, desired) {
-				return nil
-			}
-		}
-		return cause
+		return uncertainRealityMutation(fmt.Errorf("agent: synchronize 3x-ui REALITY subscription host: %w", err))
 	}
 	return nil
 }

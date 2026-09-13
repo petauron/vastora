@@ -648,7 +648,10 @@ func TestTailscaleIsolationRejectsUnexpectedRuntimeDERPMap(t *testing.T) {
 	}
 }
 
-func TestAgentUpdateVerifiesAndKeepsRollbackBinary(t *testing.T) {
+func TestAgentUpdateVerifiesAndPreservesPreviousBinary(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Agent update candidates require a Linux build target")
+	}
 	newBinary := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then printf '0.2.0\\n'; fi\n")
 	digest := sha256.Sum256(newBinary)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -695,7 +698,10 @@ func TestAgentUpdateEndpointSupportsBothLinuxArchitectures(t *testing.T) {
 	}
 }
 
-func TestAgentUpdateRestoresPreviousBinaryWhenRestartFails(t *testing.T) {
+func TestAgentUpdateStopsWithoutDowngradeWhenRestartFails(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Agent update candidates require a Linux build target")
+	}
 	newBinary := []byte("#!/bin/sh\nif [ \"$1\" = version ]; then printf '0.2.0\\n'; fi\n")
 	digest := sha256.Sum256(newBinary)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
@@ -717,11 +723,12 @@ func TestAgentUpdateRestoresPreviousBinaryWhenRestartFails(t *testing.T) {
 		}
 		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "previous binary restored") {
+	if err == nil || !strings.Contains(err.Error(), "stopped for explicit maintenance") {
 		t.Fatalf("restart failure was not reported: %v", err)
 	}
-	restored, _ := os.ReadFile(executable)
-	if restarts != 2 || string(restored) != string(oldBinary) {
-		t.Fatalf("previous Agent was not restored: restarts=%d content=%q", restarts, restored)
+	installed, _ := os.ReadFile(executable)
+	previous, _ := os.ReadFile(executable + ".previous")
+	if restarts != 1 || string(installed) != string(newBinary) || string(previous) != string(oldBinary) {
+		t.Fatalf("failed update continued, downgraded or lost backup: restarts=%d", restarts)
 	}
 }

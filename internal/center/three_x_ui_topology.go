@@ -440,7 +440,7 @@ func (s *Store) ReconcileThreeXUINode(ctx context.Context, applicationID string)
 	return s.ApplicationCommand(ctx, commandID)
 }
 
-func (s *Store) completeThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeThreeXUINodeCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input ThreeXUINodeCommandTask
 	if json.Unmarshal(inputJSON, &input) != nil || input.WorkerApplicationID == "" || (input.Action != "reconcile" && input.Action != "remove") {
 		return errors.New("center: stored 3x-ui node operation is invalid")
@@ -512,7 +512,7 @@ func (s *Store) completeThreeXUINodeCommand(ctx context.Context, tx *sql.Tx, tas
 			return err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := commit(tx); err != nil {
 		return err
 	}
 	if len(cleanups) != 0 {

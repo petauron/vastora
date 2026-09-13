@@ -146,6 +146,7 @@ func TestHostDecommissionRealSystemdEndToEnd(t *testing.T) {
 	defer server.Close()
 
 	operation := hostDecommissionOperation{
+		ExecutionID: "systemd-test-execution", SessionID: "systemd-test-session",
 		Version:       2,
 		TaskID:        systemdDecommissionIntegrationTaskID,
 		Attempt:       1,
@@ -163,7 +164,7 @@ func TestHostDecommissionRealSystemdEndToEnd(t *testing.T) {
 	if output, err := exec.Command("systemctl", "daemon-reload").CombinedOutput(); err != nil {
 		t.Fatalf("load persistent host cleanup helper: %s (%v)", output, err)
 	}
-	if output, err := exec.Command("systemctl", "enable", "--now", hostDecommissionUnitName).CombinedOutput(); err != nil {
+	if output, err := exec.Command("systemctl", "start", hostDecommissionUnitName).CombinedOutput(); err != nil {
 		t.Fatalf("start persistent host cleanup helper: %s (%v)", output, err)
 	}
 

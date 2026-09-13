@@ -424,14 +424,14 @@ func validThreeXUIInboundTag(value string) bool {
 	return true
 }
 
-func (s *Store) completeThreeXUIClientCommand(ctx context.Context, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
+func (s *Store) completeThreeXUIClientCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
 	var input ThreeXUIClientCommandTask
 	var envelope ApplicationTaskResult
 	if json.Unmarshal(inputJSON, &input) != nil || !threeXUIClientActions[input.Action] {
 		return errors.New("center: stored 3x-ui client operation is invalid")
 	}
 	if input.Action == "landing_grant" {
-		return s.completeLandingClientCommand(ctx, tx, taskID, agentID, input, succeeded, rawResult)
+		return s.completeLandingClientCommand(ctx, commit, tx, taskID, agentID, input, succeeded, rawResult)
 	}
 	if succeeded {
 		if len(rawResult) == 0 || json.Unmarshal(rawResult, &envelope) != nil || envelope.ClientCommand == nil {
@@ -531,5 +531,5 @@ func (s *Store) completeThreeXUIClientCommand(ctx context.Context, tx *sql.Tx, t
 	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", eventRevision, event, message); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }

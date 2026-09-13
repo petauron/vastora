@@ -58,7 +58,7 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 	}
 	task := claimTask(t, store, node)
 	result := json.RawMessage(`{"generatedSecrets":{"api_token":"recovered-local-api-token"}}`)
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "container state requires reconciliation", result, true, platform.ApplicationRuntimeGeneration); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, "container state requires reconciliation", result, true, platform.ApplicationRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	deployments, err := store.ListDeployments(ctx)
@@ -146,7 +146,7 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "remote API result is uncertain", nil, true); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, "remote API result is uncertain", nil, true); err != nil {
 		t.Fatal(err)
 	}
 	command, err := store.ApplicationCommand(ctx, commandID)
@@ -245,7 +245,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 	if first.ID != command.ID {
 		t.Fatalf("old Agent claimed command %q, want %q", first.ID, command.ID)
 	}
-	if err := store.completeTaskWithDisposition(ctx, previousController.ID, previousController.Credential, first.ID, first.Attempt, false, "remote API state is uncertain", nil, true); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, previousController.ID, previousController.Credential, first.ID, first.Attempt, false, "remote API state is uncertain", nil, true); err != nil {
 		t.Fatal(err)
 	}
 	assertReserved("reconciliation")
@@ -290,13 +290,13 @@ func TestNonThreeXUIDeploymentCanBeQuarantinedAndRetried(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, true); !errors.Is(err, errInvalidReconciliationDisposition) {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, true, "", nil, true); !errors.Is(err, errInvalidReconciliationDisposition) {
 		t.Fatalf("successful task accepted reconciliation disposition: %v", err)
 	}
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "", nil, true); !errors.Is(err, errInvalidReconciliationDisposition) {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, "", nil, true); !errors.Is(err, errInvalidReconciliationDisposition) {
 		t.Fatalf("reconciliation disposition without an error was accepted: %v", err)
 	}
-	if err := store.completeTaskWithDisposition(ctx, node.ID, node.Credential, task.ID, task.Attempt, false, "uncertain CPA state", nil, true, task.RequiredRuntimeGeneration); err != nil {
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, task.ID, task.Attempt, false, "uncertain CPA state", nil, true, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	var state, applicationStatus string
@@ -319,7 +319,7 @@ func TestNonThreeXUIDeploymentCanBeQuarantinedAndRetried(t *testing.T) {
 	}
 }
 
-func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
+func TestExpiredTaskRequiresVerificationAndRejectsLateResult(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -332,15 +332,12 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 	}
 	first := claimTask(t, store, node)
 	clock = clock.Add(taskLeaseDuration + time.Second)
-	second := claimTask(t, store, node)
-	if first.ID != second.ID || first.Attempt != 1 || second.Attempt != 2 || first.Revision != second.Revision {
-		t.Fatalf("unexpected retry claims: first=%#v second=%#v", first, second)
+	second, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || second != nil {
+		t.Fatalf("expired task was automatically retried: task=%#v err=%v", second, err)
 	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, first.ID, first.Attempt, false, "late result", nil, first.RequiredRuntimeGeneration); err == nil || !strings.Contains(err.Error(), "stale") {
+	if err := store.CompleteTask(ctx, node.ID, node.Credential, first.ID, first.Attempt, false, "late result", nil, first.RequiredRuntimeGeneration); err == nil {
 		t.Fatalf("stale result was not rejected: %v", err)
-	}
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, second.ID, second.Attempt, false, "expected failure", nil, second.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
 	}
 	actions, err := store.ListActions(ctx, defaultActionLimit)
 	if err != nil {
@@ -352,14 +349,14 @@ func TestExpiredTaskIsRetriedAndStaleResultIsRejected(t *testing.T) {
 			events[action.Event]++
 		}
 	}
-	if events["queued"] != 1 || events["claimed"] != 2 || events["lease_expired"] != 1 || events["failed"] != 1 {
+	if events["queued"] != 1 || events["claimed"] != 1 || events["lease_expired"] != 1 || events["failed"] != 0 {
 		t.Fatalf("unexpected task audit trail: %#v", events)
 	}
 	deployments, err := store.ListDeployments(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(deployments) != 1 || deployments[0].State != "failed" || deployments[0].Error != "expected failure" || deployments[0].OneTimeCredentials != nil {
+	if len(deployments) != 1 || deployments[0].State != "failed" || !strings.Contains(deployments[0].Error, "manual verification") || deployments[0].OneTimeCredentials != nil {
 		t.Fatalf("failed operation is not safely visible to the UI: %#v", deployments)
 	}
 }
@@ -393,19 +390,16 @@ func TestTaskLeaseRenewalKeepsAttemptActiveAndNeverResurrectsExpiredLease(t *tes
 	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt); !errors.Is(err, errStaleTaskLease) {
 		t.Fatalf("expired lease was resurrected: %v", err)
 	}
-	second := claimTask(t, store, node)
-	if second.ID != first.ID || second.Attempt != first.Attempt+1 {
-		t.Fatalf("expired task retry = %#v, first=%#v", second, first)
+	second, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || second != nil {
+		t.Fatalf("expired task retried without an operator decision: %#v %v", second, err)
 	}
 	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, first.ID, first.Attempt); !errors.Is(err, errStaleTaskLease) {
 		t.Fatalf("stale attempt renewed the newer lease: %v", err)
 	}
-	if _, err := store.RenewTaskLease(ctx, node.ID, node.Credential, second.ID, second.Attempt); err != nil {
-		t.Fatalf("current attempt could not renew: %v", err)
-	}
 }
 
-func TestAgentStartupImmediatelyRecoversProcessOwnedTaskLease(t *testing.T) {
+func TestAgentStartupFencesPreviousProcessTaskWithoutReplay(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -425,9 +419,14 @@ func TestAgentStartupImmediatelyRecoversProcessOwnedTaskLease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	second := claimTask(t, store, node)
-	if second.ID != first.ID || second.Attempt != first.Attempt+1 {
-		t.Fatalf("startup task recovery = %#v, first=%#v", second, first)
+	second, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || second != nil {
+		t.Fatalf("startup replayed task = %#v, first=%#v err=%v", second, first, err)
+	}
+	var state string
+	var attempt int64
+	if err := store.db.QueryRowContext(ctx, `SELECT state,attempt FROM deployments WHERE id=?`, first.ID).Scan(&state, &attempt); err != nil || state != "failed" || attempt != first.Attempt {
+		t.Fatalf("startup lost previous attempt evidence: state=%s attempt=%d err=%v", state, attempt, err)
 	}
 }
 

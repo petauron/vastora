@@ -163,7 +163,7 @@ func TestOfficialCatalogChangeDoesNotBlockIssuedRecovery(t *testing.T) {
 						t.Fatal(err)
 					}
 				} else {
-					if err := store.completeTaskWithDisposition(context.Background(), node.ID, node.Credential,
+					if err := store.completeTaskWithDisposition(context.Background(), commitProjectionOnlyForTest, node.ID, node.Credential,
 						first.ID, first.Attempt, false, "operation requires reconciliation", nil, true, first.RequiredRuntimeGeneration); err != nil {
 						t.Fatal(err)
 					}

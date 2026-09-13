@@ -11,7 +11,7 @@ import (
 )
 
 func hostDecommissionServiceUnit() string {
-	return "[Unit]\nDescription=Vastora Agent host decommission\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n[Service]\nType=simple\nExecStart=" + hostDecommissionBinary + " agent finish-decommission --operation-file " + hostDecommissionOperationPath + "\nRestart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=multi-user.target\n"
+	return "[Unit]\nDescription=Vastora Agent host decommission\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=0\n\n[Service]\nType=simple\nExecStart=" + hostDecommissionBinary + " agent finish-decommission --operation-file " + hostDecommissionOperationPath + "\nRestart=no\n"
 }
 
 func checkHostDecommissionOwnership(unitPath, operationPath, generatorPath string, operation hostDecommissionOperation) error {
@@ -63,8 +63,8 @@ func checkHostDecommissionOwnership(unitPath, operationPath, generatorPath strin
 
 // After Center acknowledges the result, a systemd generator becomes the
 // durable finalization record. It is removed only after all other removals
-// have been synced, so a reboot can resume even without the original unit.
-// Type=oneshot stops at the first failing command; on-failure retries it:
+// have been synced, so an operator can inspect it without the original unit.
+// Type=oneshot stops at the first failing command; no automatic retries:
 // https://github.com/systemd/systemd/blob/main/man/systemd.service.xml
 func hostDecommissionFinalizerCommands(directory, unitPath, enabledLink, generatorPath string) [][]string {
 	commands := make([][]string, 0, 14)
@@ -73,7 +73,7 @@ func hostDecommissionFinalizerCommands(directory, unitPath, enabledLink, generat
 	}
 	commands = append(commands,
 		// Do not recursively remove the directory: unexpected files are not
-		// owned by the finalizer and must keep it in the failed/retry state.
+		// owned by the finalizer and must keep it failed for operator review.
 		[]string{"/bin/sh", "-ec", "if [ -e \"$1\" ] || [ -L \"$1\" ]; then rmdir -- \"$1\"; fi", "vastora-finalizer", directory},
 		[]string{"/usr/bin/rm", "-f", "--", enabledLink},
 		[]string{"/usr/bin/rm", "-f", "--", unitPath},
@@ -103,7 +103,7 @@ func hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPa
 		}
 		unit.WriteByte('\n')
 	}
-	unit.WriteString("Restart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=multi-user.target\n")
+	unit.WriteString("Restart=no\n")
 	return unit.String()
 }
 
@@ -114,7 +114,7 @@ func hostDecommissionFinalizerUnit(directory, unitPath, enabledLink, generatorPa
 func hostDecommissionGeneratorScript(directory, finalizer string) string {
 	quoted := "'" + strings.ReplaceAll(finalizer, "'", "'\\''") + "'"
 	cancelled := "'" + strings.ReplaceAll(filepath.Join(directory, "cancelled"), "'", "'\\''") + "'"
-	return "#!/bin/sh\nset -eu\nif [ -e " + cancelled + " ] || [ -L " + cancelled + " ]; then exit 0; fi\noutput=\"${2:-$1}\"\nmkdir -p -- \"$output/multi-user.target.wants\"\nprintf '%s' " + quoted + " > \"$output/" + hostDecommissionUnitName + "\"\nln -sfn -- ../" + hostDecommissionUnitName + " \"$output/multi-user.target.wants/" + hostDecommissionUnitName + "\"\n"
+	return "#!/bin/sh\nset -eu\nif [ -e " + cancelled + " ] || [ -L " + cancelled + " ]; then exit 0; fi\noutput=\"${2:-$1}\"\nmkdir -p -- \"$output\"\nprintf '%s' " + quoted + " > \"$output/" + hostDecommissionUnitName + "\"\n"
 }
 
 func activateHostDecommissionFinalizer(ctx context.Context, unitPath, generatorPath, generator string, run func(context.Context, string, ...string) ([]byte, error)) error {

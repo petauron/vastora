@@ -18,11 +18,15 @@ const (
 // traffic permission. Monitor always requires new evidence under CheckTimeout;
 // a slower initial check can never renew a runtime firewall lease.
 func WaitReady(ctx context.Context, peer PeerIdentity, revision uint64) error {
-	return waitReady(ctx, peer, revision, NewLinkChecker().Check, (Probe{}).check)
+	checker := NewLinkChecker()
+	defer checker.Close()
+	return waitReady(ctx, peer, revision, checker.Check, (Probe{}).check)
 }
 
 func WaitTCPReady(ctx context.Context, peer PeerIdentity, revision uint64) error {
-	return waitReady(ctx, peer, revision, NewLinkChecker().Check, (Probe{TCPOnly: true}).check)
+	checker := NewLinkChecker()
+	defer checker.Close()
+	return waitReady(ctx, peer, revision, checker.Check, (Probe{TCPOnly: true}).check)
 }
 
 func waitReady(ctx context.Context, peer PeerIdentity, revision uint64,

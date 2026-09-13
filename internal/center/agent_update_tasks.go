@@ -89,6 +89,20 @@ func (s *Store) QueueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	if !errors.Is(err, sql.ErrNoRows) {
 		return AgentUpdateView{}, fmt.Errorf("center: inspect active Agent update: %w", err)
 	}
+	var lastState string
+	err = tx.QueryRowContext(ctx, `SELECT state FROM agent_updates WHERE agent_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`, agentID).Scan(&lastState)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return AgentUpdateView{}, err
+	}
+	if lastState == "failed" {
+		var abandoned bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions e JOIN agent_updates u ON u.id=e.task_id AND u.attempt=e.attempt WHERE u.id=(SELECT id FROM agent_updates WHERE agent_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1) AND e.disposition='abandon')`, agentID).Scan(&abandoned); err != nil {
+			return AgentUpdateView{}, err
+		}
+		if !abandoned {
+			return AgentUpdateView{}, errors.New("center: verify and dispose the failed execution before another update")
+		}
+	}
 	update, err := s.queueAgentUpdateTx(ctx, tx, agentID, targetVersion, "Agent update to "+targetVersion+" queued")
 	if err != nil {
 		return AgentUpdateView{}, err
@@ -118,6 +132,9 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 		  AND agent.remote_update_supported = 1
 		  AND agent.last_seen_at > ?
 		  AND agent.version <> ?
+		  AND COALESCE((SELECT previous.state FROM agent_updates previous
+			WHERE previous.agent_id = agent.id
+			ORDER BY previous.created_at DESC, previous.rowid DESC LIMIT 1), '') <> 'failed'
 		  AND NOT EXISTS (
 			SELECT 1 FROM agent_updates active_task
 			WHERE active_task.agent_id = agent.id AND active_task.state IN ('pending', 'running', 'installing')
@@ -186,29 +203,42 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 		if err := rows.Scan(&currentVersion, &lastSeenAt, &supported, &updateState, &updateTarget, &updateError, &updateUpdatedAt); err != nil {
 			return status, err
 		}
+		// A version heartbeat proves only the running executable's version,
+		// not that an interrupted operation has been explicitly resolved.
+		if updateState == "failed" || (updateState == "installing" && strings.TrimSpace(updateError) != "") {
+			status.Total++
+			status.Failed++
+			continue
+		}
 		currentSemver := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
-		if semver.IsValid(currentSemver) && semver.Compare(currentSemver, "v"+targetVersion) > 0 {
+		activeUpdate := updateState == "pending" || updateState == "running" || updateState == "installing"
+		if !activeUpdate && semver.IsValid(currentSemver) && semver.Compare(currentSemver, "v"+targetVersion) > 0 {
 			continue
 		}
 		status.Total++
-		if strings.TrimPrefix(strings.TrimSpace(currentVersion), "v") == targetVersion {
+		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(currentVersion), "v") == targetVersion {
 			status.Updated++
 			continue
 		}
 		seen, parseErr := time.Parse(time.RFC3339Nano, lastSeenAt)
 		connected := parseErr == nil && seen.After(connectedAfter)
 		// An offline Agent cannot keep the completed Center update busy. Keep
-		// its durable task intact so a reconnect or host helper can resume it.
-		if connected && (updateState == "pending" || updateState == "running" || updateState == "installing") {
+		// its durable task intact for inspection; connectivity is not permission
+		// to repeat an interrupted execution.
+		if activeUpdate {
+			if !connected {
+				status.Offline++
+				continue
+			}
 			progressAt, progressErr := time.Parse(time.RFC3339Nano, updateUpdatedAt)
-			if (updateState == "installing" && strings.TrimSpace(updateError) != "") || progressErr != nil || !progressAt.After(s.now().UTC().Add(-agentUpdateProgressTimeout)) {
+			if progressErr != nil || !progressAt.After(s.now().UTC().Add(-agentUpdateProgressTimeout)) {
 				status.Failed++
 				continue
 			}
 			status.Updating++
 			continue
 		}
-		if updateTarget == targetVersion && (updateState == "failed" || updateState == "succeeded") {
+		if updateState == "failed" || (updateTarget == targetVersion && updateState == "succeeded") {
 			status.Failed++
 			continue
 		}
@@ -269,30 +299,7 @@ func (s *Store) claimAgentUpdate(ctx context.Context, tx *sql.Tx, agentID string
 	return task, nil
 }
 
-func (s *Store) beginAgentUpdate(ctx context.Context, agentID, credential, taskID string, expectedAttempt int64) error {
-	if !isAgentUpdateTaskID(taskID) || expectedAttempt <= 0 {
-		return errStaleTaskLease
-	}
-	if err := s.authenticateAgent(ctx, agentID, credential); err != nil {
-		return err
-	}
-	now := s.now().UTC().Format(time.RFC3339Nano)
-	result, err := s.db.ExecContext(ctx, `UPDATE agent_updates SET state = 'installing', lease_expires_at = '', updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running' AND attempt = ?`, now, taskID, agentID, expectedAttempt)
-	if err != nil {
-		return fmt.Errorf("center: begin Agent update handoff: %w", err)
-	}
-	if changed, _ := result.RowsAffected(); changed == 1 {
-		return nil
-	}
-	var state string
-	var attempt int64
-	if err := s.db.QueryRowContext(ctx, `SELECT state, attempt FROM agent_updates WHERE id = ? AND agent_id = ?`, taskID, agentID).Scan(&state, &attempt); err != nil || attempt != expectedAttempt || (state != "installing" && state != "succeeded" && state != "failed") {
-		return errStaleTaskLease
-	}
-	return nil
-}
-
-func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, recoveryRequired bool) error {
+func (s *Store) completeAgentUpdate(ctx context.Context, commit projectionCommit, agentID, taskID string, expectedAttempt int64, succeeded bool, taskError string, recoveryRequired bool) error {
 	taskError = strings.TrimSpace(taskError)
 	if len(taskError) > 1024 {
 		taskError = taskError[:1024]
@@ -310,7 +317,7 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 	if attempt != expectedAttempt || expectedAttempt <= 0 {
 		return errors.New("center: Agent update task is stale")
 	}
-	if recoveryRequired && (succeeded || taskError == "" || currentState != "installing") {
+	if recoveryRequired && (succeeded || taskError == "" || (currentState != "installing" && !(currentState == "failed" && previousError == taskError))) {
 		return errInvalidReconciliationDisposition
 	}
 	desiredState := "succeeded"
@@ -320,14 +327,8 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 			taskError = "Agent update failed"
 		}
 	}
-	if recoveryRequired {
-		// The persistent helper still owns this attempt. Keep it active so
-		// neither a manual retry nor a Center rollout can replace its candidate
-		// and pre-migration recovery point with a competing update.
-		desiredState = "installing"
-	}
 	if currentState == desiredState && (!recoveryRequired || previousError == taskError) {
-		return tx.Commit()
+		return commit(tx)
 	}
 	if succeeded {
 		var liveVersion, lastSeenAt string
@@ -352,14 +353,8 @@ func (s *Store) completeAgentUpdate(ctx context.Context, agentID, taskID string,
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return errors.New("center: Agent update changed before completion")
 	}
-	eventState := desiredState
-	if recoveryRequired {
-		// Record the failed activation using the existing event vocabulary;
-		// the owning update task remains installing until recovery completes.
-		eventState = "failed"
-	}
-	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "agent.update", 1, eventState, taskError); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "agent.update", 1, desiredState, taskError); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return commit(tx)
 }

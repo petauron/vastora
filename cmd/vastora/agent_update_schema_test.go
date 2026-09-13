@@ -73,6 +73,7 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 	recoveryPrepared := 0
 	starts := 0
 	environment := hostUpdateActivationEnvironment{
+		authorize:     func(context.Context, string) error { return nil },
 		candidatePath: candidate, recoveryDirectory: filepath.Join(root, "update", hostUpdateRecoveryDirectoryName),
 		version: func(_ context.Context, path string) (string, error) {
 			raw, err := os.ReadFile(path)
@@ -131,20 +132,18 @@ func TestHostUpdateRetainsCandidateAfterActivationCanMigrateSchema(t *testing.T)
 		t.Fatalf("recovery database was migrated along with production: %d", schema)
 	}
 
-	// A restarted helper treats the published recovery manifest as the durable
-	// phase marker. It retries only its bound candidate and never prepares or
-	// restores source state again.
+	// Restart does not authorize replay, even if the service can now start.
 	serviceReady = true
-	if err := activateHostUpdate(context.Background(), operation, environment); err != nil {
-		t.Fatalf("candidate activation did not converge after restart: %v", err)
+	if err := activateHostUpdate(context.Background(), operation, environment); !errors.Is(err, errHostUpdateCandidatePending) {
+		t.Fatalf("candidate replay was not blocked: %v", err)
 	}
 	installed, _ = os.ReadFile(executable)
-	if string(installed) != "target" || recoveryPrepared != 1 || starts != 2 {
+	if string(installed) != "target" || recoveryPrepared != 1 || starts != 1 {
 		t.Fatalf("replay did not retain the candidate: installed=%q recovery=%d starts=%d", installed, recoveryPrepared, starts)
 	}
 }
 
-func TestHostUpdatePreCommitFailureRestartsSource(t *testing.T) {
+func TestHostUpdatePreCommitFailureStopsAndRetainsSource(t *testing.T) {
 	root := t.TempDir()
 	executable := filepath.Join(root, "vastora")
 	candidate := filepath.Join(root, "candidate")
@@ -162,6 +161,7 @@ func TestHostUpdatePreCommitFailureRestartsSource(t *testing.T) {
 	}
 	started := 0
 	environment := hostUpdateActivationEnvironment{
+		authorize:     func(context.Context, string) error { return nil },
 		candidatePath: candidate, recoveryDirectory: filepath.Join(root, "recovery"),
 		version: func(_ context.Context, path string) (string, error) {
 			if path == candidate {
@@ -182,16 +182,16 @@ func TestHostUpdatePreCommitFailureRestartsSource(t *testing.T) {
 		},
 	}
 	err := activateHostUpdate(context.Background(), operation, environment)
-	if err == nil || errors.Is(err, errHostUpdateCandidatePending) || !strings.Contains(err.Error(), "checkpoint failed") {
-		t.Fatalf("pre-commit recovery failure was not terminal: %v", err)
+	if !errors.Is(err, errHostUpdateCandidatePending) || !strings.Contains(err.Error(), "checkpoint failed") {
+		t.Fatalf("pre-commit failure did not require maintenance: %v", err)
 	}
 	installed, _ := os.ReadFile(executable)
-	if string(installed) != "source" || started != 1 {
-		t.Fatalf("source Agent was not retained and restarted: installed=%q starts=%d", installed, started)
+	if string(installed) != "source" || started != 0 {
+		t.Fatalf("failure changed or restarted source Agent: installed=%q starts=%d", installed, started)
 	}
 }
 
-func TestHostUpdateRecoveryPointResumesCandidateAfterInterruptedReplacement(t *testing.T) {
+func TestHostUpdateRecoveryPointBlocksAutomaticCandidateResume(t *testing.T) {
 	root := t.TempDir()
 	executable := filepath.Join(root, "bin", "vastora")
 	candidate := filepath.Join(root, "update", "vastora")
@@ -226,6 +226,7 @@ func TestHostUpdateRecoveryPointResumesCandidateAfterInterruptedReplacement(t *t
 	}
 	starts := 0
 	environment := hostUpdateActivationEnvironment{
+		authorize:     func(context.Context, string) error { return nil },
 		candidatePath: candidate, recoveryDirectory: recoveryDirectory,
 		version: func(_ context.Context, path string) (string, error) {
 			raw, err := os.ReadFile(path)
@@ -251,13 +252,12 @@ func TestHostUpdateRecoveryPointResumesCandidateAfterInterruptedReplacement(t *t
 			return nil
 		},
 	}
-	if err := activateHostUpdate(context.Background(), operation, environment); err != nil {
-		t.Fatalf("interrupted replacement did not resume the candidate: %v", err)
+	if err := activateHostUpdate(context.Background(), operation, environment); !errors.Is(err, errHostUpdateCandidatePending) {
+		t.Fatalf("interrupted replacement did not require maintenance: %v", err)
 	}
 	installed, _ := os.ReadFile(executable)
-	previous, _ := os.ReadFile(executable + ".previous")
-	if string(installed) != "target" || string(previous) != "source" || starts != 1 {
-		t.Fatalf("replay did not converge to the candidate: installed=%q previous=%q starts=%d", installed, previous, starts)
+	if string(installed) != "source" || starts != 0 {
+		t.Fatalf("replay changed installed state: installed=%q starts=%d", installed, starts)
 	}
 }
 
@@ -399,11 +399,16 @@ func TestHostUpdateRecoveryIsolatedFromPreviousTasksAndAttempts(t *testing.T) {
 	}
 }
 
-func TestHostUpdateServiceBoundsAutomaticRecoveryAttempts(t *testing.T) {
+func TestHostUpdateServiceDoesNotReplayOnFailureOrBoot(t *testing.T) {
 	unit := hostUpdateServiceUnit()
-	for _, required := range []string{"StartLimitIntervalSec=infinity\n", "StartLimitBurst=5\n", "Restart=on-failure\n", "RestartSec=15s\n", " agent cleanup-update --operation-file "} {
+	for _, required := range []string{"Restart=no\n", " agent cleanup-update --operation-file "} {
 		if !strings.Contains(unit, required) {
-			t.Fatalf("update helper lost bounded recovery or protected cleanup: %s", required)
+			t.Fatalf("update helper lost stop-on-error or protected cleanup: %s", required)
+		}
+	}
+	for _, forbidden := range []string{"Restart=on-failure", "RestartSec=", "WantedBy=", "[Install]"} {
+		if strings.Contains(unit, forbidden) {
+			t.Fatalf("update helper can automatically replay: %s", forbidden)
 		}
 	}
 }
@@ -458,12 +463,8 @@ func TestHostUpdateRecoveryRejectsMismatchedDatabaseKeyBeforePublication(t *test
 	}
 }
 
-func TestHostUpdateRecoveryReplaysLocallyBeforeCenterIsReachable(t *testing.T) {
-	for _, terminalFailure := range []bool{false, true} {
-		name := "recovering"
-		if terminalFailure {
-			name = "precommit_failure"
-		}
+func TestHostUpdateRecoveryCannotMutateBeforeCenterAuthorization(t *testing.T) {
+	for _, name := range []string{"pending", "failed", "succeeded"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			dataDir := filepath.Join(root, "agent")
@@ -488,8 +489,13 @@ func TestHostUpdateRecoveryReplaysLocallyBeforeCenterIsReachable(t *testing.T) {
 				if r.Header.Get("Authorization") != "Bearer synthetic-credential" {
 					t.Error("missing update callback authentication")
 				}
-				if !terminalFailure && starts != 1 {
-					t.Error("helper contacted Center before restoring the local Agent")
+				if starts != 0 {
+					t.Error("helper mutated service before Center authorization")
+				}
+				if name == "succeeded" && strings.HasSuffix(r.URL.Path, "/start") {
+					w.Header().Set("Content-Type", "application/json")
+					w.Write([]byte(`{}`))
+					return
 				}
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 			}))
@@ -511,12 +517,17 @@ func TestHostUpdateRecoveryReplaysLocallyBeforeCenterIsReachable(t *testing.T) {
 			if err := prepareHostUpdateRecovery(context.Background(), operation, recovery, candidate); err != nil {
 				t.Fatal(err)
 			}
-			if terminalFailure {
-				if err := writeHostUpdateResult(filepath.Join(root, "result.json"), hostUpdateResult{Error: "precommit install failed"}); err != nil {
+			if name != "pending" {
+				result := hostUpdateResult{Succeeded: name == "succeeded"}
+				if name == "failed" {
+					result.Error = "precommit install failed"
+				}
+				if err := writeHostUpdateResult(filepath.Join(root, "result.json"), result); err != nil {
 					t.Fatal(err)
 				}
 			}
 			environment := hostUpdateActivationEnvironment{
+				authorize:     func(context.Context, string) error { return nil },
 				candidatePath: candidate, recoveryDirectory: recovery,
 				version: func(context.Context, string) (string, error) { return "source-version", nil },
 				run: func(_ context.Context, _ string, arguments ...string) ([]byte, error) {
@@ -533,11 +544,8 @@ func TestHostUpdateRecoveryReplaysLocallyBeforeCenterIsReachable(t *testing.T) {
 				t.Fatal("unreachable Center was reported as a completed update")
 			}
 			installed, err := os.ReadFile(executable)
-			want := "target"
-			if terminalFailure {
-				want = "source"
-			}
-			if err != nil || string(installed) != want || centerCalls != 1 || (terminalFailure && starts != 0) {
+			wantCalls := 1
+			if err != nil || string(installed) != "source" || centerCalls != wantCalls || starts != 0 {
 				t.Fatalf("offline replay: installed=%q starts=%d centerCalls=%d err=%v", installed, starts, centerCalls, err)
 			}
 			if _, err := os.Stat(filepath.Join(recovery, "agent.db")); err != nil {

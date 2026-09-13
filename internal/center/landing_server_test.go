@@ -107,14 +107,14 @@ func TestLandingServerMigrationAndTaskRevisions(t *testing.T) {
 	if second == nil || second.Revision != 2 || second.LandingServerState.Plan != nil {
 		t.Fatal("missing stop revision")
 	}
-	if err := store.completeLandingServer(ctx, "agent-v3", first.Revision, first.Attempt, true, nil); err != nil {
+	if err := store.completeLandingServer(ctx, commitProjectionOnlyForTest, "agent-v3", first.Revision, first.Attempt, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	var applied int64
 	if err := store.db.QueryRow(`SELECT applied_revision FROM landing_server_states WHERE node_id='agent-v3'`).Scan(&applied); err != nil || applied != 0 {
 		t.Fatal("old completion overwrote current revision")
 	}
-	if err := store.completeLandingServer(ctx, "agent-v3", second.Revision, second.Attempt, true, nil); err != nil {
+	if err := store.completeLandingServer(ctx, commitProjectionOnlyForTest, "agent-v3", second.Revision, second.Attempt, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	var status string

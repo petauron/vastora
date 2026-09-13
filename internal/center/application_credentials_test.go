@@ -174,7 +174,11 @@ func TestCPACredentialLifecycleGeneratesPreservesRevealsAndRotates(t *testing.T)
 
 func completeApplicationTaskForCredentialTest(t *testing.T, store *Store, node AgentCredential, task *AgentTask, address string, port int) {
 	t.Helper()
-	result, _ := json.Marshal(ApplicationTaskResult{Services: []ApplicationServiceResult{{Name: credentialTestServiceName(task.AppKey), Protocol: "http", ContainerPort: port, HostPort: port, Address: address}}})
+	services := []ApplicationServiceResult{{Name: credentialTestServiceName(task.AppKey), Protocol: "http", ContainerPort: port, HostPort: port, Address: address}}
+	if task.AppKey == cpaAppKey {
+		services = append(services, ApplicationServiceResult{Name: "client-api", Protocol: "http", ContainerPort: port, HostPort: port, Address: address})
+	}
+	result, _ := json.Marshal(ApplicationTaskResult{Services: services})
 	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
