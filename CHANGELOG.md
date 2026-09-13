@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.130](https://github.com/petauron/vastora/compare/v0.1.0-alpha.129...v0.1.0-alpha.130) (2026-09-13)
+
+
+### Features
+
+* Agent execution MVP and local HTTP lifecycle fix ([#429](https://github.com/petauron/vastora/issues/429)) ([b3129ee](https://github.com/petauron/vastora/commit/b3129eea776fd5de06f8deeb0effc1127ca4730a))
+
 ## [0.1.0-alpha.129](https://github.com/petauron/vastora/compare/v0.1.0-alpha.128...v0.1.0-alpha.129) (2026-09-13)
 
 
