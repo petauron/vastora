@@ -6845,6 +6845,9 @@
                           },
                           "disposition": {
                             "type": "string"
+                          },
+                          "canConfirm": {
+                            "type": "boolean"
                           }
                         }
                       }
