@@ -71,8 +71,8 @@ func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []
 }
 
 // ComposeMihomo augments the native per-user configuration, never the upstream
-// global template. Existing rules/groups are retained; a new explicit strategy
-// choice is added to select groups rather than replacing users' rule semantics.
+// global template. Existing rules/groups are retained and fixed combination
+// nodes are appended without requiring a client-side chain or custom groups.
 func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants []SubscriptionGrant) ([]byte, error) {
 	if len(native) > 4<<20 || !validGrantID(parentID) || !mode.Valid() {
 		return nil, errors.New("landing: invalid subscription input")
@@ -86,8 +86,8 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 		return nil, errors.New("landing: native subscription has no proxy inventory")
 	}
 	groups, ok := config["proxy-groups"].([]any)
-	if !ok {
-		return nil, errors.New("landing: a full Mihomo configuration is required")
+	if !ok && config["proxy-groups"] != nil {
+		return nil, errors.New("landing: invalid native proxy groups")
 	}
 	names := map[string]bool{"DIRECT": true, "REJECT": true}
 	for _, values := range [][]any{proxies, groups} {
@@ -111,9 +111,7 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 		return nil
 	}
 	baseProxies := slices.Clone(proxies)
-	fixedNames, entryNames := []any{}, []any{}
-	landingEntries := map[string][]any{}
-	landingItems := map[string]SubscriptionGrant{}
+	fixedNames := []any{}
 	for _, item := range grants {
 		if err := validateSubscriptionGrant(item, parentID); err != nil {
 			return nil, err
@@ -160,72 +158,12 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 			proxies = append(proxies, clone)
 			fixedNames = append(fixedNames, name)
 		}
-		if mode.Advanced() && item.Grant.Mode.Advanced() {
-			name := proxy["name"].(string)
-			key := item.Grant.Peer.ID
-			if prior, exists := landingItems[key]; exists && prior.Grant.Peer != item.Grant.Peer {
-				return nil, errors.New("landing: landing identity changed")
-			}
-			landingItems[key] = item
-			if !slices.Contains(landingEntries[key], any(name)) {
-				landingEntries[key] = append(landingEntries[key], name)
-			}
-			if !slices.Contains(entryNames, any(name)) {
-				entryNames = append(entryNames, name)
-			}
-		}
 	}
-	choices := slices.Clone(fixedNames)
-	if len(landingEntries) > 0 {
-		defaultGroup := "入口默认出口 · Vastora"
-		if err := reserve(defaultGroup); err != nil {
-			return nil, err
-		}
-		managedGroups := []any{map[string]any{"name": defaultGroup, "type": "select", "proxies": entryNames}}
-		landingChoices := []any{defaultGroup}
-		keys := make([]string, 0, len(landingEntries))
-		for key := range landingEntries {
-			keys = append(keys, key)
-		}
-		slices.Sort(keys)
-		for _, key := range keys {
-			item := landingItems[key]
-			suffix := grantTag(key)[:8]
-			entryGroup, landingName := "入口 → "+item.LandingName+" · "+suffix, "落地 · "+item.LandingName+" · "+suffix
-			if err := reserve(entryGroup); err != nil {
-				return nil, err
-			}
-			if err := reserve(landingName); err != nil {
-				return nil, err
-			}
-			managedGroups = append(managedGroups, map[string]any{"name": entryGroup, "type": "select", "proxies": landingEntries[key]})
-			proxies = append(proxies, map[string]any{"name": landingName, "type": "socks5", "server": item.Grant.Peer.Address, "port": SOCKSPort, "udp": false, "dialer-proxy": entryGroup})
-			landingChoices = append(landingChoices, landingName)
-		}
-		strategy := "自选落地 · Vastora"
-		if err := reserve(strategy); err != nil {
-			return nil, err
-		}
-		managedGroups = append(managedGroups, map[string]any{"name": strategy, "type": "select", "proxies": landingChoices})
-		choices = append(choices, strategy)
-		// Attach only to original select groups. New per-landing entry groups
-		// must never contain fixed identities or a group pointing back to them.
-		for _, value := range groups {
-			group := value.(map[string]any)
-			if group["type"] == "select" {
-				if members, ok := group["proxies"].([]any); ok {
-					group["proxies"] = append(members, choices...)
-				}
-			}
-		}
-		groups = append(groups, managedGroups...)
-	} else {
-		for _, value := range groups {
-			group := value.(map[string]any)
-			if group["type"] == "select" {
-				if members, ok := group["proxies"].([]any); ok {
-					group["proxies"] = append(members, choices...)
-				}
+	for _, value := range groups {
+		group := value.(map[string]any)
+		if group["type"] == "select" {
+			if members, ok := group["proxies"].([]any); ok {
+				group["proxies"] = append(members, fixedNames...)
 			}
 		}
 	}

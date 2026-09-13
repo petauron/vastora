@@ -4,7 +4,7 @@ import "testing"
 
 func TestClientSourceIdentityCannotBeInherited(t *testing.T) {
 	source := PeerIdentity{ID: "original", PublicKey: "old-key", Address: "100.64.0.2"}
-	plan := ClientPlan{Source: source, Grants: []ClientGrant{clientGrantFixture("grant", BothMode)}}
+	plan := ClientPlan{Source: source, Grants: []ClientGrant{clientGrantFixture("grant", FixedMode)}}
 	if err := plan.CheckSource(source); err != nil {
 		t.Fatal(err)
 	}

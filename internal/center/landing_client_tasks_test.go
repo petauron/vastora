@@ -79,7 +79,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		}
 	}
 	completeServer(claimLanding(true))
-	input := LandingClientGrantInput{ParentID: parent, ServiceID: "client-inbound", LandingNodeID: owner.ID, Mode: landing.BothMode, Enabled: true, ConfirmSessionReset: true}
+	input := LandingClientGrantInput{ParentID: parent, ServiceID: "client-inbound", LandingNodeID: owner.ID, Mode: landing.FixedMode, Enabled: true, ConfirmSessionReset: true}
 	grant, err := store.ConfigureClientLanding(ctx, input)
 	if err != nil || grant.Status != "preparing" || grant.AppliedRevision != 0 {
 		t.Fatalf("grant queued: %+v %v", grant, err)

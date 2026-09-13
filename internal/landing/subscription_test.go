@@ -9,7 +9,7 @@ import (
 )
 
 func subscriptionFixture() SubscriptionGrant {
-	grant := clientGrantFixture("combination-a", BothMode)
+	grant := clientGrantFixture("combination-a", FixedMode)
 	query := "?type=tcp&security=reality&flow=xtls-rprx-vision&sni=example.com&pbk=public-key&sid=deadbeef"
 	return SubscriptionGrant{Grant: grant, EntryName: "入口 A", LandingName: "落地 A", BaseLink: "vless://11111111-2222-4333-8444-555555555555@entry.example.test:443" + query + "#original", FixedLink: "vless://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@entry.example.test:443" + query}
 }
@@ -42,8 +42,8 @@ func TestFixedSubscriptionPreservesNativeAndDistinctCredentials(t *testing.T) {
 	if _, err := ComposeLinks([]byte("vless://other@entry.example.test:443?security=reality"), item.Grant.ParentID, FixedMode, []SubscriptionGrant{item}, false); err == nil {
 		t.Fatal("mismatched native user obtained a fixed credential")
 	}
-	out, err := ComposeLinks([]byte(native), item.Grant.ParentID, AdvancedMode, []SubscriptionGrant{item}, false)
-	if err != nil || string(out) != native {
+	_, err := ComposeLinks([]byte(native), item.Grant.ParentID, PublishingMode("advanced"), []SubscriptionGrant{item}, false)
+	if err == nil {
 		t.Fatal("ordinary format pretended to support advanced chains")
 	}
 }
@@ -66,59 +66,33 @@ func TestSubscriptionTransportComparisonUsesValuesNotQueryOrder(t *testing.T) {
 	}
 }
 
-func TestMihomoLandingGroupUsesOnlyGrantedBaseAndNoDirectFallback(t *testing.T) {
+func TestMihomoFixedCombinationsNeedNoClientChain(t *testing.T) {
 	item := subscriptionFixture()
-	native := []byte(`proxies:
-  - {name: Original, type: vless, uuid: 11111111-2222-4333-8444-555555555555, server: entry.example.test, port: 443, tls: true, servername: example.com, flow: xtls-rprx-vision, reality-opts: {public-key: public-key, short-id: deadbeef}, udp: true}
-proxy-groups:
-  - {name: Select, type: select, proxies: [Original, DIRECT]}
-rules: ["MATCH,Select"]
-`)
-	for _, mode := range []PublishingMode{FixedMode, AdvancedMode, BothMode} {
-		out, err := ComposeMihomo(native, item.Grant.ParentID, mode, []SubscriptionGrant{item})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var config map[string]any
-		if yaml.Unmarshal(out, &config) != nil {
-			t.Fatal("invalid YAML")
-		}
-		fixed, socks := 0, 0
-		for _, value := range config["proxies"].([]any) {
-			proxy := value.(map[string]any)
-			if proxy["uuid"] == "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" {
-				fixed++
-				if proxy["udp"] != false {
-					t.Fatal("fixed UDP capability was advertised")
-				}
-			}
-			if proxy["type"] == "socks5" {
-				socks++
-				if proxy["udp"] != false || proxy["server"] != "100.64.0.8" || proxy["port"] != 1080 {
-					t.Fatal("incorrect private SOCKS target")
-				}
-				found := false
-				for _, value := range config["proxy-groups"].([]any) {
-					group := value.(map[string]any)
-					if group["name"] == proxy["dialer-proxy"] {
-						found = true
-						members := group["proxies"].([]any)
-						if len(members) != 1 || members[0] != "Original" {
-							t.Fatal("chain can select a fixed identity or DIRECT")
-						}
-					}
-				}
-				if !found {
-					t.Fatal("dialer-proxy did not resolve to an entry group")
-				}
-			}
-		}
-		if (fixed == 1) != mode.Fixed() || (socks == 1) != mode.Advanced() {
-			t.Fatal("publishing mode leaked another mode")
-		}
-		if !strings.Contains(string(out), "MATCH,Select") {
-			t.Fatal("replaced original business rules")
-		}
+	other := item
+	other.Grant.ID = "combination-b"
+	other.Grant.Peer = PeerIdentity{ID: "landing-b", PublicKey: "key-b", Address: "100.64.0.9"}
+	other.Grant.FixedUser = FixedUser(other.Grant.ID)
+	other.Grant.FixedIdentity = Identity("bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+	other.FixedLink = strings.Replace(item.FixedLink, "aaaaaaaa-bbbb", "bbbbbbbb-bbbb", 1)
+	other.LandingName = "落地 B"
+	items := []SubscriptionGrant{item, other}
+	out, err := ComposeMihomo([]byte(subscriptionRealityFixture), item.Grant.ParentID, FixedMode, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if yaml.Unmarshal(out, &config) != nil {
+		t.Fatal("invalid YAML")
+	}
+	if len(config["proxies"].([]any)) != 3 || len(config["proxy-groups"].([]any)) != 1 {
+		t.Fatal("expected original plus two independent nodes, without added strategy groups")
+	}
+	if strings.Contains(string(out), "dialer-proxy") || strings.Contains(string(out), "socks5") {
+		t.Fatal("client-side chain remains")
+	}
+	links, err := ComposeLinks([]byte(item.BaseLink+"\n"), item.Grant.ParentID, FixedMode, items, false)
+	if err != nil || strings.Count(string(links), "vless://") != 3 {
+		t.Fatalf("ordinary subscription lost a combination: %v", err)
 	}
 }
 
@@ -145,7 +119,7 @@ func TestSubscriptionMihomoRejectsChangedRealityMaterial(t *testing.T) {
 			}
 			change(native["proxies"].([]any)[0].(map[string]any))
 			data, _ := yaml.Marshal(native)
-			if _, err := ComposeMihomo(data, item.Grant.ParentID, BothMode, []SubscriptionGrant{item}); err == nil {
+			if _, err := ComposeMihomo(data, item.Grant.ParentID, FixedMode, []SubscriptionGrant{item}); err == nil {
 				t.Fatal("changed native transport accepted")
 			}
 		})

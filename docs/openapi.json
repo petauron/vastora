@@ -2099,78 +2099,13 @@
         }
       }
     },
-    "/api/v1/three-x-ui/client-landing/mode": {
-      "get": {
+    "/api/v1/three-x-ui/client-landing/combinations": {
+      "post": {
         "tags": [
           "Applications"
         ],
-        "summary": "Landing Client Mode",
-        "operationId": "landingClientMode_get",
-        "x-vastora-audience": "browser-admin",
-        "security": [
-          {
-            "AdminSession": []
-          }
-        ],
-        "responses": {
-          "202": {
-            "description": "Accepted.",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "500": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "parentId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "confirmSessionReset": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Applications"
-        ],
-        "summary": "Landing Client Mode",
-        "operationId": "landingClientMode_put",
+        "summary": "Landing Client Combinations",
+        "operationId": "landingClientCombinations_post",
         "x-vastora-audience": "browser-admin",
         "security": [
           {
@@ -2203,16 +2138,6 @@
             "$ref": "#/components/responses/Error"
           }
         },
-        "parameters": [
-          {
-            "name": "parentId",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "required": true,
           "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
@@ -2222,6 +2147,27 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
+                  "parentId": {
+                    "type": "string"
+                  },
+                  "serviceId": {
+                    "type": "string"
+                  },
+                  "targets": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "landingNodeId": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
                   "confirmSessionReset": {
                     "type": "boolean"
                   }

@@ -92,9 +92,7 @@ func PrepareClientRoutes(raw json.RawMessage, revision uint64, forced *ProxyPlan
 		}
 	}
 	prefix := []any{}
-	// Keep all explicit security rejects except the standard private-address
-	// blocker before advanced exceptions. Only that well-understood blocker
-	// can be crossed, and only by the exact authenticated tuple below.
+	// Validate original routing before composing fixed identity routes.
 	for _, value := range rules {
 		rule, ok := value.(map[string]any)
 		if !ok {
@@ -119,29 +117,6 @@ func PrepareClientRoutes(raw json.RawMessage, revision uint64, forced *ProxyPlan
 		}
 		if rule["balancerTag"] != nil {
 			return RouteChange{}, errors.New("landing: ambiguous original security policy")
-		}
-		if !blocked[outbound] || standardPrivateBlock(rule) {
-			continue
-		}
-		prefix = append(prefix, scopedGrantRejects(rule, ordered)...)
-	}
-	for _, grant := range ordered {
-		if !grant.Enabled || !grant.Mode.Advanced() {
-			continue
-		}
-		tag := grantPrivateTag + grantTag(grant.Peer.ID)
-		prefix = append(prefix, map[string]any{
-			"type": "field", "inboundTag": []string{grant.InboundTag}, "user": []string{grant.BaseUser},
-			"ip": []string{grant.Peer.Address + "/32"}, "port": "1080", "network": "tcp", "outboundTag": tag,
-		})
-		if !known[tag] {
-			// Pin the actual socket as well as the routing predicate. Sniffing or
-			// destination rewriting cannot turn this into arbitrary private access.
-			outbounds = append(outbounds, map[string]any{"tag": tag, "protocol": "freedom", "settings": map[string]any{"domainStrategy": "AsIs", "redirect": grant.Peer.Address + ":1080", "finalRules": []any{
-				map[string]any{"action": "allow", "network": "tcp", "ip": []string{grant.Peer.Address + "/32"}, "port": "1080"},
-				map[string]any{"action": "block"},
-			}}})
-			known[tag] = true
 		}
 	}
 	// Explicitly deny other private SOCKS tuples for each scoped identity,
@@ -209,14 +184,4 @@ func scopedGrantRejects(rule map[string]any, grants []ClientGrant) []any {
 		}
 	}
 	return result
-}
-
-func standardPrivateBlock(rule map[string]any) bool {
-	for key := range rule {
-		if key != "type" && key != "ip" && key != "outboundTag" && key != "inboundTag" {
-			return false
-		}
-	}
-	values, ok := rule["ip"].([]any)
-	return rule["type"] == "field" && ok && len(values) == 1 && values[0] == "geoip:private"
 }
