@@ -102,6 +102,7 @@ export function StateBadge({ value, language = document.documentElement.lang ===
   const Icon = value === "access_stopped" ? UnplugIcon : good ? CircleCheckIcon : bad ? CircleAlertIcon : Clock3Icon;
   const labels: Record<string, [string, string]> = {
     removing: ["正在移除", "Removing"],
+    deploying: ["正在处理", "In progress"],
     removal_failed: ["移除未完成", "Removal incomplete"],
     access_stopped: ["已停止接入", "Access stopped"],
     expired: ["需刷新", "Refresh required"],

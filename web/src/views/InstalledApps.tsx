@@ -142,7 +142,7 @@ function ControllerBand({ instance, language, onClients, onManage, onUpgrade }: 
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
       <span className="text-xs text-muted-foreground">{copy(language, "订阅主机", "Subscription controller")}</span>
       <span className="truncate text-sm font-medium" title={agent?.name ?? application.nodeId}>{agent?.name ?? application.nodeId}</span>
-      {application.status !== "running" ? <StateBadge language={language} value={application.status} /> : null}
+      {instance.activeChange || application.status !== "running" ? <ApplicationPrimaryStatus instance={instance} language={language} /> : null}
       {webAttention ? <span className="text-xs text-destructive">{copy(language, "入口待处理", "Access needs attention")}</span> : null}
     </div>
     <div className="flex flex-wrap items-center gap-2">
@@ -158,15 +158,26 @@ function ControllerBand({ instance, language, onClients, onManage, onUpgrade }: 
 
 function ApplicationUpdate({ instance, language, onUpgrade }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void }) {
   const { application, app, agent, activeChange } = instance;
-  if (!application.updateAvailable) return null;
+  if (!application.updateAvailable || activeChange) return null;
   const legacy = application.appKey === threeXUIAppKey && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
-  const updating = activeChange?.operation === "upgrade";
-  const disabled = Boolean(activeChange) || !agent?.connected || legacy || catalogInstallBlocked(app);
+  const disabled = !agent?.connected || legacy || catalogInstallBlocked(app) || ["pending", "deploying"].includes(application.status);
   const name = agent?.name ?? application.nodeId;
   return <Button aria-label={copy(language, `更新 ${name} 的应用`, `Update application on ${name}`)} className="max-md:min-h-11" disabled={disabled} onClick={() => onUpgrade(application)} size="sm" variant="outline" title={copy(language, `更新到 v${application.availableVersion}`, `Update to v${application.availableVersion}`)}>
-    {updating ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}
-    {updating ? copy(language, "更新中", "Updating") : application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
+    {application.status === "failed" ? copy(language, "重试更新", "Retry update") : copy(language, "更新", "Update")}
   </Button>;
+}
+
+function ApplicationPrimaryStatus({ instance, language }: { instance: InstalledAppInstance; language: Language }) {
+  const { application, activeChange } = instance;
+  if (activeChange) return <Badge role="status" variant={activeChange.reconciliationRequired ? "destructive" : "outline"}>
+    {activeChange.reconciliationRequired ? <ShieldAlertIcon aria-hidden="true" data-icon="inline-start" /> : <Spinner aria-hidden="true" data-icon="inline-start" className="motion-reduce:animate-none" />}
+    {activeChange.reconciliationRequired ? copy(language, "需要恢复", "Recovery required")
+      : activeChange.operation === "upgrade" ? copy(language, "正在更新", "Updating")
+      : copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}
+  </Badge>;
+  return application.status === "running"
+    ? <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="apps-status-dot bg-latency-fast" />{copy(language, "运行中", "Running")}</span>
+    : <StateBadge language={language} value={application.status} />;
 }
 
 function ApplicationStatus({ instance, language, onUpgrade }: { instance: InstalledAppInstance; language: Language; onUpgrade: (application: Application) => void }) {
@@ -175,13 +186,9 @@ function ApplicationStatus({ instance, language, onUpgrade }: { instance: Instal
   const syncFailed = application.role === "worker" && (!instance.controller || !["ready", "pending", "applying"].includes(application.nodeSyncStatus ?? ""));
 
   return <div className="flex flex-col items-start gap-1.5">
-    {application.status === "running" ? <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="apps-status-dot bg-latency-fast" />{copy(language, "运行中", "Running")}</span> : <StateBadge language={language} value={application.status} />}
-    {activeChange ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-      {activeChange.reconciliationRequired ? <ShieldAlertIcon aria-hidden="true" className="size-3.5 shrink-0 text-destructive" /> : <Spinner aria-hidden="true" />}
-      {activeChange.reconciliationRequired ? copy(language, "需要继续恢复", "Recovery required") : copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}
-    </span> : application.status === "failed" ? <span className="text-xs text-destructive">{copy(language, "最近一次操作失败，应用仍保留", "Last operation failed; the app is still installed")}</span> : null}
-    {syncing ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" />{copy(language, "正在接入订阅主机", "Connecting to controller")}</span> : null}
-    {syncFailed ? <span className="text-xs text-destructive">{copy(language, "尚未接入订阅主机", "Controller not connected")}</span> : null}
+    <ApplicationPrimaryStatus instance={instance} language={language} />
+    {!activeChange && syncing ? <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Spinner aria-hidden="true" />{copy(language, "正在接入订阅主机", "Connecting to controller")}</span> : null}
+    {!activeChange && syncFailed ? <span className="text-xs text-destructive">{copy(language, "尚未接入订阅主机", "Controller not connected")}</span> : null}
     {agent && !agent.connected ? <span className="text-xs text-destructive">{copy(language, "节点离线", "Node offline")}</span> : null}
     <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} />
   </div>;
