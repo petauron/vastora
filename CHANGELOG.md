@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.131](https://github.com/petauron/vastora/compare/v0.1.0-alpha.130...v0.1.0-alpha.131) (2026-09-13)
+
+
+### Features
+
+* 多选落地生成独立组合订阅节点 ([#431](https://github.com/petauron/vastora/issues/431)) ([5b2a44d](https://github.com/petauron/vastora/commit/5b2a44de7ccaed1b2f99733fdbb3a5b3e85711f1))
+
 ## [0.1.0-alpha.130](https://github.com/petauron/vastora/compare/v0.1.0-alpha.129...v0.1.0-alpha.130) (2026-09-13)
 
 
