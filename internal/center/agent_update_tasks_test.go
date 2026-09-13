@@ -207,7 +207,7 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
 		t.Fatalf("new release bypassed the failed update: %#v, %v", queued, err)
 	}
-	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.90"); err != nil || status.Failed != 1 || status.Pending != 0 || status.Updating != 0 {
+	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.90"); err != nil || status.Manual != 1 || status.Pending != 0 || status.Updating != 0 {
 		t.Fatalf("blocked new release still appears pending: %#v, %v", status, err)
 	}
 	status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")

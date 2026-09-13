@@ -763,7 +763,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	if !executionBlocked && heartbeat.Capabilities.Gateway && reportedHeadscaleAddress {
-		needsPrivateListener, err := gatewayStateNeedsReportedHeadscaleListener(ctx, tx, id, heartbeat.NetworkCandidates)
+		needsPrivateListener, err := s.gatewayStateNeedsReportedHeadscaleListener(ctx, tx, id, heartbeat.NetworkCandidates)
 		if err != nil {
 			return err
 		}
@@ -918,7 +918,7 @@ func (s *Store) queueUnhealthyGatewayReconcile(ctx context.Context, tx *sql.Tx, 
 	return s.recordTaskEvent(ctx, tx, gatewayComponentTaskID(agentID, generation), agentID, "gateway.component.apply", generation, "queued", "gateway health check failed; queued for reconcile")
 }
 
-func gatewayStateNeedsReportedHeadscaleListener(ctx context.Context, tx *sql.Tx, agentID string, candidates []networking.Candidate) (bool, error) {
+func (s *Store) gatewayStateNeedsReportedHeadscaleListener(ctx context.Context, tx *sql.Tx, agentID string, candidates []networking.Candidate) (bool, error) {
 	reported := make(map[string]struct{})
 	for _, candidate := range candidates {
 		if candidate.Kind == networking.KindHeadscale {
@@ -928,8 +928,29 @@ func gatewayStateNeedsReportedHeadscaleListener(ctx context.Context, tx *sql.Tx,
 	if len(reported) == 0 {
 		return false, nil
 	}
+	// Capability and a tailnet address do not mean this node needs a gateway.
+	// Only repair a listener required by the current routes on a selected gateway.
+	var running bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM gateway_components WHERE gateway_node_id=? AND desired_status='running')`, agentID).Scan(&running); err != nil || !running {
+		return false, err
+	}
+	expected, err := s.desiredGatewayState(ctx, tx, agentID, 1)
+	if err != nil {
+		return false, err
+	}
+	var requiredAddress string
+	for _, listener := range expected.Listeners {
+		if listener.Kind == "headscale" {
+			if _, present := reported[listener.Address]; present {
+				requiredAddress = listener.Address
+			}
+		}
+	}
+	if requiredAddress == "" {
+		return false, nil
+	}
 	var encoded []byte
-	err := tx.QueryRowContext(ctx, `SELECT desired_json FROM gateway_states WHERE gateway_node_id = ?`, agentID).Scan(&encoded)
+	err = tx.QueryRowContext(ctx, `SELECT desired_json FROM gateway_states WHERE gateway_node_id = ?`, agentID).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
@@ -941,10 +962,8 @@ func gatewayStateNeedsReportedHeadscaleListener(ctx context.Context, tx *sql.Tx,
 		return false, errors.New("center: stored gateway desired state is invalid")
 	}
 	for _, listener := range desired.Listeners {
-		if listener.Kind == "headscale" {
-			if _, current := reported[listener.Address]; current {
-				return false, nil
-			}
+		if listener.Kind == "headscale" && listener.Address == requiredAddress {
+			return false, nil
 		}
 	}
 	return true, nil

@@ -153,7 +153,7 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 	} else {
 		switch input.GrantPhase {
 		case "prepare":
-			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='prepared' WHERE id=?`, record.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='prepared',last_error='' WHERE id=?`, record.ID); err != nil {
 				return err
 			}
 			var waiting int

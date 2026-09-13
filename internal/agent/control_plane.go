@@ -97,6 +97,13 @@ type HostUpdateRequest struct {
 // requires explicit disposition; attempts never authorize retries or rollback.
 type uncertainTaskOutcomeError struct{ cause error }
 
+type centerResponseError struct {
+	status  int
+	message string
+}
+
+func (e *centerResponseError) Error() string { return "agent: Center request failed: " + e.message }
+
 func (e *uncertainTaskOutcomeError) Error() string { return e.cause.Error() }
 func (e *uncertainTaskOutcomeError) Unwrap() error { return e.cause }
 
@@ -825,8 +832,7 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 			return
 		}
 	}
-	if err := c.TransferLegacyReceipts(ctx, store); err != nil {
-		reportError(err)
+	if !c.transferLegacyReceiptsBeforeTasks(ctx, store, reportError) {
 		return
 	}
 	for {
@@ -1488,7 +1494,7 @@ func (c Client) postLimit(ctx context.Context, endpoint string, payload any, cre
 		if failure.Error == "" {
 			failure.Error = response.Status
 		}
-		return fmt.Errorf("agent: Center request failed: %s", failure.Error)
+		return &centerResponseError{status: response.StatusCode, message: failure.Error}
 	}
 	if target != nil && json.Unmarshal(content, target) != nil {
 		return errors.New("agent: Center returned invalid JSON")
