@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -217,7 +215,10 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	master := enrollAccessTestNode(t, s, "controller", "10.0.0.90")
-	worker := enrollAccessTestNode(t, s, "expired-worker", "10.0.0.91")
+	worker := enrollOrchestrationNode(t, s, "expired-worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.91", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.91", HeadscaleAddress: "100.64.0.91", EnabledKinds: []string{networking.KindHeadscale}})
+	if _, err := s.db.Exec(`UPDATE agents SET tailscale_ownership='managed' WHERE id=?`, worker.ID); err != nil {
+		t.Fatal(err)
+	}
 	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
 	m, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
 	if err != nil {
@@ -228,7 +229,7 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	completeThreeXUIDeployment(t, s, worker, claimTask(t, s, worker), "10.0.0.91", "worker-token")
+	completeThreeXUIDeployment(t, s, worker, claimTask(t, s, worker), "100.64.0.91", "worker-token")
 	initial := claimTask(t, s, master)
 	result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
 	if err = s.CompleteTask(ctx, master.ID, master.Credential, initial.ID, initial.Attempt, true, "", result, initial.RequiredRuntimeGeneration); err != nil {
@@ -241,12 +242,37 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	if _, err = s.db.Exec(`UPDATE agents SET last_seen_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), master.ID); err != nil {
 		t.Fatal(err)
 	}
+	privateDeletes := 0
+	serveRemovalHeadscale(t, s, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/node":
+			// Current Headscale response: tagged-devices owns the node, and tags
+			// replaces the removed forcedTags/validTags fields.
+			_, _ = w.Write([]byte(`{"nodes":[{"id":"10","nodeKey":"nodekey:worker-key","ipAddresses":["100.64.0.91"],"user":{"name":"tagged-devices"},"tags":["tag:vastora-agent","tag:vastora-gateway"]}]}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/node/10":
+			privateDeletes++
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected private cleanup %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
 	expireRemovalNode(t, s, worker.ID)
+	if err = s.StartAgentRemoval(ctx, worker.ID, "expired-worker"); err != nil {
+		t.Fatal(err)
+	}
+	// Resume a removal left failed by the incorrect user/legacy-tag check.
+	if _, err = s.db.Exec(`UPDATE agent_removals SET state='failed',last_error='center: private node is not owned by Vastora' WHERE agent_id=?`, worker.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err = s.StartAgentRemoval(ctx, worker.ID, "expired-worker"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.resumeAgentRemovals(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if privateDeletes != 1 {
+		t.Fatal("tagged private identity was not removed before subscription cleanup")
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, w.ApplicationID) != 1 {
 		t.Fatal("worker deleted before remote receipt")
@@ -283,6 +309,9 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM application_commands WHERE id=?`, retry.ID) != 0 {
 		t.Fatal("worker task history remained on controller")
+	}
+	if privateDeletes != 1 || removalCount(t, s, `SELECT COUNT(*) FROM agents WHERE id=?`, worker.ID) != 0 || removalCount(t, s, `SELECT COUNT(*) FROM agent_removals WHERE agent_id=?`, worker.ID) != 0 {
+		t.Fatal("removal retry did not finish exactly once")
 	}
 }
 
@@ -322,14 +351,14 @@ func TestRemoveOfflineAgentPrivateIdentityRetryDoesNotDeleteReplacement(t *testi
 	expireRemovalNode(t, s, node.ID)
 	deleted := []string{}
 	oldExists := true
-	headscale := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	serveRemovalHeadscale(t, s, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/node":
 			key, id := "old-key", "10"
 			if !oldExists {
 				key, id = "replacement-key", "11"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": []any{map[string]any{"id": id, "nodeKey": key, "ipAddresses": []string{"100.64.0.86"}, "user": map[string]string{"name": "vastora"}, "forcedTags": []string{"tag:vastora-agent"}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"nodes": []any{map[string]any{"id": id, "nodeKey": key, "ipAddresses": []string{"100.64.0.86"}, "user": map[string]string{"name": "tagged-devices"}, "tags": []string{"tag:vastora-agent"}}}})
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/node/10":
 			deleted = append(deleted, r.URL.Path)
 			oldExists = false
@@ -339,32 +368,16 @@ func TestRemoveOfflineAgentPrivateIdentityRetryDoesNotDeleteReplacement(t *testi
 			w.WriteHeader(http.StatusBadRequest)
 		}
 	}))
-	defer headscale.Close()
-	endpoint := "https://example.com:" + strings.Split(strings.TrimPrefix(headscale.URL, "https://"), ":")[1]
-	s.headscaleHTTPClient = headscale.Client()
-	s.headscaleAllowedEndpoints = []string{endpoint}
-	s.builtinHeadscaleDialAddress = strings.TrimPrefix(headscale.URL, "https://")
-	tx, _ := s.db.BeginTx(ctx, nil)
-	secretID, err := s.putSecret(ctx, tx, []byte("test-api-key"), "integration:headscale")
-	if err != nil {
+	if err := s.StartAgentRemoval(ctx, node.ID, "private-expired"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(`INSERT INTO network_integrations(kind,mode,endpoint,secret_id,status,created_at,updated_at) VALUES('headscale','builtin',?,?,'configured','','')`, endpoint, secretID); err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.StartAgentRemoval(ctx, node.ID, "private-expired"); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.resumeAgentRemovals(ctx); err == nil {
+	if err := s.resumeAgentRemovals(ctx); err == nil {
 		t.Fatal("lost response ignored")
 	}
-	if err = s.StartAgentRemoval(ctx, node.ID, "private-expired"); err != nil {
+	if err := s.StartAgentRemoval(ctx, node.ID, "private-expired"); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.resumeAgentRemovals(ctx); err != nil {
+	if err := s.resumeAgentRemovals(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(deleted) != 1 {

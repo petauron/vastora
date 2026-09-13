@@ -4,6 +4,7 @@
 backups
 web/node_modules
 web/dist
+**/*_test.go
 *.md
 !catalog/trust/README.md
 LICENSE

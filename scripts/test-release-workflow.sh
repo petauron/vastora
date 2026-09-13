@@ -36,6 +36,10 @@ require_in "$publish_job" '          platforms: linux/amd64,linux/arm64'
 require_in "$publish_job" '          outputs: type=image,name=${{ env.CENTER_IMAGE }},push-by-digest=true,name-canonical=true,push=true'
 require_in "$publish_job" '          provenance: mode=max'
 require_in "$publish_job" '          sbom: true'
+require_in "$publish_job" '      - name: Smoke-test released Center image'
+require_in "$publish_job" '          actual_version="$(docker run --rm --platform linux/amd64 --network none --read-only'
+require_in "$publish_job" '            "$CENTER_IMAGE@$IMAGE_DIGEST" version)"'
+require_in "$publish_job" '          test "$actual_version" = "$RELEASE_VERSION"'
 require_in "$publish_job" '      - name: Create durable installer release manifest'
 require_in "$publish_job" '      - name: Upload and verify draft GitHub installer assets'
 require_in "$publish_job" '        run: sh .release-tools/scripts/github-installer-release-assets.sh upload --tag "$RELEASE_TAG" --directory dist'
@@ -66,6 +70,7 @@ for step in \
   'Build and push Center image' \
   'Scan released Center image for x64 vulnerabilities' \
   'Scan released Center image for ARM64 vulnerabilities' \
+  'Smoke-test released Center image' \
   'Publish verified Center image tags' \
   'Attest Center image' \
   'Package release installer' \
@@ -73,6 +78,14 @@ for step in \
   'Create durable installer release manifest' \
   'Upload and verify draft GitHub installer assets'; do
   require_fresh_release_step "$step"
+done
+
+for step in \
+  'Prune stale Vastora installer objects' \
+  'Verify immutable installer release after pruning' \
+  'Verify public installer endpoint after pruning'; do
+  step_block="$(printf '%s\n' "$publish_job" | sed -n "/^      - name: $step$/,/^      - name:/p")"
+  require_in "$step_block" "vars.VASTORA_CI_MODE != 'alpha' || !contains(needs.prepare.outputs.release_version, '-alpha.')"
 done
 
 for step in \
@@ -95,6 +108,8 @@ line_of() {
   printf '%s\n' "$publish_job" | grep -nF "$1" | head -n 1 | cut -d: -f1
 }
 scan_line="$(line_of 'Scan released Center image for ARM64 vulnerabilities')"
+smoke_line="$(line_of 'Smoke-test released Center image')"
+tags_line="$(line_of 'Publish verified Center image tags')"
 manifest_line="$(line_of 'Create durable installer release manifest')"
 github_assets_line="$(line_of 'Upload and verify draft GitHub installer assets')"
 stage_line="$(line_of 'Stage immutable installer assets in R2')"
@@ -106,9 +121,9 @@ immutable_reverify_line="$(line_of 'Verify immutable installer release after pru
 public_reverify_line="$(line_of 'Verify public installer endpoint after pruning')"
 publish_line="$(line_of 'Generate and publish GitHub release notes')"
 previous=0
-for current in "$scan_line" "$manifest_line" "$github_assets_line" "$stage_line" "$activate_line" "$immutable_verify_line" "$public_verify_line" "$prune_line" "$immutable_reverify_line" "$public_reverify_line" "$publish_line"; do
+for current in "$scan_line" "$smoke_line" "$tags_line" "$manifest_line" "$github_assets_line" "$stage_line" "$activate_line" "$immutable_verify_line" "$public_verify_line" "$prune_line" "$immutable_reverify_line" "$public_reverify_line" "$publish_line"; do
   if [ -z "$current" ] || [ "$current" -le "$previous" ]; then
-    echo 'Release workflow does not enforce build -> draft assets -> stage -> activate -> verify -> prune -> verify -> publish.' >&2
+    echo 'Release workflow must enforce build -> smoke -> tags -> draft assets -> stage -> activate -> verify -> optional housekeeping -> publish.' >&2
     exit 1
   fi
   previous="$current"

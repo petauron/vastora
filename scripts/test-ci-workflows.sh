@@ -20,11 +20,16 @@ require_line() {
 
 require_line "$ci_workflow" '    name: CI / gate'
 require_line "$center_dockerfile" 'COPY catalog/trust/ /app/catalog-trust/'
+require_line "$project_dir/.dockerignore" '**/*_test.go'
 require_line "$project_dir/deploy/center/compose.yaml" '${VASTORA_OFFICIAL_CATALOG_ROOT:-/app/catalog-trust/1.root.json}'
 require_line "$project_dir/.github/workflows/release.yml" 'go run ./cmd/catalog-check --catalog catalog/catalog.json --root-directory catalog/trust'
 require_line "$ci_workflow" '    name: Go race tests'
 require_line "$ci_workflow" '    name: Go quality and security'
 require_line "$ci_workflow" '    name: Go cross-compile'
+require_line "$ci_workflow" '    name: Alpha minimal checks'
+require_line "$ci_workflow" "    if: github.event_name == 'pull_request' && vars.VASTORA_CI_MODE == 'alpha'"
+require_line "$ci_workflow" '          ALPHA_RESULT: ${{ needs.alpha-minimal.result }}'
+require_line "$ci_workflow" '          for result in "$CHANGES_RESULT" "$ALPHA_RESULT"'
 require_line "$ci_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$ci_workflow" '    name: Release metadata'
 require_line "$ci_workflow" '        run: scripts/validate-release-metadata.sh "$BASE_SHA"'
@@ -42,6 +47,35 @@ require_line "$codeql_workflow" '    name: CodeQL / gate'
 require_line "$codeql_workflow" "vars.VASTORA_CI_MODE != 'alpha'"
 require_line "$codeql_workflow" '  group: codeql-${{ github.workflow }}-${{ github.ref }}'
 require_line "$codeql_workflow" "  cancel-in-progress: \${{ github.event_name == 'pull_request' }}"
+
+# Alpha only validates source/configuration shape. Compilation and the minimal
+# executable check happen once, on the actual release artifact.
+alpha_job="$(sed -n '/^  alpha-minimal:/,/^  go-race:/p' "$ci_workflow")"
+if ! printf '%s\n' "$alpha_job" | grep -Fq 'cache: false' ||
+   ! printf '%s\n' "$alpha_job" | grep -Fq 'run: make go-format-check' ||
+   printf '%s\n' "$alpha_job" | grep -Eq '(go test|go build|go-static-check|web-check|cache: true|docker build)'; then
+  echo 'Alpha CI must not restore the Go build cache or duplicate release builds/full checks.' >&2
+  exit 1
+fi
+for job in go-race go-quality go-build web deployment security container-image-security; do
+  condition="$(sed -n "/^  $job:/,/^    needs:/p" "$ci_workflow" | grep '^    if:')"
+  if ! printf '%s\n' "$condition" | grep -Fq "vars.VASTORA_CI_MODE != 'alpha'" ||
+     ! printf '%s\n' "$condition" | grep -Fq "github.event_name == 'workflow_dispatch'" ||
+     ! printf '%s\n' "$condition" | grep -Fq "github.event_name == 'schedule'"; then
+    echo "$job must defer full Alpha checks to manual or scheduled runs." >&2
+    exit 1
+  fi
+done
+for job in analyze-go analyze-javascript; do
+  condition="$(sed -n "/^  $job:/,/^    needs:/p" "$codeql_workflow" | grep '^    if:')"
+  if ! printf '%s\n' "$condition" | grep -Fq "vars.VASTORA_CI_MODE != 'alpha'" ||
+     printf '%s\n' "$condition" | grep -Fq "github.event_name != 'pull_request'"; then
+    echo 'CodeQL must not run full Alpha analysis on every main-branch push.' >&2
+    exit 1
+  fi
+done
+require_line "$project_dir/.github/workflows/catalog-check.yml" "    if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'"
+require_line "$project_dir/.github/workflows/catalog-check.yml" '  schedule:'
 
 if grep -Fq 'cache-to: type=gha' "$ci_workflow"; then
   echo 'Pull-request image builds must not write GitHub Actions caches.' >&2

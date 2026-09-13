@@ -193,6 +193,17 @@ jobs:
           exit-code: "1"
           skip-setup-trivy: true
 
+      - name: Smoke-test released Center image
+        if: needs.prepare.outputs.release_retry != 'true'
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+        run: |
+          actual_version="$(docker run --rm --platform linux/amd64 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            "$CENTER_IMAGE@$IMAGE_DIGEST" version)"
+          test "$actual_version" = "$RELEASE_VERSION"
+
       - name: Publish verified Center image tags
         if: needs.prepare.outputs.release_retry != 'true'
         env:
@@ -273,14 +284,18 @@ jobs:
         run: .release-tools/scripts/verify-installer-release.sh --base-url https://vastora.petauron.com --expected-version "$EXPECTED_VERSION" --attempts 18 --retry-delay 5
 
       - name: Prune stale Vastora installer objects
+        # Alpha housekeeping runs in the existing daily reconcile workflow.
+        if: vars.VASTORA_CI_MODE != 'alpha' || !contains(needs.prepare.outputs.release_version, '-alpha.')
         run: sh .release-tools/scripts/reconcile-installer-r2.sh --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
 
       - name: Verify immutable installer release after pruning
+        if: vars.VASTORA_CI_MODE != 'alpha' || !contains(needs.prepare.outputs.release_version, '-alpha.')
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: .release-tools/scripts/verify-installer-release.sh --base-url "https://vastora.petauron.com/releases/v$RELEASE_VERSION" --expected-version "$RELEASE_VERSION"
 
       - name: Verify public installer endpoint after pruning
+        if: vars.VASTORA_CI_MODE != 'alpha' || !contains(needs.prepare.outputs.release_version, '-alpha.')
         env:
           EXPECTED_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: .release-tools/scripts/verify-installer-release.sh --base-url https://vastora.petauron.com --expected-version "$EXPECTED_VERSION" --attempts 18 --retry-delay 5

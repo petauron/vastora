@@ -22,11 +22,7 @@ type removalHeadscaleNode struct {
 	ID          string   `json:"id"`
 	NodeKey     string   `json:"nodeKey"`
 	IPAddresses []string `json:"ipAddresses"`
-	ForcedTags  []string `json:"forcedTags"`
-	ValidTags   []string `json:"validTags"`
-	User        struct {
-		Name string `json:"name"`
-	} `json:"user"`
+	Tags        []string `json:"tags"`
 }
 
 // Resolve only a confirmed managed private address, then persist the exact
@@ -86,7 +82,9 @@ func (s *Store) removeAgentPrivateIdentity(ctx context.Context, id string) error
 			if identity.ID != "" {
 				return errors.New("center: private node identity is ambiguous")
 			}
-			if node.User.Name != "vastora" || (!slices.Contains(node.ForcedTags, "tag:vastora-agent") && !slices.Contains(node.ValidTags, "tag:vastora-agent")) || node.NodeKey == "" {
+			// Headscale tagged devices are owned by tags, not the enrolling user.
+			// Its current Node API exposes tags; forcedTags/validTags were removed.
+			if !slices.Contains(node.Tags, "tag:vastora-agent") || node.NodeKey == "" {
 				return errors.New("center: private node is not owned by Vastora")
 			}
 			if observedKey != "" && (observedAddress != address || strings.TrimPrefix(node.NodeKey, "nodekey:") != strings.TrimPrefix(observedKey, "nodekey:")) {
