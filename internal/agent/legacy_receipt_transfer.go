@@ -3,14 +3,42 @@ package agent
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/petauron/vastora/internal/controlplane"
 )
 
-// TransferLegacyReceipts is one-time cutover, not a completion outbox. No
-// application effect is replayed. Unknown results remain fenced in Center.
+// Archival is idempotent by task identity and digest. A temporary Center
+// outage must not permanently kill the task receiver while heartbeats survive.
+// Invalid evidence/acknowledgements still stop closed; no business task is replayed.
+func (c Client) transferLegacyReceiptsBeforeTasks(ctx context.Context, store *Store, report func(error)) bool {
+	for {
+		err := c.TransferLegacyReceipts(ctx, store)
+		if err == nil {
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		report(err)
+		var response *centerResponseError
+		var network net.Error
+		retryable := errors.As(err, &network) && (network.Timeout() || network.Temporary())
+		if errors.As(err, &response) {
+			retryable = response.status == http.StatusTooManyRequests || response.status == http.StatusBadGateway || response.status == http.StatusServiceUnavailable || response.status == http.StatusGatewayTimeout
+		}
+		if !retryable || !waitForTaskRetry(ctx) {
+			return false
+		}
+	}
+}
+
+// TransferLegacyReceipts transfers unresolved one-time cutover evidence, not
+// acknowledged history. No application effect is replayed. Unknown results
+// remain fenced in Center before this Agent can receive a new task.
 func (c Client) TransferLegacyReceipts(ctx context.Context, store *Store) error {
 	for {
 		item, digest, err := store.NextLegacyReceipt(ctx, "")

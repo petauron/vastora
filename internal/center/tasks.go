@@ -132,14 +132,15 @@ func (s *Store) RenewTaskLease(ctx context.Context, agentID, credential, taskID 
 }
 
 type ActionView struct {
-	ID        string    `json:"id"`
-	TaskID    string    `json:"taskId"`
-	AgentID   string    `json:"agentId"`
-	Kind      string    `json:"kind"`
-	Revision  int64     `json:"revision"`
-	Event     string    `json:"event"`
-	Message   string    `json:"message,omitempty"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID           string    `json:"id"`
+	TaskID       string    `json:"taskId"`
+	AgentID      string    `json:"agentId"`
+	Kind         string    `json:"kind"`
+	Revision     int64     `json:"revision"`
+	Event        string    `json:"event"`
+	CurrentState string    `json:"currentState,omitempty"`
+	Message      string    `json:"message,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 func (s *Store) recordTaskEvent(ctx context.Context, tx *sql.Tx, taskID, agentID, kind string, revision int64, event, message string) error {
@@ -297,7 +298,17 @@ func (s *Store) ListActions(ctx context.Context, limit int) ([]ActionView, error
 	if limit > maxActionLimit {
 		limit = maxActionLimit
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, task_id, agent_id, kind, revision, event, message, created_at FROM task_events ORDER BY created_at DESC LIMIT ?`, limit)
+	// Keep historical events intact; gateway revisions are not independent jobs.
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.task_id, e.agent_id, e.kind, e.revision, e.event, e.message, e.created_at,
+		CASE WHEN e.kind='gateway.routes.apply' THEN
+			CASE WHEN g.gateway_node_id IS NULL OR e.revision<g.desired_revision THEN 'superseded'
+			WHEN COALESCE(c.desired_status,'stopped')<>'running' THEN 'stopped'
+			WHEN e.revision=g.desired_revision THEN g.status ELSE '' END
+		ELSE '' END
+		FROM (SELECT * FROM task_events ORDER BY created_at DESC LIMIT ?) e
+		LEFT JOIN gateway_states g ON e.kind='gateway.routes.apply' AND g.gateway_node_id=e.agent_id
+		LEFT JOIN gateway_components c ON c.gateway_node_id=g.gateway_node_id
+		ORDER BY e.created_at DESC`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("center: list actions: %w", err)
 	}
@@ -306,7 +317,7 @@ func (s *Store) ListActions(ctx context.Context, limit int) ([]ActionView, error
 	for rows.Next() {
 		var value ActionView
 		var createdAt string
-		if err := rows.Scan(&value.ID, &value.TaskID, &value.AgentID, &value.Kind, &value.Revision, &value.Event, &value.Message, &createdAt); err != nil {
+		if err := rows.Scan(&value.ID, &value.TaskID, &value.AgentID, &value.Kind, &value.Revision, &value.Event, &value.Message, &createdAt, &value.CurrentState); err != nil {
 			return nil, err
 		}
 		value.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)

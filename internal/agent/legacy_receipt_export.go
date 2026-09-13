@@ -16,9 +16,9 @@ func legacyTaskCompletionContext(taskID string) []byte {
 	return []byte("agent-task-completion:" + taskID)
 }
 
-// NextLegacyReceipt reads at most one bounded record in a consistent snapshot.
-// It deliberately does not acknowledge, prune or replay anything. The caller
-// must persist the returned evidence in Center before retiring local history.
+// NextLegacyReceipt reads one unresolved cutover record. Already acknowledged
+// receipts remain immutable local history; copying thousands of completed jobs
+// must not gate the new task receiver. No history is deleted or replayed here.
 func (s *Store) NextLegacyReceipt(ctx context.Context, afterID string) (*controlplane.LegacyReceipt, string, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -31,7 +31,7 @@ func (s *Store) NextLegacyReceipt(ctx context.Context, afterID string) (*control
 func (s *Store) readLegacyReceipt(ctx context.Context, tx *sql.Tx, afterID string) (*controlplane.LegacyReceipt, string, error) {
 	var item controlplane.LegacyReceipt
 	var length int64
-	err := tx.QueryRowContext(ctx, `SELECT task_id,task_kind,attempt,runtime_generation,task_hash,state,created_at,updated_at,COALESCE(length(sealed_completion),0) FROM task_receipts WHERE task_id>? ORDER BY task_id LIMIT 1`, afterID).Scan(&item.TaskID, &item.Kind, &item.Attempt, &item.RuntimeGeneration, &item.TaskHash, &item.State, &item.CreatedAt, &item.UpdatedAt, &length)
+	err := tx.QueryRowContext(ctx, `SELECT task_id,task_kind,attempt,runtime_generation,task_hash,state,created_at,updated_at,COALESCE(length(sealed_completion),0) FROM task_receipts WHERE task_id>? AND state<>'acknowledged' ORDER BY task_id LIMIT 1`, afterID).Scan(&item.TaskID, &item.Kind, &item.Attempt, &item.RuntimeGeneration, &item.TaskHash, &item.State, &item.CreatedAt, &item.UpdatedAt, &length)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", nil
 	}

@@ -23,8 +23,9 @@ export function ActivityView({ actions, agents, language }: { actions: Action[];
             const message = visibleActionMessage(language, latest);
             return (
               <Card key={group.taskId} size="sm">
-                <CardHeader><CardTitle>{message || actionKind(language, latest.kind)}</CardTitle><CardDescription>{agentNames.get(latest.agentId) ?? copy(language, "未知节点", "Unknown node")} · {formatDate(language, latest.createdAt)}</CardDescription><CardAction><StateBadge language={language} value={latest.event} /></CardAction></CardHeader>
+                <CardHeader><CardTitle>{message || actionKind(language, latest.kind)}</CardTitle><CardDescription>{agentNames.get(latest.agentId) ?? copy(language, "未知节点", "Unknown node")} · {formatDate(language, latest.createdAt)}</CardDescription><CardAction><StateBadge language={language} value={latest.currentState || latest.event} /></CardAction></CardHeader>
                 <CardContent>
+                  {latest.currentState === "superseded" ? <p className="text-sm text-muted-foreground">{copy(language, "此配置已被替代，不再排队；下面保留原始事件。", "This configuration was superseded and is no longer queued; original events are retained below.")}</p> : null}
                   {message && message !== actionKind(language, latest.kind) ? <p className="text-sm text-muted-foreground">{actionKind(language, latest.kind)}</p> : null}
                   <details className="mt-3 rounded-lg border p-3 text-xs text-muted-foreground">
                     <summary className="cursor-pointer font-medium text-foreground">{copy(language, `技术详情与 ${group.actions.length} 个步骤`, `Technical details and ${group.actions.length} step(s)`)}</summary>
