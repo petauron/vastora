@@ -255,9 +255,13 @@ function NodeSettingsSheet({ agent, data, language, mutate, onClose, onStopAcces
   };
   const startUpdate = async () => {
     if (!agent) return;
+    const failedUpdateId = agent.update?.state === "failed" ? agent.update.id : undefined;
+    if (failedUpdateId && !window.confirm(copy(language,
+      "请先确认旧升级进程已停止、升级故障已处理。继续将保留旧失败记录并创建新的升级任务；不会重放旧任务。确认已处理并继续？",
+      "Confirm the previous updater has stopped and its fault has been resolved. Continue to retain the failure and create a new update, without replaying the old task?"))) return;
     setUpdateBusy(true); setError("");
     try {
-      await mutate(() => api.startAgentUpdate(agent.id), copy(language, "已向 Agent 下发安全更新。", "Secure Agent update queued."));
+      await mutate(() => failedUpdateId ? api.recoverAgentUpdate(agent.id, failedUpdateId) : api.startAgentUpdate(agent.id), copy(language, "已向 Agent 下发安全更新。", "Secure Agent update queued."));
     } catch (updateError) {
       setError(userError(language, updateError));
     } finally {

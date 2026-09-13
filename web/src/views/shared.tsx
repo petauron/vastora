@@ -20,6 +20,18 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
+  if (normalized === "center: resolve outstanding execution and runtime recovery before updating") {
+    return copy(language, "节点仍有待处理任务或升级恢复状态，请处理后再更新。", "Resolve the node's outstanding task or runtime recovery before updating.");
+  }
+  if (normalized === "center: confirm the exact failed update is stopped and record recovery verification") {
+    return copy(language, "升级状态已变化，请刷新并重新确认。", "The update state changed. Refresh and confirm again.");
+  }
+  if (normalized === "center: task execution is paused; resume task execution before changing exits") {
+    return copy(language, "任务已暂停，恢复后才能切换出口。", "Tasks are paused. Resume them before changing exits.");
+  }
+  if (normalized === "center: a related node has an unresolved execution; resolve it before changing exits") {
+    return copy(language, "相关节点有待处理任务，处理后才能切换出口。", "A related node has a task needing attention before its exit can change.");
+  }
   if (normalized === "refresh the app catalog and retry this operation.") {
     return copy(language, "请先在设置中刷新应用目录，再重试。", "Refresh the app catalog in Settings, then retry.");
   }
