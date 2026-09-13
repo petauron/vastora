@@ -63,6 +63,11 @@ func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []
 		lines = append(lines, fixed.String())
 		identities[fixed.User.Username()] = true
 	}
+	lines = slices.DeleteFunc(lines, func(line string) bool {
+		return slices.ContainsFunc(grants, func(item SubscriptionGrant) bool {
+			return item.Grant.Enabled && item.Grant.HideBase && sameLinkIdentity(strings.TrimSpace(line), item.BaseLink)
+		})
+	})
 	result := []byte(strings.Join(lines, "\n") + "\n")
 	if encoded {
 		result = []byte(base64.StdEncoding.EncodeToString(result))
@@ -112,6 +117,7 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 	}
 	baseProxies := slices.Clone(proxies)
 	fixedNames := []any{}
+	replacements := map[string][]any{}
 	for _, item := range grants {
 		if err := validateSubscriptionGrant(item, parentID); err != nil {
 			return nil, err
@@ -157,13 +163,56 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 			clone["name"], clone["uuid"], clone["udp"] = name, fixed.User.Username(), false
 			proxies = append(proxies, clone)
 			fixedNames = append(fixedNames, name)
+			if item.Grant.HideBase {
+				original := proxy["name"].(string)
+				replacements[original] = append(replacements[original], name)
+			}
 		}
 	}
 	for _, value := range groups {
 		group := value.(map[string]any)
+		if members, ok := group["proxies"].([]any); ok {
+			var updated []any
+			for _, member := range members {
+				name, ok := member.(string)
+				if !ok {
+					return nil, errors.New("landing: invalid native group member")
+				}
+				if replacement := replacements[name]; len(replacement) > 0 {
+					updated = append(updated, replacement...)
+				} else {
+					updated = append(updated, member)
+				}
+			}
+			group["proxies"] = updated
+		}
 		if group["type"] == "select" {
 			if members, ok := group["proxies"].([]any); ok {
-				group["proxies"] = append(members, fixedNames...)
+				for _, name := range fixedNames {
+					if !slices.Contains(members, name) {
+						members = append(members, name)
+					}
+				}
+				group["proxies"] = members
+			}
+		}
+	}
+	proxies = slices.DeleteFunc(proxies, func(value any) bool {
+		name, _ := value.(map[string]any)["name"].(string)
+		return len(replacements[name]) > 0
+	})
+	if rules, ok := config["rules"].([]any); ok {
+		for i, value := range rules {
+			if rule, ok := value.(string); ok {
+				parts := strings.Split(rule, ",")
+				target := len(parts) - 1
+				if parts[target] == "no-resolve" && target > 0 {
+					target--
+				}
+				if replacement := replacements[parts[target]]; len(replacement) > 0 {
+					parts[target] = replacement[0].(string)
+					rules[i] = strings.Join(parts, ",")
+				}
 			}
 		}
 	}

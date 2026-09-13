@@ -17,7 +17,6 @@ import { clearSecretOperation, commandSecretOperations, commandSecretScope, secr
 import { bytesFromGB, dateInputValueInTimeZone, endOfDayEpochInTimeZone, gigabytesFromBytes, nextRenewalDateInTimeZone, SubscriptionTrafficPlanFields } from "./TrafficPlanFields";
 import { hasObservedThreeXUIState, mergeCachedCommand, mergeCommandUpdate } from "./threeXUICommandState";
 import { ThreeXUIClientCard } from "./ThreeXUIClientCard";
-import { ThreeXUIClientLanding } from "./ThreeXUIClientLanding";
 
 type Editor = { client?: ThreeXUIClient } | null;
 type RevealedLink = { title: string; value: string; commandId: string; operationKey: string; scope: string } | null;
@@ -31,7 +30,6 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [editor, setEditor] = useState<Editor>(null);
-  const [landingClient, setLandingClient] = useState<ThreeXUIClient | null>(null);
   const [editorDirty, setEditorDirty] = useState(false);
   const [deleteClient, setDeleteClient] = useState<ThreeXUIClient | null>(null);
   const [resetClient, setResetClient] = useState<ThreeXUIClient | null>(null);
@@ -175,7 +173,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
         <SheetDescription>{copy(language, "在这里完成日常管理；路由、协议参数等少用设置仍在 3x-ui 中调整。", "Handle everyday tasks here. Use 3x-ui only for advanced routing and protocol details.")}</SheetDescription>
       </SheetHeader>
 
-      {landingClient ? <ThreeXUIClientLanding client={landingClient} inbounds={inbounds} key={landingClient.id} language={language} onClose={() => setLandingClient(null)} /> : editor ? <ClientEditor busy={busy} editor={editor} inbounds={inbounds} language={language} onCancel={discardEditor} onDirtyChange={setEditorDirty} onSave={async (input) => { await run(input); setEditorDirty(false); setEditor(null); }} siteTimezone={siteTimezone} /> : <>
+      {editor ? <ClientEditor busy={busy} editor={editor} inbounds={inbounds} language={language} onCancel={discardEditor} onDirtyChange={setEditorDirty} onSave={async (input) => { await run(input); setEditorDirty(false); setEditor(null); }} siteTimezone={siteTimezone} /> : <>
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button disabled={busy || inbounds.length === 0} onClick={() => openEditor({})} size="sm"><PlusIcon data-icon="inline-start" />{copy(language, "添加客户端", "Add client")}</Button>
@@ -210,7 +208,6 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
               onCopySubscription={() => void reveal(client, "reveal_subscription")}
               onCopyLink={() => void reveal(client, "reveal_link")}
               onEdit={() => openEditor({ client })}
-              onLanding={() => setLandingClient(client)}
               onReset={() => { setDeleteClient(null); setResetClient(client); }}
               onDelete={() => { setResetClient(null); setDeleteClient(client); }}
             >

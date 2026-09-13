@@ -38,6 +38,7 @@ type ClientGrant struct {
 	Peer          PeerIdentity   `json:"peer"`
 	Mode          PublishingMode `json:"mode"`
 	Enabled       bool           `json:"enabled"`
+	HideBase      bool           `json:"hideBase"`
 }
 
 func (g ClientGrant) Validate() error {

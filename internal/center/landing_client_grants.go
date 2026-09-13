@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"slices"
 	"time"
 
@@ -211,6 +210,11 @@ func (s *Store) configureClientLanding(ctx context.Context, tx *sql.Tx, input La
 	record.Source = source
 	record.Revision++
 	record.Grant.Mode, record.Grant.Enabled = input.Mode, input.Enabled
+	policy, err := readNodeExitPolicy(ctx, tx, selected.ApplicationID)
+	if err != nil {
+		return LandingClientGrantView{}, err
+	}
+	record.Grant.HideBase = !policy.OwnExit
 	if err := record.Grant.Validate(); err != nil {
 		return LandingClientGrantView{}, err
 	}
@@ -237,27 +241,4 @@ func (s *Store) configureClientLanding(ctx context.Context, tx *sql.Tx, input La
 	}
 	record.Mode, record.Enabled = input.Mode, input.Enabled
 	return record.LandingClientGrantView, nil
-}
-
-func (s *Server) handleLandingClientGrants(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodGet {
-		grants, err := s.store.LandingClientGrants(r.Context(), r.URL.Query().Get("parentId"))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, grants)
-		return
-	}
-	var input LandingClientGrantInput
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	grant, err := s.store.ConfigureClientLanding(r.Context(), input)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusAccepted, grant)
 }
