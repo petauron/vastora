@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.132](https://github.com/petauron/vastora/compare/v0.1.0-alpha.131...v0.1.0-alpha.132) (2026-09-13)
+
+
+### Features
+
+* **apps:** configure exit combinations from node rows ([#433](https://github.com/petauron/vastora/issues/433)) ([51db2db](https://github.com/petauron/vastora/commit/51db2db1bc54e8b5afdb317460922a9386db4317))
+
 ## [0.1.0-alpha.131](https://github.com/petauron/vastora/compare/v0.1.0-alpha.130...v0.1.0-alpha.131) (2026-09-13)
 
 
