@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.129](https://github.com/petauron/vastora/compare/v0.1.0-alpha.128...v0.1.0-alpha.129) (2026-09-13)
+
+
+### Bug Fixes
+
+* remove unvalidated release compiler cache integration ([#426](https://github.com/petauron/vastora/issues/426)) ([c9967fa](https://github.com/petauron/vastora/commit/c9967fa6ed3018f4f86923f6962237398cc9adb3))
+* simplify app update status and reuse release compiler caches ([#425](https://github.com/petauron/vastora/issues/425)) ([17139e8](https://github.com/petauron/vastora/commit/17139e83808aa31be3ec460e45f3d7de004867d2))
+
 ## [0.1.0-alpha.128](https://github.com/petauron/vastora/compare/v0.1.0-alpha.127...v0.1.0-alpha.128) (2026-09-13)
 
 
