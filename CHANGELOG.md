@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.136](https://github.com/petauron/vastora/compare/v0.1.0-alpha.135...v0.1.0-alpha.136) (2026-09-13)
+
+
+### Bug Fixes
+
+* restore task reception and stop heartbeat queue churn ([#443](https://github.com/petauron/vastora/issues/443)) ([8609a61](https://github.com/petauron/vastora/commit/8609a61a0e9e533d3da55dbc3fb0a248d15e75ae))
+
 ## [0.1.0-alpha.135](https://github.com/petauron/vastora/compare/v0.1.0-alpha.134...v0.1.0-alpha.135) (2026-09-13)
 
 
