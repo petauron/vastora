@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.128](https://github.com/petauron/vastora/compare/v0.1.0-alpha.127...v0.1.0-alpha.128) (2026-09-13)
+
+
+### Bug Fixes
+
+* **apps:** 列表直接更新应用并清理残留提示 ([#423](https://github.com/petauron/vastora/issues/423)) ([ae3294c](https://github.com/petauron/vastora/commit/ae3294cbdb48a9b5ec84866d1cf6c409e372280a))
+
 ## [0.1.0-alpha.127](https://github.com/petauron/vastora/compare/v0.1.0-alpha.126...v0.1.0-alpha.127) (2026-09-13)
 
 
