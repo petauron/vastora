@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.135](https://github.com/petauron/vastora/compare/v0.1.0-alpha.134...v0.1.0-alpha.135) (2026-09-13)
+
+
+### Bug Fixes
+
+* **agent:** bind landing child to validated inbound at creation ([#441](https://github.com/petauron/vastora/issues/441)) ([768400b](https://github.com/petauron/vastora/commit/768400b347ea11182e64d4fd2b3b216426548a68))
+
 ## [0.1.0-alpha.134](https://github.com/petauron/vastora/compare/v0.1.0-alpha.133...v0.1.0-alpha.134) (2026-09-13)
 
 
