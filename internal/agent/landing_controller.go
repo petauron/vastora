@@ -148,9 +148,11 @@ func applyLandingClientCommand(ctx context.Context, store *Store, task landing.C
 			return result, errors.New("agent: child inventory is unavailable")
 		}
 		if !found && task.Grant.Enabled && task.Grant.Mode.Fixed() {
-			// Upstream add defaults Enable to true. An expired identity with no
-			// inbound is safe even if that default is applied before read-back.
-			payload := map[string]any{"client": map[string]any{"email": task.Grant.FixedUser, "id": task.FixedUUID, "subId": previous.ChildSubscription, "flow": "xtls-rprx-vision", "enable": false, "expiryTime": int64(1), "totalGB": int64(1), "reset": 0}, "inboundIds": []int{}}
+			// 3x-ui requires an inbound at creation and defaults Enable to true.
+			// Bind only the validated entry, with an already-expired identity;
+			// disableLandingChild below must confirm it is disabled before prepare
+			// succeeds. Only activation may grant usable traffic and expiry limits.
+			payload := map[string]any{"client": map[string]any{"email": task.Grant.FixedUser, "id": task.FixedUUID, "subId": previous.ChildSubscription, "flow": "xtls-rprx-vision", "enable": false, "expiryTime": int64(1), "totalGB": int64(1), "reset": 0}, "inboundIds": []int{task.InboundID}}
 			_, writeErr := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/add", token, "application/json", payload)
 			child, err = getThreeXUIClient(ctx, baseURL, token, task.Grant.FixedUser)
 			if err != nil {
