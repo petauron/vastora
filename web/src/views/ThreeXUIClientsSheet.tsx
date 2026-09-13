@@ -65,7 +65,6 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
 
   useEffect(() => {
     setEditor(null); setEditorDirty(false); setDeleteClient(null); setResetClient(null); setRevealed(null);
-    setLandingClient(null);
     setNotice(""); setSearch(""); setPage(1); setError(""); setRefreshError(""); setShowingCached(false); setCommand(null);
   }, [application?.id]);
 
