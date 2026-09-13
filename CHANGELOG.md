@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.134](https://github.com/petauron/vastora/compare/v0.1.0-alpha.133...v0.1.0-alpha.134) (2026-09-13)
+
+
+### Bug Fixes
+
+* **agent:** recover failed updates with explicit operator confirmation ([#437](https://github.com/petauron/vastora/issues/437)) ([7835910](https://github.com/petauron/vastora/commit/78359101302d92454eaef6512546bf759ce50b50))
+* clarify blocked landing exits and guard release baseline ([#440](https://github.com/petauron/vastora/issues/440)) ([a962789](https://github.com/petauron/vastora/commit/a96278909d937241f626589dc80f9339bb604566))
+
+
+### Performance Improvements
+
+* **release:** reuse compilation and retry only missing uploads ([#438](https://github.com/petauron/vastora/issues/438)) ([d0bd025](https://github.com/petauron/vastora/commit/d0bd0254836e68423f7767dd04d73cb324547961))
+
 ## [0.1.0-alpha.133](https://github.com/petauron/vastora/compare/v0.1.0-alpha.131...v0.1.0-alpha.133) (2026-09-14)
 
 ### Features
