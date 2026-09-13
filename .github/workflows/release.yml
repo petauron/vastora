@@ -273,15 +273,18 @@ jobs:
           RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
         run: sh .release-tools/scripts/publish-installer-r2.sh activate --version "$RELEASE_VERSION" --bucket "$R2_BUCKET_NAME" --endpoint "$R2_ENDPOINT"
 
-      - name: Verify immutable installer release
+      - name: Verify immutable and public installer endpoints
         env:
           RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
-        run: .release-tools/scripts/verify-installer-release.sh --base-url "https://vastora.petauron.com/releases/v$RELEASE_VERSION" --expected-version "$RELEASE_VERSION"
-
-      - name: Verify public installer endpoint
-        env:
-          EXPECTED_VERSION: ${{ needs.prepare.outputs.release_version }}
-        run: .release-tools/scripts/verify-installer-release.sh --base-url https://vastora.petauron.com --expected-version "$EXPECTED_VERSION" --attempts 18 --retry-delay 5
+        run: |
+          .release-tools/scripts/verify-installer-release.sh --base-url "https://vastora.petauron.com/releases/v$RELEASE_VERSION" --expected-version "$RELEASE_VERSION" &
+          immutable_pid=$!
+          .release-tools/scripts/verify-installer-release.sh --base-url https://vastora.petauron.com --expected-version "$RELEASE_VERSION" --attempts 18 --retry-delay 5 &
+          public_pid=$!
+          verification_failed=0
+          wait "$immutable_pid" || verification_failed=1
+          wait "$public_pid" || verification_failed=1
+          exit "$verification_failed"
 
       - name: Prune stale Vastora installer objects
         # Alpha housekeeping runs in the existing daily reconcile workflow.

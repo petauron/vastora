@@ -96,20 +96,48 @@ if [ "$command_name" = "download" ]; then
 fi
 
 validate_assets "$directory"
-gh release upload "$tag" \
-  "$directory/install.sh" \
-  "$directory/vastora-center-install.tar.gz" \
-  "$directory/vastora-center-install.tar.gz.sha256" \
-  "$directory/vastora-release-manifest.json" \
-  --clobber
-
 temporary_dir="$(mktemp -d "${TMPDIR:-/tmp}/vastora-github-release.XXXXXX")"
 cleanup() { rm -rf "$temporary_dir"; }
 trap cleanup EXIT HUP INT TERM
-gh release download "$tag" --dir "$temporary_dir"
-validate_assets "$temporary_dir"
+
+# Retry only an individual missing upload, never rebuild or overwrite an asset.
+# Refresh the draft after uncertain responses: the upload may have succeeded.
 for asset in install.sh vastora-center-install.tar.gz vastora-center-install.tar.gz.sha256 vastora-release-manifest.json; do
-  if ! cmp -s "$directory/$asset" "$temporary_dir/$asset"; then
+  attempt=1
+  while :; do
+    release_json="$(gh release view "$tag" --json isDraft,assets)"
+    if ! printf '%s' "$release_json" | jq -e --argjson expected "$expected_assets" '.isDraft == true and (([.assets[].name] - $expected) == [])' >/dev/null; then
+      echo "Release changed during upload; refusing asset mutation." >&2
+      exit 1
+    fi
+    if printf '%s' "$release_json" | jq -e --arg name "$asset" 'any(.assets[]; .name == $name)' >/dev/null; then
+      mkdir -p "$temporary_dir/existing"
+      gh release download "$tag" --pattern "$asset" --dir "$temporary_dir/existing"
+      if ! cmp -s "$directory/$asset" "$temporary_dir/existing/$asset"; then
+        echo "Existing GitHub asset differs: $asset; refusing replacement." >&2
+        exit 1
+      fi
+      break
+    fi
+    if gh release upload "$tag" "$directory/$asset" >"$temporary_dir/upload.log" 2>&1; then
+      break
+    fi
+    cat "$temporary_dir/upload.log" >&2
+    if [ "$attempt" -ge 3 ] || ! grep -Eq 'HTTP (404|408|429|5[0-9][0-9])|[Tt]imeout|timed out|connection reset|unexpected EOF|TLS handshake' "$temporary_dir/upload.log"; then
+      exit 1
+    fi
+    echo "Retrying missing upload $asset ($attempt/3)." >&2
+    sleep "$((attempt * 2))"
+    attempt="$((attempt + 1))"
+  done
+done
+
+mkdir -p "$temporary_dir/verified"
+temporary_assets="$temporary_dir/verified"
+gh release download "$tag" --dir "$temporary_assets"
+validate_assets "$temporary_assets"
+for asset in install.sh vastora-center-install.tar.gz vastora-center-install.tar.gz.sha256 vastora-release-manifest.json; do
+  if ! cmp -s "$directory/$asset" "$temporary_assets/$asset"; then
     echo "Downloaded GitHub Release asset differs from the uploaded file: $asset" >&2
     exit 1
   fi

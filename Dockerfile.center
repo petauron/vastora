@@ -39,19 +39,28 @@ RUN GOTOOLCHAIN=go1.26.6 go mod download && \
 COPY --link cmd/ ./cmd/
 COPY --link internal/ ./internal/
 
-FROM go-source AS binary-amd64
+# Export compiled packages through the existing registry layer cache. Do not
+# use a cache mount here: ephemeral builders would lose its contents. Version
+# arguments belong only to the final link stage, not package compilation.
+FROM go-source AS compile-amd64
 COPY --link --from=dante-amd64 /out/ /src/internal/dantebundle/assets/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 \
+    go list -export -deps -trimpath ./cmd/vastora > /dev/null
+
+FROM compile-amd64 AS binary-amd64
 ARG VASTORA_VERSION=0.1.0-dev
-RUN --mount=type=cache,id=vastora-go-build-amd64,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
     -o /out/vastora ./cmd/vastora
 
-FROM go-source AS binary-arm64
+FROM go-source AS compile-arm64
 COPY --link --from=dante-arm64 /out/ /src/internal/dantebundle/assets/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 \
+    go list -export -deps -trimpath ./cmd/vastora > /dev/null
+
+FROM compile-arm64 AS binary-arm64
 ARG VASTORA_VERSION=0.1.0-dev
-RUN --mount=type=cache,id=vastora-go-build-arm64,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
     -o /out/vastora ./cmd/vastora
 

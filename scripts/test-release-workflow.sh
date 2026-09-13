@@ -115,14 +115,16 @@ manifest_line="$(line_of 'Create durable installer release manifest')"
 github_assets_line="$(line_of 'Upload and verify draft GitHub installer assets')"
 stage_line="$(line_of 'Stage immutable installer assets in R2')"
 activate_line="$(line_of 'Atomically activate installer release in R2')"
-immutable_verify_line="$(line_of 'Verify immutable installer release')"
-public_verify_line="$(line_of 'Verify public installer endpoint')"
+verify_line="$(line_of 'Verify immutable and public installer endpoints')"
+require_in "$publish_job" '          wait "$immutable_pid" || verification_failed=1'
+require_in "$publish_job" '          wait "$public_pid" || verification_failed=1'
+require_in "$publish_job" '          exit "$verification_failed"'
 prune_line="$(line_of 'Prune stale Vastora installer objects')"
 immutable_reverify_line="$(line_of 'Verify immutable installer release after pruning')"
 public_reverify_line="$(line_of 'Verify public installer endpoint after pruning')"
 publish_line="$(line_of 'Generate and publish GitHub release notes')"
 previous=0
-for current in "$scan_line" "$smoke_line" "$tags_line" "$manifest_line" "$github_assets_line" "$stage_line" "$activate_line" "$immutable_verify_line" "$public_verify_line" "$prune_line" "$immutable_reverify_line" "$public_reverify_line" "$publish_line"; do
+for current in "$scan_line" "$smoke_line" "$tags_line" "$manifest_line" "$github_assets_line" "$stage_line" "$activate_line" "$verify_line" "$prune_line" "$immutable_reverify_line" "$public_reverify_line" "$publish_line"; do
   if [ -z "$current" ] || [ "$current" -le "$previous" ]; then
     echo 'Release workflow must enforce build -> smoke -> tags -> draft assets -> stage -> activate -> verify -> optional housekeeping -> publish.' >&2
     exit 1
