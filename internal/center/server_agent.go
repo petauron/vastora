@@ -483,6 +483,26 @@ func (s *Server) handleQueueAgentUpdate(writer http.ResponseWriter, request *htt
 	writeJSON(writer, http.StatusAccepted, update)
 }
 
+func (s *Server) handleRecoverAgentUpdate(writer http.ResponseWriter, request *http.Request) {
+	adminID, err := s.requestAdminID(request)
+	if err != nil {
+		writeError(writer, http.StatusUnauthorized, err)
+		return
+	}
+	var input AgentUpdateRecoveryInput
+	if err := decodeJSON(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	input.adminID = adminID
+	update, err := s.store.queueAgentUpdate(request.Context(), request.PathValue("id"), Version, &input)
+	if err != nil {
+		writeError(writer, http.StatusConflict, err)
+		return
+	}
+	writeJSON(writer, http.StatusAccepted, update)
+}
+
 func (s *Server) handleBeginAgentUpdate(writer http.ResponseWriter, request *http.Request) {
 	credential, err := agentCredential(request)
 	if err != nil {

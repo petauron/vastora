@@ -128,6 +128,7 @@ export const api = {
 	updateSite: (site: Site, input: SiteInput) => request<Site>(`/api/v1/sites/${encodeURIComponent(site.id)}`, { method: "PUT", body: JSON.stringify(input) }),
 	updateAgent: (agentId: string, name: string, siteId: string) => request<{ updated: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "PATCH", body: JSON.stringify({ name, siteId }) }),
 	startAgentUpdate: (agentId: string) => request<AgentUpdate>(`/api/v1/agents/${encodeURIComponent(agentId)}/updates`, { method: "POST", body: "{}" }),
+	recoverAgentUpdate: (agentId: string, failedUpdateId: string) => request<AgentUpdate>(`/api/v1/agents/${encodeURIComponent(agentId)}/updates/recover`, { method: "POST", body: JSON.stringify({ failedUpdateId, executionStopped: true, note: "Administrator explicitly confirmed the previous updater has stopped and its fault has been resolved; authorize a new update without replaying the failed attempt." }) }),
 	disableAgent: (agentId: string) => request<{ disabled: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/disable`, { method: "POST", body: "{}" }),
 	revokeAgentCredential: (agentId: string) => request<{ revoked: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/revoke`, { method: "POST", body: "{}" }),
 	removeOfflineAgent: (agentId: string, confirmation: string) => request<{ removing: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/remove`, { method: "POST", body: JSON.stringify({ confirmation }) }),

@@ -40,6 +40,17 @@ func isAgentUpdateTaskID(value string) bool {
 }
 
 func (s *Store) QueueAgentUpdate(ctx context.Context, agentID, targetVersion string) (AgentUpdateView, error) {
+	return s.queueAgentUpdate(ctx, agentID, targetVersion, nil)
+}
+
+type AgentUpdateRecoveryInput struct {
+	FailedUpdateID   string `json:"failedUpdateId"`
+	ExecutionStopped bool   `json:"executionStopped"`
+	Note             string `json:"note"`
+	adminID          string
+}
+
+func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion string, recovery *AgentUpdateRecoveryInput) (AgentUpdateView, error) {
 	agentID = strings.TrimSpace(agentID)
 	targetVersion = strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
 	if agentID == "" || targetVersion == "" || !semver.IsValid("v"+targetVersion) {
@@ -89,12 +100,37 @@ func (s *Store) QueueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	if !errors.Is(err, sql.ErrNoRows) {
 		return AgentUpdateView{}, fmt.Errorf("center: inspect active Agent update: %w", err)
 	}
-	var lastState string
-	err = tx.QueryRowContext(ctx, `SELECT state FROM agent_updates WHERE agent_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`, agentID).Scan(&lastState)
+	var lastState, lastID string
+	err = tx.QueryRowContext(ctx, `SELECT state,id FROM agent_updates WHERE agent_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`, agentID).Scan(&lastState, &lastID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return AgentUpdateView{}, err
 	}
-	if lastState == "failed" {
+	if recovery != nil {
+		if lastState != "failed" || recovery.FailedUpdateID != lastID || !recovery.ExecutionStopped || strings.TrimSpace(recovery.Note) == "" || len(recovery.Note) > 1024 {
+			return AgentUpdateView{}, errors.New("center: confirm the exact failed update is stopped and record recovery verification")
+		}
+		var admin, blocked bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admins WHERE id=?)`, recovery.adminID).Scan(&admin); err != nil || !admin {
+			return AgentUpdateView{}, errors.New("center: administrator authorization required")
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded') OR EXISTS(SELECT 1 FROM agents WHERE id=? AND runtime_recovery<>'')`, agentID, agentID).Scan(&blocked); err != nil {
+			return AgentUpdateView{}, err
+		}
+		if blocked {
+			return AgentUpdateView{}, errors.New("center: resolve outstanding execution and runtime recovery before updating")
+		}
+		if paused, err := executionClaimsPaused(ctx, tx); err != nil {
+			return AgentUpdateView{}, err
+		} else if paused {
+			return AgentUpdateView{}, errExecutionBlocked
+		}
+		// Keep the original failure immutable. Recovery authorizes a new task,
+		// never replay or a fabricated success for the old attempt.
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,json_object('actor',?,'note',?,'targetVersion',?,'recoveredAt',?))`, "agent-update-recovery:"+lastID, recovery.adminID, recovery.Note, targetVersion, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return AgentUpdateView{}, err
+		}
+	}
+	if lastState == "failed" && recovery == nil {
 		var abandoned bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions e JOIN agent_updates u ON u.id=e.task_id AND u.attempt=e.attempt WHERE u.id=(SELECT id FROM agent_updates WHERE agent_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1) AND e.disposition='abandon')`, agentID).Scan(&abandoned); err != nil {
 			return AgentUpdateView{}, err
@@ -203,20 +239,13 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 		if err := rows.Scan(&currentVersion, &lastSeenAt, &supported, &updateState, &updateTarget, &updateError, &updateUpdatedAt); err != nil {
 			return status, err
 		}
-		// A version heartbeat proves only the running executable's version,
-		// not that an interrupted operation has been explicitly resolved.
-		if updateState == "failed" || (updateState == "installing" && strings.TrimSpace(updateError) != "") {
-			status.Total++
-			status.Failed++
-			continue
-		}
 		currentSemver := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
 		activeUpdate := updateState == "pending" || updateState == "running" || updateState == "installing"
 		if !activeUpdate && semver.IsValid(currentSemver) && semver.Compare(currentSemver, "v"+targetVersion) > 0 {
 			continue
 		}
 		status.Total++
-		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(currentVersion), "v") == targetVersion {
+		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(currentVersion), "v") == targetVersion && !(updateTarget == targetVersion && updateState == "failed") {
 			status.Updated++
 			continue
 		}
@@ -230,6 +259,14 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 				status.Offline++
 				continue
 			}
+			if updateTarget != targetVersion {
+				status.Manual++
+				continue
+			}
+			if updateState == "installing" && strings.TrimSpace(updateError) != "" {
+				status.Failed++
+				continue
+			}
 			progressAt, progressErr := time.Parse(time.RFC3339Nano, updateUpdatedAt)
 			if progressErr != nil || !progressAt.After(s.now().UTC().Add(-agentUpdateProgressTimeout)) {
 				status.Failed++
@@ -238,8 +275,16 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			status.Updating++
 			continue
 		}
-		if updateState == "failed" || (updateTarget == targetVersion && updateState == "succeeded") {
+		if !connected {
+			status.Offline++
+			continue
+		}
+		if updateTarget == targetVersion && (updateState == "failed" || updateState == "succeeded") {
 			status.Failed++
+			continue
+		}
+		if updateState == "failed" {
+			status.Manual++
 			continue
 		}
 		if !supported {

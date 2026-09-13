@@ -194,6 +194,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/{id}/reconnect", s.requireAuth(true, s.handleCreateAgentReconnectEnrollment))
 	mux.HandleFunc("PATCH /api/v1/agents/{id}", s.requireAuth(true, s.handleUpdateAgent))
 	mux.HandleFunc("POST /api/v1/agents/{id}/updates", s.requireAuth(true, s.handleQueueAgentUpdate))
+	mux.HandleFunc("POST /api/v1/agents/{id}/updates/recover", s.requireAuth(true, s.handleRecoverAgentUpdate))
 	mux.HandleFunc("POST /api/v1/agents/{id}/disable", s.requireAuth(true, s.handleDisableAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.requireAuth(true, s.handleDeleteAgent))
 	mux.HandleFunc("POST /api/v1/agents/{id}/revoke", s.requireAuth(true, s.handleRevokeAgentCredential))
