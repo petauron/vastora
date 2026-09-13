@@ -31,6 +31,7 @@ export type NodeExitInput = Pick<NodeExitPolicy, "ownExit" | "landingNodeIds" | 
 export type LandingView = {
   nodeExits?: NodeExitPolicy[];
   tasksPaused?: boolean;
+  controllerBlocked?: boolean;
   blockedNodeIds?: string[];
   nodeIds: string[];
   revision: number;

@@ -12,6 +12,8 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 )
 
+var errNodeExitControllerBlocked = errors.New("center: subscription controller has unresolved tasks; exit configuration was not saved")
+
 type NodeExitPolicy struct {
 	ApplicationID   string   `json:"applicationId"`
 	OwnExit         bool     `json:"ownExit"`
@@ -85,7 +87,14 @@ func (s *Store) ConfigureNodeExits(ctx context.Context, applicationID string, in
 	if !input.OwnExit && entry.HY2InboundID != 0 {
 		return errors.New("center: keep the own exit while HY2 is enabled; landing combinations support VLESS only")
 	}
-	for _, nodeID := range append([]string{controllerNode, entry.NodeID}, input.LandingNodeIDs...) {
+	var controllerBlocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, controllerNode).Scan(&controllerBlocked); err != nil {
+		return err
+	}
+	if controllerBlocked {
+		return errNodeExitControllerBlocked
+	}
+	for _, nodeID := range append([]string{entry.NodeID}, input.LandingNodeIDs...) {
 		var blocked bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, nodeID).Scan(&blocked); err != nil {
 			return err

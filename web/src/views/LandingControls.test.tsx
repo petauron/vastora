@@ -71,14 +71,50 @@ it("saves multiple exits from the node row without client-specific configuration
   expect(container.textContent).toContain("正在同步组合");
 });
 
-it.each(["paused", "failed"] as const)("does not allow an unsafe write when %s", async (condition) => {
+it.each(["paused", "failed", "controller-blocked"] as const)("does not allow an unsafe write when %s", async (condition) => {
   const view = overview(); view.tasksPaused = condition === "paused";
+  view.controllerBlocked = condition === "controller-blocked";
   vi.spyOn(api, "landing").mockImplementation(() => condition === "failed" ? Promise.reject(new Error("offline")) : Promise.resolve(view));
   const update = vi.spyOn(api, "configureNodeExits");
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
-  expect(container.querySelector<HTMLButtonElement>("button")?.disabled).toBe(true);
+  const trigger = container.querySelector<HTMLButtonElement>("button");
+  if (condition === "failed") {
+    expect(trigger?.disabled).toBe(true);
+  } else {
+    expect(trigger?.disabled).toBe(false);
+    await act(async () => { trigger?.click(); });
+    const save = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "保存出口组合");
+    expect(save?.disabled).toBe(true);
+    if (condition === "controller-blocked") expect(document.body.textContent).toContain("订阅主机任务待处理");
+  }
   expect(update).not.toHaveBeenCalled();
+});
+
+it("distinguishes a ready exit with unresolved tasks and restores saved checks", async () => {
+  const view = overview();
+  view.blockedNodeIds = ["b"];
+  view.nodeExits = [{ applicationId: "app-one", ownExit: true, landingNodeIds: ["a"], revision: 3 }];
+  vi.spyOn(api, "landing").mockResolvedValue(view);
+  const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
+  await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
+  const checks = [...document.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+  expect(checks[1].getAttribute("aria-checked")).toBe("true");
+  expect(document.body.textContent).toContain("任务待处理");
+  expect(document.body.textContent).not.toContain("未就绪");
+});
+
+it("keeps the draft and a specific error when a save is rejected", async () => {
+  vi.spyOn(api, "landing").mockResolvedValue(overview());
+  vi.spyOn(api, "configureNodeExits").mockRejectedValue(Object.assign(new Error("blocked"), { code: "exit_controller_blocked" }));
+  const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /></LandingProvider>); });
+  await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
+  await act(async () => { document.querySelectorAll<HTMLElement>('[role="checkbox"]')[1].click(); });
+  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "保存出口组合")?.click(); });
+  expect(document.querySelectorAll<HTMLElement>('[role="checkbox"]')[1].getAttribute("aria-checked")).toBe("true");
+  expect(document.body.textContent).toContain("本次出口配置未保存");
 });
 
 it("protects in-use servers while letting an unused server be removed", async () => {

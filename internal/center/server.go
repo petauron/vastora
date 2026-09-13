@@ -399,6 +399,12 @@ func writeError(writer http.ResponseWriter, status int, err error) {
 // operational diagnostics remain on the authenticated diagnostic/task surfaces.
 func publicErrorMessage(code string) string {
 	switch code {
+	case "exit_controller_blocked":
+		return "The subscription host has unresolved tasks. Exit settings were not saved."
+	case "execution_blocked":
+		return "A related node has unresolved tasks. Resolve them before retrying."
+	case "exit_revision_changed":
+		return "Exit settings changed. Refresh before saving again."
 	case "node_remove_online":
 		return "The node is online. Permanent removal is only available for offline nodes."
 	case "node_remove_confirmation":
@@ -455,6 +461,12 @@ func errorCode(status int, message string) string {
 	}
 	normalized := strings.ToLower(message)
 	switch {
+	case message == errNodeExitControllerBlocked.Error():
+		return "exit_controller_blocked"
+	case message == errExecutionBlocked.Error():
+		return "execution_blocked"
+	case message == "center: exit selection changed; refresh and retry":
+		return "exit_revision_changed"
 	case message == errNodeRemovalOnline.Error():
 		return "node_remove_online"
 	case message == errNodeRemovalName.Error():

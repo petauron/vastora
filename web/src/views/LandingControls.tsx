@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ServerIcon, SlidersHorizontalIcon } from "lucide-react";
-import { copy } from "./shared";
+import { copy, userError } from "./shared";
 import { landingLatencyColor, landingLatencyPreview } from "./landingLatency";
 import { applyLandingLatencyEvent, freshLandingLatencies } from "./landingLatencyEvents";
 
@@ -17,6 +17,8 @@ type LandingContextValue = {
   view: LandingView | null;
   busy: boolean;
   failed: boolean;
+  changeError: unknown;
+  clearChangeError: () => void;
   refresh: () => void;
   change: (operation: (signal: AbortSignal) => Promise<LandingView>) => Promise<boolean>;
 };
@@ -29,6 +31,7 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
   const [view, setView] = useState<LandingView | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [changeError, setChangeError] = useState<unknown>(null);
   const generation = useRef(0);
   const writing = useRef(false);
   const reading = useRef<AbortController | null>(null);
@@ -103,6 +106,7 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
   const change = async (operation: (signal: AbortSignal) => Promise<LandingView>) => {
     if (!mounted.current || writing.current) return false;
     writing.current = true;
+    setChangeError(null);
     const current = ++generation.current;
     reading.current?.abort();
     reading.current = null;
@@ -114,7 +118,8 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
       const next = await operation(controller.signal);
       if (mounted.current && generation.current === current) adoptView(next);
       return true;
-    } catch {
+    } catch (error) {
+      if (mounted.current && generation.current === current) setChangeError(error);
       // The server may have accepted a request whose reply was lost. Require
       // a new overview before allowing another revision-sensitive mutation.
       if (mounted.current && generation.current === current) setFailed(true);
@@ -126,7 +131,7 @@ export function LandingProvider({ enabled, children }: { enabled: boolean; child
     }
   };
 
-  return <LandingContext.Provider value={{ view, busy, failed, refresh: () => void refresh(), change }}>{children}</LandingContext.Provider>;
+  return <LandingContext.Provider value={{ view, busy, failed, changeError, clearChangeError: () => setChangeError(null), refresh: () => void refresh(), change }}>{children}</LandingContext.Provider>;
 }
 
 export function LandingManager({ language }: { language: Language }) {
@@ -218,7 +223,7 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
   const { view, busy, failed } = state;
   const policy = view?.nodeExits?.find((item) => item.applicationId === applicationId);
   const servers = view?.servers.filter((server) => server.nodeId !== nodeId) ?? [];
-  const blocked = Boolean(view?.tasksPaused || view?.blockedNodeIds?.includes(nodeId));
+  const blocked = Boolean(view?.tasksPaused || view?.controllerBlocked || view?.blockedNodeIds?.includes(nodeId));
   const disabled = locked || busy || failed || !view || blocked || policy?.status === "applying";
   const ownName = copy(language, "本机出口", "Own exit");
   const exitName = (target: string) => servers.find((server) => server.nodeId === target)?.name ?? copy(language, "不可用落地机", "Unavailable exit");
@@ -227,12 +232,13 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
   const stale = draft !== null && draft.revision !== (policy?.revision ?? 0);
   const invalid = !draft || (!draft.ownExit && draft.landingNodeIds.length === 0) || draft.landingNodeIds.some((target) => view?.blockedNodeIds?.includes(target) || !servers.some((server) => server.nodeId === target && server.status === "ready"));
   const status = view?.tasksPaused ? copy(language, "任务已暂停，等待恢复", "Tasks paused; waiting to resume")
+    : view?.controllerBlocked ? copy(language, "订阅主机任务待处理，暂不能保存", "Subscription host blocked; cannot save")
     : blocked ? copy(language, "节点任务待处理", "Node task needs attention")
     : policy?.status === "applying" ? copy(language, "正在同步组合…", "Syncing combinations…")
     : policy?.status === "failed" ? copy(language, "同步失败，请重新保存", "Sync failed; save again to retry")
     : policy?.revision ? copy(language, "出口配置已保存", "Exit configuration saved") : null;
   return <div className="flex min-w-0 flex-col gap-1">
-    <Button id={id} variant="outline" className="w-full justify-between" disabled={disabled} aria-label={copy(language, `配置 ${name} 的出口`, `Configure exits for ${name}`)} title={names.join(" · ")} onClick={() => setDraft({ ownExit: policy?.ownExit ?? true, landingNodeIds: [...(policy?.landingNodeIds ?? [])], revision: policy?.revision ?? 0 })}>
+    <Button id={id} variant="outline" className="w-full justify-between" disabled={locked || busy || !view} aria-label={copy(language, `配置 ${name} 的出口`, `Configure exits for ${name}`)} title={names.join(" · ")} onClick={() => { state.clearChangeError(); setDraft({ ownExit: policy?.ownExit ?? true, landingNodeIds: [...(policy?.landingNodeIds ?? [])], revision: policy?.revision ?? 0 }); }}>
       <span className="truncate">{failed ? copy(language, "状态未知", "Unknown") : view ? !policy?.revision && previous ? copy(language, `原单出口：${exitName(previous.landingNodeId)}`, `Previous exit: ${exitName(previous.landingNodeId)}`) : names.join(" · ") : copy(language, "读取出口", "Loading exits")}</span><SlidersHorizontalIcon data-icon="inline-end" />
     </Button>
     {status ? <p role="status" className="text-xs text-muted-foreground">{status}</p> : null}
@@ -246,6 +252,8 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
           <FieldSet disabled={busy}>
             <FieldLegend>{copy(language, "选择出口", "Choose exits")}</FieldLegend>
             <FieldDescription>{copy(language, "至少选择一项；保存可能短暂中断此节点连接，订阅地址不变。", "Choose at least one. Saving may briefly interrupt this entry; subscription URLs stay unchanged.")}</FieldDescription>
+            {blocked ? <Alert><AlertTitle>{status}</AlertTitle><AlertDescription>{copy(language, "请先在任务记录中核实并处理历史任务；本表单不会自动清空记录或强制执行。", "Resolve historical tasks in Activity first. This form does not clear records or force execution.")}</AlertDescription></Alert> : null}
+            {!policy?.revision && previous ? <FieldDescription>{copy(language, `原单出口 ${exitName(previous.landingNodeId)} 仍在生效；下面是尚未保存的新组合选项。`, `The previous exit ${exitName(previous.landingNodeId)} is still active. The choices below are a new, unsaved combination.`)}</FieldDescription> : null}
             <FieldGroup>
               <Field orientation="horizontal" data-disabled={policy?.requiresOwnExit}>
                 <Checkbox id={id + "-own"} checked={draft?.ownExit ?? true} disabled={policy?.requiresOwnExit} onCheckedChange={(checked) => setDraft((value) => value ? { ...value, ownExit: checked } : value)} />
@@ -253,17 +261,19 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
               </Field>
               {servers.map((server) => {
                 const selected = draft?.landingNodeIds.includes(server.nodeId) ?? false;
-                const unavailable = server.status !== "ready" || view?.blockedNodeIds?.includes(server.nodeId);
+                const taskBlocked = view?.blockedNodeIds?.includes(server.nodeId);
+                const unavailable = server.status !== "ready" || taskBlocked;
                 const latency = view?.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === server.nodeId);
                 return <Field key={server.nodeId} orientation="horizontal" data-disabled={!selected && unavailable}>
                   <Checkbox id={id + server.nodeId} checked={selected} disabled={!selected && unavailable} onCheckedChange={(checked) => setDraft((value) => value ? { ...value, landingNodeIds: checked ? [...value.landingNodeIds, server.nodeId] : value.landingNodeIds.filter((target) => target !== server.nodeId) } : value)} />
                   <FieldLabel className="min-w-0 flex-1" htmlFor={id + server.nodeId}>{server.name}</FieldLabel>
-                  <span className={landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}>{unavailable ? copy(language, "未就绪", "Not ready") : latencyLabel(language, latency)}</span>
+                  <span className={landingLatencyColor(latency?.state === "direct" ? latency.latencyMs : null)}>{taskBlocked ? copy(language, "任务待处理", "Tasks need attention") : server.status === "offline" ? copy(language, "离线", "Offline") : server.status === "failed" ? copy(language, "部署失败", "Setup failed") : unavailable ? copy(language, "正在准备", "Preparing") : latencyLabel(language, latency)}</span>
                 </Field>;
               })}
             </FieldGroup>
             {policy?.requiresOwnExit ? <FieldDescription>{copy(language, "HY2 当前仅支持本机出口；落地组合使用 VLESS，因此需保留本机出口。", "HY2 currently uses the own exit. Landing combinations use VLESS, so keep the own exit enabled.")}</FieldDescription> : null}
             {stale ? <FieldDescription role="alert">{copy(language, "配置已变化，请关闭后重新打开。", "Configuration changed. Close and reopen.")}</FieldDescription> : null}
+            {state.changeError != null ? <Alert variant="destructive"><AlertTitle>{copy(language, "未确认保存成功", "Save not confirmed")}</AlertTitle><AlertDescription>{userError(language, state.changeError)} {copy(language, "勾选仍保留在本表单；请刷新状态核对，关闭不会将其保存。", "Your choices remain in this form. Refresh to reconcile the saved state; closing does not save them.")}</AlertDescription></Alert> : null}
             <LandingNotice language={language} />
           </FieldSet>
         </div>

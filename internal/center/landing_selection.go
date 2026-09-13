@@ -26,7 +26,8 @@ type LandingCandidate struct {
 }
 
 type LandingView struct {
-	NodeExits []NodeExitPolicy `json:"nodeExits"`
+	NodeExits         []NodeExitPolicy `json:"nodeExits"`
+	ControllerBlocked bool             `json:"controllerBlocked"`
 	LandingSelection
 	TasksPaused    bool                 `json:"tasksPaused"`
 	BlockedNodeIDs []string             `json:"blockedNodeIds"`
@@ -176,8 +177,11 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 	}
 	proxies.Close()
 	view.NodeExits = []NodeExitPolicy{}
-	controller, _, err := runningGlobalThreeXUIController(ctx, tx)
+	controller, controllerNode, err := runningGlobalThreeXUIController(ctx, tx)
 	if err == nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, controllerNode).Scan(&view.ControllerBlocked); err != nil {
+			return view, err
+		}
 		inbounds, err := threeXUIClientInbounds(ctx, tx, controller)
 		if err != nil {
 			return view, err
