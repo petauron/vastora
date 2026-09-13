@@ -10277,15 +10277,6 @@
           "revision": {
             "type": "integer"
           },
-          "tasksPaused": {
-            "type": "boolean"
-          },
-          "blockedNodeIds": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "servers": {
             "type": "array",
             "items": {
