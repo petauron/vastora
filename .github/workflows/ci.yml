@@ -39,6 +39,37 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: scripts/classify-ci-changes.sh --git ci "$BASE_SHA" "$HEAD_SHA" >> "$GITHUB_OUTPUT"
 
+  alpha-minimal:
+    name: Alpha minimal checks
+    if: github.event_name == 'pull_request' && vars.VASTORA_CI_MODE == 'alpha'
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Do not restore the shared Go build cache or compile a second time here.
+      # Release builds both architectures and the frontend, then smoke-tests it.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+        with:
+          go-version: "1.26.6"
+          cache: false
+      - name: Check Go formatting and API contract
+        if: needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'
+        run: make go-format-check
+      - name: Check deployment syntax and release workflow contracts
+        if: needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'
+        run: |
+          sh -n install.sh
+          for script in deploy/center/*.sh scripts/*.sh; do sh -n "$script"; done
+          scripts/test-ci-workflows.sh
+          scripts/test-release-workflow.sh
+      - name: Check frontend dependency manifests
+        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
+        run: jq -e 'type == "object"' web/package.json web/package-lock.json >/dev/null
+
   go-race:
     name: Go race tests
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
@@ -55,7 +86,7 @@ jobs:
 
   go-quality:
     name: Go quality and security
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -146,7 +177,7 @@ jobs:
         run: make agent-binaries
 
   web:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -162,7 +193,7 @@ jobs:
       - run: make web-security-check
 
   deployment:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'))
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && (needs.changes.outputs.deployment == 'true' || needs.changes.outputs.full == 'true'))
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -175,7 +206,7 @@ jobs:
         run: scripts/check-runtime-image-platforms.sh
 
   security:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && needs.changes.outputs.security == 'true')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && vars.VASTORA_CI_MODE != 'alpha' && needs.changes.outputs.security == 'true')
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -273,13 +304,14 @@ jobs:
   gate:
     name: CI / gate
     if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
-    needs: [changes, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]
+    needs: [changes, alpha-minimal, go-race, go-quality, go-build, web, deployment, security, release-metadata, container-image-security]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every applicable CI job
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          ALPHA_RESULT: ${{ needs.alpha-minimal.result }}
           GO_RACE_RESULT: ${{ needs.go-race.result }}
           GO_QUALITY_RESULT: ${{ needs.go-quality.result }}
           GO_BUILD_RESULT: ${{ needs.go-build.result }}
@@ -289,7 +321,7 @@ jobs:
           RELEASE_METADATA_RESULT: ${{ needs.release-metadata.result }}
           CONTAINER_RESULT: ${{ needs.container-image-security.result }}
         run: |
-          for result in "$CHANGES_RESULT" "$GO_RACE_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$CONTAINER_RESULT"; do
+          for result in "$CHANGES_RESULT" "$ALPHA_RESULT" "$GO_RACE_RESULT" "$GO_QUALITY_RESULT" "$GO_BUILD_RESULT" "$WEB_RESULT" "$DEPLOYMENT_RESULT" "$SECURITY_RESULT" "$RELEASE_METADATA_RESULT" "$CONTAINER_RESULT"; do
             case "$result" in
               success|skipped) ;;
               *) echo "Required CI job did not succeed: $result" >&2; exit 1 ;;

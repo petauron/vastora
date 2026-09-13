@@ -2,6 +2,8 @@ name: Official catalog checks
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "53 3 * * 1"
   pull_request:
     paths:
       - 'catalog/**'
@@ -24,6 +26,7 @@ concurrency:
 
 jobs:
   verify:
+    if: github.event_name != 'pull_request' || vars.VASTORA_CI_MODE != 'alpha'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
