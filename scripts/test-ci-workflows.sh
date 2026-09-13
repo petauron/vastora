@@ -119,7 +119,14 @@ for architecture in amd64 arm64; do
   require_line "$center_dockerfile" "FROM scratch AS dante-$architecture"
   require_line "$center_dockerfile" "COPY --link --from=dante-build-$architecture /out/ /out/"
   require_line "$center_dockerfile" "COPY --link --from=dante-$architecture /out/ /src/internal/dantebundle/assets/"
-  build_count="$(grep -Fc "GOARCH=$architecture " "$center_dockerfile")"
+  require_line "$center_dockerfile" "FROM go-source AS compile-$architecture"
+  require_line "$center_dockerfile" "FROM compile-$architecture AS binary-$architecture"
+  compile_stage="$(sed -n "/^FROM go-source AS compile-$architecture$/,/^FROM compile-$architecture AS binary-$architecture$/p" "$center_dockerfile")"
+  if printf '%s\n' "$compile_stage" | grep -Eq 'VASTORA_VERSION|type=cache'; then
+    echo 'Package compilation must be version-independent and exportable.' >&2
+    exit 1
+  fi
+  build_count="$(grep -F "GOARCH=$architecture " "$center_dockerfile" | grep -c 'go build')"
   if [ "$build_count" -ne 1 ]; then
     echo "Center image must compile $architecture exactly once; found $build_count builds." >&2
     exit 1
