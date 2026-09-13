@@ -38,7 +38,6 @@ RUN GOTOOLCHAIN=go1.26.6 go mod download && \
     find /go/pkg/mod/cache/download -type f -name '*.zip' -delete
 COPY --link cmd/ ./cmd/
 COPY --link internal/ ./internal/
-COPY scripts/trim-go-build-cache.sh /trim-go-build-cache.sh
 
 FROM go-source AS binary-amd64
 COPY --link --from=dante-amd64 /out/ /src/internal/dantebundle/assets/
@@ -46,7 +45,7 @@ ARG VASTORA_VERSION=0.1.0-dev
 RUN --mount=type=cache,id=vastora-go-build-amd64,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
-    -o /out/vastora ./cmd/vastora && sh /trim-go-build-cache.sh
+    -o /out/vastora ./cmd/vastora
 
 FROM go-source AS binary-arm64
 COPY --link --from=dante-arm64 /out/ /src/internal/dantebundle/assets/
@@ -54,7 +53,7 @@ ARG VASTORA_VERSION=0.1.0-dev
 RUN --mount=type=cache,id=vastora-go-build-arm64,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.26.6 go build -trimpath \
     -ldflags="-s -w -X github.com/petauron/vastora/internal/center.Version=${VASTORA_VERSION} -X github.com/petauron/vastora/internal/agent.Version=${VASTORA_VERSION}" \
-    -o /out/vastora ./cmd/vastora && sh /trim-go-build-cache.sh
+    -o /out/vastora ./cmd/vastora
 
 FROM binary-amd64 AS center-amd64
 FROM binary-arm64 AS center-arm64
