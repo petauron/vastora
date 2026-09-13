@@ -116,12 +116,21 @@ if grep -Fq 'runtime-image-platforms:' "$ci_workflow"; then
   exit 1
 fi
 for architecture in amd64 arm64; do
+  require_line "$center_dockerfile" "FROM scratch AS dante-$architecture"
+  require_line "$center_dockerfile" "COPY --link --from=dante-build-$architecture /out/ /out/"
+  require_line "$center_dockerfile" "COPY --link --from=dante-$architecture /out/ /src/internal/dantebundle/assets/"
   build_count="$(grep -Fc "GOARCH=$architecture " "$center_dockerfile")"
   if [ "$build_count" -ne 1 ]; then
     echo "Center image must compile $architecture exactly once; found $build_count builds." >&2
     exit 1
   fi
 done
+require_line "$center_dockerfile" 'FROM scratch AS web-assets'
+require_line "$center_dockerfile" 'COPY --link --from=web-build /src/web/dist/ /dist/'
+require_line "$center_dockerfile" 'COPY --link --from=web-assets /dist/ /app/web/dist/'
+require_line "$center_dockerfile" "find /go/pkg/mod/cache/download -type f -name '*.zip' -delete"
+require_line "$center_dockerfile" 'COPY --link cmd/ ./cmd/'
+require_line "$center_dockerfile" 'COPY --link internal/ ./internal/'
 if grep -Fq 'target=/go/pkg/mod' "$center_dockerfile"; then
   echo 'Center image dependency downloads must live in an exportable layer, not an unexported cache mount.' >&2
   exit 1

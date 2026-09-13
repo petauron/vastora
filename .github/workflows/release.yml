@@ -162,7 +162,7 @@ jobs:
             org.opencontainers.image.revision=${{ needs.prepare.outputs.release_sha }}
             org.opencontainers.image.version=${{ needs.prepare.outputs.release_version }}
           cache-from: type=registry,ref=${{ env.CENTER_IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.CENTER_IMAGE }}:buildcache,mode=max,ignore-error=true
+          cache-to: type=registry,ref=${{ env.CENTER_IMAGE }}:buildcache,mode=max,compression=zstd,compression-level=3,ignore-error=true
           provenance: mode=max
           sbom: true
 
