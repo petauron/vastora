@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.139](https://github.com/petauron/vastora/compare/v0.1.0-alpha.138...v0.1.0-alpha.139) (2026-09-14)
+
+
+### Bug Fixes
+
+* **ui:** simplify 3x-ui node and exit management ([#465](https://github.com/petauron/vastora/issues/465)) ([fda3755](https://github.com/petauron/vastora/commit/fda375586468c6749fbefb413543cbe7cb6ae79a))
+
 ## [0.1.0-alpha.138](https://github.com/petauron/vastora/compare/v0.1.0-alpha.137...v0.1.0-alpha.138) (2026-09-14)
 
 
