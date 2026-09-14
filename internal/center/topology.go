@@ -27,11 +27,12 @@ var (
 )
 
 type NodeCapabilities struct {
-	Docker  bool `json:"docker"`
-	Gateway bool `json:"gateway"`
-	Tunnel  bool `json:"tunnel"`
-	Metrics bool `json:"metrics"`
-	Logs    bool `json:"logs"`
+	IPQuality bool `json:"ipQuality"`
+	Docker    bool `json:"docker"`
+	Gateway   bool `json:"gateway"`
+	Tunnel    bool `json:"tunnel"`
+	Metrics   bool `json:"metrics"`
+	Logs      bool `json:"logs"`
 }
 
 type NodeHeartbeat struct {

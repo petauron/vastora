@@ -20,6 +20,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
@@ -120,11 +121,12 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
-	Docker  bool `json:"docker"`
-	Gateway bool `json:"gateway"`
-	Tunnel  bool `json:"tunnel"`
-	Metrics bool `json:"metrics"`
-	Logs    bool `json:"logs"`
+	IPQuality bool `json:"ipQuality"`
+	Docker    bool `json:"docker"`
+	Gateway   bool `json:"gateway"`
+	Tunnel    bool `json:"tunnel"`
+	Metrics   bool `json:"metrics"`
+	Logs      bool `json:"logs"`
 }
 
 type Enrollment struct {
@@ -136,6 +138,7 @@ type Enrollment struct {
 }
 
 type DeploymentTask struct {
+	IPQuality                 *ipquality.Task                     `json:"ipQuality,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization `json:"-"`
 	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
@@ -190,6 +193,7 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
+	IPQuality           *ipquality.Result                `json:"ipQuality,omitempty"`
 	PulseEnrollment     *pulse.EnrollmentResult          `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand     *nodeprotocol.Result             `json:"protocolCommand,omitempty"`
 	LandingPeer         *landing.PeerIdentity            `json:"landingPeer,omitempty"`
@@ -947,6 +951,16 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	decommissionHandedOff := false
 	updateHandedOff := false
 	switch task.Kind {
+	case ipquality.Kind:
+		checker, ok := c.Executor.(interface {
+			CheckIPQuality(context.Context, ipquality.Task) (ipquality.Result, error)
+		})
+		if !ok || !c.Capabilities.IPQuality || !c.Capabilities.Docker || task.IPQuality == nil {
+			err = errors.New("agent: IP quality capability is not configured")
+		} else {
+			value, checkErr := checker.CheckIPQuality(ctx, *task.IPQuality)
+			result.IPQuality, err = &value, checkErr
+		}
 	case "application.apply":
 		if landingErr := store.checkLandingApplicationMutation(ctx, task.AppKey); landingErr != nil {
 			err = landingErr

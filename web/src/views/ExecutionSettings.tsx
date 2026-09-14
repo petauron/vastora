@@ -25,7 +25,7 @@ function kindLabel(language: Language, kind: string) {
     "landing.proxy.apply": ["落地连接", "Landing connection"], "landing.server.apply": ["落地服务", "Landing service"],
     "gateway.routes.apply": ["网关路由", "Gateway routes"], "gateway.component.apply": ["网关配置", "Gateway configuration"],
     "node.listener.apply": ["节点入口", "Node entry"], "tunnel.state.apply": ["隧道配置", "Tunnel configuration"],
-    "legacy.receipt": ["旧执行记录", "Legacy execution"],
+    "legacy.receipt": ["旧执行记录", "Legacy execution"], "node.ip-quality": ["IP 质量检测", "IP quality check"],
   };
   return labels[kind] ? copy(language, ...labels[kind]) : copy(language, "节点任务", "Node task");
 }

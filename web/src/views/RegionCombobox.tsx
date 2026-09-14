@@ -5,6 +5,7 @@ import { api } from "../api";
 import type { Region } from "../types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
+import { regionFlag, regionName } from "@/lib/regions";
 
 type RegionOption = Region & {
   label: string;
@@ -61,20 +62,6 @@ function subscriptionRegionName(code: string) {
   if (Object.hasOwn(shortChineseRegionNames, code)) return shortChineseRegionNames[code];
   const name = regionName(code, ["zh-CN"]);
   return Array.from(name).length > maxRegionNameLength ? code : name;
-}
-
-function regionName(code: string, locales: string[]) {
-  if (!/^[A-Z]{2}$/.test(code)) return code;
-  try {
-    return new Intl.DisplayNames(locales, { type: "region" }).of(code) ?? code;
-  } catch {
-    return code;
-  }
-}
-
-function regionFlag(code: string) {
-  if (!/^[A-Z]{2}$/.test(code)) return "";
-  return String.fromCodePoint(...Array.from(code, (character) => 0x1f1e6 + character.charCodeAt(0) - 65));
 }
 
 export function RegionCombobox({ id, language, onValueChange, value }: { id: string; language: Language; onValueChange: (code: string) => void; value: string }) {

@@ -3,7 +3,7 @@ import { LandingProvider, LandingManager, LandingNotice, LandingExitSelect, Land
 import { AppWindowIcon, EllipsisIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { Mutate } from "../App";
-import type { Application, Publication, Service } from "../types";
+import type { AgentView, Application, Publication, Service } from "../types";
 import type { Language } from "../translations";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -17,9 +17,12 @@ import { cn } from "@/lib/utils";
 import { localized, operationLabel } from "./appAccess";
 import { catalogInstallBlocked, copy, StateBadge } from "./shared";
 import { AppIdentityBadge } from "./AppIdentity";
+import { RegionFlag } from "./RegionFlag";
+import { IPQualityButton, IPQualityProvider } from "./IPQuality";
 import { canCreateRealityNode, publicationNeedsAttention, serviceNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
 
 type InstalledAppsProps = {
+  agents: AgentView[];
   groups: InstalledAppGroup[];
   language: Language;
   mutate: Mutate;
@@ -29,11 +32,11 @@ type InstalledAppsProps = {
   onReality: (application: Application) => void;
 };
 
-export function InstalledApps({ groups, ...props }: InstalledAppsProps) {
+export function InstalledApps({ groups, agents, ...props }: InstalledAppsProps) {
   const [selectedID, setSelectedID] = useState(groups[0]?.id ?? "");
   const selected = groups.find((group) => group.id === selectedID) ?? groups[0];
   const showSite = new Set(groups.flatMap((group) => group.instances.map((instance) => instance.application.siteId))).size > 1;
-  return <LandingProvider enabled={groups.some((group) => group.appKey === threeXUIAppKey)}>
+  return <IPQualityProvider enabled={selected?.appKey === threeXUIAppKey} agents={agents}><LandingProvider enabled={groups.some((group) => group.appKey === threeXUIAppKey)} agents={agents}>
     <Tabs value={selected?.id ?? ""} onValueChange={(value) => { if (typeof value === "string") setSelectedID(value); }} className="apps-chooser gap-4">
       <div className="max-w-full overflow-x-auto pb-1">
         <TabsList variant="line" aria-label={copy(props.language, "已安装的应用", "Installed applications")}>
@@ -48,10 +51,10 @@ export function InstalledApps({ groups, ...props }: InstalledAppsProps) {
         <InstalledApplicationGroup group={group} showSite={showSite} {...props} />
       </TabsContent>)}
     </Tabs>
-  </LandingProvider>;
+  </LandingProvider></IPQualityProvider>;
 }
 
-function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrade, onClients, onReality, showSite }: Omit<InstalledAppsProps, "groups"> & { group: InstalledAppGroup; showSite: boolean }) {
+function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrade, onClients, onReality, showSite }: Omit<InstalledAppsProps, "groups" | "agents"> & { group: InstalledAppGroup; showSite: boolean }) {
   const headingID = useId();
   const [query, setQuery] = useState("");
   const threeXUI = group.appKey === threeXUIAppKey;
@@ -236,11 +239,13 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
   return <TableRow className="grid grid-cols-2 gap-x-4 gap-y-3 py-4 lg:table-row lg:py-0" data-application-id={application.id}>
     <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {threeXUI ? <RegionFlag code={instance.realityServices[0]?.regionCode} language={language} /> : null}
         <p className="min-w-0 break-words font-medium">{name}</p>
         {threeXUI && instance.realityServices[0] ? <div className="flex flex-wrap gap-1">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => <Badge key={protocol} variant="secondary">{protocol.toUpperCase()}</Badge>)}</div> : null}
       </div>
       {threeXUI && application.role === "master" && application.id !== instance.controller?.id ? <Badge className="mt-1" variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}
       {showSite || displayName ? <p className="mt-1 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}
+      {threeXUI ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} /> : null}
     </TableCell>
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "应用状态", "Application")}</p>
@@ -249,7 +254,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
     {threeXUI ? <>
       <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
         <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "出口", "Exit")}</p>
-        {needsVLESS ? <span className="text-muted-foreground">—</span> : <LandingExitSelect applicationId={application.id} nodeId={application.nodeId} name={name} locked={locked} language={language} />}
+        {needsVLESS ? <span className="text-muted-foreground">—</span> : <LandingExitSelect applicationId={application.id} nodeId={application.nodeId} name={name} regionCode={instance.realityServices[0]?.regionCode} locked={locked} language={language} />}
       </TableCell>
       <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
         <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "落地延迟", "Exit latency")}</p>

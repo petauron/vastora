@@ -291,7 +291,7 @@ export type AgentView = {
   credentialRevoked: boolean;
   siteId: string;
   roles: string[];
-  capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean };
+  capabilities: { docker: boolean; gateway: boolean; tunnel: boolean; metrics: boolean; logs: boolean; ipQuality?: boolean };
   networkCandidates: NetworkCandidate[];
   publicEgress?: PublicEgress;
   networkProfile?: NetworkProfile;

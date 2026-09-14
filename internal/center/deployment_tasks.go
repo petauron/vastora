@@ -15,6 +15,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
@@ -23,6 +24,7 @@ import (
 )
 
 type AgentTask struct {
+	IPQuality                 *ipquality.Task                     `json:"ipQuality,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization `json:"-"`
 	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
@@ -247,7 +249,14 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
-					return nil, nil
+					check, err := s.claimIPQuality(ctx, tx, agentID)
+					if err != nil || check == nil {
+						return nil, err
+					}
+					if err := commitTask(tx, check); err != nil {
+						return nil, err
+					}
+					return check, nil
 				}
 				if err := commitTask(tx, decommissionTask); err != nil {
 					return nil, err
@@ -419,6 +428,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
 		}
 		return err
+	}
+	if strings.HasPrefix(taskID, "ip-quality-") {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeIPQuality(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {
