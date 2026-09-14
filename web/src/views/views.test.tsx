@@ -843,8 +843,8 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("home");
     expect(container.textContent).toContain("Singapore");
     expect(container.textContent).toContain("singapore");
-    expect(container.textContent).toContain("位置：Home");
-    expect(container.textContent).toContain("位置：Singapore");
+    expect(container.querySelector('table[aria-label="节点全局状态"]')).not.toBeNull();
+    expect(container.querySelectorAll("tbody tr").length).toBeGreaterThanOrEqual(4);
   });
 
   it("shows the native architecture of each node", () => {

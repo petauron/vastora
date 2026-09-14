@@ -51,6 +51,14 @@ it("shows every global landing latency and never includes self-to-self", () => {
   expect(selectedLandingLatencies(view, "a", "entry-on-a").map((pair) => pair.server.nodeId)).toEqual(["b"]);
 });
 
+it("sorts measured global landing latency from fastest to slowest", () => {
+  const view = overview();
+  view.latencies = view.latencies.map((latency) => ({ ...latency, latencyMs: latency.landingNodeId === "a" ? 128 : 12 }));
+  view.servers.push({ nodeId: "c", name: "落地 C", status: "ready", inUse: true, eligibleEntries: 2, readyCombinations: 0, failedCombinations: 0, withheldCombinations: 0 });
+  view.nodeIds.push("c");
+  expect(selectedLandingLatencies(view, "source-one", "entry-one").map((pair) => pair.server.nodeId)).toEqual(["b", "a", "c"]);
+});
+
 it("reports global and per-server rollout counts", async () => {
   vi.spyOn(api, "landing").mockResolvedValue(overview());
   const container = document.createElement("div");
