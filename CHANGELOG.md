@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.143](https://github.com/petauron/vastora/compare/v0.1.0-alpha.142...v0.1.0-alpha.143) (2026-09-14)
+
+
+### Bug Fixes
+
+* **landing:** simplify subscription combination names ([#479](https://github.com/petauron/vastora/issues/479)) ([c7df89f](https://github.com/petauron/vastora/commit/c7df89fbff0d16ca262d1f9d44d039c107451ab2))
+
 ## [0.1.0-alpha.142](https://github.com/petauron/vastora/compare/v0.1.0-alpha.141...v0.1.0-alpha.142) (2026-09-14)
 
 
