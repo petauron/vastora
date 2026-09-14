@@ -29,8 +29,8 @@ func openLandingSubscriptionAccess(ctx context.Context, installation AppliedInst
 	}
 	var subnet string
 	for _, value := range network.Network.IPAM.Config {
-		prefix, err := netip.ParsePrefix(value.Subnet)
-		if err != nil || !prefix.Addr().Is4() {
+		prefix := value.Subnet
+		if !prefix.IsValid() || !prefix.Addr().Is4() {
 			continue
 		}
 		if subnet != "" {
