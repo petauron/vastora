@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.140](https://github.com/petauron/vastora/compare/v0.1.0-alpha.139...v0.1.0-alpha.140) (2026-09-14)
+
+
+### Features
+
+* add node IP quality diagnostics ([#471](https://github.com/petauron/vastora/issues/471)) ([e03861b](https://github.com/petauron/vastora/commit/e03861b9bbc6ded6f7aa3eb11082394eb822f314))
+
+
+### Bug Fixes
+
+* **landing:** recover routing after agent restart ([#469](https://github.com/petauron/vastora/issues/469)) ([a17e36f](https://github.com/petauron/vastora/commit/a17e36fae175b366f03775e2860b2bb0171074c0)), closes [#467](https://github.com/petauron/vastora/issues/467)
+
 ## [0.1.0-alpha.139](https://github.com/petauron/vastora/compare/v0.1.0-alpha.138...v0.1.0-alpha.139) (2026-09-14)
 
 
