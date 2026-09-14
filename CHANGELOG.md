@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.144](https://github.com/petauron/vastora/compare/v0.1.0-alpha.143...v0.1.0-alpha.144) (2026-09-14)
+
+
+### Features
+
+* **landing:** replace node exits with global pool ([#485](https://github.com/petauron/vastora/issues/485)) ([48d2372](https://github.com/petauron/vastora/commit/48d23728fcd814cca2eba6aac71bb8d18610c1b6))
+
+
+### Bug Fixes
+
+* **agent:** make IP quality cleanup deterministic ([#483](https://github.com/petauron/vastora/issues/483)) ([24f587b](https://github.com/petauron/vastora/commit/24f587bf84c2ee5a90a1cd7b3a1e0fc34fbd9c00))
+
 ## [0.1.0-alpha.143](https://github.com/petauron/vastora/compare/v0.1.0-alpha.142...v0.1.0-alpha.143) (2026-09-14)
 
 
