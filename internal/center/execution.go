@@ -221,6 +221,14 @@ func (s *Store) StartExecution(ctx context.Context, agentID, sessionID, id, dige
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return errExecutionAuthorization
 	}
+	// Token-based cloudflared reads ingress from Cloudflare, not the task JSON.
+	// Do this only after consuming the one-use offer, outside a DB transaction.
+	if err := s.prepareTunnelExecution(ctx, agentID, sessionID, id); err != nil {
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		message := "center: Cloudflare Tunnel origin configuration was not confirmed; explicit recovery required"
+		return errors.Join(errors.New(message), s.StopExecution(stopCtx, agentID, sessionID, id, true, message))
+	}
 	return nil
 }
 

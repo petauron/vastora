@@ -151,7 +151,7 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 			}
 			setClientJSONField(detail.Client, "expiryTime", expiry)
 			setClientJSONField(detail.Client, "reset", 0)
-			if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client); err != nil {
+			if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client, detail.InboundIDs); err != nil {
 				return err
 			}
 			observed, err := getThreeXUIClient(ctx, baseURL, token, email)
@@ -170,29 +170,10 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 
 // 3x-ui can save its controller DB while a worker is still pending. A DB
 // read-back alone must never release quota for another credential to spend.
-// Retrying the persisted write is safe, including after a lost response.
-func updateLandingNativeClient(ctx context.Context, baseURL, token, email string, payload map[string]json.RawMessage) error {
-	result, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/update/"+url.PathEscape(email), token, "application/json", payload)
-	if err != nil {
-		return errors.New("agent: shared account update requires confirmed retry")
-	}
-	if err := landingNativeWriteReady(result); err != nil {
-		return err
-	}
-	return nil
-}
-
-func landingNativeWriteReady(raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var status struct {
-		NodePending bool `json:"nodePending"`
-	}
-	if json.Unmarshal(raw, &status) != nil || status.NodePending {
-		return errors.New("agent: shared account is waiting for entry synchronization")
-	}
-	return nil
+// A successful but deferred write is confirmed within this task, not submitted
+// again. A lost/rejected write response still requires explicit recovery.
+func updateLandingNativeClient(ctx context.Context, baseURL, token, email string, payload map[string]json.RawMessage, inboundIDs []int) error {
+	return writeLandingNativeChange(ctx, baseURL, token, baseURL+"/panel/api/clients/update/"+url.PathEscape(email), payload, inboundIDs)
 }
 
 func (s *Store) blockLandingAccount(ctx context.Context, baseURL, token string, state *landingControllerState, parentID string) error {
