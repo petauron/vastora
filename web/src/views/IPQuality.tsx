@@ -97,8 +97,8 @@ export function IPQualityButton({ nodeId, name, language, compact = false }: { n
   const summary = state.error ? copy(language, "IP 质量 · 读取失败", "IP quality · Unavailable") : ipQualitySummary(language, check);
   const score = !check?.stale && !check?.error && !active ? report?.scores.find((value) => value.source === "IPQS") : undefined;
   return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setError(""); void state.refresh(); } }}>
-    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "h-auto min-h-8 max-w-full justify-start px-1 py-1 text-left text-xs text-muted-foreground"} />} aria-label={copy(language, `查看 ${name} 的 IP 质量`, `View IP quality for ${name}`)} title={compact ? copy(language, "查看 IP 质量", "View IP quality") : undefined}>
-      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="min-w-0 whitespace-normal">{summary}{score ? ` · IPQS ${score.value}` : ""}</span><ChevronRightIcon className="shrink-0" aria-hidden="true" /></>}
+    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "h-auto min-h-6 max-w-full justify-start px-1 py-0 text-left text-xs text-muted-foreground max-md:min-h-11"} />} aria-label={copy(language, `查看 ${name} 的 IP 质量`, `View IP quality for ${name}`)} title={compact ? copy(language, "查看 IP 质量", "View IP quality") : `${summary}${score ? ` · IPQS ${score.value}` : ""}`}>
+      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="min-w-0 truncate whitespace-nowrap">{summary}{score ? ` · IPQS ${score.value}` : ""}</span><ChevronRightIcon className="shrink-0" aria-hidden="true" /></>}
     </SheetTrigger>
     {open ? <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
       <SheetHeader className="pr-12">

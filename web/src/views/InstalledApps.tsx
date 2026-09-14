@@ -244,8 +244,10 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
         {threeXUI && instance.realityServices[0] ? <div className="flex flex-wrap gap-1">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => <Badge key={protocol} variant="secondary">{protocol.toUpperCase()}</Badge>)}</div> : null}
       </div>
       {threeXUI && application.role === "master" && application.id !== instance.controller?.id ? <Badge className="mt-1" variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}
-      {showSite || displayName ? <p className="mt-1 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}
-      {threeXUI ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} /> : null}
+      {showSite || displayName || threeXUI ? <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+        {showSite || displayName ? <p className="min-w-0 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}
+        {threeXUI ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} /> : null}
+      </div> : null}
     </TableCell>
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
       <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "应用状态", "Application")}</p>

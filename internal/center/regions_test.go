@@ -100,14 +100,17 @@ func TestSubscriptionRegionNamesStayShortAndDistinct(t *testing.T) {
 	}
 }
 
-func TestSuggestAgentRegionUsesConfirmedPublicGatewayAddress(t *testing.T) {
+func TestSuggestAgentRegionUsesKnownPublicEgressAddress(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "gateway", NodeCapabilities{Gateway: true}, []networking.Candidate{
 		{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN},
 		{Address: "203.0.113.91", Interface: "eth0", Kind: networking.KindPublic},
-	}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", PublicAddress: "203.0.113.91", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", EnabledKinds: []string{networking.KindLAN}, DirectPublic: false})
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET public_egress_address = '203.0.113.91' WHERE id = ?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
 	var lookedUp string
 	store.lookupPublicRegion = func(_ context.Context, address string) (string, error) {
 		lookedUp = address

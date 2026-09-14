@@ -87,8 +87,9 @@ it("keeps the row compact and restores the selected exits after closing the edit
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /><LandingLatency applicationId="app-one" nodeId="source-one" language="zh-CN" /></LandingProvider>); });
   expect(container.textContent).toContain("本机 + 2 个落地");
-  expect(container.textContent).toContain("12–157 ms");
-  expect(container.querySelector(".text-destructive")?.textContent).toBe("12–157 ms");
+  expect(container.textContent).toContain("12 ms");
+  expect(container.textContent).toContain("157 ms");
+  expect(container.querySelector(".text-destructive")?.textContent).toBe("157 ms");
   expect(container.textContent).not.toContain("出口配置已保存");
   expect(container.textContent).not.toContain("落地 A");
   const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="配置 节点一 的出口"]');
@@ -103,7 +104,7 @@ it("keeps the row compact and restores the selected exits after closing the edit
   expect(update).not.toHaveBeenCalled();
 });
 
-it("keeps failed and pending exits visible beside the measured range", async () => {
+it("keeps failed and pending exits visible beside measured exits", async () => {
   const view = overview();
   view.nodeExits = [{ applicationId: "app-one", ownExit: false, landingNodeIds: ["a", "b", "missing"], revision: 3 }];
   view.latencies = view.latencies.filter((sample) => sample.landingNodeId !== "b");
@@ -111,8 +112,8 @@ it("keeps failed and pending exits visible beside the measured range", async () 
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => { root?.render(<LandingProvider enabled><LandingLatency applicationId="app-one" nodeId="source-one" language="zh-CN" /></LandingProvider>); });
   expect(container.textContent).toContain("12 ms");
-  expect(container.textContent).toContain("1 个待检测");
-  expect(container.querySelector(".text-destructive")?.textContent).toBe("1 个不可用");
+  expect(container.textContent).toContain("待检测");
+  expect(container.querySelector(".text-destructive")?.textContent).toBe("不可用");
 });
 
 it.each(["paused", "failed", "controller-blocked"] as const)("does not allow an unsafe write when %s", async (condition) => {
