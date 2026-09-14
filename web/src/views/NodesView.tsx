@@ -93,7 +93,7 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
         return [agent.name, agent.version, agent.architecture, site?.name, site?.code]
           .some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
       })
-      .toSorted((left, right) => compareNodes(left, right, sort, siteByID));
+      .sort((left, right) => compareNodes(left, right, sort, siteByID));
   }, [data.agents, query, siteByID, siteFilter, sort, statusFilter]);
   const visibleGroups = useMemo(() => {
     const groups = new Map<string, { site: AppData["sites"][number]; agents: AgentView[] }>();
