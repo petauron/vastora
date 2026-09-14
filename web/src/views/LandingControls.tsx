@@ -5,17 +5,14 @@ import type { Language } from "../translations";
 import type { AgentView } from "../types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldSet, FieldLegend } from "@/components/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { ServerIcon, SlidersHorizontalIcon } from "lucide-react";
+import { ServerIcon } from "lucide-react";
 import { copy, userError } from "./shared";
 import { landingLatencyColor, selectedLandingLatencies } from "./landingLatency";
 import { applyLandingLatencyEvent, freshLandingLatencies } from "./landingLatencyEvents";
-import { LandingExitEditor } from "./LandingExitEditor";
 import { RegionFlag } from "./RegionFlag";
 import { IPQualityButton } from "./IPQuality";
 import { useLandingRegions } from "./useLandingRegions";
@@ -26,7 +23,6 @@ type LandingContextValue = {
   busy: boolean;
   failed: boolean;
   changeError: unknown;
-  clearChangeError: () => void;
   refresh: () => void;
   change: (operation: (signal: AbortSignal) => Promise<LandingView>) => Promise<boolean>;
 };
@@ -37,7 +33,8 @@ const LandingContext = createContext<LandingContextValue | null>(null);
 // configuration/status current; it must not overwrite newer streamed latency.
 export function LandingProvider({ enabled, agents = [], children }: { enabled: boolean; agents?: AgentView[]; children: ReactNode }) {
   const [view, setView] = useState<LandingView | null>(null);
-  const regions = useLandingRegions(enabled ? view?.nodeIds ?? [] : [], agents);
+  const discoveredRegions = useLandingRegions(enabled ? [...(view?.nodeIds ?? []), ...(view?.candidates.map((candidate) => candidate.nodeId) ?? [])] : [], agents);
+  const regions = { ...(view?.landingRegionCodes ?? {}), ...discoveredRegions };
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [changeError, setChangeError] = useState<unknown>(null);
@@ -140,7 +137,7 @@ export function LandingProvider({ enabled, agents = [], children }: { enabled: b
     }
   };
 
-  return <LandingContext.Provider value={{ view, regions, busy, failed, changeError, clearChangeError: () => setChangeError(null), refresh: () => void refresh(), change }}>{children}</LandingContext.Provider>;
+  return <LandingContext.Provider value={{ view, regions, busy, failed, changeError, refresh: () => void refresh(), change }}>{children}</LandingContext.Provider>;
 }
 
 export function LandingManager({ language }: { language: Language }) {
@@ -150,8 +147,12 @@ export function LandingManager({ language }: { language: Language }) {
   const id = useId();
   if (!state) return null;
   const { view, busy, failed } = state;
-  const candidates = view?.candidates.filter((candidate) => !view.nodeIds.includes(candidate.nodeId)) ?? [];
+  const candidates = view?.candidates.filter((candidate) => !view.nodeIds.includes(candidate.nodeId) && !view.retiringNodeIds?.includes(candidate.nodeId)) ?? [];
   const candidate = candidates.find((item) => item.nodeId === candidateID);
+  const regionCodes = (nodeIds: string[]) => Object.fromEntries(nodeIds.flatMap((nodeId) => {
+    const code = state.regions[nodeId] ?? view?.landingRegionCodes?.[nodeId];
+    return code ? [[nodeId, code]] : [];
+  }));
   const disabled = !view || busy || failed;
   return <Sheet open={open} onOpenChange={setOpen}>
     <SheetTrigger render={<Button variant="outline" size="sm" />}>
@@ -160,10 +161,15 @@ export function LandingManager({ language }: { language: Language }) {
     <SheetContent className="apps-workspace apps-landing-sheet">
       <SheetHeader>
         <SheetTitle>{copy(language, "管理落地机", "Landing servers")}</SheetTitle>
-        <SheetDescription>{copy(language, "可添加多台，在节点列表中勾选一个或多个出口。", "Add servers, then select one or more exits in each node row.")}</SheetDescription>
+        <SheetDescription>{copy(language, "添加后将自动应用到所有符合条件的 VLESS 节点，并可能重置现有组合连接。", "Added servers automatically apply to every eligible VLESS entry and may reset existing combination sessions.")}</SheetDescription>
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-5 pb-5">
         <LandingNotice language={language} />
+        {state.changeError != null ? <Alert variant="destructive"><AlertTitle>{copy(language, "全局落地池未更新", "Global landing pool was not updated")}</AlertTitle><AlertDescription>{userError(language, state.changeError)}</AlertDescription></Alert> : null}
+        {view ? <Alert>
+          <AlertTitle>{view.status === "ready" ? copy(language, "全局落地池已就绪", "Global landing pool ready") : view.status === "failed" ? copy(language, "部分组合需要处理", "Some combinations need attention") : copy(language, "正在同步全局落地池", "Syncing global landing pool")}</AlertTitle>
+          <AlertDescription>{copy(language, `${view.eligibleEntries} 个 VLESS 入口 · ${view.readyCombinations} 个组合就绪 · ${view.failedCombinations} 个失败 · ${view.withheldCombinations} 个暂缓发布`, `${view.eligibleEntries} VLESS entries · ${view.readyCombinations} combinations ready · ${view.failedCombinations} failed · ${view.withheldCombinations} withheld`)}</AlertDescription>
+        </Alert> : null}
         {!view && !failed ? <p role="status" className="text-muted-foreground">{copy(language, "正在读取…", "Loading…")}</p> : null}
         <section aria-label={copy(language, "已配置的落地机", "Configured landing servers")}>
           <ul className="divide-y divide-border">
@@ -172,22 +178,28 @@ export function LandingManager({ language }: { language: Language }) {
               <div className="min-w-0 flex-1">
                 <p className="flex items-center gap-2 font-medium" title={server.name}><RegionFlag code={state.regions[server.nodeId]} language={language} /><span className="truncate">{server.name}</span></p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {server.status === "ready" ? copy(language, "可用", "Available") : server.status === "offline" ? copy(language, "离线", "Offline") : server.status === "failed" ? copy(language, "配置失败，请检查节点", "Setup failed. Check the node.") : copy(language, "正在准备…", "Preparing…")}
-                  {server.inUse ? copy(language, " · 使用中", " · In use") : ""}
+                  {server.status === "ready" ? copy(language, "可用", "Available") : server.status === "draining" ? copy(language, "正在排空并移除…", "Draining and removing…") : server.status === "offline" ? copy(language, "离线", "Offline") : server.status === "failed" ? copy(language, "配置失败，请检查节点", "Setup failed. Check the node.") : copy(language, "正在准备…", "Preparing…")}
                 </p>
+                <p className="mt-1 text-xs text-muted-foreground">{copy(language, `${server.eligibleEntries} 个入口 · ${server.readyCombinations} 就绪 · ${server.failedCombinations} 失败 · ${server.withheldCombinations} 暂缓`, `${server.eligibleEntries} entries · ${server.readyCombinations} ready · ${server.failedCombinations} failed · ${server.withheldCombinations} withheld`)}</p>
                 <IPQualityButton nodeId={server.nodeId} name={server.name} language={language} />
               </div>
-              <Button variant="outline" size="sm" disabled={disabled || server.inUse} aria-label={copy(language, `移除 ${server.name}`, `Remove ${server.name}`)} onClick={() => {
-                if (view) void state.change((signal) => api.selectLanding(view.nodeIds.filter((nodeID) => nodeID !== server.nodeId), view.revision, signal));
+              <Button variant="outline" size="sm" disabled={disabled || server.status === "draining"} aria-label={copy(language, `移除 ${server.name}`, `Remove ${server.name}`)} onClick={() => {
+                if (view) {
+                  const nodeIds = view.nodeIds.filter((nodeID) => nodeID !== server.nodeId);
+                  void state.change((signal) => api.selectLanding(nodeIds, view.revision, regionCodes(nodeIds), signal));
+                }
               }}>{copy(language, "移除", "Remove")}</Button>
             </li>)}
           </ul>
           {view && !view.servers.length ? <p className="py-4 text-muted-foreground">{copy(language, "还没有添加落地机。", "No landing servers yet.")}</p> : null}
-          {view?.servers.some((server) => server.inUse) ? <p className="mt-3 text-xs text-muted-foreground">{copy(language, "使用中的落地机不能移除，请先切换相关节点的出口。", "Move connected nodes to another exit before removing a server.")}</p> : null}
+          {view?.servers.some((server) => server.status === "draining") ? <p className="mt-3 text-xs text-muted-foreground">{copy(language, "移除会先停止发布相关组合，确认会话、路由和授权均已清理后再卸载服务。", "Removal first stops publishing combinations, then uninstalls the service after sessions, routes, and grants are confirmed removed.")}</p> : null}
         </section>
         <form onSubmit={(event) => {
           event.preventDefault();
-          if (!disabled && view && candidate && view.nodeIds.length < 16) void state.change((signal) => api.selectLanding([...view.nodeIds, candidate.nodeId], view.revision, signal));
+          if (!disabled && view && candidate && view.nodeIds.length < 16) {
+            const nodeIds = [...view.nodeIds, candidate.nodeId];
+            void state.change((signal) => api.selectLanding(nodeIds, view.revision, regionCodes(nodeIds), signal));
+          }
         }}>
           <FieldGroup>
             <Field>
@@ -223,97 +235,6 @@ export function LandingNotice({ language }: { language: Language }) {
 function latencyLabel(language: Language, latency: LandingView["latencies"][number] | undefined) {
   if (latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0) return `${latency.latencyMs < 1 ? "<1" : Math.round(latency.latencyMs)} ms`;
   return latency?.state === "unavailable" ? copy(language, "无法直连", "Unavailable") : copy(language, "待检测", "Pending");
-}
-
-export function LandingExitSelect({ applicationId, nodeId, name, regionCode, locked, language }: { applicationId: string; nodeId: string; name: string; regionCode?: string; locked: boolean; language: Language }) {
-  const state = useContext(LandingContext);
-  const id = useId();
-  const [draft, setDraft] = useState<{ ownExit: boolean; landingNodeIds: string[]; revision: number } | null>(null);
-  if (!state) return null;
-  const { view, busy, failed } = state;
-  const policy = view?.nodeExits?.find((item) => item.applicationId === applicationId);
-  const servers = view?.servers.filter((server) => server.nodeId !== nodeId) ?? [];
-  const blocked = Boolean(view?.tasksPaused || view?.controllerBlocked || view?.blockedNodeIds?.includes(nodeId));
-  const disabled = locked || busy || failed || !view || blocked || policy?.status === "applying";
-  const ownName = copy(language, "本机出口", "Own exit");
-  const exitName = (target: string) => servers.find((server) => server.nodeId === target)?.name ?? copy(language, "不可用落地机", "Unavailable exit");
-  const previous = view?.proxies.find((item) => item.applicationId === applicationId && item.enabled);
-  const runtime = view?.proxies.find((item) => item.applicationId === applicationId);
-  const flagTargets = policy?.revision ? policy.landingNodeIds : previous ? [previous.landingNodeId] : [];
-  const names = [...(policy?.ownExit !== false ? [ownName] : []), ...(policy?.landingNodeIds ?? []).map(exitName)];
-  const landingCount = policy?.landingNodeIds.length ?? 0;
-  const summary = landingCount > 0
-    ? policy?.ownExit !== false ? copy(language, `本机 + ${landingCount} 个落地`, `Own + ${landingCount} exits`) : copy(language, `${landingCount} 个落地`, `${landingCount} exits`)
-    : ownName;
-  const stale = draft !== null && draft.revision !== (policy?.revision ?? 0);
-  const invalid = !draft || (!draft.ownExit && draft.landingNodeIds.length === 0) || draft.landingNodeIds.some((target) => view?.blockedNodeIds?.includes(target) || !servers.some((server) => server.nodeId === target && server.status === "ready"));
-  const unhealthyRuntimeCount = (policy?.landingNodeIds ?? []).filter((target) => runtime?.peers?.some((peer) => peer.nodeId === target && !peer.healthy)).length;
-  const status = view?.tasksPaused ? copy(language, "任务已暂停，等待恢复", "Tasks paused; waiting to resume")
-    : view?.controllerBlocked ? copy(language, "订阅主机任务待处理，暂不能保存", "Subscription host blocked; cannot save")
-    : blocked ? copy(language, "节点任务待处理", "Node task needs attention")
-    : policy?.status === "applying" ? copy(language, "正在同步组合…", "Syncing combinations…")
-    : policy?.status === "failed" ? copy(language, "同步失败，请重新保存", "Sync failed; save again to retry")
-    : unhealthyRuntimeCount > 0 ? copy(language, `${unhealthyRuntimeCount} 个落地运行异常，订阅已暂停发布`, `${unhealthyRuntimeCount} exits unavailable; subscription entries withheld`) : null;
-  return <div className="flex min-w-0 flex-col gap-1">
-    <LandingExitEditor open={draft !== null} busy={busy} onOpenChange={(open) => {
-      if (open) {
-        state.clearChangeError();
-        setDraft({ ownExit: policy?.ownExit ?? true, landingNodeIds: [...(policy?.landingNodeIds ?? [])], revision: policy?.revision ?? 0 });
-      } else setDraft(null);
-    }} title={copy(language, `${name} · 出口组合`, `${name} · Exit combinations`)}
-      description={copy(language, "每项生成一个订阅节点，自动同步给当前和后续接入的客户端。", "Each exit creates a subscription node, synced to current and future clients.")}
-      closeLabel={copy(language, "关闭出口配置", "Close exit configuration")}
-      trigger={<Button id={id} variant="ghost" size="sm" className="h-auto min-h-8 w-full justify-between max-md:min-h-11" disabled={locked || busy || !view} aria-label={copy(language, `配置 ${name} 的出口`, `Configure exits for ${name}`)} title={!policy?.revision && previous ? exitName(previous.landingNodeId) : names.join(" · ")}>
-        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-left">
-          <span className="truncate">{failed ? copy(language, "状态未知", "Unknown") : view ? !policy?.revision && previous ? copy(language, "原单出口 · 1 个落地", "Previous · 1 exit") : summary : copy(language, "读取出口", "Loading exits")}</span>
-          {!failed ? flagTargets.map((target) => <RegionFlag key={target} code={state.regions[target]} language={language} />) : null}
-        </span><SlidersHorizontalIcon data-icon="inline-end" />
-      </Button>}
-      footer={<>
-        <Button variant="outline" size="sm" disabled={busy} onClick={() => setDraft(null)}>{copy(language, "取消", "Cancel")}</Button>
-        <Button size="sm" disabled={disabled || stale || invalid} onClick={() => {
-          if (!draft || disabled || stale || invalid) return;
-          const landingRegionCodes = Object.fromEntries(draft.landingNodeIds.flatMap((nodeID) => {
-            const code = state.regions[nodeID] ?? policy?.landingRegionCodes?.[nodeID];
-            return code ? [[nodeID, code]] : [];
-          }));
-          void state.change((signal) => api.configureNodeExits(applicationId, { ...draft, landingRegionCodes, confirmSessionReset: true }, signal)).then((saved) => { if (saved) setDraft(null); });
-        }}>{busy ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{busy ? copy(language, "正在保存…", "Saving…") : copy(language, "保存出口组合", "Save exit combinations")}</Button>
-      </>}>
-          <FieldSet disabled={busy} className="gap-3">
-            <FieldLegend variant="label">{copy(language, "选择出口", "Choose exits")}</FieldLegend>
-            {blocked ? <Alert><AlertTitle>{status}</AlertTitle><AlertDescription>{copy(language, "请先在任务记录中核实并处理历史任务；本表单不会自动清空记录或强制执行。", "Resolve historical tasks in Activity first. This form does not clear records or force execution.")}</AlertDescription></Alert> : null}
-            {!policy?.revision && previous ? <FieldDescription>{copy(language, `原单出口 ${exitName(previous.landingNodeId)} 仍在生效；下面是尚未保存的新组合选项。`, `The previous exit ${exitName(previous.landingNodeId)} is still active. The choices below are a new, unsaved combination.`)}</FieldDescription> : null}
-            <FieldGroup className="gap-0">
-              <Field orientation="horizontal" className="min-h-11 py-2" data-disabled={policy?.requiresOwnExit}>
-                <Checkbox id={id + "-own"} checked={draft?.ownExit ?? true} disabled={policy?.requiresOwnExit} onCheckedChange={(checked) => setDraft((value) => value ? { ...value, ownExit: checked } : value)} />
-                <FieldLabel htmlFor={id + "-own"}><RegionFlag code={regionCode} language={language} />{ownName}</FieldLabel>
-              </Field>
-              {servers.map((server) => {
-                const selected = draft?.landingNodeIds.includes(server.nodeId) ?? false;
-                const taskBlocked = view?.blockedNodeIds?.includes(server.nodeId);
-                const unavailable = server.status !== "ready" || taskBlocked;
-                const latency = view?.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === server.nodeId);
-                const peerRuntime = runtime?.peers?.find((peer) => peer.nodeId === server.nodeId);
-                const runtimeBlocked = selected && peerRuntime != null && !peerRuntime.healthy;
-                const attention = taskBlocked || runtimeBlocked || server.status === "offline" || server.status === "failed" || (latency?.state === "unavailable" && !unavailable);
-                return <Field key={server.nodeId} orientation="horizontal" className="min-h-11 py-2" data-disabled={!selected && unavailable}>
-                  <Checkbox id={id + server.nodeId} checked={selected} disabled={!selected && unavailable} onCheckedChange={(checked) => setDraft((value) => value ? { ...value, landingNodeIds: checked ? [...value.landingNodeIds, server.nodeId] : value.landingNodeIds.filter((target) => target !== server.nodeId) } : value)} />
-                  <FieldLabel className="min-w-0 flex-1" htmlFor={id + server.nodeId}><RegionFlag code={state.regions[server.nodeId]} language={language} />{server.name}</FieldLabel>
-                  <IPQualityButton compact nodeId={server.nodeId} name={server.name} language={language} />
-                  <span className={cn("shrink-0 text-xs tabular-nums", attention ? "text-destructive" : landingLatencyColor(!unavailable && latency?.state === "direct" ? latency.latencyMs : null))}>{taskBlocked ? copy(language, "任务待处理", "Tasks need attention") : runtimeBlocked ? copy(language, "运行链路不可用", "Runtime unavailable") : server.status === "offline" ? copy(language, "离线", "Offline") : server.status === "failed" ? copy(language, "部署失败", "Setup failed") : unavailable ? copy(language, "正在准备", "Preparing") : latencyLabel(language, latency)}</span>
-                </Field>;
-              })}
-            </FieldGroup>
-            <FieldDescription>{copy(language, "至少选择一项；保存可能短暂中断连接，订阅地址不变。", "Choose at least one. Saving may briefly interrupt connections; subscription URLs stay unchanged.")}</FieldDescription>
-            {policy?.requiresOwnExit ? <FieldDescription>{copy(language, "HY2 当前仅支持本机出口；落地组合使用 VLESS，因此需保留本机出口。", "HY2 currently uses the own exit. Landing combinations use VLESS, so keep the own exit enabled.")}</FieldDescription> : null}
-            {stale ? <FieldDescription role="alert">{copy(language, "配置已变化，请关闭后重新打开。", "Configuration changed. Close and reopen.")}</FieldDescription> : null}
-            {state.changeError != null ? <Alert variant="destructive"><AlertTitle>{copy(language, "未确认保存成功", "Save not confirmed")}</AlertTitle><AlertDescription>{userError(language, state.changeError)} {copy(language, "勾选仍保留在本表单；请刷新状态核对，关闭不会将其保存。", "Your choices remain in this form. Refresh to reconcile the saved state; closing does not save them.")}</AlertDescription></Alert> : null}
-            <LandingNotice language={language} />
-          </FieldSet>
-    </LandingExitEditor>
-    {status ? <p role="status" className={cn("text-xs", blocked || policy?.status === "failed" ? "text-destructive" : "text-muted-foreground")}>{status}</p> : null}
-  </div>;
 }
 
 export function LandingLatency({ applicationId, nodeId, language }: { applicationId: string; nodeId: string; language: Language }) {

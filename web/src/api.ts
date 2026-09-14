@@ -1,6 +1,6 @@
 import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
-import type { LandingView, NodeExitInput } from "./landing-types";
+import type { LandingView } from "./landing-types";
 import type { IPQualityCheck } from "./ip-quality-types";
 import type { NodeProtocols } from "./types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
@@ -78,10 +78,9 @@ export const api = {
     return request(`/api/v1/executions/${encodeURIComponent(id)}/${endpoint}`, { method: "POST", body: JSON.stringify(input) });
   },
   landing: (signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", { signal }),
-  selectLanding: (nodeIds: string[], revision: number, signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", {
-    method: "PUT", body: JSON.stringify({ nodeIds, revision }), signal
+  selectLanding: (nodeIds: string[], revision: number, landingRegionCodes: Record<string, string>, signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", {
+    method: "PUT", body: JSON.stringify({ nodeIds, revision, landingRegionCodes }), signal
   }),
-  configureNodeExits: (applicationId: string, input: NodeExitInput, signal?: AbortSignal) => request<LandingView>(`/api/v1/applications/${encodeURIComponent(applicationId)}/exits`, { method: "PUT", body: JSON.stringify(input), signal }),
   setupStatus: () => request<SetupStatus>("/api/v1/setup/status"),
   setupAdmin: (username: string, password: string) =>
     request<{ administratorConfigured: boolean }>("/api/v1/setup/admin", {

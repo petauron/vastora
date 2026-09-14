@@ -26,17 +26,20 @@ export type LandingLatencyEvent = {
 
 export type LandingLatencySnapshot = { revision: number; samples: LandingLatencyView[] };
 
-export type NodeExitPolicy = { applicationId: string; ownExit: boolean; landingNodeIds: string[]; landingRegionCodes?: Record<string, string>; revision: number; status?: "saved" | "applying" | "failed"; requiresOwnExit?: boolean };
-export type NodeExitInput = Pick<NodeExitPolicy, "ownExit" | "landingNodeIds" | "revision"> & { landingRegionCodes: Record<string, string>; confirmSessionReset: boolean };
-
 export type LandingView = {
-  nodeExits?: NodeExitPolicy[];
   tasksPaused?: boolean;
   controllerBlocked?: boolean;
   blockedNodeIds?: string[];
   nodeIds: string[];
+  retiringNodeIds?: string[];
+  landingRegionCodes?: Record<string, string>;
   revision: number;
-  servers: Array<{ nodeId: string; name: string; status: "pending" | "applying" | "ready" | "failed" | "stopped" | "offline"; inUse: boolean }>;
+  status: "ready" | "applying" | "failed";
+  eligibleEntries: number;
+  readyCombinations: number;
+  failedCombinations: number;
+  withheldCombinations: number;
+  servers: Array<{ nodeId: string; name: string; status: "pending" | "applying" | "ready" | "failed" | "stopped" | "offline" | "draining"; inUse: boolean; eligibleEntries: number; readyCombinations: number; failedCombinations: number; withheldCombinations: number }>;
   candidates: Array<{ nodeId: string; name: string }>;
   proxies: LandingProxyView[];
   latencies: LandingLatencyView[];

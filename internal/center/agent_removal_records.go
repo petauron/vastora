@@ -43,7 +43,6 @@ func (s *Store) finishAgentRemoval(ctx context.Context, id string) error {
 		`DELETE FROM three_x_ui_client_accounts WHERE controller_id IN(SELECT id FROM applications WHERE node_id=?)`,
 		`DELETE FROM application_commands WHERE gateway_node_id=? AND state NOT IN('pending','running') AND reconciliation_required=0`,
 		`DELETE FROM publications WHERE entry_node_id=? AND status='stopped' AND cleanup_pending=0`,
-		`DELETE FROM settings WHERE replace(key,'node-exits-error:','node-exits:') IN (SELECT 'node-exits:'||id FROM applications WHERE node_id=?)`,
 		`DELETE FROM applications WHERE node_id=?`,
 		`DELETE FROM cloudflare_tunnel_operations WHERE agent_id=?`,
 		`DELETE FROM settings WHERE key='agent_runtime_recovery:'||?`,

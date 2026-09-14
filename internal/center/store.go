@@ -287,6 +287,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("center: resume global 3x-ui controller convergence: %w", err)
 	}
+	if err := store.resumeGlobalLandingPool(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, fmt.Errorf("center: resume global landing pool: %w", err)
+	}
 	freshComplete = true
 	return store, nil
 }

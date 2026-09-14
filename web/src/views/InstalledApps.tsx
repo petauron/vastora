@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { LandingProvider, LandingManager, LandingNotice, LandingExitSelect, LandingLatency } from "./LandingControls";
+import { LandingProvider, LandingManager, LandingNotice, LandingLatency } from "./LandingControls";
 import { AppWindowIcon, EllipsisIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
 import type { Mutate } from "../App";
@@ -100,14 +100,14 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
           <TableRow>
             <TableHead className={threeXUI ? "w-[30%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
             <TableHead className={threeXUI ? "w-[15%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
-            {threeXUI ? <><TableHead className="w-[22%]">{copy(language, "出口", "Exit")}</TableHead><TableHead className="w-[13%]">{copy(language, "落地延迟", "Exit latency")}</TableHead></> : null}
+            {threeXUI ? <TableHead className="w-[35%]">{copy(language, "全局落地延迟", "Global exit latency")}</TableHead> : null}
             <TableHead className={threeXUI ? "w-[12%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
             <TableHead className={threeXUI ? "w-[8%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody className="block lg:table-row-group">
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
-          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 VLESS 节点", "No VLESS nodes configured")}</TableCell></TableRow> : null}
+          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 5 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 VLESS 节点", "No VLESS nodes configured")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
     </Content>
@@ -255,11 +255,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
     </TableCell>
     {threeXUI ? <>
       <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-        <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "出口", "Exit")}</p>
-        {needsVLESS ? <span className="text-muted-foreground">—</span> : <LandingExitSelect applicationId={application.id} nodeId={application.nodeId} name={name} regionCode={instance.realityServices[0]?.regionCode} locked={locked} language={language} />}
-      </TableCell>
-      <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-        <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "落地延迟", "Exit latency")}</p>
+        <p className="mb-1.5 text-xs text-muted-foreground lg:hidden">{copy(language, "全局落地延迟", "Global exit latency")}</p>
         {needsVLESS ? <span className="text-muted-foreground">—</span> : <LandingLatency applicationId={application.id} nodeId={application.nodeId} language={language} />}
       </TableCell>
     </> : null}

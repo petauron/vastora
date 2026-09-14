@@ -20,9 +20,8 @@ export function userError(language: Language, error: unknown) {
   const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
   const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const normalized = detail.toLowerCase();
-  if (code === "exit_controller_blocked") return copy(language, "订阅主机有待处理的历史任务，本次出口配置未保存。请先在任务记录中处理阻挡。", "The subscription host has unresolved tasks. Exit settings were not saved. Resolve the tasks first.");
   if (code === "execution_blocked") return copy(language, "相关节点有待处理任务，请处理后重试。", "A related node has unresolved tasks. Resolve them before retrying.");
-  if (code === "exit_revision_changed") return copy(language, "出口配置已被更改，请刷新后重新确认选择。", "Exit settings changed. Refresh and review your selection.");
+  if (code === "landing_pool_revision_changed") return copy(language, "全局落地池已变化，请刷新后重试。", "The global landing pool changed. Refresh before retrying.");
   if (normalized === "center: resolve outstanding execution and runtime recovery before updating") {
     return copy(language, "节点仍有待处理任务或升级恢复状态，请处理后再更新。", "Resolve the node's outstanding task or runtime recovery before updating.");
   }

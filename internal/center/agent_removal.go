@@ -429,7 +429,18 @@ func (s *Store) removeAgentLandingReferences(ctx context.Context, tx *sql.Tx, id
 	}
 	if slices.Contains(selection.NodeIDs, id) {
 		selection.NodeIDs = slices.DeleteFunc(selection.NodeIDs, func(value string) bool { return value == id })
+		delete(selection.LandingRegionCodes, id)
 		selection.Revision++
+		encoded, err := json.Marshal(selection)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE settings SET value=? WHERE key=?`, string(encoded), landingSelectionKey); err != nil {
+			return err
+		}
+	}
+	if slices.Contains(selection.RetiringNodeIDs, id) {
+		selection.RetiringNodeIDs = slices.DeleteFunc(selection.RetiringNodeIDs, func(value string) bool { return value == id })
 		encoded, err := json.Marshal(selection)
 		if err != nil {
 			return err

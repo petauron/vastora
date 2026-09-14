@@ -35,6 +35,7 @@ func (s *Store) observeLandingAccounts(ctx context.Context, tx *sql.Tx, commandI
 	if err := tx.QueryRowContext(ctx, `SELECT application_id FROM application_commands WHERE id=?`, commandID).Scan(&controllerID); err != nil {
 		return err
 	}
+	seen := make(map[string]bool, len(result.Clients))
 	for _, client := range result.Clients {
 		decoded, err := hex.DecodeString(client.ID)
 		if err != nil || len(decoded) != 32 || strings.HasPrefix(client.Email, "vastora-combination-") {
@@ -62,42 +63,32 @@ func (s *Store) observeLandingAccounts(ctx context.Context, tx *sql.Tx, commandI
 		if count, err := written.RowsAffected(); err != nil || count != 1 {
 			return errors.New("center: client belongs to another subscription controller; reconcile ownership first")
 		}
+		seen[client.ID] = true
 	}
-	inbounds, err := threeXUIClientInbounds(ctx, tx, controllerID)
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM three_x_ui_client_accounts WHERE controller_id=? AND email=json_extract(metadata_json,'$.email')`, controllerID)
 	if err != nil {
 		return err
 	}
-	// Inventory is authoritative even when a landing is temporarily unavailable.
-	// Roll back only derived topology work and expose a retryable sync status.
-	for _, entry := range inbounds {
-		p, err := readNodeExitPolicy(ctx, tx, entry.ApplicationID)
-		if err != nil {
+	missing := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return err
 		}
-		if p.Revision == 0 {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, "SAVEPOINT node_exit_sync"); err != nil {
-			return err
-		}
-		syncErr := s.syncNodeExitClients(ctx, tx, controllerID, inbounds, entry.ApplicationID, true)
-		if syncErr != nil {
-			if _, err := tx.ExecContext(ctx, "ROLLBACK TO node_exit_sync"); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.ExecContext(ctx, "RELEASE node_exit_sync"); err != nil {
-			return err
-		}
-		if syncErr != nil {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,'failed') ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "node-exits-error:"+entry.ApplicationID); err != nil {
-				return err
-			}
-		} else {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, "node-exits-error:"+entry.ApplicationID); err != nil {
-				return err
-			}
+		if !seen[id] {
+			missing = append(missing, id)
 		}
 	}
-	return nil
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, id := range missing {
+		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_client_accounts SET metadata_json=json_set(metadata_json,'$.enabled',false),observed_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+			return err
+		}
+	}
+	return s.reconcileGlobalLandingPool(ctx, tx, false)
 }

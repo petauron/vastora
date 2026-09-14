@@ -1917,6 +1917,10 @@
                       "type": "string"
                     }
                   },
+                  "landingRegionCodes": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "revision": {
                     "type": "integer"
                   }
@@ -1926,91 +1930,6 @@
           }
         },
         "description": "Administrator-only landing configuration. Mutations use the last observed revision and return the complete overview. Configuration readiness alone does not establish connection health; connection health requires fresh Agent observations."
-      }
-    },
-    "/api/v1/applications/{id}/exits": {
-      "put": {
-        "tags": [
-          "Applications"
-        ],
-        "summary": "Configure Node Exits",
-        "operationId": "configureNodeExits_put",
-        "x-vastora-audience": "browser-admin",
-        "security": [
-          {
-            "AdminSession": [],
-            "AdminCSRF": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response.",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Error"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          },
-          "404": {
-            "$ref": "#/components/responses/Error"
-          },
-          "409": {
-            "$ref": "#/components/responses/Error"
-          },
-          "500": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "ownExit": {
-                    "type": "boolean"
-                  },
-                  "landingNodeIds": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "landingRegionCodes": {
-                    "type": "object",
-                    "additionalProperties": true
-                  },
-                  "revision": {
-                    "type": "integer"
-                  },
-                  "confirmSessionReset": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        }
       }
     },
     "/api/v1/three-x-ui/landing/latencies/events": {
@@ -10241,45 +10160,36 @@
               "type": "string"
             }
           },
+          "landingRegionCodes": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "retiringNodeIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "revision": {
             "type": "integer"
           },
-          "nodeExits": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "applicationId": {
-                  "type": "string"
-                },
-                "ownExit": {
-                  "type": "boolean"
-                },
-                "landingNodeIds": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "landingRegionCodes": {
-                  "type": "object",
-                  "additionalProperties": true
-                },
-                "revision": {
-                  "type": "integer"
-                },
-                "status": {
-                  "type": "string"
-                },
-                "requiresOwnExit": {
-                  "type": "boolean"
-                }
-              }
-            }
-          },
           "controllerBlocked": {
             "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          },
+          "eligibleEntries": {
+            "type": "integer"
+          },
+          "readyCombinations": {
+            "type": "integer"
+          },
+          "failedCombinations": {
+            "type": "integer"
+          },
+          "withheldCombinations": {
+            "type": "integer"
           },
           "tasksPaused": {
             "type": "boolean"
@@ -10307,6 +10217,18 @@
                 },
                 "inUse": {
                   "type": "boolean"
+                },
+                "eligibleEntries": {
+                  "type": "integer"
+                },
+                "readyCombinations": {
+                  "type": "integer"
+                },
+                "failedCombinations": {
+                  "type": "integer"
+                },
+                "withheldCombinations": {
+                  "type": "integer"
                 }
               }
             }
