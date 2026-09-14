@@ -30,7 +30,6 @@ jobs:
       release_retry: ${{ steps.retry.outputs.release_retry || 'false' }}
     steps:
       - name: Check out program source for catalog trust preflight
-        if: github.event_name != 'workflow_dispatch' || inputs.release_tag == ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -74,13 +73,36 @@ jobs:
             echo "release $RELEASE_TAG was not found" >&2
             exit 1
           fi
-          release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha')"
+          release_retry=true
+          if release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq '.sha' 2>/dev/null)"; then
+            :
+          elif printf '%s' "$release_json" | jq -e '
+            .draft == true and
+            ([.assets[].name] | sort) == (["install.sh", "vastora-center-install.tar.gz", "vastora-center-install.tar.gz.sha256", "vastora-release-manifest.json"] | sort)
+          ' >/dev/null; then
+            release_sha="$(printf '%s' "$release_json" | jq -er '.target_commitish')"
+          elif printf '%s' "$release_json" | jq -e '.draft == true and (.assets | length) == 0' >/dev/null; then
+            release_version="${RELEASE_TAG#v}"
+            current_version="$(tr -d '\r\n' < version.txt)"
+            if [ "$current_version" != "$release_version" ]; then
+              echo "draft release $RELEASE_TAG does not match current version $current_version" >&2
+              exit 1
+            fi
+            release_sha="$GITHUB_SHA"
+            release_id="$(printf '%s' "$release_json" | jq -er '.id')"
+            gh api --method PATCH "/repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -f target_commitish="$release_sha" >/dev/null
+            release_retry=false
+          else
+            echo "release $RELEASE_TAG has incomplete or unexpected draft assets; refusing an ambiguous retry" >&2
+            exit 1
+          fi
           {
             echo 'release_created=true'
             echo "release_sha=$release_sha"
             echo "release_tag=$RELEASE_TAG"
             echo "release_version=${RELEASE_TAG#v}"
-            echo 'release_retry=true'
+            echo "release_retry=$release_retry"
           } >> "$GITHUB_OUTPUT"
 
   publish:

@@ -24,7 +24,11 @@ require_in "$(cat "$workflow")" '  group: vastora-installer-r2'
 require_in "$(cat "$workflow")" '  cancel-in-progress: false'
 require_in "$prepare_job" '          skip-github-pull-request: true'
 require_in "$prepare_job" '      pull-requests: write'
-require_in "$prepare_job" '          release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG"'
+require_in "$prepare_job" '          if release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG"'
+require_in "$prepare_job" "          elif printf '%s' \"\$release_json\" | jq -e '.draft == true and (.assets | length) == 0' >/dev/null; then"
+require_in "$prepare_job" '            release_sha="$GITHUB_SHA"'
+require_in "$prepare_job" '            release_retry=false'
+require_in "$prepare_job" '              -f target_commitish="$release_sha" >/dev/null'
 require_in "$prepare_job" "      release_retry: \${{ steps.retry.outputs.release_retry || 'false' }}"
 require_in "$publish_job" '      artifact-metadata: write'
 require_in "$publish_job" '      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}'
