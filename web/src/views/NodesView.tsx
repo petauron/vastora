@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CheckCircle2Icon, CircleArrowUpIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
+import { CheckCircle2Icon, CircleArrowUpIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
 import { api } from "../api";
 import { validCenterURL } from "../lib/network";
 import type { AppData, Mutate, Screen } from "../App";
@@ -9,15 +9,17 @@ import { CopyButton, PageHeading, StateBadge, copy, formatDate, userError } from
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { SelectControl } from "@/components/SelectControl";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { RuntimeRecoveryAlert } from "./RuntimeRecoveryAlert";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
@@ -47,6 +49,10 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
   const removingAgent = data.agents.find((agent) => agent.id === removingID);
   const stoppingAccessAgent = data.agents.find((agent) => agent.id === stoppingAccessID);
   const [reconnecting, setReconnecting] = useState<{ agent: AgentView; enrollment: AgentEnrollment | null; busy: boolean; error: string } | null>(null);
+  const [query, setQuery] = useState("");
+  const [siteFilter, setSiteFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sort, setSort] = useState("site");
   const reconnectRequest = useRef(0);
   const currentEditing = editing ? data.agents.find((agent) => agent.id === editing.id) ?? editing : null;
   const currentReconnecting = reconnecting ? data.agents.find((agent) => agent.id === reconnecting.agent.id) ?? reconnecting.agent : null;
@@ -69,10 +75,70 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
     reconnectRequest.current += 1;
     setReconnecting(null);
   };
-  const siteGroups = data.sites.map((site) => ({ site, agents: data.agents.filter((agent) => agent.siteId === site.id) })).filter((group) => group.agents.length > 0);
+  const siteByID = useMemo(() => new Map(data.sites.map((site) => [site.id, site])), [data.sites]);
+  const summary = useMemo(() => ({
+    connected: data.agents.filter((agent) => agent.status === "active" && agent.connected && !agent.credentialRevoked).length,
+    attention: data.agents.filter(nodeNeedsAttention).length,
+    withApplications: data.agents.filter((agent) => agent.appliedInstallations > 0).length,
+    gateways: data.agents.filter((agent) => agent.capabilities.gateway).length,
+  }), [data.agents]);
+  const visibleAgents = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return data.agents
+      .filter((agent) => siteFilter === "all" || agent.siteId === siteFilter)
+      .filter((agent) => statusFilter === "all" || matchesNodeStatus(agent, statusFilter))
+      .filter((agent) => {
+        if (!normalizedQuery) return true;
+        const site = siteByID.get(agent.siteId);
+        return [agent.name, agent.version, agent.architecture, site?.name, site?.code]
+          .some((value) => value?.toLocaleLowerCase().includes(normalizedQuery));
+      })
+      .toSorted((left, right) => compareNodes(left, right, sort, siteByID));
+  }, [data.agents, query, siteByID, siteFilter, sort, statusFilter]);
+  const visibleGroups = useMemo(() => {
+    const groups = new Map<string, { site: AppData["sites"][number]; agents: AgentView[] }>();
+    for (const agent of visibleAgents) {
+      const site = siteByID.get(agent.siteId);
+      if (!site) continue;
+      const group = groups.get(site.id) ?? { site, agents: [] };
+      group.agents.push(agent);
+      groups.set(site.id, group);
+    }
+    return [...groups.values()];
+  }, [siteByID, visibleAgents]);
   return <section className="flex flex-col gap-7">
     <PageHeading title={copy(language, "节点", "Nodes")} description={copy(language, "节点是运行应用的设备。添加后，Center 会自动发现它的网络。", "Nodes are devices that run apps. Center discovers their networks after they join.")} action={<Button onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "添加节点", "Add node")}</Button>} />
-    {data.agents.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><ServerIcon /></EmptyMedia><EmptyTitle>{copy(language, "添加第一台节点", "Add your first node")}</EmptyTitle><EmptyDescription>{copy(language, "当前 Center 主机或另一台受支持的 Linux 设备都可以作为节点；复制一条命令即可按需安装 Docker 和 Agent。", "The current Center host or another supported Linux device can be a node. Copy one command to install Docker when needed and then install Agent.")}</EmptyDescription><Button className="mt-3" onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "开始添加", "Get started")}</Button></EmptyHeader></Empty> : <div className="flex flex-col gap-7">{siteGroups.map(({ site, agents }) => <section className="flex flex-col gap-3" key={site.id}><div className="flex items-center gap-2"><MapPinIcon className="size-4 text-muted-foreground" /><h2 className="text-sm font-semibold">{site.name}</h2><Badge variant="secondary">{site.code}</Badge><span className="text-xs text-muted-foreground">{copy(language, `${agents.length} 台节点`, `${agents.length} node${agents.length === 1 ? "" : "s"}`)}</span></div><div className="grid gap-4 lg:grid-cols-2">{agents.map((agent) => <NodeCard agent={agent} data={data} key={agent.id} language={language} onRemove={() => setRemovingID(agent.id)} onApplications={() => onNavigate("apps")} onConfigure={() => setEditing(agent)} onNetwork={() => onNavigate("network")} onReconnect={() => void beginReconnect(agent)} />)}</div></section>)}</div>}
+    {data.agents.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><ServerIcon /></EmptyMedia><EmptyTitle>{copy(language, "添加第一台节点", "Add your first node")}</EmptyTitle><EmptyDescription>{copy(language, "当前 Center 主机或另一台受支持的 Linux 设备都可以作为节点；复制一条命令即可按需安装 Docker 和 Agent。", "The current Center host or another supported Linux device can be a node. Copy one command to install Docker when needed and then install Agent.")}</EmptyDescription><Button className="mt-3" onClick={() => setAdding(true)}><PlusIcon data-icon="inline-start" />{copy(language, "开始添加", "Get started")}</Button></EmptyHeader></Empty> : <div className="flex min-w-0 flex-col gap-4">
+      <FleetSummary agents={data.agents.length} connected={summary.connected} attention={summary.attention} gateways={summary.gateways} sites={new Set(data.agents.map((agent) => agent.siteId)).size} withApplications={summary.withApplications} language={language} />
+      <div className="flex flex-wrap items-center gap-2">
+        <InputGroup className="w-full sm:w-64">
+          <InputGroupInput aria-label={copy(language, "搜索节点", "Search nodes")} onChange={(event) => setQuery(event.target.value)} placeholder={copy(language, "搜索节点、位置或版本…", "Search node, location, or version…")} type="search" value={query} />
+          <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
+        </InputGroup>
+        <SelectControl aria-label={copy(language, "按位置筛选", "Filter by location")} className="w-40" onValueChange={setSiteFilter} options={[{ value: "all", label: copy(language, "所有位置", "All locations") }, ...data.sites.map((site) => ({ value: site.id, label: site.name }))]} size="sm" value={siteFilter} />
+        <SelectControl aria-label={copy(language, "按状态筛选", "Filter by status")} className="w-36" onValueChange={setStatusFilter} options={[{ value: "all", label: copy(language, "所有状态", "All statuses") }, { value: "connected", label: copy(language, "已连接", "Connected") }, { value: "attention", label: copy(language, "需要处理", "Needs attention") }, { value: "offline", label: copy(language, "离线", "Offline") }, { value: "disabled", label: copy(language, "未启用", "Disabled") }]} size="sm" value={statusFilter} />
+        <SelectControl aria-label={copy(language, "节点排序", "Sort nodes")} className="w-40" onValueChange={setSort} options={[{ value: "site", label: copy(language, "按位置排序", "Sort by location") }, { value: "status", label: copy(language, "异常优先", "Attention first") }, { value: "name", label: copy(language, "按名称排序", "Sort by name") }, { value: "last_seen", label: copy(language, "按最后在线排序", "Sort by last seen") }]} size="sm" value={sort} />
+        <span aria-live="polite" className="ml-auto text-xs text-muted-foreground">{copy(language, `显示 ${visibleAgents.length}/${data.agents.length} 台`, `Showing ${visibleAgents.length}/${data.agents.length}`)}</span>
+      </div>
+      <Table aria-label={copy(language, "节点全局状态", "Fleet status")} className="min-w-[960px] table-fixed">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[19%]">{copy(language, "节点", "Node")}</TableHead>
+            <TableHead className="w-[15%]">{copy(language, "位置", "Location")}</TableHead>
+            <TableHead className="w-[12%]">{copy(language, "状态", "Status")}</TableHead>
+            <TableHead className="w-[17%]">{copy(language, "用途", "Purpose")}</TableHead>
+            <TableHead className="w-[13%]">{copy(language, "网络", "Network")}</TableHead>
+            <TableHead className="w-[12%]">{copy(language, "版本", "Version")}</TableHead>
+            <TableHead className="w-[12%]">{copy(language, "最后在线", "Last seen")}</TableHead>
+            <TableHead className="w-24"><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {visibleGroups.map(({ site, agents }) => <NodeSiteRows agents={agents} data={data} key={site.id} language={language} onApplications={() => onNavigate("apps")} onConfigure={setEditing} onNetwork={() => onNavigate("network")} onReconnect={beginReconnect} onRemove={setRemovingID} site={site} />)}
+          {visibleAgents.length === 0 ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={8}>{copy(language, "没有符合当前筛选条件的节点", "No nodes match the current filters")}</TableCell></TableRow> : null}
+        </TableBody>
+      </Table>
+    </div>}
     <AddNodeSheet data={data} language={language} onClose={() => { setAdding(false); onAddFirstNodeHandled?.(); }} onJoined={() => { setAdding(false); onAddFirstNodeHandled?.(); onNavigate("network"); }} open={adding} />
     <NodeSettingsSheet agent={currentEditing} data={data} language={language} mutate={mutate} onClose={() => setEditing(null)} onStopAccess={() => { if (currentEditing) { setStoppingAccessID(currentEditing.id); setEditing(null); } }} />
     {stoppingAccessAgent ? <StopNodeAccessSheet agent={stoppingAccessAgent} key={stoppingAccessAgent.id} language={language} mutate={mutate} onClose={() => setStoppingAccessID(null)} /> : null}
@@ -81,11 +147,84 @@ export function NodesView({ data, language, mutate, onAddFirstNodeHandled, onNav
   </section>;
 }
 
-function NodeCard({ agent, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove }: { agent: AgentView; data: AppData; language: Language; onApplications: () => void; onConfigure: () => void; onNetwork: () => void; onReconnect: () => void; onRemove: () => void }) {
+function FleetSummary({ agents, connected, attention, gateways, sites, withApplications, language }: { agents: number; connected: number; attention: number; gateways: number; sites: number; withApplications: number; language: Language }) {
+  const items = [
+    { label: copy(language, "节点", "Nodes"), value: agents },
+    { label: copy(language, "已连接", "Connected"), value: connected, tone: connected === agents ? "text-latency-fast" : undefined },
+    { label: copy(language, "需要处理", "Needs attention"), value: attention, tone: attention > 0 ? "text-destructive" : undefined },
+    { label: copy(language, "运行应用", "Running apps"), value: withApplications },
+    { label: copy(language, "可作为网关", "Gateway capable"), value: gateways },
+    { label: copy(language, "位置", "Locations"), value: sites },
+  ];
+  return <dl className="grid grid-cols-2 divide-x divide-y overflow-hidden rounded-xl border bg-card sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
+    {items.map((item) => <div className="flex min-w-0 items-baseline gap-2 px-4 py-3" key={item.label}>
+      <dd className={cn("text-xl font-semibold tabular-nums", item.tone)}>{item.value}</dd>
+      <dt className="truncate text-xs text-muted-foreground">{item.label}</dt>
+    </div>)}
+  </dl>;
+}
+
+function NodeSiteRows({ agents, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove, site }: { agents: AgentView[]; data: AppData; language: Language; onApplications: () => void; onConfigure: (agent: AgentView) => void; onNetwork: () => void; onReconnect: (agent: AgentView) => void; onRemove: (id: string) => void; site: AppData["sites"][number] }) {
+  return <>
+    <TableRow className="bg-muted/25 hover:bg-muted/25">
+      <TableCell className="h-8 py-1" colSpan={8}>
+        <div className="flex items-center gap-2 text-xs"><MapPinIcon aria-hidden="true" className="size-3.5 text-muted-foreground" /><span className="font-medium">{site.name}</span><Badge variant="secondary">{site.code}</Badge><span className="text-muted-foreground">{copy(language, `${agents.length} 台节点`, `${agents.length} node${agents.length === 1 ? "" : "s"}`)}</span></div>
+      </TableCell>
+    </TableRow>
+    {agents.map((agent) => <NodeTableRow agent={agent} data={data} key={agent.id} language={language} onApplications={onApplications} onConfigure={() => onConfigure(agent)} onNetwork={onNetwork} onReconnect={() => onReconnect(agent)} onRemove={() => onRemove(agent.id)} />)}
+  </>;
+}
+
+function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove }: { agent: AgentView; data: AppData; language: Language; onApplications: () => void; onConfigure: () => void; onNetwork: () => void; onReconnect: () => void; onRemove: () => void }) {
   const site = data.sites.find((value) => value.id === agent.siteId);
   const selectedGateway = Boolean(site?.gatewayNodes.includes(agent.id));
   const architecture = agent.architecture === "arm64" ? "ARM64" : "x64";
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><ServerIcon />{agent.name}</CardTitle><CardDescription>{copy(language, "位置", "Location")}：{site?.name ?? agent.siteId} · {agent.version}</CardDescription><CardAction><StateBadge language={language} value={agent.removal ? agent.removal.state === "failed" ? "removal_failed" : "removing" : agent.status === "disabled" ? "disabled" : agent.credentialRevoked ? "access_stopped" : agent.connected ? "connected" : "offline"} /></CardAction></CardHeader><CardContent className="flex flex-col gap-4"><div className="flex flex-wrap gap-2"><Badge variant="outline">{architecture}</Badge>{agent.capabilities.docker ? <Badge variant="secondary">{copy(language, "运行应用", "Runs apps")}</Badge> : null}{selectedGateway ? <Badge variant="default">{copy(language, "当前位置网关", "Location gateway")}</Badge> : agent.capabilities.gateway ? <Badge variant="outline">{copy(language, "可作为网关", "Gateway capable")}</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="outline">Cloudflare</Badge> : null}</div><dl className="grid grid-cols-2 gap-4 text-sm"><div><dt className="text-muted-foreground">{copy(language, "网络", "Network")}</dt><dd className="mt-1 font-medium">{agent.networkProfile ? copy(language, "已确认", "Confirmed") : copy(language, "需要确认", "Needs confirmation")}</dd></div><div><dt className="text-muted-foreground">{copy(language, "最后在线", "Last seen")}</dt><dd className="mt-1 font-medium">{formatDate(language, agent.lastSeenAt)}</dd></div><div className="col-span-2"><dt className="text-muted-foreground">{copy(language, "私有服务地址", "Private service address")}</dt><dd className="mt-1 font-mono text-xs">{agent.networkProfile?.serviceAddress || "—"}</dd></div></dl><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></CardContent><CardFooter className="flex-wrap justify-end gap-2">{agent.status === "active" && !agent.networkProfile ? <Button onClick={onNetwork} size="sm"><NetworkIcon data-icon="inline-start" />{copy(language, "确认网络", "Confirm network")}</Button> : null}{!agent.removal && agent.status === "active" && !agent.connected ? <Button onClick={onReconnect} size="sm" variant="outline"><RotateCcwIcon data-icon="inline-start" />{copy(language, "重新接入", "Reconnect")}</Button> : null}{!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除节点", "Delete node")}</Button> : null}{!agent.removal && agent.status === "active" ? <Button onClick={onConfigure} size="sm" variant="outline"><Settings2Icon data-icon="inline-start" />{copy(language, "管理", "Manage")}</Button> : null}{!agent.connected ? <Button onClick={onRemove} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{agent.removal ? agent.removal.state === "failed" ? copy(language, "重试移除", "Retry removal") : copy(language, "查看进度", "View progress") : copy(language, "永久移除", "Permanently remove")}</Button> : null}</CardFooter></Card>;
+  const state = nodeState(agent);
+  return <>
+    <TableRow className="h-14">
+      <TableCell><div className="flex min-w-0 items-center gap-2"><ServerIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="truncate font-medium" title={agent.name}>{agent.name}</p><p className="text-xs text-muted-foreground">{architecture}</p></div></div></TableCell>
+      <TableCell><p className="truncate" title={site?.name ?? agent.siteId}>{site?.name ?? agent.siteId}</p><p className="text-xs text-muted-foreground">{site?.code}</p></TableCell>
+      <TableCell><StateBadge language={language} value={state} /></TableCell>
+      <TableCell><div className="flex flex-wrap gap-1">{agent.appliedInstallations > 0 ? <Badge variant="secondary">{copy(language, `${agent.appliedInstallations} 个应用`, `${agent.appliedInstallations} apps`)}</Badge> : agent.capabilities.docker ? <Badge variant="outline">Docker</Badge> : null}{selectedGateway ? <Badge>{copy(language, "当前位置网关", "Location gateway")}</Badge> : agent.capabilities.gateway ? <Badge variant="outline">Gateway</Badge> : null}{agent.capabilities.tunnel ? <Badge variant="outline">Cloudflare</Badge> : null}</div></TableCell>
+      <TableCell><p>{agent.networkProfile ? copy(language, "已确认", "Confirmed") : copy(language, "需要确认", "Needs confirmation")}</p><p className="font-mono text-xs text-muted-foreground">{agent.networkProfile?.serviceAddress || "—"}</p></TableCell>
+      <TableCell className="text-xs tabular-nums text-muted-foreground">{agent.version || "—"}</TableCell>
+      <TableCell className="text-xs tabular-nums"><span className="block truncate" title={formatDate(language, agent.lastSeenAt)}>{formatDate(language, agent.lastSeenAt)}</span></TableCell>
+      <TableCell><div className="flex items-center justify-end gap-1">{agent.status === "active" && !agent.networkProfile ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm"><NetworkIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "active" && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" variant="outline"><RotateCcwIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}{!agent.removal && agent.status === "active" ? <Button onClick={onConfigure} size="sm" variant="ghost"><Settings2Icon data-icon="inline-start" />{copy(language, "管理", "Manage")}</Button> : null}{!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}</div></TableCell>
+    </TableRow>
+    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={8}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
+  </>;
+}
+
+function nodeState(agent: AgentView) {
+  return agent.removal ? agent.removal.state === "failed" ? "removal_failed" : "removing" : agent.status === "disabled" ? "disabled" : agent.credentialRevoked ? "access_stopped" : agent.connected ? "connected" : "offline";
+}
+
+function nodeNeedsAttention(agent: AgentView) {
+  return agent.status !== "active" || !agent.connected || agent.credentialRevoked || !agent.networkProfile || Boolean(agent.runtimeRecovery) || agent.removal?.state === "failed" || agent.update?.state === "failed";
+}
+
+function matchesNodeStatus(agent: AgentView, status: string) {
+  if (status === "attention") return nodeNeedsAttention(agent);
+  if (status === "connected") return agent.status === "active" && agent.connected && !agent.credentialRevoked;
+  if (status === "offline") return agent.status === "active" && !agent.connected && !agent.credentialRevoked;
+  if (status === "disabled") return agent.status === "disabled" || agent.credentialRevoked;
+  return true;
+}
+
+function compareNodes(left: AgentView, right: AgentView, sort: string, siteByID: Map<string, AppData["sites"][number]>) {
+  if (sort === "status") {
+    const severity = Number(nodeNeedsAttention(right)) - Number(nodeNeedsAttention(left));
+    if (severity !== 0) return severity;
+  }
+  if (sort === "last_seen") {
+    const recency = Date.parse(right.lastSeenAt) - Date.parse(left.lastSeenAt);
+    if (Number.isFinite(recency) && recency !== 0) return recency;
+  }
+  if (sort === "site") {
+    const site = (siteByID.get(left.siteId)?.name ?? left.siteId).localeCompare(siteByID.get(right.siteId)?.name ?? right.siteId);
+    if (site !== 0) return site;
+  }
+  return left.name.localeCompare(right.name);
 }
 
 function AddNodeSheet({ data, language, onClose, onJoined, open }: { data: AppData; language: Language; onClose: () => void; onJoined: () => void; open: boolean }) {

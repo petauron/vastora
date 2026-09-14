@@ -7,7 +7,19 @@ export function selectedLandingLatencies(view: LandingView, nodeId: string, appl
     .map((server) => ({
       server,
       latency: view.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === server.nodeId),
-    }));
+    }))
+    .sort((left, right) => {
+      const leftLatency = measuredLatency(left.latency?.state, left.latency?.latencyMs);
+      const rightLatency = measuredLatency(right.latency?.state, right.latency?.latencyMs);
+      if (leftLatency !== rightLatency) return leftLatency - rightLatency;
+      return left.server.name.localeCompare(right.server.name);
+    });
+}
+
+function measuredLatency(state: string | undefined, milliseconds: number | null | undefined): number {
+  return state === "direct" && milliseconds != null && Number.isFinite(milliseconds) && milliseconds >= 0
+    ? milliseconds
+    : Number.POSITIVE_INFINITY;
 }
 
 export function landingLatencyColor(milliseconds: number | null | undefined): string {

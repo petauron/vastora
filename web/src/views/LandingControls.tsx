@@ -243,7 +243,7 @@ export function LandingLatency({ applicationId, nodeId, language }: { applicatio
   if (!state || !view || state.failed) return <span className="text-muted-foreground">—</span>;
   const pairs = selectedLandingLatencies(view, nodeId, applicationId);
   if (!pairs.length) return <span className="text-muted-foreground">—</span>;
-  return <div className="flex min-w-0 flex-col items-start gap-1">
+  return <div className="flex min-w-0 flex-row flex-wrap items-center gap-x-3 gap-y-1">
     {pairs.map(({ server, latency }, index) => {
       const measured = server?.status === "ready" && latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0;
       const unavailable = !server || ["offline", "failed", "stopped"].includes(server.status) || server.status === "ready" && latency?.state === "unavailable";
