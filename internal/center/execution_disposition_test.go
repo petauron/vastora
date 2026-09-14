@@ -11,7 +11,7 @@ import (
 func TestExecutionRequeueStatementsMatchSchemaAndDoNotCreateTasks(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
-	for _, kind := range []string{"application.apply", "application.command", "agent.update", "agent.decommission", "landing.proxy.apply", "landing.server.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply"} {
+	for _, kind := range []string{"node.ip-quality", "application.apply", "application.command", "agent.update", "agent.decommission", "landing.proxy.apply", "landing.server.apply", "gateway.routes.apply", "gateway.component.apply", "node.listener.apply", "tunnel.state.apply"} {
 		t.Run(kind, func(t *testing.T) {
 			query, args, err := executionRequeueStatement(AgentTask{ID: "nonexistent-task", Kind: kind, Attempt: 2, Revision: 7}, "nonexistent-agent", time.Now().UTC().Format(time.RFC3339Nano))
 			if err != nil {

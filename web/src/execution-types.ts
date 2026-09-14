@@ -13,6 +13,7 @@ export type LegacyReceiptView = {
 };
 
 const taskKinds = new Set([
+  "node.ip-quality",
   "application.apply", "application.command", "agent.update", "agent.decommission",
   "landing.proxy.apply", "landing.server.apply", "gateway.routes.apply",
   "gateway.component.apply", "node.listener.apply", "tunnel.state.apply",

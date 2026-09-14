@@ -562,6 +562,7 @@ func runAgent(arguments []string) error {
 			client.LandingServer = agent.NativeLandingServer{}
 		}
 		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
+		client.Capabilities.IPQuality = capabilities.Docker && runtime.GOOS == "linux"
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
 		}

@@ -88,13 +88,14 @@ it("keeps the row compact and restores the selected exits after closing the edit
   await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /><LandingLatency applicationId="app-one" nodeId="source-one" language="zh-CN" /></LandingProvider>); });
   expect(container.textContent).toContain("本机 + 2 个落地");
   expect(container.textContent).toContain("12–157 ms");
+  expect(container.querySelector(".text-destructive")?.textContent).toBe("12–157 ms");
   expect(container.textContent).not.toContain("出口配置已保存");
   expect(container.textContent).not.toContain("落地 A");
   const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="配置 节点一 的出口"]');
   await act(async () => { trigger?.click(); });
   expect(document.querySelector(".apps-exit-popover")?.textContent).toContain("落地 A");
   expect(document.querySelector(".apps-exit-popover")?.textContent).toContain("157 ms");
-  expect(document.querySelector(".apps-exit-popover .text-destructive")).toBeNull();
+  expect(document.querySelector(".apps-exit-popover .text-destructive")?.textContent).toBe("157 ms");
   await act(async () => { document.querySelectorAll<HTMLElement>('[role="checkbox"]')[1].click(); });
   await act(async () => { [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "取消")?.click(); });
   await act(async () => { trigger?.click(); });

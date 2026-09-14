@@ -1,6 +1,7 @@
 import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationCommand, ApplicationCommandKind, ApplicationCredentialRotation, ApplicationCredentials, AppView, Application, AssistantConversation, AssistantExecution, AssistantProvider, AssistantProposal, AssistantRun, CatalogSource, CenterRemoteAccess, CenterRemoteAccessInput, CloudflareOAuthPoll, CloudflareOAuthStart, CloudflareZone, CenterStatus, CenterUpdateStatus, CreatePublicationInput, Deployment, Diagnostics, HeadscaleJoin, InitialSetupInput, Integration, NetworkProfile, Organization, Publication, RealitySecurityCheck, Region, RegionSuggestion, RegistryCredential, Route, Service, SetupStatus, Site, SiteInput, SystemDomain, SystemDomainSwitchResult, TailscaleFixedEndpoint, TailscaleFixedEndpointInput, ThreeXUIClientCommandInput, ThreeXUIControllerMigration } from "./types";
 
 import type { LandingView, NodeExitInput } from "./landing-types";
+import type { IPQualityCheck } from "./ip-quality-types";
 import type { NodeProtocols } from "./types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
 
@@ -60,6 +61,8 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 }
 
 export const api = {
+  ipQuality: (signal?: AbortSignal) => request<{ checks: IPQualityCheck[] }>("/api/v1/ip-quality", { signal }),
+  checkIPQuality: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/ip-quality`, { method: "POST", body: "{}", signal }),
   executions: (before = 0, signal?: AbortSignal) => request<ExecutionPage>(`/api/v1/executions${before ? `?before=${before}` : ""}`, { signal }),
   executionClaimControl: (signal?: AbortSignal) => request<ExecutionClaimControl>("/api/v1/execution-claim-control", { signal }),
   setExecutionClaimControl: (paused: boolean) => request<{ recorded: boolean }>("/api/v1/execution-claim-control", { method: "PUT", body: JSON.stringify({ paused }) }),
@@ -143,7 +146,7 @@ export const api = {
 	retryThreeXUIControllerMigrationCleanup: (id: string) => request<ThreeXUIControllerMigration>(`/api/v1/three-x-ui-migrations/${encodeURIComponent(id)}/retry-cleanup`, { method: "POST", body: "{}" }),
 	migrateThreeXUIController: (applicationId: string, targetApplicationId: string, allowStaleBackup: boolean) => request<ThreeXUIControllerMigration>(`/api/v1/applications/${encodeURIComponent(applicationId)}/3xui-controller/migrate`, { method: "POST", body: JSON.stringify({ targetApplicationId, confirm: true, allowStaleBackup }) }),
 	regions: () => request<{ regions: Region[] }>("/api/v1/regions"),
-	agentRegionSuggestion: (agentId: string) => request<RegionSuggestion>(`/api/v1/agents/${encodeURIComponent(agentId)}/region-suggestion`),
+	agentRegionSuggestion: (agentId: string, signal?: AbortSignal) => request<RegionSuggestion>(`/api/v1/agents/${encodeURIComponent(agentId)}/region-suggestion`, { signal }),
 	verifyRealityTarget: (applicationId: string, targetHost: string, serverName: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/reality-targets/verify`, { method: "POST", body: JSON.stringify({ targetHost, serverName }) }),
 	recommendRealityTargets: (applicationId: string) => request<ApplicationCommand>(`/api/v1/applications/${encodeURIComponent(applicationId)}/reality-targets/verify`, { method: "POST", body: JSON.stringify({ recommend: true }) }),
 	createRealityCommand: (input: { applicationId: string; verificationId: string; targetIp: string; regionCode: string; name: string; clientName?: string; hostname?: string; dnsProvider: "manual" | "cloudflare"; targetHost: string; serverName: string; inboundTotalBytes: number; inboundResetDay: number; clientTotalBytes?: number; clientResetDays?: number; clientExpiryTime?: number }) => request<ApplicationCommand>("/api/v1/application-commands/reality", { method: "POST", body: JSON.stringify(input) }),
