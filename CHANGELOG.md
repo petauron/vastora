@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.138](https://github.com/petauron/vastora/compare/v0.1.0-alpha.137...v0.1.0-alpha.138) (2026-09-14)
+
+
+### Bug Fixes
+
+* release stopped Agent update staging and start unloaded helpers ([#463](https://github.com/petauron/vastora/issues/463)) ([aec7fea](https://github.com/petauron/vastora/commit/aec7feaf06a686b74ad5cc7a7c35f7bd99de921c))
+
 ## [0.1.0-alpha.137](https://github.com/petauron/vastora/compare/v0.1.0-alpha.136...v0.1.0-alpha.137) (2026-09-14)
 
 
