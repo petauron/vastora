@@ -18,6 +18,7 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -316,6 +317,63 @@ func TestTaskClaimDecryptsEnvelopeBoundToAgentAndAttempt(t *testing.T) {
 	claimed, err := (Client{}).claimNextTask(context.Background(), store, 0)
 	if err != nil || claimed == nil || claimed.ID != task.ID || string(claimed.Secrets) != string(task.Secrets) || claimed.ApplicationCommand == nil || claimed.ApplicationCommand.RegionCode != "US" {
 		t.Fatalf("decrypted task=%#v err=%v", claimed, err)
+	}
+}
+
+func TestTerminalTaskAuthorityConflictStopsTaskReceiver(t *testing.T) {
+	connection := testConnection(t, "agent-1", "test", "http://127.0.0.1", "credential")
+	publicKey, err := controlplane.PublicKey(connection.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := DeploymentTask{Kind: ipquality.Kind, ID: "stale-task", Attempt: 1, IPQuality: &ipquality.Task{Address: "203.0.113.8", BindAddress: "10.0.0.8"}}
+	plaintext, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(plaintext)
+	authorization := controlplane.ExecutionAuthorization{ID: "stale-execution", Protocol: controlplane.ExecutionProtocol, Digest: hex.EncodeToString(digest[:])}
+	envelope, err := controlplane.Seal(publicKey, plaintext, controlplane.TaskAdditionalData(connection.AgentID, task.ID, task.Attempt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/v1/agents/agent-1/execution-session":
+			_, _ = response.Write([]byte(`{"registered":true}`))
+		case "/api/v1/agents/agent-1/tasks/next":
+			claims.Add(1)
+			_ = json.NewEncoder(response).Encode(map[string]any{"task": map[string]any{"id": task.ID, "attempt": task.Attempt, "envelope": envelope, "authorization": authorization}})
+		case "/api/v1/agents/agent-1/executions/stale-execution":
+			http.Error(response, `{"error":"execution authority expired"}`, http.StatusConflict)
+		default:
+			t.Fatalf("unexpected request: %s", request.URL.Path)
+		}
+	}))
+	defer server.Close()
+	connection.CenterURL = server.URL
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), connection); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		(Client{HTTPClient: server.Client()}).RunTasks(context.Background(), store, func(error) {})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("task receiver retried after terminal authority conflict")
+	}
+	if claims.Load() != 1 {
+		t.Fatalf("terminal task was claimed %d times", claims.Load())
 	}
 }
 

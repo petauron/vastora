@@ -856,7 +856,9 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 			}
 			continue
 		}
-		c.processTaskWithLease(ctx, store, *task, report)
+		if c.processTaskWithLease(ctx, store, *task, report) {
+			return
+		}
 	}
 }
 
@@ -864,18 +866,18 @@ func freshTaskControlContext(parent context.Context) (context.Context, context.C
 	return context.WithTimeout(context.WithoutCancel(parent), taskControlTimeout)
 }
 
-func (c Client) processTaskWithLease(parent context.Context, store *Store, task DeploymentTask, report func(error)) {
-	c.processTaskWithLeaseInterval(parent, store, task, report, taskLeaseRenewInterval)
+func (c Client) processTaskWithLease(parent context.Context, store *Store, task DeploymentTask, report func(error)) bool {
+	return c.processTaskWithLeaseInterval(parent, store, task, report, taskLeaseRenewInterval)
 }
 
-func (c Client) processTaskWithLeaseInterval(parent context.Context, store *Store, task DeploymentTask, report func(error), interval time.Duration) {
+func (c Client) processTaskWithLeaseInterval(parent context.Context, store *Store, task DeploymentTask, report func(error), interval time.Duration) bool {
 	c.execution = task.Authorization
 	executionContext, cancelExecution, release, err := store.beginExecution(parent)
 	if err != nil {
 		if report != nil {
 			report(err)
 		}
-		return
+		return false
 	}
 	defer release()
 	c.executionAbort = cancelExecution
@@ -883,7 +885,7 @@ func (c Client) processTaskWithLeaseInterval(parent context.Context, store *Stor
 		if report != nil {
 			report(err)
 		}
-		return
+		return terminalTaskAuthorityConflict(err)
 	}
 	renewalResult := make(chan error, 1)
 	go func() {
@@ -893,11 +895,13 @@ func (c Client) processTaskWithLeaseInterval(parent context.Context, store *Stor
 		}
 		renewalResult <- err
 	}()
-	c.processTask(executionContext, store, task, report)
+	processErr := c.processTask(executionContext, store, task, report)
 	cancelExecution(context.Canceled)
-	if err := <-renewalResult; err != nil && parent.Err() == nil && report != nil {
-		report(err)
+	renewalErr := <-renewalResult
+	if renewalErr != nil && parent.Err() == nil && report != nil {
+		report(renewalErr)
 	}
+	return terminalTaskAuthorityConflict(renewalErr) || terminalTaskAuthorityConflict(processErr)
 }
 
 func (c Client) renewTaskLeaseLoop(ctx context.Context, store *Store, task DeploymentTask, interval time.Duration) error {
@@ -933,12 +937,12 @@ func waitForTaskRetry(ctx context.Context) bool {
 	}
 }
 
-func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTask, report func(error)) {
+func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTask, report func(error)) error {
 	if err := c.executionTransition(ctx, store, "step", "apply", false, ""); err != nil {
 		if report != nil {
 			report(err)
 		}
-		return
+		return err
 	}
 	var result ApplicationTaskResult
 	var err error
@@ -1159,12 +1163,12 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if decommissionHandedOff {
 		// The persistent host helper owns the terminal result. A successful
 		// schedule is not evidence that host cleanup itself has completed.
-		return
+		return nil
 	}
 	if updateHandedOff {
 		// The persistent updater owns binary replacement, rollback, restart, and
 		// terminal reporting. A successful schedule is not an update result.
-		return
+		return nil
 	}
 	if task.Kind == "application.apply" && task.Operation != "uninstall" && len(result.GeneratedSecrets) != 0 {
 		merged, mergeErr := mergeGeneratedSecrets(task.Secrets, result.GeneratedSecrets)
@@ -1211,6 +1215,12 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 	if err != nil && report != nil {
 		report(errors.New(safeTaskError(err)))
 	}
+	return completeErr
+}
+
+func terminalTaskAuthorityConflict(err error) bool {
+	var response *centerResponseError
+	return errors.As(err, &response) && response.status == http.StatusConflict
 }
 
 func (c Client) sendTaskCompletion(ctx context.Context, store *Store, completion taskCompletion) error {
