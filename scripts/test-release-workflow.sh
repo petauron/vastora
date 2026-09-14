@@ -24,11 +24,14 @@ require_in "$(cat "$workflow")" '  group: vastora-installer-r2'
 require_in "$(cat "$workflow")" '  cancel-in-progress: false'
 require_in "$prepare_job" '          skip-github-pull-request: true'
 require_in "$prepare_job" '      pull-requests: write'
+require_in "$prepare_job" '      packages: read'
 require_in "$prepare_job" '          if release_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG"'
 require_in "$prepare_job" "          elif printf '%s' \"\$release_json\" | jq -e '.draft == true and (.assets | length) == 0' >/dev/null; then"
 require_in "$prepare_job" '            release_sha="$GITHUB_SHA"'
-require_in "$prepare_job" '            release_retry=false'
+require_in "$prepare_job" '            release_retry=image'
+require_in "$prepare_job" '              -f tag_name="$RELEASE_TAG" \'
 require_in "$prepare_job" '              -f target_commitish="$release_sha" >/dev/null'
+require_in "$prepare_job" '      center_image_digest: ${{ steps.retry.outputs.center_image_digest }}'
 require_in "$prepare_job" "      release_retry: \${{ steps.retry.outputs.release_retry || 'false' }}"
 require_in "$publish_job" '      artifact-metadata: write'
 require_in "$publish_job" '      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}'
@@ -66,24 +69,32 @@ require_in "$release_pr_job" '        run: scripts/validate-release-metadata.sh 
 require_fresh_release_step() {
   step_name="$1"
   step_block="$(printf '%s\n' "$publish_job" | sed -n "/^      - name: $step_name$/,/^      - name:/p")"
-  require_in "$step_block" "        if: needs.prepare.outputs.release_retry != 'true'"
+  require_in "$step_block" "        if: needs.prepare.outputs.release_retry == 'false'"
 }
 
 for step in \
-  'Set up Docker Buildx' \
   'Log in to GitHub Container Registry' \
   'Build and push Center image' \
   'Scan released Center image for x64 vulnerabilities' \
   'Scan released Center image for ARM64 vulnerabilities' \
   'Smoke-test released Center image' \
   'Publish verified Center image tags' \
-  'Attest Center image' \
+  'Attest Center image'; do
+  require_fresh_release_step "$step"
+done
+
+for step in \
+  'Set up Docker Buildx' \
   'Package release installer' \
   'Verify release assets and public image access' \
   'Create durable installer release manifest' \
   'Upload and verify draft GitHub installer assets'; do
-  require_fresh_release_step "$step"
+  step_block="$(printf '%s\n' "$publish_job" | sed -n "/^      - name: $step$/,/^      - name:/p")"
+  require_in "$step_block" "        if: needs.prepare.outputs.release_retry != 'assets'"
 done
+
+retry_assets_step="$(printf '%s\n' "$publish_job" | sed -n '/^      - name: Recover verified installer assets for release retry$/,/^      - name:/p')"
+require_in "$retry_assets_step" "        if: needs.prepare.outputs.release_retry == 'assets'"
 
 for step in \
   'Prune stale Vastora installer objects' \
