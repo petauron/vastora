@@ -5,7 +5,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../api";
 import type { LandingLatencyEvent, LandingView } from "../landing-types";
 import { LandingExitSelect, LandingLatency, LandingManager, LandingProvider } from "./LandingControls";
-import { landingLatencyPreview } from "./landingLatency";
+import { selectedLandingLatencies } from "./landingLatency";
+import { useIsMobile } from "@/hooks/use-mobile";
+
+vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: vi.fn(() => false) }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | undefined;
@@ -17,6 +20,7 @@ class LatencyEventSource {
   emit(event: LandingLatencyEvent) { this.onmessage?.(new MessageEvent("message", { data: JSON.stringify(event) })); }
 }
 beforeEach(() => {
+  vi.mocked(useIsMobile).mockReturnValue(false);
   LatencyEventSource.instances = [];
   vi.stubGlobal("EventSource", LatencyEventSource);
 });
@@ -39,20 +43,23 @@ function overview(): LandingView {
   };
 }
 
-it("previews the best exit without selecting it and never borrows another pair's latency", () => {
+it("summarizes only configured exits and never borrows another pair's latency", () => {
   const view = overview();
-  expect(landingLatencyPreview(view, "source-one", "app-one")).toMatchObject({ selected: false, server: { nodeId: "a" }, latency: { latencyMs: 12 } });
+  expect(selectedLandingLatencies(view, "source-one", "app-one")).toEqual([]);
   expect(view.proxies[0].enabled).toBe(false);
   view.proxies[0] = { ...view.proxies[0], enabled: true, landingNodeId: "b", status: "ready" };
-  expect(landingLatencyPreview(view, "source-one", "app-one")).toMatchObject({ selected: true, server: { nodeId: "b" }, latency: { latencyMs: 88 } });
+  expect(selectedLandingLatencies(view, "source-one", "app-one")).toMatchObject([{ server: { nodeId: "b" }, latency: { latencyMs: 88 } }]);
   view.latencies = view.latencies.filter((sample) => sample.nodeId !== "source-one");
-  expect(landingLatencyPreview(view, "source-one", "app-one").latency).toBeUndefined();
+  expect(selectedLandingLatencies(view, "source-one", "app-one")[0].latency).toBeUndefined();
   view.servers[1].status = "offline";
-  expect(landingLatencyPreview(view, "source-one", "app-one").server?.nodeId).toBe("b");
+  expect(selectedLandingLatencies(view, "source-one", "app-one")[0].server?.status).toBe("offline");
+  view.nodeExits = [{ applicationId: "app-one", ownExit: true, landingNodeIds: [], revision: 3 }];
+  expect(selectedLandingLatencies(view, "source-one", "app-one")).toEqual([]);
 });
 
 
-it("saves multiple exits from the node row without client-specific configuration", async () => {
+it.each([false, true])("saves multiple exits from the node row (mobile: %s)", async (mobile) => {
+  vi.mocked(useIsMobile).mockReturnValue(mobile);
   const view = overview();
   view.nodeExits = [{ applicationId: "app-one", ownExit: true, landingNodeIds: [], revision: 2 }];
   const read = vi.spyOn(api, "landing").mockResolvedValue(view);
@@ -69,6 +76,42 @@ it("saves multiple exits from the node row without client-specific configuration
   await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === "保存出口组合")?.click(); });
   expect(update).toHaveBeenCalledWith("app-one", { ownExit: true, landingNodeIds: ["a", "b"], revision: 2, confirmSessionReset: true }, expect.any(AbortSignal));
   expect(container.textContent).toContain("正在同步组合");
+});
+
+it("keeps the row compact and restores the selected exits after closing the editor", async () => {
+  const view = overview();
+  view.nodeExits = [{ applicationId: "app-one", ownExit: true, landingNodeIds: ["a", "b"], revision: 3, status: "saved" }];
+  view.latencies[1].latencyMs = 157;
+  vi.spyOn(api, "landing").mockResolvedValue(view);
+  const update = vi.spyOn(api, "configureNodeExits");
+  const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingExitSelect applicationId="app-one" nodeId="source-one" name="节点一" locked={false} language="zh-CN" /><LandingLatency applicationId="app-one" nodeId="source-one" language="zh-CN" /></LandingProvider>); });
+  expect(container.textContent).toContain("本机 + 2 个落地");
+  expect(container.textContent).toContain("12–157 ms");
+  expect(container.textContent).not.toContain("出口配置已保存");
+  expect(container.textContent).not.toContain("落地 A");
+  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="配置 节点一 的出口"]');
+  await act(async () => { trigger?.click(); });
+  expect(document.querySelector(".apps-exit-popover")?.textContent).toContain("落地 A");
+  expect(document.querySelector(".apps-exit-popover")?.textContent).toContain("157 ms");
+  expect(document.querySelector(".apps-exit-popover .text-destructive")).toBeNull();
+  await act(async () => { document.querySelectorAll<HTMLElement>('[role="checkbox"]')[1].click(); });
+  await act(async () => { [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "取消")?.click(); });
+  await act(async () => { trigger?.click(); });
+  expect([...document.querySelectorAll<HTMLElement>('[role="checkbox"]')].map((checkbox) => checkbox.getAttribute("aria-checked"))).toEqual(["true", "true", "true"]);
+  expect(update).not.toHaveBeenCalled();
+});
+
+it("keeps failed and pending exits visible beside the measured range", async () => {
+  const view = overview();
+  view.nodeExits = [{ applicationId: "app-one", ownExit: false, landingNodeIds: ["a", "b", "missing"], revision: 3 }];
+  view.latencies = view.latencies.filter((sample) => sample.landingNodeId !== "b");
+  vi.spyOn(api, "landing").mockResolvedValue(view);
+  const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled><LandingLatency applicationId="app-one" nodeId="source-one" language="zh-CN" /></LandingProvider>); });
+  expect(container.textContent).toContain("12 ms");
+  expect(container.textContent).toContain("1 个待检测");
+  expect(container.querySelector(".text-destructive")?.textContent).toBe("1 个不可用");
 });
 
 it.each(["paused", "failed", "controller-blocked"] as const)("does not allow an unsafe write when %s", async (condition) => {
@@ -134,6 +177,7 @@ it("protects in-use servers while letting an unused server be removed", async ()
 it("updates one line immediately and does not let the overview poll replace streamed results", async () => {
   vi.useFakeTimers();
   const view = overview();
+  view.nodeExits = [{ applicationId: "app-one", ownExit: true, landingNodeIds: ["a"], revision: 3 }, { applicationId: "app-two", ownExit: true, landingNodeIds: ["b"], revision: 3 }];
   vi.spyOn(api, "landing").mockResolvedValue(view);
   const container = document.createElement("div");
   document.body.append(container);
@@ -161,6 +205,7 @@ it("updates one line immediately and does not let the overview poll replace stre
 it("expires only stale pairs during a disconnected stream and accepts a reconnect snapshot", async () => {
   vi.useFakeTimers();
   const view = overview();
+  view.nodeExits = [{ applicationId: "app-one", ownExit: true, landingNodeIds: ["a"], revision: 3 }, { applicationId: "app-two", ownExit: true, landingNodeIds: ["b"], revision: 3 }];
   vi.spyOn(api, "landing").mockResolvedValue(view);
   const container = document.createElement("div");
   document.body.append(container);

@@ -165,9 +165,16 @@
 .apps-instance-table td { font-size: 13px; }
 .apps-landing-sheet[data-side="right"] { width: min(100%, 440px); max-width: 440px; }
 .apps-landing-sheet [data-slot="sheet-header"] { padding: 24px 40px 8px 20px; gap: 8px; }
+.apps-three-xui-toolbar { border-bottom: 1px solid var(--border); }
+.apps-exit-popover { width: min(420px, var(--available-width)); max-height: min(640px, var(--available-height)); }
+.apps-exit-sheet[data-side="right"] { width: 100%; max-width: 440px; }
+.apps-exit-sheet [data-slot="sheet-footer"] { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
 
 @media (min-width: 1024px) {
   .apps-instance-table td { padding-block: 10px; }
+  .apps-three-xui .apps-instance-table td { height: 64px; padding-block: 12px; }
+  .apps-three-xui .apps-instance-table :is(th, td):first-child { padding-left: 0; }
+  .apps-three-xui .apps-instance-table :is(th, td):last-child { padding-right: 0; }
 }
 @media (pointer: coarse) {
   .apps-workspace [data-slot="tabs-trigger"] { min-height: 44px; }
