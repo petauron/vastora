@@ -16,15 +16,15 @@ import (
 // Native links remain the source of protocol credentials; never reconstruct
 // REALITY keys from browser input or expose these values in task events.
 type SubscriptionGrant struct {
-	Grant       ClientGrant
-	EntryName   string
-	LandingName string
-	BaseLink    string
-	FixedLink   string
+	Grant             ClientGrant
+	EntryName         string
+	LandingRegionCode string
+	BaseLink          string
+	FixedLink         string
 }
 
 // ComposeLinks preserves original lines verbatim. Distinct combination UUIDs
-// keep ordinary converters from merging nodes which differ only by display name.
+// keep ordinary converters from merging the compact A/B display names.
 func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []SubscriptionGrant, encoded bool) ([]byte, error) {
 	if len(native) > 4<<20 || !validGrantID(parentID) || !mode.Valid() {
 		return nil, errors.New("landing: invalid subscription input")
@@ -44,6 +44,7 @@ func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []
 			identities[link.User.Username()] = true
 		}
 	}
+	labels := combinationLabels(grants)
 	for _, item := range grants {
 		if err := validateSubscriptionGrant(item, parentID); err != nil {
 			return nil, err
@@ -59,7 +60,7 @@ func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []
 		if err != nil || fixed.Host != base.Host || !sameRealityTransport(fixed, base) || identities[fixed.User.Username()] {
 			return nil, errors.New("landing: invalid combination credentials")
 		}
-		fixed.Fragment = combinationName(item)
+		fixed.Fragment = combinationName(item, labels[item.Grant.ID])
 		lines = append(lines, fixed.String())
 		identities[fixed.User.Username()] = true
 	}
@@ -116,6 +117,7 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 		return nil
 	}
 	baseProxies := slices.Clone(proxies)
+	labels := combinationLabels(grants)
 	fixedNames := []any{}
 	replacements := map[string][]any{}
 	for _, item := range grants {
@@ -152,7 +154,7 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 					return nil, errors.New("landing: duplicated fixed subscription identity")
 				}
 			}
-			name := combinationName(item)
+			name := combinationName(item, labels[item.Grant.ID])
 			if err := reserve(name); err != nil {
 				return nil, err
 			}
@@ -228,7 +230,7 @@ func validateSubscriptionGrant(item SubscriptionGrant, parentID string) error {
 	if err := item.Grant.Validate(); err != nil {
 		return err
 	}
-	if item.Grant.ParentID != parentID || item.EntryName == "" || item.LandingName == "" || len(item.EntryName)+len(item.LandingName) > 512 {
+	if item.Grant.ParentID != parentID || item.EntryName == "" || len(item.EntryName) > 512 || item.LandingRegionCode != "" && !validRegionCode(item.LandingRegionCode) {
 		return errors.New("landing: subscription grant scope does not match")
 	}
 	base, err := parseVLESSLink(item.BaseLink)
@@ -244,8 +246,43 @@ func validateSubscriptionGrant(item SubscriptionGrant, parentID string) error {
 	return nil
 }
 
-func combinationName(item SubscriptionGrant) string {
-	return item.EntryName + " → " + item.LandingName + " · " + grantTag(item.Grant.ID)[:8]
+func combinationLabels(grants []SubscriptionGrant) map[string]string {
+	byEntry := map[string][]SubscriptionGrant{}
+	for _, item := range grants {
+		if item.Grant.Enabled && item.Grant.Mode.Fixed() {
+			key := string(item.Grant.BaseIdentity) + "\x00" + item.EntryName
+			byEntry[key] = append(byEntry[key], item)
+		}
+	}
+	labels := make(map[string]string, len(grants))
+	for _, items := range byEntry {
+		slices.SortFunc(items, func(a, b SubscriptionGrant) int {
+			if order := strings.Compare(a.Grant.Peer.ID, b.Grant.Peer.ID); order != 0 {
+				return order
+			}
+			return strings.Compare(a.Grant.ID, b.Grant.ID)
+		})
+		for index, item := range items {
+			labels[item.Grant.ID] = string(rune('A' + index))
+		}
+	}
+	return labels
+}
+
+func combinationName(item SubscriptionGrant, label string) string {
+	prefix := ""
+	if item.LandingRegionCode != "" {
+		prefix = regionFlag(item.LandingRegionCode) + "｜"
+	}
+	return prefix + item.EntryName + " " + label
+}
+
+func validRegionCode(code string) bool {
+	return len(code) == 2 && code[0] >= 'A' && code[0] <= 'Z' && code[1] >= 'A' && code[1] <= 'Z'
+}
+
+func regionFlag(code string) string {
+	return string([]rune{rune(code[0]-'A') + 0x1F1E6, rune(code[1]-'A') + 0x1F1E6})
 }
 
 func parseVLESSLink(raw string) (*url.URL, error) {

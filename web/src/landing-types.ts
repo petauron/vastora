@@ -26,8 +26,8 @@ export type LandingLatencyEvent = {
 
 export type LandingLatencySnapshot = { revision: number; samples: LandingLatencyView[] };
 
-export type NodeExitPolicy = { applicationId: string; ownExit: boolean; landingNodeIds: string[]; revision: number; status?: "saved" | "applying" | "failed"; requiresOwnExit?: boolean };
-export type NodeExitInput = Pick<NodeExitPolicy, "ownExit" | "landingNodeIds" | "revision"> & { confirmSessionReset: boolean };
+export type NodeExitPolicy = { applicationId: string; ownExit: boolean; landingNodeIds: string[]; landingRegionCodes?: Record<string, string>; revision: number; status?: "saved" | "applying" | "failed"; requiresOwnExit?: boolean };
+export type NodeExitInput = Pick<NodeExitPolicy, "ownExit" | "landingNodeIds" | "revision"> & { landingRegionCodes: Record<string, string>; confirmSessionReset: boolean };
 
 export type LandingView = {
   nodeExits?: NodeExitPolicy[];

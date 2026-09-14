@@ -15,19 +15,21 @@ import (
 var errNodeExitControllerBlocked = errors.New("center: subscription controller has unresolved tasks; exit configuration was not saved")
 
 type NodeExitPolicy struct {
-	ApplicationID   string   `json:"applicationId"`
-	OwnExit         bool     `json:"ownExit"`
-	LandingNodeIDs  []string `json:"landingNodeIds"`
-	Revision        uint64   `json:"revision"`
-	Status          string   `json:"status,omitempty"`
-	RequiresOwnExit bool     `json:"requiresOwnExit,omitempty"`
+	ApplicationID      string            `json:"applicationId"`
+	OwnExit            bool              `json:"ownExit"`
+	LandingNodeIDs     []string          `json:"landingNodeIds"`
+	LandingRegionCodes map[string]string `json:"landingRegionCodes,omitempty"`
+	Revision           uint64            `json:"revision"`
+	Status             string            `json:"status,omitempty"`
+	RequiresOwnExit    bool              `json:"requiresOwnExit,omitempty"`
 }
 
 type NodeExitInput struct {
-	OwnExit             bool     `json:"ownExit"`
-	LandingNodeIDs      []string `json:"landingNodeIds"`
-	Revision            uint64   `json:"revision"`
-	ConfirmSessionReset bool     `json:"confirmSessionReset"`
+	OwnExit             bool              `json:"ownExit"`
+	LandingNodeIDs      []string          `json:"landingNodeIds"`
+	LandingRegionCodes  map[string]string `json:"landingRegionCodes"`
+	Revision            uint64            `json:"revision"`
+	ConfirmSessionReset bool              `json:"confirmSessionReset"`
 }
 
 func readNodeExitPolicy(ctx context.Context, tx *sql.Tx, applicationID string) (NodeExitPolicy, error) {
@@ -55,6 +57,13 @@ func (s *Store) ConfigureNodeExits(ctx context.Context, applicationID string, in
 		if id == "" || i > 0 && id == input.LandingNodeIDs[i-1] {
 			return errors.New("center: invalid exit selection")
 		}
+	}
+	for id, value := range input.LandingRegionCodes {
+		code, ok := regionCode(value)
+		if !ok || !slices.Contains(input.LandingNodeIDs, id) {
+			return errors.New("center: invalid landing region")
+		}
+		input.LandingRegionCodes[id] = code
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -142,9 +151,12 @@ func (s *Store) ConfigureNodeExits(ctx context.Context, applicationID string, in
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	p := NodeExitPolicy{ApplicationID: applicationID, OwnExit: input.OwnExit, LandingNodeIDs: input.LandingNodeIDs, Revision: old.Revision + 1}
+	p := NodeExitPolicy{ApplicationID: applicationID, OwnExit: input.OwnExit, LandingNodeIDs: input.LandingNodeIDs, LandingRegionCodes: input.LandingRegionCodes, Revision: old.Revision + 1}
 	if p.LandingNodeIDs == nil {
 		p.LandingNodeIDs = []string{}
+	}
+	if p.LandingRegionCodes == nil {
+		p.LandingRegionCodes = map[string]string{}
 	}
 	raw, _ := json.Marshal(p)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "node-exits:"+applicationID, string(raw)); err != nil {
@@ -244,7 +256,7 @@ func (s *Store) syncNodeExitClients(ctx context.Context, tx *sql.Tx, controller 
 						return err
 					}
 					revision = g.Revision
-					if (automatic && g.Status != "ready" && g.Status != "revoked") || (g.Enabled && g.Grant.HideBase == !p.OwnExit && g.Status == "ready") {
+					if automatic && (g.Status != "ready" && g.Status != "revoked" || g.Enabled && g.Grant.HideBase == !p.OwnExit && g.Status == "ready") {
 						continue
 					}
 				} else if !errors.Is(err, sql.ErrNoRows) {
