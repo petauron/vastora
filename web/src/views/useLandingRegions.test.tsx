@@ -17,12 +17,12 @@ afterEach(() => {
 });
 
 function Harness({ address }: { address: string }) {
-  const agents = [{ id: "landing", networkProfile: { publicAddress: address, directPublic: true } }] as AgentView[];
+  const agents = [{ id: "landing", publicEgress: { address, bindAddress: "10.0.0.2", mode: "nat", observedAt: "2026-09-14T00:00:00Z" }, networkProfile: { directPublic: false } }] as AgentView[];
   const regions = useLandingRegions(["landing"], agents);
   return <RegionFlag code={regions.landing} language="zh-CN" />;
 }
 
-it("reuses flags across heartbeat renders and rejects a result for an old IP", async () => {
+it("shows a NAT node flag, reuses it across heartbeat renders, and rejects a result for an old IP", async () => {
   const lookup = vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "landing", publicAddress: "192.0.2.1", regionCode: "HK", prefix: "", source: "configured_helper" });
   const container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   await act(async () => { root?.render(<Harness address="192.0.2.1" />); });

@@ -144,8 +144,9 @@ func (s *Store) SuggestAgentRegion(ctx context.Context, agentID string) (RegionS
 		return RegionSuggestion{}, errors.New("center: automatic region matching is disabled; select a region manually")
 	}
 	var publicAddress string
-	if err := s.db.QueryRowContext(ctx, `SELECT public_address FROM agent_network_profiles WHERE agent_id = ? AND direct_public = 1`, agentID).Scan(&publicAddress); err != nil {
-		return RegionSuggestion{}, errors.New("center: this Agent has no confirmed public address")
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(agent.public_egress_address, ''), NULLIF(profile.public_address, ''), '')
+		FROM agents agent LEFT JOIN agent_network_profiles profile ON profile.agent_id = agent.id WHERE agent.id = ?`, agentID).Scan(&publicAddress); err != nil {
+		return RegionSuggestion{}, errors.New("center: this Agent has no known public address")
 	}
 	publicIP := net.ParseIP(strings.TrimSpace(publicAddress))
 	if publicIP == nil {

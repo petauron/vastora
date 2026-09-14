@@ -318,15 +318,15 @@ export function LandingLatency({ applicationId, nodeId, language }: { applicatio
   if (!state || !view || state.failed) return <span className="text-muted-foreground">—</span>;
   const pairs = selectedLandingLatencies(view, nodeId, applicationId);
   if (!pairs.length) return <span className="text-muted-foreground">—</span>;
-  const unavailable = pairs.filter(({ server, latency }) => !server || ["offline", "failed", "stopped"].includes(server.status) || server.status === "ready" && latency?.state === "unavailable").length;
-  const measured = pairs.flatMap(({ server, latency }) => server?.status === "ready" && latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0 ? [latency.latencyMs] : []);
-  const pending = pairs.length - measured.length - unavailable;
-  const format = (value: number) => value < 1 ? "<1" : String(Math.round(value));
-  const min = Math.min(...measured), max = Math.max(...measured);
-  const range = measured.length ? `${format(min)}${format(min) === format(max) ? "" : `–${format(max)}`} ms` : null;
-  return <div className="flex min-w-0 flex-col gap-1">
-    {range ? <span className={cn("tabular-nums", landingLatencyColor(max))}>{range}</span> : null}
-    {unavailable ? <span className="text-xs text-destructive">{copy(language, `${unavailable} 个不可用`, `${unavailable} unavailable`)}</span> : null}
-    {pending ? <span className="text-xs text-muted-foreground">{copy(language, `${pending} 个待检测`, `${pending} pending`)}</span> : null}
+  return <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+    {pairs.map(({ server, latency }, index) => {
+      const measured = server?.status === "ready" && latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0;
+      const unavailable = !server || ["offline", "failed", "stopped"].includes(server.status) || server.status === "ready" && latency?.state === "unavailable";
+      const label = measured ? latencyLabel(language, latency) : unavailable ? copy(language, "不可用", "Unavailable") : copy(language, "待检测", "Pending");
+      return <span className={cn("inline-flex shrink-0 items-center gap-1.5 text-xs tabular-nums", unavailable ? "text-destructive" : measured ? landingLatencyColor(latency.latencyMs) : "text-muted-foreground")} key={server?.nodeId ?? `missing-${index}`} title={server?.name}>
+        <RegionFlag code={server ? state.regions[server.nodeId] : undefined} language={language} />
+        <span>{label}</span>
+      </span>;
+    })}
   </div>;
 }

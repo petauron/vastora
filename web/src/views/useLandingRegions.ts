@@ -7,8 +7,11 @@ export function useLandingRegions(nodeIds: readonly string[], agents: readonly A
   // Depend on identity/address, not heartbeat or latency updates. IP changes
   // invalidate old flags; no region polling or unbounded request cache.
   const key = JSON.stringify(nodeIds.slice(0, 16).sort().flatMap((nodeId) => {
-    const profile = agents.find((agent) => agent.id === nodeId)?.networkProfile;
-    return profile?.directPublic && profile.publicAddress ? [[nodeId, profile.publicAddress]] : [];
+    const agent = agents.find((value) => value.id === nodeId);
+    // Region describes the node's public egress. NAT nodes still have a usable
+    // egress address even though they cannot accept direct public ingress.
+    const address = agent?.publicEgress?.address || agent?.networkProfile?.publicAddress;
+    return address ? [[nodeId, address]] : [];
   }));
   const [result, setResult] = useState<{ key: string; regions: Record<string, string> } | null>(null);
 
