@@ -17,6 +17,7 @@ create_bundle() {
   bundle_version="$1"
   bundle_content="$2"
   printf 'VASTORA_VERSION=%s\n' "$bundle_version" > "$bundle_dir/release.env"
+  printf 'VASTORA_CENTER_IMAGE=ghcr.io/petauron/vastora-center@sha256:%064d\n' 0 >> "$bundle_dir/release.env"
   printf '%s\n' "$bundle_content" > "$bundle_dir/content.txt"
   tar -czf "$source_dir/vastora-center-install.tar.gz" -C "$bundle_dir" .
   (cd "$source_dir" && sha256sum vastora-center-install.tar.gz > vastora-center-install.tar.gz.sha256)
@@ -141,7 +142,7 @@ cp "$project_dir/install.sh" "$source_dir/install.sh"
 manifest="$fake_r2/objects/vastora/releases/v$version/manifest.json"
 test -f "$manifest"
 test ! -e "$fake_r2/objects/vastora/releases/v$version/activated.json"
-jq -e --arg version "$version" '.schema == 1 and .version == $version and (.assets | length) == 3' "$manifest" >/dev/null
+jq -e --arg version "$version" '.schema == 1 and .version == $version and (.centerImage | startswith("ghcr.io/petauron/vastora-center@sha256:")) and (.assets | length) == 3' "$manifest" >/dev/null
 
 "$script_dir/publish-installer-r2.sh" activate --version "$version" --bucket "$bucket" --endpoint "$endpoint" >/dev/null
 cmp -s "$manifest" "$fake_r2/objects/vastora/releases/v$version/activated.json"

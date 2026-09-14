@@ -16,6 +16,7 @@ mkdir -p "$fake_bin" "$fake_release" "$source_dir" "$bundle_dir"
 version="0.1.0-alpha.10"
 tag="v$version"
 printf 'VASTORA_VERSION=%s\n' "$version" > "$bundle_dir/release.env"
+printf 'VASTORA_CENTER_IMAGE=ghcr.io/petauron/vastora-center@sha256:%064d\n' 0 >> "$bundle_dir/release.env"
 tar -czf "$source_dir/vastora-center-install.tar.gz" -C "$bundle_dir" .
 (cd "$source_dir" && sha256sum vastora-center-install.tar.gz > vastora-center-install.tar.gz.sha256)
 cp "$project_dir/install.sh" "$source_dir/install.sh"

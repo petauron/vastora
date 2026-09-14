@@ -87,6 +87,7 @@ function oauthEnvironment() {
 const installerManifest = {
   schema: 1,
   version: "0.1.0-alpha.4",
+  centerImage: `ghcr.io/petauron/vastora-center@sha256:${"d".repeat(64)}`,
   assets: {
     "install.sh": {
       key: "vastora/releases/v0.1.0-alpha.4/install.sh",
@@ -146,6 +147,7 @@ function installerEnvironment({ mismatchAsset = "", manifest = installerManifest
   assert.equal(await response.text(), "#!/bin/sh\n");
   assert.equal(response.headers.get("x-vastora-version"), "0.1.0-alpha.4");
   assert.equal(response.headers.get("x-vastora-sha256"), "a".repeat(64));
+  assert.equal(response.headers.get("x-vastora-center-image"), installerManifest.centerImage);
   assert.equal(response.headers.get("cache-control"), "public, max-age=60");
 
   const cachedResponse = await worker.fetch(request("/vastora-center-install.tar.gz"), env, executionContext().context);

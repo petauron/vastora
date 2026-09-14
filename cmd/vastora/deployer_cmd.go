@@ -57,6 +57,6 @@ func runDeployer(arguments []string) error {
 	server := deployer.NewServer(installer).
 		WithPublicEntryProber(deployer.NewPublicEntryProbeService(*dockerSocket, *runtimeImage)).
 		WithCenterRemoteAccessManager(deployer.DockerCenterRemoteAccessManager{Socket: *dockerSocket}).
-		WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir})
+		WithCenterUpdater(deployer.FileCenterUpdater{InstallDir: *centerInstallDir, RuntimeImage: *runtimeImage})
 	return deployer.ServeUnix(*socket, *centerUID, *centerGID, server.Handler())
 }

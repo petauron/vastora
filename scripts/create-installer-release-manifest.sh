@@ -52,6 +52,11 @@ if [ "$bundle_version" != "$version" ]; then
   echo "The Center bundle version does not match the release version." >&2
   exit 1
 fi
+center_image="$(tar -xOzf "$bundle" ./release.env 2>/dev/null | awk -F= '$1 == "VASTORA_CENTER_IMAGE" {sub(/^[^=]*=/, ""); print; exit}')"
+if ! printf '%s\n' "$center_image" | grep -Eq '^ghcr\.io/petauron/vastora-center@sha256:[0-9a-f]{64}$'; then
+  echo "The Center bundle image is not pinned by a valid release digest." >&2
+  exit 1
+fi
 expected_bundle_digest="$(awk 'NR == 1 {print tolower($1)}' "$checksum")"
 actual_bundle_digest="$(sha256sum "$bundle" | awk 'NR == 1 {print tolower($1)}')"
 if ! printf '%s\n' "$expected_bundle_digest" | grep -Eq '^[0-9a-f]{64}$' || [ "$actual_bundle_digest" != "$expected_bundle_digest" ]; then
@@ -64,13 +69,14 @@ installer_digest="$(sha256sum "$installer" | awk 'NR == 1 {print tolower($1)}')"
 checksum_digest="$(sha256sum "$checksum" | awk 'NR == 1 {print tolower($1)}')"
 jq -n -S \
   --arg version "$version" \
+  --arg center_image "$center_image" \
   --arg installer_key "$prefix/install.sh" \
   --arg installer_digest "$installer_digest" \
   --arg bundle_key "$prefix/vastora-center-install.tar.gz" \
   --arg bundle_digest "$actual_bundle_digest" \
   --arg checksum_key "$prefix/vastora-center-install.tar.gz.sha256" \
   --arg checksum_digest "$checksum_digest" \
-  '{schema: 1, version: $version, assets: {
+  '{schema: 1, version: $version, centerImage: $center_image, assets: {
     "install.sh": {key: $installer_key, sha256: $installer_digest},
     "vastora-center-install.tar.gz": {key: $bundle_key, sha256: $bundle_digest},
     "vastora-center-install.tar.gz.sha256": {key: $checksum_key, sha256: $checksum_digest}

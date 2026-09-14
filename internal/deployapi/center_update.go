@@ -9,15 +9,17 @@ import (
 )
 
 type CenterUpdateExecution struct {
-	Available     bool   `json:"available"`
-	State         string `json:"state"`
-	TargetVersion string `json:"targetVersion,omitempty"`
-	Message       string `json:"message,omitempty"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
+	Available      bool   `json:"available"`
+	InstalledImage string `json:"installedImage"`
+	State          string `json:"state"`
+	TargetVersion  string `json:"targetVersion,omitempty"`
+	Message        string `json:"message,omitempty"`
+	UpdatedAt      string `json:"updatedAt,omitempty"`
 }
 
 type CenterUpdateRequest struct {
 	Version          string `json:"version"`
+	Image            string `json:"image"`
 	InstallerBaseURL string `json:"installerBaseUrl"`
 	InstallerHost    string `json:"installerHost"`
 	InstallerPort    string `json:"installerPort"`
