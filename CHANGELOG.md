@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.137](https://github.com/petauron/vastora/compare/v0.1.0-alpha.136...v0.1.0-alpha.137) (2026-09-14)
+
+
+### Bug Fixes
+
+* publish landing combinations through confirmed tunnel origins ([#460](https://github.com/petauron/vastora/issues/460)) ([20444d3](https://github.com/petauron/vastora/commit/20444d334b59dc423a4c7c529bc7b47ddd578df2))
+* use native Docker IPAM prefix type ([#461](https://github.com/petauron/vastora/issues/461)) ([0c7e620](https://github.com/petauron/vastora/commit/0c7e620d407136b26e75ab417e4496214592e63e))
+
 ## [0.1.0-alpha.136](https://github.com/petauron/vastora/compare/v0.1.0-alpha.135...v0.1.0-alpha.136) (2026-09-13)
 
 
