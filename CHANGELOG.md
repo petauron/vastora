@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.142](https://github.com/petauron/vastora/compare/v0.1.0-alpha.141...v0.1.0-alpha.142) (2026-09-14)
+
+
+### Bug Fixes
+
+* **landing:** show per-exit flags and latency ([#477](https://github.com/petauron/vastora/issues/477)) ([4f6fadd](https://github.com/petauron/vastora/commit/4f6fadde1336d0e4feef4f8bc7ca87408695c7ac))
+
 ## [0.1.0-alpha.141](https://github.com/petauron/vastora/compare/v0.1.0-alpha.140...v0.1.0-alpha.141) (2026-09-14)
 
 
