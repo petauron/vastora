@@ -69,6 +69,15 @@ jobs:
       - name: Check frontend dependency manifests
         if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
         run: jq -e 'type == "object"' web/package.json web/package-lock.json >/dev/null
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Compile frontend
+        if: needs.changes.outputs.web == 'true' || needs.changes.outputs.full == 'true'
+        run: cd web && npm ci --ignore-scripts && npm run build
 
   go-race:
     name: Go race tests
