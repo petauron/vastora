@@ -82,11 +82,14 @@ func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.Hos
 	if info, err := os.Stat(executable); err != nil || !info.Mode().IsRegular() {
 		return errors.New("agent: update executable is not a regular file")
 	}
-	if err := os.MkdirAll(hostUpdateDir, 0o700); err != nil {
-		return fmt.Errorf("agent: create persistent update directory: %w", err)
+	operation := hostUpdateOperation{
+		ExecutionID: request.ExecutionID, SessionID: request.SessionID,
+		Version: 1, TaskID: request.TaskID, Attempt: request.Attempt, TargetVersion: request.TargetVersion, SourceVersion: agent.Version,
+		DataDir: u.dataDir, Executable: executable, AgentID: request.Connection.AgentID, CenterURL: request.Connection.CenterURL,
+		Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint, CACertificatePEM: request.Connection.CACertificatePEM,
 	}
-	if err := os.Chmod(hostUpdateDir, 0o700); err != nil {
-		return fmt.Errorf("agent: protect persistent update directory: %w", err)
+	if err := prepareHostUpdateDirectory(ctx, hostUpdateDir, operation, runHostCommand, executableVersion); err != nil {
+		return err
 	}
 	client, err := agent.CenterHTTPClient(request.Connection, 2*time.Minute)
 	if err != nil {
@@ -101,24 +104,10 @@ func (u systemHostUpdater) ScheduleUpdate(ctx context.Context, request agent.Hos
 	if version != request.TargetVersion {
 		return fmt.Errorf("agent: Center offered version %s for update task targeting %s", version, request.TargetVersion)
 	}
-	operation := hostUpdateOperation{
-		ExecutionID: request.ExecutionID, SessionID: request.SessionID,
-		Version: 1, TaskID: request.TaskID, Attempt: request.Attempt, TargetVersion: version, SourceVersion: agent.Version,
-		DataDir: u.dataDir, Executable: executable, AgentID: request.Connection.AgentID, CenterURL: request.Connection.CenterURL,
-		Credential: request.Connection.Credential, CAFingerprint: request.Connection.CAFingerprint, CACertificatePEM: request.Connection.CACertificatePEM,
-	}
 	if err := persistHostUpdate(candidate, operation); err != nil {
 		return err
 	}
-	// This authorization starts the helper once. A host reboot or helper
-	// failure must not authorize another execution of the operation.
-	for _, arguments := range [][]string{{"daemon-reload"}, {"disable", hostUpdateUnitName}, {"reset-failed", hostUpdateUnitName}, {"start", "--no-block", hostUpdateUnitName}} {
-		output, err := exec.CommandContext(ctx, "systemctl", arguments...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("agent: start persistent host update: %s: %w", strings.TrimSpace(string(output)), err)
-		}
-	}
-	return nil
+	return startHostUpdateHelper(ctx, runHostCommand)
 }
 
 func persistHostUpdate(candidate string, operation hostUpdateOperation) error {
