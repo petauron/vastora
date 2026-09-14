@@ -17,11 +17,26 @@ func (s *Store) landingHealth() *landing.Health {
 	s.landingStatusMu.RLock()
 	defer s.landingStatusMu.RUnlock()
 	status := s.landingStatus
-	if status.Revision == 0 {
+	if status.Revision == 0 && len(s.landingPeerStatuses) == 0 {
 		return nil
 	}
-	healthy := status.State == "healthy" && status.LinkState == "direct" && status.TCP && status.UDP && status.AllowedUntil.After(time.Now())
-	return &landing.Health{Revision: status.Revision, Healthy: healthy, CheckedAt: status.CheckedAt}
+	healthy := status.State == "healthy" && status.LinkState == "direct" && status.TCP && status.UDP && status.AllowedUntil.After(s.now())
+	value := &landing.Health{Revision: status.Revision, Healthy: healthy, CheckedAt: status.CheckedAt, Peers: []landing.PeerHealth{}}
+	for _, peer := range s.landingPeerStatuses {
+		peerHealthy := peer.Status.State == "healthy" && peer.Status.LinkState == "direct" && peer.Status.TCP && peer.Status.AllowedUntil.After(s.now())
+		value.Peers = append(value.Peers, landing.PeerHealth{Peer: peer.Peer, Revision: peer.Status.Revision, Healthy: peerHealthy, State: peer.Status.State, Reason: peer.Status.Reason, CheckedAt: peer.Status.CheckedAt})
+	}
+	slices.SortFunc(value.Peers, func(a, b landing.PeerHealth) int { return strings.Compare(a.Peer.ID, b.Peer.ID) })
+	return value
+}
+
+func (s *Store) setLandingPeerStatus(peer landing.PeerIdentity, status landing.MonitorStatus) {
+	s.landingStatusMu.Lock()
+	defer s.landingStatusMu.Unlock()
+	if s.landingPeerStatuses == nil {
+		s.landingPeerStatuses = map[string]landingPeerStatus{}
+	}
+	s.landingPeerStatuses[peer.ID] = landingPeerStatus{Peer: peer, Status: status}
 }
 
 func (s *Store) checkLandingApplicationMutation(ctx context.Context, appKey string) error {
@@ -38,24 +53,89 @@ func (s *Store) checkLandingApplicationMutation(ctx context.Context, appKey stri
 	return nil
 }
 
-func (s *Store) restoreLandingProxy(ctx context.Context) error {
+// ResumeLandingRuntime restores only the fail-closed runtime monitor. It never
+// writes Xray routes, changes restart policy, starts a container, advances a
+// revision, or terminates existing sessions.
+func (s *Store) ResumeLandingRuntime(ctx context.Context) (result error) {
 	s.landingMutationMu.Lock()
+	defer s.landingMutationMu.Unlock()
 	if s.landingCancel != nil {
 		select {
 		case <-s.landingDone:
 			s.landingCancel = nil
 			s.landingDone = nil
 		default:
-			s.landingMutationMu.Unlock()
 			return nil
 		}
 	}
 	state, err := s.landingRuntime(ctx)
-	s.landingMutationMu.Unlock()
-	if err != nil || state == nil || state.Route == nil {
+	if err != nil || state == nil {
 		return err
 	}
-	return s.applyLandingProxy(ctx, state.Desired)
+	if !state.Desired.Active() {
+		return nil
+	}
+	blocked := landing.MonitorStatus{Revision: state.Desired.Revision, State: "blocked", LinkState: "unknown", Reason: "startup_recovery", CheckedAt: time.Now().UTC()}
+	for _, use := range state.Desired.PeerUses() {
+		if use.Active {
+			s.setLandingPeerStatus(use.Peer, blocked)
+		}
+	}
+	defer func() {
+		if result == nil {
+			return
+		}
+		blocked.Reason = "startup_validation_failed"
+		blocked.CheckedAt = time.Now().UTC()
+		for _, use := range state.Desired.PeerUses() {
+			if use.Active {
+				s.setLandingPeerStatus(use.Peer, blocked)
+			}
+		}
+	}()
+	if state.Route == nil || state.Phase != "applied" || state.Applied == nil || state.Retiring != nil || state.Applied.Revision != state.Desired.Revision || state.Route.Revision != state.Desired.Revision || state.ApplicationID != state.Desired.ApplicationID() {
+		return errors.New("agent: landing runtime requires explicit reconciliation")
+	}
+	// Close every known peer before inspecting Docker or the management API.
+	gates, err := landingGates(state.Desired, state.Bridge)
+	if err != nil {
+		return err
+	}
+	for _, gate := range gates {
+		if err := gate.Install(ctx); err != nil {
+			return err
+		}
+	}
+	docker, bridge, policy, err := openLandingDocker(ctx, state.ApplicationID, state.ContainerID)
+	if err != nil {
+		return err
+	}
+	defer docker.engine.Close()
+	if bridge != state.Bridge || policy != "no" {
+		return errors.New("agent: landing proxy runtime identity changed")
+	}
+	inspected, err := docker.inspect(ctx)
+	if err != nil || !inspected.Container.State.Running {
+		return errors.New("agent: landing proxy instance is not running")
+	}
+	routes, err := s.localThreeXUILandingRoutes(ctx, state.ApplicationID)
+	if err != nil {
+		return err
+	}
+	if err := waitLandingRoutes(ctx, routes); err != nil {
+		return err
+	}
+	raw, _, err := routes.Read(ctx)
+	if err != nil {
+		return errors.New("agent: applied landing route is unavailable")
+	}
+	if _, write, err := state.Route.NextWrite(raw, true); err != nil || write {
+		return errors.New("agent: applied landing route identity changed")
+	}
+	if err := s.verifyLocalLandingPlan(ctx, routes, state.Desired); err != nil {
+		return err
+	}
+	return s.startLandingMonitor(*state, true)
 }
 
 func waitLandingRoutes(ctx context.Context, routes threeXUILandingRoutes) error {
@@ -271,7 +351,7 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if err := s.saveLandingRuntime(ctx, *current); err != nil {
 		return err
 	}
-	return s.startLandingMonitor(*current)
+	return s.startLandingMonitor(*current, false)
 }
 
 // Caller holds landingMutationMu. Direct routing is restored only on an
@@ -366,13 +446,23 @@ func removeRetiringLandingGate(ctx context.Context, state *landingRuntimeState) 
 	return nil
 }
 
-func (s *Store) startLandingMonitor(state landingRuntimeState) error {
+func (s *Store) startLandingMonitor(state landingRuntimeState, resumed bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	gates, err := landingGates(state.Desired, state.Bridge)
 	if err != nil {
 		cancel()
 		return err
 	}
+	starting := landing.MonitorStatus{Revision: state.Desired.Revision, State: "blocked", LinkState: "unknown", Reason: "monitor_starting", CheckedAt: time.Now().UTC()}
+	s.landingStatusMu.Lock()
+	s.landingStatus = landing.MonitorStatus{}
+	s.landingPeerStatuses = map[string]landingPeerStatus{}
+	for _, use := range state.Desired.PeerUses() {
+		if use.Active {
+			s.landingPeerStatuses[use.Peer.ID] = landingPeerStatus{Peer: use.Peer, Status: starting}
+		}
+	}
+	s.landingStatusMu.Unlock()
 	s.landingCancel = cancel
 	s.landingDone = make(chan struct{})
 	done := s.landingDone
@@ -435,8 +525,9 @@ func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 					return (landing.Probe{TCPOnly: use.TCPOnly}).Check(checkCtx, peer, revision)
 				}
 				checker := landing.NewLinkChecker()
-				monitor := landing.Monitor{Gate: gate, Links: checker, TCPOnly: use.TCPOnly, CheckBusiness: checkBusiness,
+				monitor := landing.Monitor{Gate: gate, Links: checker, TCPOnly: use.TCPOnly, SkipInitialStop: resumed, CheckBusiness: checkBusiness,
 					StopConnections: stopConnections, Report: func(status landing.MonitorStatus) {
+						s.setLandingPeerStatus(use.Peer, status)
 						s.landingStatusMu.Lock()
 						if state.Desired.Proxy != nil && use.Peer == state.Desired.Proxy.Peer {
 							s.landingStatus = status
@@ -445,8 +536,9 @@ func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 					},
 				}
 				if err := monitor.Run(ctx); err != nil {
-					s.landingStatusMu.Lock()
 					blocked := landing.MonitorStatus{Revision: state.Desired.Revision, State: "blocked", Reason: "monitor_stopped", CheckedAt: time.Now().UTC()}
+					s.setLandingPeerStatus(use.Peer, blocked)
+					s.landingStatusMu.Lock()
 					if state.Desired.Proxy != nil && use.Peer == state.Desired.Proxy.Peer {
 						s.landingStatus = blocked
 					}

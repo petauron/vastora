@@ -39,9 +39,9 @@ type MonitorStatus struct {
 // must check before changing the old direct configuration. StopConnections
 // must terminate old connections in the selected proxy instance (not HAProxy,
 // the controller, or other nodes), and verify that termination before returning.
-// The caller must close the gate and terminate old connections synchronously
-// before Run, including checkpoint recovery. Callers must disclose the resulting
-// instance-wide interruption; Run does not repeat this initial cutover.
+// A configuration task must close the gate and terminate old connections
+// synchronously before Run. Startup recovery closes the gate but deliberately
+// does not restart the proxy merely because the Agent process restarted.
 type Monitor struct {
 	Gate            *BridgeGate
 	Links           *LinkChecker
@@ -49,6 +49,10 @@ type Monitor struct {
 	StopConnections func(context.Context) error
 	Report          func(MonitorStatus)
 	TCPOnly         bool
+	// Startup recovery already installed a closed gate. A lost response to the
+	// first renewal must remain fail closed, but must not restart the proxy just
+	// because the Agent process restarted.
+	SkipInitialStop bool
 }
 
 // Run owns Links for this monitor's lifetime, including validation and setup
@@ -61,14 +65,24 @@ func (m *Monitor) Run(ctx context.Context) error {
 	// No permission survives process restart. A kernel boot fence is separately
 	// required: a monitor cannot retroactively close a pre-start boot window.
 	if err := m.Gate.Install(ctx); err != nil {
+		if m.SkipInitialStop {
+			return err
+		}
 		return errors.Join(err, m.stop())
 	}
-	defer func() { _ = m.close(); _ = m.stop() }()
+	everAllowed := false
+	defer func() {
+		_ = m.close()
+		if !m.SkipInitialStop || everAllowed {
+			_ = m.stop()
+		}
+	}()
 	ticker := time.NewTicker(CheckInterval)
 	defer ticker.Stop()
 	var lastHealthy time.Time
 	wasAllowed := false
 	lastProbeFailure := ""
+	initialCheck := true
 	for {
 		status := MonitorStatus{Revision: m.Gate.revision, State: "blocked", LinkState: "unknown", Reason: "check_failed", LastHealthyAt: lastHealthy}
 		before := m.Links.Check(ctx, m.Gate.peer)
@@ -115,7 +129,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 			if err := m.close(); err != nil {
 				return errors.Join(err, m.stop())
 			}
-			if wasAllowed || attemptedRenewal {
+			if wasAllowed || attemptedRenewal && !(initialCheck && m.SkipInitialStop) {
 				if err := m.stop(); err != nil {
 					return err
 				}
@@ -124,11 +138,15 @@ func (m *Monitor) Run(ctx context.Context) error {
 				status.Reason = "business_or_link_check_failed"
 			}
 		}
+		if status.State == "healthy" {
+			everAllowed = true
+		}
 		wasAllowed = status.State == "healthy"
 		status.CheckedAt = time.Now().UTC()
 		if m.Report != nil {
 			m.Report(status)
 		}
+		initialCheck = false
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

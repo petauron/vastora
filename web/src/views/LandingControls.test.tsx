@@ -38,7 +38,7 @@ function overview(): LandingView {
     nodeIds: ["a", "b"], revision: 4,
     servers: [{ nodeId: "a", name: "落地 A", status: "ready", inUse: true }, { nodeId: "b", name: "落地 B", status: "ready", inUse: false }],
     candidates: [{ nodeId: "a", name: "落地 A" }, { nodeId: "b", name: "落地 B" }, { nodeId: "c", name: "落地 C" }],
-    proxies: [{ applicationId: "app-one", landingNodeId: "a", enabled: false, revision: 2, status: "stopped", connection: "disabled", applied: { revision: 2, landingNodeId: "" } }],
+    proxies: [{ applicationId: "app-one", landingNodeId: "a", enabled: false, revision: 2, status: "stopped", connection: "disabled", applied: { revision: 2, landingNodeId: "" }, peers: [] }],
     latencies: [{ nodeId: "source-one", landingNodeId: "a", state: "direct", latencyMs: 12, checkedAt: new Date().toISOString() }, { nodeId: "source-one", landingNodeId: "b", state: "direct", latencyMs: 88, checkedAt: new Date().toISOString() }, { nodeId: "source-two", landingNodeId: "b", state: "direct", latencyMs: 1, checkedAt: new Date().toISOString() }],
   };
 }

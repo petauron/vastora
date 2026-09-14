@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/secret"
@@ -17,6 +18,7 @@ type landingControllerGrant struct {
 	Phase             string                   `json:"phase"`
 	ChildSubscription string                   `json:"childSubscription"`
 	Material          landing.ControllerResult `json:"material"`
+	DetachInboundIDs  []int                    `json:"detachInboundIds,omitempty"`
 }
 
 type landingControllerAccount struct {
@@ -69,6 +71,14 @@ func (s *Store) landingController(ctx context.Context) (*landingControllerState,
 	for id, g := range state.Grants {
 		if id != g.Task.Grant.ID || g.Task.Grant.Validate() != nil || g.Task.Revision == 0 || g.Task.ControllerID != state.ControllerID || landing.Identity(g.Task.FixedUUID) != g.Task.Grant.FixedIdentity || g.ChildSubscription == "" {
 			return nil, errors.New("agent: invalid landing account ownership")
+		}
+		if !slices.IsSorted(g.DetachInboundIDs) {
+			return nil, errors.New("agent: invalid landing detach scope")
+		}
+		for index, inboundID := range g.DetachInboundIDs {
+			if inboundID <= 0 || index > 0 && g.DetachInboundIDs[index-1] == inboundID {
+				return nil, errors.New("agent: invalid landing detach scope")
+			}
 		}
 	}
 	return &state, nil

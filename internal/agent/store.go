@@ -44,11 +44,17 @@ type Store struct {
 	landingDone                chan struct{}
 	landingStatusMu            sync.RWMutex
 	landingStatus              landing.MonitorStatus
+	landingPeerStatuses        map[string]landingPeerStatus
 	landingSubscriptionMu      sync.RWMutex
 	landingSubscriptionAddress string
 	landingLatencyMu           sync.Mutex
 	landingLatencyTargets      []landing.LatencyTarget
 	landingLatencyChanged      chan struct{}
+}
+
+type landingPeerStatus struct {
+	Peer   landing.PeerIdentity
+	Status landing.MonitorStatus
 }
 
 type AppliedInstallation struct {

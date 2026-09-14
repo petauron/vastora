@@ -23,6 +23,7 @@ const landingProxySchema = `CREATE TABLE landing_proxy_states (
  health_ok INTEGER NOT NULL DEFAULT 0 CHECK(health_ok IN (0,1)),
  health_checked_at TEXT NOT NULL DEFAULT '',
  health_received_at TEXT NOT NULL DEFAULT '',
+ peer_health_json BLOB NOT NULL DEFAULT '[]' CHECK(json_valid(peer_health_json)),
  desired_revision INTEGER NOT NULL CHECK(desired_revision > 0),
  applied_revision INTEGER NOT NULL DEFAULT 0,
  applied_landing_node_id TEXT,

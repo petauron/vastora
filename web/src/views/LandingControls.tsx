@@ -231,6 +231,7 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
   const ownName = copy(language, "本机出口", "Own exit");
   const exitName = (target: string) => servers.find((server) => server.nodeId === target)?.name ?? copy(language, "不可用落地机", "Unavailable exit");
   const previous = view?.proxies.find((item) => item.applicationId === applicationId && item.enabled);
+  const runtime = view?.proxies.find((item) => item.applicationId === applicationId);
   const names = [...(policy?.ownExit !== false ? [ownName] : []), ...(policy?.landingNodeIds ?? []).map(exitName)];
   const landingCount = policy?.landingNodeIds.length ?? 0;
   const summary = landingCount > 0
@@ -238,11 +239,13 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
     : ownName;
   const stale = draft !== null && draft.revision !== (policy?.revision ?? 0);
   const invalid = !draft || (!draft.ownExit && draft.landingNodeIds.length === 0) || draft.landingNodeIds.some((target) => view?.blockedNodeIds?.includes(target) || !servers.some((server) => server.nodeId === target && server.status === "ready"));
+  const unhealthyRuntimeCount = (policy?.landingNodeIds ?? []).filter((target) => runtime?.peers?.some((peer) => peer.nodeId === target && !peer.healthy)).length;
   const status = view?.tasksPaused ? copy(language, "任务已暂停，等待恢复", "Tasks paused; waiting to resume")
     : view?.controllerBlocked ? copy(language, "订阅主机任务待处理，暂不能保存", "Subscription host blocked; cannot save")
     : blocked ? copy(language, "节点任务待处理", "Node task needs attention")
     : policy?.status === "applying" ? copy(language, "正在同步组合…", "Syncing combinations…")
-    : policy?.status === "failed" ? copy(language, "同步失败，请重新保存", "Sync failed; save again to retry") : null;
+    : policy?.status === "failed" ? copy(language, "同步失败，请重新保存", "Sync failed; save again to retry")
+    : unhealthyRuntimeCount > 0 ? copy(language, `${unhealthyRuntimeCount} 个落地运行异常，订阅已暂停发布`, `${unhealthyRuntimeCount} exits unavailable; subscription entries withheld`) : null;
   return <div className="flex min-w-0 flex-col gap-1">
     <LandingExitEditor open={draft !== null} busy={busy} onOpenChange={(open) => {
       if (open) {
@@ -276,11 +279,13 @@ export function LandingExitSelect({ applicationId, nodeId, name, locked, languag
                 const taskBlocked = view?.blockedNodeIds?.includes(server.nodeId);
                 const unavailable = server.status !== "ready" || taskBlocked;
                 const latency = view?.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === server.nodeId);
-                const attention = taskBlocked || server.status === "offline" || server.status === "failed" || (latency?.state === "unavailable" && !unavailable);
+                const peerRuntime = runtime?.peers?.find((peer) => peer.nodeId === server.nodeId);
+                const runtimeBlocked = selected && peerRuntime != null && !peerRuntime.healthy;
+                const attention = taskBlocked || runtimeBlocked || server.status === "offline" || server.status === "failed" || (latency?.state === "unavailable" && !unavailable);
                 return <Field key={server.nodeId} orientation="horizontal" className="min-h-11 py-2" data-disabled={!selected && unavailable}>
                   <Checkbox id={id + server.nodeId} checked={selected} disabled={!selected && unavailable} onCheckedChange={(checked) => setDraft((value) => value ? { ...value, landingNodeIds: checked ? [...value.landingNodeIds, server.nodeId] : value.landingNodeIds.filter((target) => target !== server.nodeId) } : value)} />
                   <FieldLabel className="min-w-0 flex-1" htmlFor={id + server.nodeId}>{server.name}</FieldLabel>
-                  <span className={cn("shrink-0 text-xs tabular-nums", attention ? "text-destructive" : landingLatencyColor(!unavailable && latency?.state === "direct" ? latency.latencyMs : null))}>{taskBlocked ? copy(language, "任务待处理", "Tasks need attention") : server.status === "offline" ? copy(language, "离线", "Offline") : server.status === "failed" ? copy(language, "部署失败", "Setup failed") : unavailable ? copy(language, "正在准备", "Preparing") : latencyLabel(language, latency)}</span>
+                  <span className={cn("shrink-0 text-xs tabular-nums", attention ? "text-destructive" : landingLatencyColor(!unavailable && latency?.state === "direct" ? latency.latencyMs : null))}>{taskBlocked ? copy(language, "任务待处理", "Tasks need attention") : runtimeBlocked ? copy(language, "运行链路不可用", "Runtime unavailable") : server.status === "offline" ? copy(language, "离线", "Offline") : server.status === "failed" ? copy(language, "部署失败", "Setup failed") : unavailable ? copy(language, "正在准备", "Preparing") : latencyLabel(language, latency)}</span>
                 </Field>;
               })}
             </FieldGroup>

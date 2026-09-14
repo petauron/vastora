@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -198,6 +199,51 @@ func TestMonitorDoesNotRepeatCallerCutoverAndStillStopsOnExit(t *testing.T) {
 	}
 	if err := monitor.Run(ctx); err != context.Canceled || stops != 1 || reports != 1 {
 		t.Fatalf("shutdown cleanup changed: stops=%d reports=%d err=%v", stops, reports, err)
+	}
+}
+
+func TestRecoveredMonitorDoesNotRestartOnUnconfirmedInitialRenewal(t *testing.T) {
+	gate := fixtureGate(t)
+	document, err := json.Marshal(fixtureNFT(t, gate))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate.run = func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+		if input != nil && strings.Contains(string(input), `"element"`) {
+			return nil, errors.New("simulated lost renewal response")
+		}
+		if input != nil {
+			return nil, nil
+		}
+		return document, nil
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/localapi/v0/ping" {
+			seconds := 0.001
+			_ = json.NewEncoder(w).Encode(pingResult{IP: gate.peer.Address, NodeIP: gate.peer.Address, Endpoint: "203.0.113.8:41641", LatencySeconds: &seconds})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(localStatus{BackendState: "Running", Peer: map[string]*localPeer{"peer": {ID: gate.peer.ID, PublicKey: gate.peer.PublicKey, TailscaleIPs: []string{gate.peer.Address}}}})
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	stops, reports := 0, 0
+	monitor := Monitor{Gate: gate, Links: &LinkChecker{HTTPClient: &http.Client{Transport: latencyTransport{server.URL}}}, SkipInitialStop: true,
+		CheckBusiness: func(_ context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
+			started := time.Now()
+			return BusinessResult{Peer: peer, Revision: revision, TCP: true, UDP: true, UDPRelay: peer.Address + ":1081", ExitIPv4: "1.1.1.1", StartedAt: started, CheckedAt: time.Now()}, nil
+		},
+		StopConnections: func(context.Context) error { stops++; return nil },
+		Report: func(status MonitorStatus) {
+			reports++
+			if status.State != "blocked" || stops != 0 {
+				t.Fatalf("startup renewal failure restarted the proxy: status=%+v stops=%d", status, stops)
+			}
+			cancel()
+		},
+	}
+	if err := monitor.Run(ctx); err != context.Canceled || reports != 1 || stops != 0 {
+		t.Fatalf("recovered monitor cleanup changed: reports=%d stops=%d err=%v", reports, stops, err)
 	}
 }
 

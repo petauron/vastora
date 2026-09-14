@@ -66,14 +66,20 @@ func applyLandingClientCommand(ctx context.Context, store *Store, task landing.C
 			if err := verifyLandingChild(child, previous); err != nil {
 				return result, err
 			}
-			if previous.Task.InboundID > 0 {
-				// Retain the journaled inbound scope even after the controller DB
-				// detaches it: an empty post-write attachment list proves nothing
-				// about whether the worker received the removal.
-				inboundIDs := []int{previous.Task.InboundID}
-				if err := writeLandingNativeChange(ctx, baseURL, token, baseURL+"/panel/api/clients/"+url.PathEscape(task.Grant.FixedUser)+"/detach", map[string]any{"inboundIds": inboundIDs}, inboundIDs); err != nil {
+			if len(previous.DetachInboundIDs) == 0 {
+				// The journaled UUID and private child subscription token establish
+				// ownership. Persist the complete observed scope before changing it,
+				// including the expected entry for lost-response retries.
+				previous.DetachInboundIDs = append(slices.Clone(child.InboundIDs), previous.Task.InboundID)
+				slices.Sort(previous.DetachInboundIDs)
+				previous.DetachInboundIDs = slices.Compact(previous.DetachInboundIDs)
+				state.Grants[task.Grant.ID] = previous
+				if err := store.saveLandingController(ctx, state); err != nil {
 					return result, err
 				}
+			}
+			if err := writeLandingNativeChange(ctx, baseURL, token, baseURL+"/panel/api/clients/"+url.PathEscape(task.Grant.FixedUser)+"/detach", map[string]any{"inboundIds": previous.DetachInboundIDs}, previous.DetachInboundIDs); err != nil {
+				return result, err
 			}
 			observed, err := getThreeXUIClient(ctx, baseURL, token, task.Grant.FixedUser)
 			if err != nil || verifyLandingChild(observed, previous) != nil || len(observed.InboundIDs) != 0 {
@@ -223,11 +229,6 @@ func safeLandingAPIError(err error) error {
 func verifyLandingChild(child threeXUIClientDetail, grant landingControllerGrant) error {
 	if landing.Identity(clientJSONText(child.Client, "id")) != grant.Task.Grant.FixedIdentity || clientJSONText(child.Client, "subId") != grant.ChildSubscription || clientJSONText(child.Client, "email") != grant.Task.Grant.FixedUser {
 		return errors.New("agent: child identity ownership changed")
-	}
-	for _, id := range child.InboundIDs {
-		if id != grant.Task.InboundID {
-			return errors.New("agent: child is attached to an unexpected entry")
-		}
 	}
 	return nil
 }

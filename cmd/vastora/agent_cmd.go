@@ -588,6 +588,9 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
+			if err := store.ResumeLandingRuntime(context.Background()); err != nil {
+				controlLogger.Error("Landing monitor recovery blocked", "event", "landing.monitor.recovery", "error", controlplane.SafeError(err.Error()))
+			}
 			for {
 				if err := client.StartupHeartbeat(context.Background(), store); err == nil {
 					break
