@@ -18,9 +18,19 @@ func TestLandingRetirementRequiresConfirmedDetachmentAndPreservesLedger(t *testi
 		fields[key], _ = json.Marshal(value)
 	}
 	inboundIDs, pending, detachCalls := []int{9}, true, 0
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var value any
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/panel/api/inbounds/get/9":
+			value = map[string]any{"id": 9, "nodeId": 7}
+		case r.Method == "GET" && r.URL.Path == "/panel/api/nodes/get/7":
+			dirty := pending
+			if dirty {
+				cancelFirst()
+			}
+			value = map[string]any{"id": 7, "enable": true, "status": "online", "configDirty": dirty}
 		case r.Method == "GET" && r.URL.Path == "/panel/api/clients/get/Phone":
 			// The parent was externally removed; old counters must stay charged.
 			w.WriteHeader(http.StatusNotFound)
@@ -66,7 +76,7 @@ func TestLandingRetirementRequiresConfirmedDetachmentAndPreservesLedger(t *testi
 	}
 	task := grant.Task
 	task.Phase, task.Mode, task.Grant.Enabled, task.Revision = "retire", grant.Task.Grant.Mode, false, 2
-	if _, err := applyLandingClientCommand(context.Background(), store, task); err == nil {
+	if _, err := applyLandingClientCommand(firstCtx, store, task); err == nil {
 		t.Fatal("pending detach accepted")
 	}
 	pending = false

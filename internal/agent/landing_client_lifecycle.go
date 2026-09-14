@@ -119,7 +119,7 @@ func (s *Store) applyLandingParentMutation(ctx context.Context, baseURL, token s
 		if command.Action == "update" {
 			setClientJSONField(detail.Client, "email", account.Email)
 			setClientJSONField(detail.Client, "limitIp", command.LimitIP)
-			if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client); err != nil {
+			if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client, detail.InboundIDs); err != nil {
 				return err
 			}
 			observed, err := getThreeXUIClient(ctx, baseURL, token, account.Email)

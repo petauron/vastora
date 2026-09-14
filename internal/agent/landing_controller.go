@@ -67,13 +67,11 @@ func applyLandingClientCommand(ctx context.Context, store *Store, task landing.C
 				return result, err
 			}
 			if previous.Task.InboundID > 0 {
-				// Replay the journaled attachment even if the controller DB already
-				// removed it before returning nodePending or losing its response.
-				raw, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/"+url.PathEscape(task.Grant.FixedUser)+"/detach", token, "application/json", map[string]any{"inboundIds": []int{previous.Task.InboundID}})
-				if err != nil {
-					return result, errors.New("agent: child detachment requires confirmed retry")
-				}
-				if err := landingNativeWriteReady(raw); err != nil {
+				// Retain the journaled inbound scope even after the controller DB
+				// detaches it: an empty post-write attachment list proves nothing
+				// about whether the worker received the removal.
+				inboundIDs := []int{previous.Task.InboundID}
+				if err := writeLandingNativeChange(ctx, baseURL, token, baseURL+"/panel/api/clients/"+url.PathEscape(task.Grant.FixedUser)+"/detach", map[string]any{"inboundIds": inboundIDs}, inboundIDs); err != nil {
 					return result, err
 				}
 			}
@@ -248,7 +246,7 @@ func disableLandingChild(ctx context.Context, baseURL, token string, grant landi
 	setClientJSONField(child.Client, "enable", false)
 	setClientJSONField(child.Client, "expiryTime", int64(1))
 	setClientJSONField(child.Client, "reset", 0)
-	if err := updateLandingNativeClient(ctx, baseURL, token, grant.Task.Grant.FixedUser, child.Client); err != nil {
+	if err := updateLandingNativeClient(ctx, baseURL, token, grant.Task.Grant.FixedUser, child.Client, child.InboundIDs); err != nil {
 		return err
 	}
 	observed, err := getThreeXUIClient(ctx, baseURL, token, grant.Task.Grant.FixedUser)

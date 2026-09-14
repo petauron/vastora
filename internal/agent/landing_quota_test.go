@@ -46,6 +46,8 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 				clients[value.email] = &client{UUID: value.uuid, Fields: fields}
 			}
 			pending := true
+			firstCtx, cancelFirst := context.WithCancel(context.Background())
+			defer cancelFirst()
 			writes := []string{}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
@@ -55,6 +57,14 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 					return
 				}
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
+				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/nodes/get/7":
+					dirty := pending
+					if dirty {
+						cancelFirst()
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 7, "enable": true, "status": "online", "configDirty": dirty}})
 				case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/panel/api/clients/get/"):
 					item := clients[strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")]
 					if item == nil {
@@ -89,7 +99,7 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 			if err := store.saveLandingController(context.Background(), state); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.applyLandingQuotaPlan(context.Background(), server.URL, "native-token", state, parent); err == nil {
+			if err := store.applyLandingQuotaPlan(firstCtx, server.URL, "native-token", state, parent); err == nil {
 				t.Fatal("pending worker was accepted")
 			}
 			if !reflect.DeepEqual(writes, []string{grant.Task.Grant.FixedUser}) {

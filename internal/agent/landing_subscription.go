@@ -178,6 +178,8 @@ func (s *Store) runLandingSubscriptions(ctx context.Context, report func(error))
 	client := &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	var server *http.Server
 	var address string
+	var blockedAddress string
+	var inputRule []string
 	stop := func() {
 		s.landingSubscriptionMu.Lock()
 		s.landingSubscriptionAddress = ""
@@ -186,6 +188,14 @@ func (s *Store) runLandingSubscriptions(ctx context.Context, report func(error))
 			_ = server.Close()
 			server = nil
 		}
+		if inputRule != nil {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := runSubscriptionIPTables(cleanupCtx, append([]string{"-D", "INPUT"}, inputRule...)...); err != nil && report != nil {
+				report(errors.New("agent: private subscription input rule cleanup failed"))
+			}
+			cancel()
+			inputRule = nil
+		}
 		address = ""
 	}
 	defer stop()
@@ -193,9 +203,17 @@ func (s *Store) runLandingSubscriptions(ctx context.Context, report func(error))
 		installation, err := s.AppliedInstallation(ctx, threeXUIKey)
 		if err != nil || (landing.ServerPlan{Revision: 1, Address: installation.ServiceAddress}).Validate() != nil {
 			stop()
-		} else if address != installation.ServiceAddress {
+		} else if address != installation.ServiceAddress && blockedAddress != installation.ServiceAddress {
 			stop()
 			listener, err := net.Listen("tcp4", net.JoinHostPort(installation.ServiceAddress, strconv.Itoa(landing.SubscriptionPort)))
+			if err == nil {
+				inputRule, err = openLandingSubscriptionAccess(ctx, installation)
+				if err != nil {
+					_ = listener.Close()
+					// Do not replay an uncertain firewall mutation every five seconds.
+					blockedAddress = installation.ServiceAddress
+				}
+			}
 			if err != nil {
 				if report != nil {
 					report(errors.New("agent: private subscription endpoint is unavailable"))

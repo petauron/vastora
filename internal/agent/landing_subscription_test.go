@@ -29,15 +29,18 @@ func TestLandingSubscriptionRequestCannotBecomeAnOpenProxy(t *testing.T) {
 	}
 }
 
-func TestLandingNativeWriteCannotConfirmPendingWorkers(t *testing.T) {
-	for _, raw := range []string{`{"nodePending":true}`, `{"nodePending":"false"}`, `invalid`} {
-		if landingNativeWriteReady(json.RawMessage(raw)) == nil {
-			t.Fatal("unconfirmed worker update accepted")
+func TestLandingNativeWriteDistinguishesPendingFromInvalidResponses(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"nodePending":null}`, `{"nodePending":"false"}`, `invalid`} {
+		if _, err := landingNativeWritePending(json.RawMessage(raw)); err == nil {
+			t.Fatal("invalid worker response accepted")
 		}
 	}
-	for _, raw := range []string{`null`, `{}`, `{"nodePending":false}`} {
-		if err := landingNativeWriteReady(json.RawMessage(raw)); err != nil {
-			t.Fatal(err)
+	for _, raw := range []string{`null`, `{"nodePending":false}`} {
+		if pending, err := landingNativeWritePending(json.RawMessage(raw)); err != nil || pending {
+			t.Fatal("synchronous write was not recognized", pending, err)
 		}
+	}
+	if pending, err := landingNativeWritePending(json.RawMessage(`{"nodePending":true}`)); err != nil || !pending {
+		t.Fatal("deferred success must wait, not fail", pending, err)
 	}
 }
