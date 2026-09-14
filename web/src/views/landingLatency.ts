@@ -1,14 +1,13 @@
 import type { LandingView } from "../landing-types";
 
 export function selectedLandingLatencies(view: LandingView, nodeId: string, applicationId: string) {
-  const policy = view.nodeExits?.find((item) => item.applicationId === applicationId);
-  const previous = view.proxies.find((proxy) => proxy.applicationId === applicationId && proxy.enabled);
-  const targets = policy?.revision ? policy.landingNodeIds : previous ? [previous.landingNodeId] : [];
-  // Show only configured exits. A fast, unselected server is not active routing.
-  return targets.map((target) => ({
-    server: view.servers.find((server) => server.nodeId === target),
-    latency: view.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === target),
-  }));
+  void applicationId;
+  return view.servers
+    .filter((server) => view.nodeIds.includes(server.nodeId) && server.nodeId !== nodeId)
+    .map((server) => ({
+      server,
+      latency: view.latencies.find((sample) => sample.nodeId === nodeId && sample.landingNodeId === server.nodeId),
+    }));
 }
 
 export function landingLatencyColor(milliseconds: number | null | undefined): string {

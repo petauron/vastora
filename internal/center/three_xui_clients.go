@@ -475,6 +475,11 @@ func (s *Store) completeThreeXUIClientCommand(ctx context.Context, commit projec
 				if err := s.observeLandingAccounts(ctx, tx, taskID, &result); err != nil {
 					return err
 				}
+				if result.InboundsObserved && !result.ClientsObserved {
+					if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
+						return err
+					}
+				}
 				if result.Secret != "" {
 					secretID, err := s.putSecret(ctx, tx, []byte(result.Secret), "application-command:"+taskID)
 					if err != nil {

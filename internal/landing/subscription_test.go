@@ -14,7 +14,7 @@ func subscriptionFixture() SubscriptionGrant {
 	return SubscriptionGrant{Grant: grant, EntryName: "入口 A", LandingRegionCode: "US", BaseLink: "vless://11111111-2222-4333-8444-555555555555@entry.example.test:443" + query + "#original", FixedLink: "vless://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@entry.example.test:443" + query}
 }
 
-func TestNodeExitSelectionOmitsOwnExit(t *testing.T) {
+func TestCompositionPrimitiveCanOmitOwnExit(t *testing.T) {
 	item := subscriptionFixture()
 	item.Grant.HideBase = true
 	out, err := ComposeLinks([]byte(item.BaseLink+"\n"), item.Grant.ParentID, FixedMode, []SubscriptionGrant{item}, false)

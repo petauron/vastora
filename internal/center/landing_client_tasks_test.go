@@ -79,9 +79,12 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		}
 	}
 	completeServer(claimLanding(true))
-	input := LandingClientGrantInput{ParentID: parent, ServiceID: "client-inbound", LandingNodeID: owner.ID, Mode: landing.FixedMode, Enabled: true, ConfirmSessionReset: true}
-	grant, err := store.ConfigureClientLanding(ctx, input)
-	if err != nil || grant.Status != "preparing" || grant.AppliedRevision != 0 {
+	grants, err := store.LandingClientGrants(ctx, parent)
+	if err != nil || len(grants) != 1 {
+		t.Fatalf("global pool did not derive one authorized combination: %+v %v", grants, err)
+	}
+	grant := grants[0]
+	if grant.Status != "preparing" || grant.AppliedRevision != 0 {
 		t.Fatalf("grant queued: %+v %v", grant, err)
 	}
 	completeController := func(phase string) landing.ControllerTask {
@@ -126,7 +129,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	completeController("activate")
-	grants, err := store.LandingClientGrants(ctx, parent)
+	grants, err = store.LandingClientGrants(ctx, parent)
 	if err != nil || len(grants) != 1 || grants[0].Status != "ready" || grants[0].AppliedRevision != grant.Revision {
 		t.Fatal("grant became ready without the full task sequence", err)
 	}
@@ -219,8 +222,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	// The old landing can be offline: entry deny and controller retirement
 	// must not wait for a successful connection to that landing.
 	exec(`UPDATE landing_server_states SET status='failed' WHERE node_id=?`, owner.ID)
-	input.Enabled, input.Revision = false, grants[0].Revision
-	if _, err := store.ConfigureClientLanding(ctx, input); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{}, Revision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	routes = claimLanding(false)

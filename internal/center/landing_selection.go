@@ -16,8 +16,16 @@ import (
 const landingSelectionKey = "three_x_ui_landing_selection"
 
 type LandingSelection struct {
-	NodeIDs  []string `json:"nodeIds"`
-	Revision uint64   `json:"revision"`
+	NodeIDs            []string          `json:"nodeIds"`
+	LandingRegionCodes map[string]string `json:"landingRegionCodes,omitempty"`
+	RetiringNodeIDs    []string          `json:"retiringNodeIds,omitempty"`
+	Revision           uint64            `json:"revision"`
+}
+
+type LandingSelectionInput struct {
+	NodeIDs            []string          `json:"nodeIds"`
+	LandingRegionCodes map[string]string `json:"landingRegionCodes,omitempty"`
+	Revision           uint64            `json:"revision"`
 }
 
 type LandingCandidate struct {
@@ -26,22 +34,30 @@ type LandingCandidate struct {
 }
 
 type LandingView struct {
-	NodeExits         []NodeExitPolicy `json:"nodeExits"`
-	ControllerBlocked bool             `json:"controllerBlocked"`
+	ControllerBlocked bool `json:"controllerBlocked"`
 	LandingSelection
-	TasksPaused    bool                 `json:"tasksPaused"`
-	BlockedNodeIDs []string             `json:"blockedNodeIds"`
-	Servers        []LandingServerView  `json:"servers"`
-	Candidates     []LandingCandidate   `json:"candidates"`
-	Proxies        []LandingProxyView   `json:"proxies"`
-	Latencies      []LandingLatencyView `json:"latencies"`
+	Status               string               `json:"status"`
+	EligibleEntries      int                  `json:"eligibleEntries"`
+	ReadyCombinations    int                  `json:"readyCombinations"`
+	FailedCombinations   int                  `json:"failedCombinations"`
+	WithheldCombinations int                  `json:"withheldCombinations"`
+	TasksPaused          bool                 `json:"tasksPaused"`
+	BlockedNodeIDs       []string             `json:"blockedNodeIds"`
+	Servers              []LandingServerView  `json:"servers"`
+	Candidates           []LandingCandidate   `json:"candidates"`
+	Proxies              []LandingProxyView   `json:"proxies"`
+	Latencies            []LandingLatencyView `json:"latencies"`
 }
 
 type LandingServerView struct {
-	NodeID string `json:"nodeId"`
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	InUse  bool   `json:"inUse"`
+	NodeID               string `json:"nodeId"`
+	Name                 string `json:"name"`
+	Status               string `json:"status"`
+	InUse                bool   `json:"inUse"`
+	EligibleEntries      int    `json:"eligibleEntries"`
+	ReadyCombinations    int    `json:"readyCombinations"`
+	FailedCombinations   int    `json:"failedCombinations"`
+	WithheldCombinations int    `json:"withheldCombinations"`
 }
 
 type LandingProxyView struct {
@@ -74,7 +90,7 @@ func readLandingSelection(ctx context.Context, tx *sql.Tx) (LandingSelection, er
 	var encoded string
 	err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key=?`, landingSelectionKey).Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
-		return LandingSelection{NodeIDs: []string{}}, nil
+		return LandingSelection{NodeIDs: []string{}, LandingRegionCodes: map[string]string{}, RetiringNodeIDs: []string{}}, nil
 	}
 	if err != nil {
 		return LandingSelection{}, err
@@ -83,7 +99,40 @@ func readLandingSelection(ctx context.Context, tx *sql.Tx) (LandingSelection, er
 	if json.Unmarshal([]byte(encoded), &value) != nil || value.Revision == 0 || value.NodeIDs == nil {
 		return value, errors.New("center: invalid landing selection")
 	}
+	if value.LandingRegionCodes == nil {
+		value.LandingRegionCodes = map[string]string{}
+	}
+	if value.RetiringNodeIDs == nil {
+		value.RetiringNodeIDs = []string{}
+	}
+	if err := validateLandingSelection(value); err != nil {
+		return value, err
+	}
 	return value, nil
+}
+
+func validateLandingSelection(value LandingSelection) error {
+	active := map[string]bool{}
+	for _, nodeID := range value.NodeIDs {
+		if strings.TrimSpace(nodeID) == "" || active[nodeID] {
+			return errors.New("center: invalid landing selection")
+		}
+		active[nodeID] = true
+	}
+	retiring := map[string]bool{}
+	for _, nodeID := range value.RetiringNodeIDs {
+		if strings.TrimSpace(nodeID) == "" || active[nodeID] || retiring[nodeID] {
+			return errors.New("center: invalid landing retirement")
+		}
+		retiring[nodeID] = true
+	}
+	for nodeID, raw := range value.LandingRegionCodes {
+		code, ok := regionCode(raw)
+		if (!active[nodeID] && !retiring[nodeID]) || !ok || code != raw {
+			return errors.New("center: invalid landing region")
+		}
+	}
+	return nil
 }
 
 func (s *Store) Landing(ctx context.Context) (LandingView, error) {
@@ -120,7 +169,10 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		return view, err
 	}
 	view.Latencies = s.landingLatencyViews(selection)
-	for _, nodeID := range selection.NodeIDs {
+	serverIDs := append(slices.Clone(selection.NodeIDs), selection.RetiringNodeIDs...)
+	slices.Sort(serverIDs)
+	serverIDs = slices.Compact(serverIDs)
+	for _, nodeID := range serverIDs {
 		server := LandingServerView{NodeID: nodeID}
 		var active bool
 		var lastSeen string
@@ -133,11 +185,13 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		if !active || s.now().Sub(seen) > 2*time.Minute {
 			server.Status = "offline"
 		}
-		var configured bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM settings p JOIN applications app ON p.key='node-exits:'||app.id JOIN json_each(p.value,'$.landingNodeIds') target WHERE target.value=?)`, nodeID).Scan(&configured); err != nil {
+		if slices.Contains(selection.RetiringNodeIDs, nodeID) {
+			server.Status = "draining"
+		}
+		if err := s.populateLandingServerCounts(ctx, tx, selection, &server); err != nil {
 			return view, err
 		}
-		server.InUse = server.InUse || configured
+		server.InUse = server.InUse || server.ReadyCombinations+server.FailedCombinations+server.WithheldCombinations > 0
 		view.Servers = append(view.Servers, server)
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT a.id,a.name,p.headscale_address FROM agents a JOIN agent_network_profiles p ON p.agent_id=a.id
@@ -200,7 +254,6 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 		return view, err
 	}
 	proxies.Close()
-	view.NodeExits = []NodeExitPolicy{}
 	controller, controllerNode, err := runningGlobalThreeXUIController(ctx, tx)
 	if err == nil {
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, controllerNode).Scan(&view.ControllerBlocked); err != nil {
@@ -211,34 +264,22 @@ func (s *Store) Landing(ctx context.Context) (LandingView, error) {
 			return view, err
 		}
 		for _, entry := range inbounds {
-			p, err := readNodeExitPolicy(ctx, tx, entry.ApplicationID)
-			if err != nil {
-				return view, err
+			if !entry.VLESSDisabled && entry.InboundTag != "" {
+				view.EligibleEntries++
 			}
-			p.RequiresOwnExit = entry.HY2InboundID != 0
-			if p.Revision > 0 {
-				p.Status = "saved"
-				var failed, pending bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_client_grants WHERE application_id=? AND status IN ('failed','paused')) OR EXISTS(SELECT 1 FROM settings WHERE key=?), EXISTS(SELECT 1 FROM landing_client_grants WHERE application_id=? AND status NOT IN ('ready','revoked','failed','paused'))`, entry.ApplicationID, "node-exits-error:"+entry.ApplicationID, entry.ApplicationID).Scan(&failed, &pending); err != nil {
-					return view, err
-				}
-				if failed {
-					p.Status = "failed"
-				} else if pending {
-					p.Status = "applying"
-				}
-			}
-			for _, proxy := range view.Proxies {
-				if proxy.ApplicationID == entry.ApplicationID && p.Revision > 0 {
-					if proxy.Status == "failed" {
-						p.Status = "failed"
-					} else if (proxy.Status == "pending" || proxy.Status == "applying") && p.Status != "failed" {
-						p.Status = "applying"
-					}
-				}
-			}
-			view.NodeExits = append(view.NodeExits, p)
 		}
+	}
+	for _, server := range view.Servers {
+		view.ReadyCombinations += server.ReadyCombinations
+		view.FailedCombinations += server.FailedCombinations
+		view.WithheldCombinations += server.WithheldCombinations
+	}
+	view.Status = "ready"
+	if len(selection.RetiringNodeIDs) > 0 || view.WithheldCombinations > 0 {
+		view.Status = "applying"
+	}
+	if view.TasksPaused || view.ControllerBlocked || view.FailedCombinations > 0 {
+		view.Status = "failed"
 	}
 	return view, nil
 }
@@ -259,11 +300,23 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 			return errors.New("center: invalid landing server selection")
 		}
 	}
+	for id, value := range input.LandingRegionCodes {
+		code, ok := regionCode(value)
+		if !ok || !slices.Contains(input.NodeIDs, id) {
+			return errors.New("center: invalid landing region")
+		}
+		input.LandingRegionCodes[id] = code
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
+		return err
+	} else if paused {
+		return errExecutionBlocked
+	}
 	current, err := readLandingSelection(ctx, tx)
 	if err != nil {
 		return err
@@ -271,9 +324,38 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 	if current.Revision != input.Revision {
 		return errors.New("center: landing selection changed; refresh and retry")
 	}
-	if slices.Equal(current.NodeIDs, input.NodeIDs) {
+	if slices.Equal(current.NodeIDs, input.NodeIDs) && equalStringMap(current.LandingRegionCodes, input.LandingRegionCodes) {
 		return nil
 	}
+	for _, nodeID := range input.NodeIDs {
+		if slices.Contains(current.RetiringNodeIDs, nodeID) {
+			return errors.New("center: wait for the landing server removal to finish before adding it again")
+		}
+	}
+	checkNodes := append(slices.Clone(current.NodeIDs), input.NodeIDs...)
+	if controller, controllerNode, controllerErr := runningGlobalThreeXUIController(ctx, tx); controllerErr == nil {
+		checkNodes = append(checkNodes, controllerNode)
+		inbounds, err := threeXUIClientInbounds(ctx, tx, controller)
+		if err != nil {
+			return err
+		}
+		for _, entry := range inbounds {
+			if !entry.VLESSDisabled && entry.InboundTag != "" {
+				checkNodes = append(checkNodes, entry.NodeID)
+			}
+		}
+	}
+	slices.Sort(checkNodes)
+	for _, nodeID := range slices.Compact(checkNodes) {
+		var blocked bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, nodeID).Scan(&blocked); err != nil {
+			return err
+		}
+		if blocked {
+			return errExecutionBlocked
+		}
+	}
+	input.RetiringNodeIDs = slices.Clone(current.RetiringNodeIDs)
 	for _, nodeID := range input.NodeIDs {
 		if slices.Contains(current.NodeIDs, nodeID) {
 			continue
@@ -295,26 +377,22 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 		if slices.Contains(input.NodeIDs, nodeID) {
 			continue
 		}
-		var configured bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM settings p JOIN applications app ON p.key='node-exits:'||app.id JOIN json_each(p.value,'$.landingNodeIds') target WHERE target.value=?)`, nodeID).Scan(&configured); err != nil {
-			return err
+		if !slices.Contains(input.RetiringNodeIDs, nodeID) {
+			input.RetiringNodeIDs = append(input.RetiringNodeIDs, nodeID)
 		}
-		if configured {
-			return errors.New("center: deselect this landing server from node exits before removing it")
+	}
+	slices.Sort(input.RetiringNodeIDs)
+	for _, nodeID := range input.RetiringNodeIDs {
+		if code := current.LandingRegionCodes[nodeID]; code != "" {
+			if input.LandingRegionCodes == nil {
+				input.LandingRegionCodes = map[string]string{}
+			}
+			input.LandingRegionCodes[nodeID] = code
 		}
-		var encoded []byte
-		if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, nodeID).Scan(&encoded); err != nil {
-			return err
-		}
-		var state landing.ServerState
-		if json.Unmarshal(encoded, &state) != nil || state.Validate() != nil {
-			return errors.New("center: invalid current landing configuration")
-		}
-		if state.Plan != nil && len(state.Plan.Sources) > 0 {
-			return errors.New("center: move connected nodes before removing this landing server")
-		}
-		if err := s.queueLandingServer(ctx, tx, nodeID, nil); err != nil {
-			return err
+	}
+	for id := range input.LandingRegionCodes {
+		if !slices.Contains(input.NodeIDs, id) && !slices.Contains(input.RetiringNodeIDs, id) {
+			delete(input.LandingRegionCodes, id)
 		}
 	}
 	input.Revision++
@@ -325,7 +403,22 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 	if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, landingSelectionKey, string(encoded)); err != nil {
 		return err
 	}
+	if err := s.reconcileGlobalLandingPool(ctx, tx, !equalStringMap(current.LandingRegionCodes, input.LandingRegionCodes)); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func equalStringMap(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if b[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleLanding(writer http.ResponseWriter, request *http.Request) {
@@ -339,12 +432,14 @@ func (s *Server) handleLanding(writer http.ResponseWriter, request *http.Request
 }
 
 func (s *Server) handleSelectLanding(writer http.ResponseWriter, request *http.Request) {
-	var input LandingSelection
+	var input LandingSelectionInput
 	if err := decodeJSON(request, &input); err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.SelectLanding(request.Context(), input); err != nil {
+	if err := s.store.SelectLanding(request.Context(), LandingSelection{
+		NodeIDs: input.NodeIDs, LandingRegionCodes: input.LandingRegionCodes, Revision: input.Revision,
+	}); err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
 	}

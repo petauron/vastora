@@ -137,5 +137,8 @@ func (s *Store) projectLandingProxy(ctx context.Context, tx *sql.Tx, commit proj
 	if err := s.completeClientLandingRoutes(ctx, tx, nodeID, uint64(revision), succeeded); err != nil {
 		return err
 	}
+	if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
+		return err
+	}
 	return commit(tx)
 }

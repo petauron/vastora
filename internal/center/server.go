@@ -141,7 +141,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/sites/{id}", s.requireAuth(true, s.handleUpdateSite))
 	mux.HandleFunc("GET /api/v1/applications", s.requireAuth(false, s.handleListApplications))
 	mux.HandleFunc("GET /api/v1/three-x-ui/landing", s.requireAuth(false, s.handleLanding))
-	mux.HandleFunc("PUT /api/v1/applications/{id}/exits", s.requireAuth(true, s.handleConfigureNodeExits))
 	mux.HandleFunc("GET /api/v1/three-x-ui/landing/latencies/events", s.requireAuth(false, s.handleLandingLatencyEvents))
 	mux.HandleFunc("PUT /api/v1/three-x-ui/landing", s.requireAuth(true, s.handleSelectLanding))
 	mux.HandleFunc("POST /api/v1/applications/{id}/credentials/reveal", s.requireAuth(true, s.handleRevealApplicationCredentials))
@@ -401,12 +400,10 @@ func writeError(writer http.ResponseWriter, status int, err error) {
 // operational diagnostics remain on the authenticated diagnostic/task surfaces.
 func publicErrorMessage(code string) string {
 	switch code {
-	case "exit_controller_blocked":
-		return "The subscription host has unresolved tasks. Exit settings were not saved."
 	case "execution_blocked":
 		return "A related node has unresolved tasks. Resolve them before retrying."
-	case "exit_revision_changed":
-		return "Exit settings changed. Refresh before saving again."
+	case "landing_pool_revision_changed":
+		return "The global landing pool changed. Refresh before saving again."
 	case "node_remove_online":
 		return "The node is online. Permanent removal is only available for offline nodes."
 	case "node_remove_confirmation":
@@ -467,12 +464,10 @@ func errorCode(status int, message string) string {
 		return normalized
 	}
 	switch {
-	case message == errNodeExitControllerBlocked.Error():
-		return "exit_controller_blocked"
 	case message == errExecutionBlocked.Error():
 		return "execution_blocked"
-	case message == "center: exit selection changed; refresh and retry":
-		return "exit_revision_changed"
+	case message == "center: landing selection changed; refresh and retry":
+		return "landing_pool_revision_changed"
 	case message == errNodeRemovalOnline.Error():
 		return "node_remove_online"
 	case message == errNodeRemovalName.Error():

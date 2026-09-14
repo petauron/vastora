@@ -210,11 +210,9 @@ func (s *Store) configureClientLanding(ctx context.Context, tx *sql.Tx, input La
 	record.Source = source
 	record.Revision++
 	record.Grant.Mode, record.Grant.Enabled = input.Mode, input.Enabled
-	policy, err := readNodeExitPolicy(ctx, tx, selected.ApplicationID)
-	if err != nil {
-		return LandingClientGrantView{}, err
-	}
-	record.Grant.HideBase = !policy.OwnExit
+	// Global landing combinations supplement the authoritative original node;
+	// they can never hide or disable its own-exit subscription entry.
+	record.Grant.HideBase = false
 	if err := record.Grant.Validate(); err != nil {
 		return LandingClientGrantView{}, err
 	}

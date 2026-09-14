@@ -778,6 +778,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 		if !executionBlocked {
+			if heartbeat.LandingClientRuntime != nil {
+				if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
+					return err
+				}
+			}
 			if err := s.reconcileClientLandingSourcesForNode(ctx, tx, id); err != nil {
 				return err
 			}

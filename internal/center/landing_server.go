@@ -158,5 +158,8 @@ func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit pro
 			return err
 		}
 	}
+	if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
+		return err
+	}
 	return commit(tx)
 }

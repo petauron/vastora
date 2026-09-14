@@ -100,11 +100,11 @@ func (s *Store) hydrateLandingClientCommand(ctx context.Context, tx *sql.Tx, com
 	if err != nil || landing.Identity(string(credential)) != record.Grant.FixedIdentity {
 		return errors.New("center: landing credential is unavailable")
 	}
-	policy, err := readNodeExitPolicy(ctx, tx, record.ApplicationID)
+	selection, err := readLandingSelection(ctx, tx)
 	if err != nil {
 		return err
 	}
-	command.Landing = &landing.ControllerTask{Grant: record.Grant.Published(landing.PublishingMode(mode)), Revision: record.Revision, Phase: command.GrantPhase, ControllerID: controllerID, FixedUUID: string(credential), LandingRegionCode: policy.LandingRegionCodes[record.LandingNodeID], Mode: landing.PublishingMode(mode)}
+	command.Landing = &landing.ControllerTask{Grant: record.Grant.Published(landing.PublishingMode(mode)), Revision: record.Revision, Phase: command.GrantPhase, ControllerID: controllerID, FixedUUID: string(credential), LandingRegionCode: selection.LandingRegionCodes[record.LandingNodeID], Mode: landing.PublishingMode(mode)}
 	if selected != nil {
 		command.Landing.InboundID = selected.ID
 		command.Landing.ConnectHostname = selected.ConnectHostname
@@ -222,6 +222,9 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 		if err := s.queueClientLandingRoutes(ctx, tx, record.ApplicationID); err != nil {
 			return err
 		}
+	}
+	if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
+		return err
 	}
 	return commit(tx)
 }

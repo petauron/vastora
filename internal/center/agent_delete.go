@@ -29,7 +29,7 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if slices.Contains(selection.NodeIDs, id) {
+	if slices.Contains(selection.NodeIDs, id) || slices.Contains(selection.RetiringNodeIDs, id) {
 		return errors.New("center: node still in use")
 	}
 	for _, query := range []string{
@@ -62,7 +62,6 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 	}
 	for _, query := range []string{
 		`DELETE FROM publications WHERE entry_node_id=? AND status='stopped' AND cleanup_pending=0`,
-		`DELETE FROM settings WHERE replace(key,'node-exits-error:','node-exits:') IN (SELECT 'node-exits:'||id FROM applications WHERE node_id=? AND status='stopped')`,
 		`DELETE FROM applications WHERE node_id=? AND status='stopped'`,
 	} {
 		if _, err := tx.ExecContext(ctx, query, id); err != nil {

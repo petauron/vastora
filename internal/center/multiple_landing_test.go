@@ -207,9 +207,6 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if grants(a) != 1 || grants(b) != 2 {
 		t.Fatal("switch revoked old grant before acknowledgement")
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{b}, Revision: 1}); err == nil {
-		t.Fatal("in-use old exit removed")
-	}
 	if claim(source, false) != nil {
 		t.Fatal("switch claimed before new source grant applied")
 	}
@@ -271,7 +268,7 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err := store.Landing(ctx)
-	if err != nil || len(view.Servers) != 1 || view.Servers[0].NodeID != b {
-		t.Fatalf("wrong retained server: %+v %v", view, err)
+	if err != nil || !slices.Equal(view.NodeIDs, []string{b}) || !slices.Contains(view.RetiringNodeIDs, a) {
+		t.Fatalf("landing server was not moved into draining state: %+v %v", view, err)
 	}
 }

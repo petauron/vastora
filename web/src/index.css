@@ -166,7 +166,6 @@
 .apps-landing-sheet[data-side="right"] { width: min(100%, 440px); max-width: 440px; }
 .apps-landing-sheet [data-slot="sheet-header"] { padding: 24px 40px 8px 20px; gap: 8px; }
 .apps-three-xui-toolbar { border-bottom: 1px solid var(--border); }
-.apps-exit-popover { width: min(420px, var(--available-width)); max-height: min(640px, var(--available-height)); }
 .apps-exit-sheet[data-side="right"] { width: 100%; max-width: 440px; }
 .apps-exit-sheet [data-slot="sheet-footer"] { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
 
