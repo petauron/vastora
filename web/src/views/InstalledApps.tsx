@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { LandingProvider, LandingManager, LandingNotice, LandingExitSelect, LandingLatency } from "./LandingControls";
 import { AppWindowIcon, EllipsisIcon, ExternalLinkIcon, MonitorIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { api } from "../api";
@@ -36,11 +36,11 @@ export function InstalledApps({ groups, ...props }: InstalledAppsProps) {
   return <LandingProvider enabled={groups.some((group) => group.appKey === threeXUIAppKey)}>
     <Tabs value={selected?.id ?? ""} onValueChange={(value) => { if (typeof value === "string") setSelectedID(value); }} className="apps-chooser gap-4">
       <div className="max-w-full overflow-x-auto pb-1">
-        <TabsList aria-label={copy(props.language, "已安装的应用", "Installed applications")}>
+        <TabsList variant="line" aria-label={copy(props.language, "已安装的应用", "Installed applications")}>
           {groups.map((group) => <TabsTrigger value={group.id} key={group.id}>
             <AppWindowIcon aria-hidden="true" />
             {group.app ? localized(group.app, props.language, "name") : group.instances[0].application.name}
-            <span className="text-xs text-muted-foreground tabular-nums">{group.instances.length}</span>
+            {group.appKey !== threeXUIAppKey ? <span className="text-xs text-muted-foreground tabular-nums">{group.instances.length}</span> : null}
           </TabsTrigger>)}
         </TabsList>
       </div>
@@ -55,49 +55,51 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
   const headingID = useId();
   const [query, setQuery] = useState("");
   const threeXUI = group.appKey === threeXUIAppKey;
-  const nodeCount = group.instances.filter((instance) => instance.realityServices.length > 0).length;
+  const nodeCount = group.instances.filter(showInstalledNode).length;
   const attentionCount = group.instances.reduce((count, instance) => count + instance.publications.filter(publicationNeedsAttention).length, 0);
   const attentionInstance = group.instances.find((instance) => instance.publications.some(publicationNeedsAttention));
   const name = group.app ? localized(group.app, language, "name") : group.instances[0].application.name;
   const search = query.trim().toLocaleLowerCase();
   const instances = group.instances.filter(showInstalledNode).filter((instance) => !search || [instance.agent?.name, instance.application.nodeId, instance.siteName, ...instance.realityServices.map((service) => service.displayName)].some((value) => value?.toLocaleLowerCase().includes(search)));
+  const Container = threeXUI ? "section" : Card;
+  const Header = threeXUI ? "header" : CardHeader;
+  const Content = threeXUI ? "div" : CardContent;
 
-  return <Card aria-labelledby={headingID} data-app-group={group.id} role="region">
-    <CardHeader className="flex flex-row flex-wrap items-center gap-3">
+  return <Container aria-labelledby={headingID} data-app-group={group.id} role="region" className={threeXUI ? "apps-three-xui flex min-w-0 flex-col gap-3" : undefined}>
+    <Header className="flex flex-row flex-wrap items-center gap-3">
       <div className="min-w-0 flex-1">
-        <CardTitle className="flex flex-wrap items-center gap-2">
+        {threeXUI ? <div className="flex items-center gap-2"><h2 className="text-base font-medium" id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}</div> : <CardTitle className="flex flex-wrap items-center gap-2">
           <h2 className="min-w-0 break-words" id={headingID}>{name}</h2>{group.app ? <AppIdentityBadge app={group.app} language={language} /> : null}
-        </CardTitle>
-        <CardDescription>
-          {threeXUI ? copy(language, `${nodeCount} 个 VLESS 节点`, `${nodeCount} VLESS node(s)`)
-            : copy(language, `已安装到 ${group.instances.length} 个节点`, `Installed on ${group.instances.length} node(s)`)}
-        </CardDescription>
+        </CardTitle>}
+        {threeXUI ? <p className="mt-1 text-xs text-muted-foreground">{copy(language, `${nodeCount} 个节点 · ${group.controller ? 1 : 0} 台订阅主机`, `${nodeCount} nodes · ${group.controller ? 1 : 0} subscription host`)}</p>
+          : <CardDescription>{copy(language, `已安装到 ${group.instances.length} 个节点`, `Installed on ${group.instances.length} node(s)`)}</CardDescription>}
       </div>
-      {threeXUI ? <LandingManager language={language} /> : null}
       {attentionInstance ? <Button onClick={() => onManage(attentionInstance.application)} size="sm" variant="ghost">
         <ShieldAlertIcon aria-hidden="true" data-icon="inline-start" />
         <span className="text-destructive">{copy(language, `${attentionCount} 个入口待处理`, `${attentionCount} access point(s) need attention`)}</span>
       </Button> : null}
-    </CardHeader>
-    <CardContent className="flex min-w-0 flex-col gap-4">
+    </Header>
+    <Content className={cn("flex min-w-0 flex-col", threeXUI ? "gap-3" : "gap-4")}>
       {threeXUI && group.legacyControllers.length > 0 ? <ControllerConvergence group={group} language={language} onManage={onManage} /> : null}
-      {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} onUpgrade={onUpgrade} /> : null}
       {threeXUI ? <LandingNotice language={language} /> : null}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <InputGroup className="max-w-xs">
+      <div className={cn("flex flex-wrap items-center gap-3", threeXUI ? "apps-three-xui-toolbar py-2" : "justify-between")}>
+        <InputGroup className={threeXUI ? "w-full sm:w-48" : "max-w-xs"}>
           <InputGroupInput type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={copy(language, "搜索节点", "Search nodes")} placeholder={copy(language, "搜索节点…", "Search nodes…")} />
           <InputGroupAddon><SearchIcon aria-hidden="true" /></InputGroupAddon>
         </InputGroup>
-        <p role="status" className="text-xs text-muted-foreground">{copy(language, `${instances.length} 个节点`, `${instances.length} node(s)`)}</p>
+        {!threeXUI || search ? <p role="status" className="text-xs text-muted-foreground">{copy(language, `${instances.length} 个节点`, `${instances.length} node(s)`)}</p> : null}
+        {group.controller ? <ControllerBand instance={group.controller} language={language} onClients={onClients} onManage={onManage} onUpgrade={onUpgrade}>
+          {threeXUI ? <LandingManager language={language} /> : null}
+        </ControllerBand> : threeXUI ? <div className="ml-auto"><LandingManager language={language} /></div> : null}
       </div>
-      <Table aria-label={threeXUI ? copy(language, `${name} VLESS 节点`, `${name} VLESS nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table block lg:table lg:table-fixed">
+      <Table aria-label={threeXUI ? copy(language, `${name} 节点`, `${name} nodes`) : copy(language, `${name} 已安装实例`, `${name} installed instances`)} className="apps-instance-table block lg:table lg:table-fixed">
         <TableHeader className="hidden lg:table-header-group">
           <TableRow>
-            <TableHead className={threeXUI ? "w-[23%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
+            <TableHead className={threeXUI ? "w-[30%]" : "w-[36%]"}>{copy(language, "节点", "Node")}</TableHead>
             <TableHead className={threeXUI ? "w-[15%]" : "w-[24%]"}>{copy(language, "状态", "Status")}</TableHead>
-            {threeXUI ? <><TableHead className="w-[24%]">{copy(language, "出口", "Exit")}</TableHead><TableHead className="w-[14%]">{copy(language, "落地延迟", "Exit latency")}</TableHead></> : null}
+            {threeXUI ? <><TableHead className="w-[22%]">{copy(language, "出口", "Exit")}</TableHead><TableHead className="w-[13%]">{copy(language, "落地延迟", "Exit latency")}</TableHead></> : null}
             <TableHead className={threeXUI ? "w-[12%]" : "w-[24%]"}>{copy(language, "入口", "Access")}</TableHead>
-            <TableHead className={threeXUI ? "w-[12%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
+            <TableHead className={threeXUI ? "w-[8%]" : "w-[16%]"}><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody className="block lg:table-row-group">
@@ -105,9 +107,8 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
           {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 6 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 VLESS 节点", "No VLESS nodes configured")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
-      {threeXUI ? <p className="text-xs text-muted-foreground">{copy(language, "切换出口时，当前连接会短暂中断。", "Switching exits briefly interrupts current connections.")}</p> : null}
-    </CardContent>
-  </Card>;
+    </Content>
+  </Container>;
 }
 
 function ControllerConvergence({ group, language, onManage }: { group: InstalledAppGroup; language: Language; onManage: (application: Application) => void }) {
@@ -130,16 +131,16 @@ function ControllerConvergence({ group, language, onManage }: { group: Installed
   </Alert>;
 }
 
-function ControllerBand({ instance, language, onClients, onManage, onUpgrade }: { instance: InstalledAppInstance; language: Language; onClients: (application: Application) => void; onManage: (application: Application) => void; onUpgrade: (application: Application) => void }) {
+function ControllerBand({ instance, language, onClients, onManage, onUpgrade, children }: { instance: InstalledAppInstance; language: Language; onClients: (application: Application) => void; onManage: (application: Application) => void; onUpgrade: (application: Application) => void; children?: ReactNode }) {
   const { application, agent, services, publications, locked } = instance;
   const webServiceIDs = new Set(services.filter((service) => service.protocol === "http" || service.protocol === "https").map((service) => service.id));
   const webAttention = publications.some((publication) => webServiceIDs.has(publication.serviceId) && publicationNeedsAttention(publication));
   const panelService = services.find((service) => service.name === "panel");
   const panelPublication = panelService ? publications.find((publication) => publication.serviceId === panelService.id && publication.status === "ready" && !publication.actionRequired && !publication.lastError && publication.accessUrl) : undefined;
 
-  return <section aria-label={copy(language, "订阅主机", "Subscription controller")} className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5" data-slot="subscription-controller">
-    <MonitorIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+  return <section aria-label={copy(language, "订阅主机", "Subscription controller")} className="flex min-w-0 flex-1 basis-full flex-wrap items-center gap-3 xl:basis-auto" data-slot="subscription-controller">
+    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+      <MonitorIcon aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
       <span className="text-xs text-muted-foreground">{copy(language, "订阅主机", "Subscription controller")}</span>
       <span className="truncate text-sm font-medium" title={agent?.name ?? application.nodeId}>{agent?.name ?? application.nodeId}</span>
       {instance.activeChange || application.status !== "running" ? <ApplicationPrimaryStatus instance={instance} language={language} /> : null}
@@ -147,8 +148,9 @@ function ControllerBand({ instance, language, onClients, onManage, onUpgrade }: 
     </div>
     <div className="flex flex-wrap items-center gap-2">
       <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} />
-      <Button disabled={locked} onClick={() => onClients(application)} size="sm" variant="outline">{copy(language, "客户端与订阅", "Clients & subscriptions")}</Button>
-      {panelPublication?.accessUrl ? <a className={buttonVariants({ size: "sm", variant: "outline" })} href={panelPublication.accessUrl} rel="noreferrer" target="_blank">
+      <Button disabled={locked} onClick={() => onClients(application)} size="sm" variant="secondary">{copy(language, "客户端与订阅", "Clients & subscriptions")}</Button>
+      {children}
+      {panelPublication?.accessUrl ? <a className={buttonVariants({ size: "sm", variant: "ghost" })} href={panelPublication.accessUrl} rel="noreferrer" target="_blank">
         {copy(language, "打开面板", "Open panel")}<ExternalLinkIcon aria-hidden="true" data-icon="inline-end" />
       </a> : null}
       <Button aria-label={copy(language, `管理 ${agent?.name ?? application.nodeId} 订阅主机`, `Manage ${agent?.name ?? application.nodeId} subscription controller`)} onClick={() => onManage(application)} size="icon-sm" variant="ghost"><EllipsisIcon aria-hidden="true" /></Button>
@@ -176,7 +178,7 @@ function ApplicationPrimaryStatus({ instance, language }: { instance: InstalledA
       : copy(language, `正在${operationLabel(language, activeChange.operation)}`, `${operationLabel(language, activeChange.operation)} in progress`)}
   </Badge>;
   return application.status === "running"
-    ? <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="apps-status-dot bg-latency-fast" />{copy(language, "运行中", "Running")}</span>
+    ? <span className={cn("inline-flex items-center gap-2", application.appKey === threeXUIAppKey && "text-muted-foreground")}><span aria-hidden="true" className="apps-status-dot bg-latency-fast" />{copy(language, "运行中", "Running")}</span>
     : <StateBadge language={language} value={application.status} />;
 }
 
@@ -205,7 +207,7 @@ function AccessStatus({ services, publications, language, threeXUI }: { services
   </div>;
   if (hardening) return <StateBadge language={language} value="applying" />;
   if (changing) return <StateBadge language={language} value={changing.status} />;
-  if (publications.length > 0) return <span className="inline-flex items-center gap-2 text-muted-foreground"><span aria-hidden="true" className="apps-status-dot bg-latency-fast" />{copy(language, "就绪", "Ready")}</span>;
+  if (publications.length > 0) return <span className="inline-flex items-center gap-2 text-muted-foreground">{!threeXUI ? <span aria-hidden="true" className="apps-status-dot bg-latency-fast" /> : null}{copy(language, "就绪", "Ready")}</span>;
   return <span className="text-xs text-muted-foreground">
     {threeXUI && services.length === 0 ? copy(language, "尚未创建 VLESS", "VLESS not configured") : services.length > 0 ? copy(language, "未添加入口", "No access point") : copy(language, "无需访问入口", "No access point needed")}
   </span>;
@@ -233,8 +235,10 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
 
   return <TableRow className="grid grid-cols-2 gap-x-4 gap-y-3 py-4 lg:table-row lg:py-0" data-application-id={application.id}>
     <TableCell className="col-span-2 min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">
-      <p className="break-words font-medium">{name}</p>
-      {threeXUI && instance.realityServices[0] ? <div className="mt-1 flex flex-wrap gap-1">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => <Badge key={protocol} variant="outline">{protocol.toUpperCase()}</Badge>)}</div> : null}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <p className="min-w-0 break-words font-medium">{name}</p>
+        {threeXUI && instance.realityServices[0] ? <div className="flex flex-wrap gap-1">{(instance.realityServices[0].protocols ?? ["vless"]).map((protocol) => <Badge key={protocol} variant="secondary">{protocol.toUpperCase()}</Badge>)}</div> : null}
+      </div>
       {threeXUI && application.role === "master" && application.id !== instance.controller?.id ? <Badge className="mt-1" variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}
       {showSite || displayName ? <p className="mt-1 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}
     </TableCell>

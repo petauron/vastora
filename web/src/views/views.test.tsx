@@ -25,6 +25,7 @@ import { commandSecretScope, secretOperation } from "../secret-delivery";
 
 let root: Root | undefined;
 beforeEach(() => {
+  vi.stubGlobal("matchMedia", vi.fn((media: string) => ({ matches: false, media, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
   vi.stubGlobal("EventSource", class {
     onmessage: ((event: MessageEvent<string>) => void) | null = null;
     close() {}
@@ -1024,8 +1025,8 @@ describe("network and app views", () => {
     );
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     expect(container.textContent).toContain("订阅主机");
-    expect(container.textContent).toContain("VLESS 节点");
-    expect(container.textContent).toContain("2 个 VLESS 节点");
+    expect(container.textContent).toContain("2 个节点 · 1 台订阅主机");
+    expect(container.querySelector('[data-app-group]')?.tagName).toBe("SECTION");
     expect(container.querySelectorAll("[data-app-group]")).toHaveLength(1);
     expect(container.querySelectorAll("[data-application-id]")).toHaveLength(2);
     expect(container.querySelector("[data-application-id]")?.getAttribute("data-application-id")).toBe("three-x-ui");
