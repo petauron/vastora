@@ -134,6 +134,7 @@ export function IPQualityButton({ nodeId, name, language, compact = false }: { n
             <Table><TableHeader><TableRow><TableHead>{copy(language, "来源", "Provider")}</TableHead><TableHead className="text-right">{copy(language, "原始分值", "Reported value")}</TableHead></TableRow></TableHeader><TableBody>
               {report.scores.map((value) => <TableRow key={value.source}><TableCell>{value.source}</TableCell><TableCell className="text-right tabular-nums">{value.value}</TableCell></TableRow>)}
               {!report.scores.length ? <TableRow><TableCell colSpan={2}>{copy(language, "暂无评分数据", "No score data")}</TableCell></TableRow> : null}
+            </TableBody>
             </Table>
           </section>
         </> : !active && !submitting ? <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "尚无检测结果，手动检测后会保留最近一次结果。", "No report yet. Run a check to save the latest result.")}</p> : null}
