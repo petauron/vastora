@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.141](https://github.com/petauron/vastora/compare/v0.1.0-alpha.140...v0.1.0-alpha.141) (2026-09-14)
+
+
+### Bug Fixes
+
+* **updates:** verify Center image identity ([#475](https://github.com/petauron/vastora/issues/475)) ([dabdd69](https://github.com/petauron/vastora/commit/dabdd6935930fce46abc8eb012b5837b083593a3))
+
 ## [0.1.0-alpha.140](https://github.com/petauron/vastora/compare/v0.1.0-alpha.139...v0.1.0-alpha.140) (2026-09-14)
 
 
