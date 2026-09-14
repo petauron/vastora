@@ -19,6 +19,9 @@ import (
 // The upstream entrypoint downloads a mutable script. Override it: both the
 // dependency image and script are pinned, and no host files are mounted.
 const ipQualityImage = "xykt/ipquality@sha256:26258a197cc03c186d41c26bd871d36ccc6ee269baf97762cfdd2b7d694c8dda"
+
+var errIPQualityCleanupUnconfirmed = errors.New("agent: IP quality container cleanup could not be confirmed")
+
 const ipQualityScript = `set -eu
 curl --proto '=https' --tlsv1.2 -fsSL --max-time 30 https://raw.githubusercontent.com/xykt/IPQuality/ad222ab16778be2a13a174cd1acbd69fb4cac6b7/ip.sh -o /tmp/upstream.sh
 echo 'ffb17dae790341c13023a94c5141775974dd73a3653ca5fba5c4648fc5588402  /tmp/upstream.sh' | sha256sum -c - >/dev/null
@@ -36,7 +39,7 @@ func ipQualityContainerOptions(task ipquality.Task) client.ContainerCreateOption
 		Config: &container.Config{Image: ipQualityImage, User: "65534:65534", WorkingDir: "/tmp", Env: []string{"TERM=dumb", "HOME=/tmp"},
 			Entrypoint: []string{"timeout", "-s", "KILL", "210", "/bin/sh", "-c", ipQualityScript, "ip-quality"}, Cmd: []string{task.BindAddress, family},
 			Labels: map[string]string{"io.vastora.diagnostic": "ip-quality"}},
-		HostConfig: &container.HostConfig{NetworkMode: "host", AutoRemove: true, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
+		HostConfig: &container.HostConfig{NetworkMode: "host", AutoRemove: false, ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges"},
 			Tmpfs: map[string]string{"/tmp": "rw,noexec,nosuid,size=32m,mode=1777"}, LogConfig: container.LogConfig{Type: "none"},
 			Resources: container.Resources{Memory: 128 * 1024 * 1024, MemorySwap: 128 * 1024 * 1024, NanoCPUs: 500000000, PidsLimit: &pids}},
 	}
@@ -79,9 +82,8 @@ func (e ApplicationExecutor) CheckIPQuality(parent context.Context, task ipquali
 	defer func() {
 		cleanup, done := context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 		defer done()
-		_, removeErr := docker.ContainerRemove(cleanup, cleanupID, client.ContainerRemoveOptions{Force: true})
-		if removeErr != nil && !errdefs.IsNotFound(removeErr) {
-			err = errors.New("agent: IP quality container cleanup could not be confirmed")
+		if cleanupErr := cleanupIPQualityContainer(cleanup, docker, cleanupID); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
 		}
 	}()
 	created, err := docker.ContainerCreate(ctx, options)
@@ -137,4 +139,36 @@ func (e ApplicationExecutor) CheckIPQuality(parent context.Context, task ipquali
 		return ipquality.Result{Error: parseErr.Error()}, nil
 	}
 	return ipquality.Result{Report: &report}, nil
+}
+
+type ipQualityCleanupEngine interface {
+	ContainerInspect(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
+	ContainerRemove(context.Context, string, client.ContainerRemoveOptions) (client.ContainerRemoveResult, error)
+}
+
+func cleanupIPQualityContainer(ctx context.Context, docker ipQualityCleanupEngine, containerID string) error {
+	_, err := docker.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{Force: true})
+	if err == nil || errdefs.IsNotFound(err) {
+		return nil
+	}
+	if !errdefs.IsConflict(err) {
+		return errIPQualityCleanupUnconfirmed
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		_, inspectErr := docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+		if errdefs.IsNotFound(inspectErr) {
+			return nil
+		}
+		if inspectErr != nil {
+			return errIPQualityCleanupUnconfirmed
+		}
+		select {
+		case <-ctx.Done():
+			return errIPQualityCleanupUnconfirmed
+		case <-ticker.C:
+		}
+	}
 }
