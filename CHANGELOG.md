@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.145](https://github.com/petauron/vastora/compare/v0.1.0-alpha.144...v0.1.0-alpha.145) (2026-09-14)
+
+
+### Features
+
+* **ui:** add compact fleet overview ([#486](https://github.com/petauron/vastora/issues/486)) ([b53ef4e](https://github.com/petauron/vastora/commit/b53ef4e0305d80caa082fc94cc86f128d243fef6))
+
 ## [0.1.0-alpha.144](https://github.com/petauron/vastora/compare/v0.1.0-alpha.143...v0.1.0-alpha.144) (2026-09-14)
 
 
