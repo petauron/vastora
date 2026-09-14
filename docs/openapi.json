@@ -6183,6 +6183,46 @@
                           "checkedAt": {
                             "type": "string",
                             "format": "date-time"
+                          },
+                          "peers": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "peer": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "publicKey": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "revision": {
+                                  "type": "integer"
+                                },
+                                "healthy": {
+                                  "type": "boolean"
+                                },
+                                "state": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "checkedAt": {
+                                  "type": "string",
+                                  "format": "date-time"
+                                }
+                              }
+                            }
                           }
                         }
                       },
@@ -10225,6 +10265,31 @@
                       "type": "null"
                     }
                   ]
+                },
+                "peers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "nodeId": {
+                        "type": "string"
+                      },
+                      "healthy": {
+                        "type": "boolean"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "checkedAt": {
+                        "type": "string",
+                        "format": "date-time"
+                      }
+                    }
+                  }
                 }
               }
             }

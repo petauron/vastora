@@ -9,9 +9,21 @@ import (
 )
 
 type Health struct {
-	Revision  uint64    `json:"revision"`
-	Healthy   bool      `json:"healthy"`
-	CheckedAt time.Time `json:"checkedAt"`
+	Revision  uint64       `json:"revision"`
+	Healthy   bool         `json:"healthy"`
+	CheckedAt time.Time    `json:"checkedAt"`
+	Peers     []PeerHealth `json:"peers,omitempty"`
+}
+
+// PeerHealth is runtime evidence for one configured exit. It deliberately
+// carries no grant credentials or subscription material.
+type PeerHealth struct {
+	Peer      PeerIdentity `json:"peer"`
+	Revision  uint64       `json:"revision"`
+	Healthy   bool         `json:"healthy"`
+	State     string       `json:"state"`
+	Reason    string       `json:"reason"`
+	CheckedAt time.Time    `json:"checkedAt"`
 }
 
 // ServerState is the complete native landing service intent. A nil plan

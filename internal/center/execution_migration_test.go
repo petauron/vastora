@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -65,7 +66,7 @@ func TestExecutionMigrationBacksUpAndFailsClosed(t *testing.T) {
 			}
 			store.Close()
 		}
-		backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v74-before-v75-*.db"))
+		backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v74-before-v%d-*.db", centerSchemaVersion)))
 		if err != nil || len(backups) != 1 {
 			t.Fatalf("pre-migration backup missing: %v %v", backups, err)
 		}
