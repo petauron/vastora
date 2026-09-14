@@ -1996,6 +1996,10 @@
                       "type": "string"
                     }
                   },
+                  "landingRegionCodes": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "revision": {
                     "type": "integer"
                   },
@@ -10257,6 +10261,10 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "landingRegionCodes": {
+                  "type": "object",
+                  "additionalProperties": true
                 },
                 "revision": {
                   "type": "integer"

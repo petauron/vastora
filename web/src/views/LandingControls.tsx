@@ -273,7 +273,11 @@ export function LandingExitSelect({ applicationId, nodeId, name, regionCode, loc
         <Button variant="outline" size="sm" disabled={busy} onClick={() => setDraft(null)}>{copy(language, "取消", "Cancel")}</Button>
         <Button size="sm" disabled={disabled || stale || invalid} onClick={() => {
           if (!draft || disabled || stale || invalid) return;
-          void state.change((signal) => api.configureNodeExits(applicationId, { ...draft, confirmSessionReset: true }, signal)).then((saved) => { if (saved) setDraft(null); });
+          const landingRegionCodes = Object.fromEntries(draft.landingNodeIds.flatMap((nodeID) => {
+            const code = state.regions[nodeID] ?? policy?.landingRegionCodes?.[nodeID];
+            return code ? [[nodeID, code]] : [];
+          }));
+          void state.change((signal) => api.configureNodeExits(applicationId, { ...draft, landingRegionCodes, confirmSessionReset: true }, signal)).then((saved) => { if (saved) setDraft(null); });
         }}>{busy ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{busy ? copy(language, "正在保存…", "Saving…") : copy(language, "保存出口组合", "Save exit combinations")}</Button>
       </>}>
           <FieldSet disabled={busy} className="gap-3">
@@ -318,12 +322,12 @@ export function LandingLatency({ applicationId, nodeId, language }: { applicatio
   if (!state || !view || state.failed) return <span className="text-muted-foreground">—</span>;
   const pairs = selectedLandingLatencies(view, nodeId, applicationId);
   if (!pairs.length) return <span className="text-muted-foreground">—</span>;
-  return <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+  return <div className="flex min-w-0 flex-col items-start gap-1">
     {pairs.map(({ server, latency }, index) => {
       const measured = server?.status === "ready" && latency?.state === "direct" && latency.latencyMs != null && Number.isFinite(latency.latencyMs) && latency.latencyMs >= 0;
       const unavailable = !server || ["offline", "failed", "stopped"].includes(server.status) || server.status === "ready" && latency?.state === "unavailable";
       const label = measured ? latencyLabel(language, latency) : unavailable ? copy(language, "不可用", "Unavailable") : copy(language, "待检测", "Pending");
-      return <span className={cn("inline-flex shrink-0 items-center gap-1.5 text-xs tabular-nums", unavailable ? "text-destructive" : measured ? landingLatencyColor(latency.latencyMs) : "text-muted-foreground")} key={server?.nodeId ?? `missing-${index}`} title={server?.name}>
+      return <span className={cn("inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs tabular-nums", unavailable ? "text-destructive" : measured ? landingLatencyColor(latency.latencyMs) : "text-muted-foreground")} key={server?.nodeId ?? `missing-${index}`} title={server?.name}>
         <RegionFlag code={server ? state.regions[server.nodeId] : undefined} language={language} />
         <span>{label}</span>
       </span>;

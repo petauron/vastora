@@ -11,7 +11,7 @@ import (
 func subscriptionFixture() SubscriptionGrant {
 	grant := clientGrantFixture("combination-a", FixedMode)
 	query := "?type=tcp&security=reality&flow=xtls-rprx-vision&sni=example.com&pbk=public-key&sid=deadbeef"
-	return SubscriptionGrant{Grant: grant, EntryName: "入口 A", LandingName: "落地 A", BaseLink: "vless://11111111-2222-4333-8444-555555555555@entry.example.test:443" + query + "#original", FixedLink: "vless://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@entry.example.test:443" + query}
+	return SubscriptionGrant{Grant: grant, EntryName: "入口 A", LandingRegionCode: "US", BaseLink: "vless://11111111-2222-4333-8444-555555555555@entry.example.test:443" + query + "#original", FixedLink: "vless://aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee@entry.example.test:443" + query}
 }
 
 func TestNodeExitSelectionOmitsOwnExit(t *testing.T) {
@@ -107,7 +107,7 @@ func TestMihomoFixedCombinationsNeedNoClientChain(t *testing.T) {
 	other.Grant.FixedUser = FixedUser(other.Grant.ID)
 	other.Grant.FixedIdentity = Identity("bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee")
 	other.FixedLink = strings.Replace(item.FixedLink, "aaaaaaaa-bbbb", "bbbbbbbb-bbbb", 1)
-	other.LandingName = "落地 B"
+	other.LandingRegionCode = "TW"
 	items := []SubscriptionGrant{item, other}
 	out, err := ComposeMihomo([]byte(subscriptionRealityFixture), item.Grant.ParentID, FixedMode, items)
 	if err != nil {
@@ -122,6 +122,9 @@ func TestMihomoFixedCombinationsNeedNoClientChain(t *testing.T) {
 	}
 	if strings.Contains(string(out), "dialer-proxy") || strings.Contains(string(out), "socks5") {
 		t.Fatal("client-side chain remains")
+	}
+	if !strings.Contains(string(out), "🇺🇸｜入口 A A") || !strings.Contains(string(out), "🇹🇼｜入口 A B") || strings.Contains(string(out), "落地") || strings.Contains(string(out), "combination-") {
+		t.Fatal("combination names did not use compact landing flags and stable labels")
 	}
 	links, err := ComposeLinks([]byte(item.BaseLink+"\n"), item.Grant.ParentID, FixedMode, items, false)
 	if err != nil || strings.Count(string(links), "vless://") != 3 {

@@ -38,7 +38,7 @@ func landingSubscriptionTestState(t *testing.T) (*Store, *landingControllerState
 		return "vless://" + id + "@entry.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=example.com&pbk=public-key&sid=deadbeef#Original"
 	}
 	state := &landingControllerState{ControllerID: "controller", Grants: map[string]landingControllerGrant{
-		grant.ID: {Task: landing.ControllerTask{Grant: grant, Revision: 1, Phase: "activate", ControllerID: "controller", InboundID: 9, FixedUUID: childUUID, EntryName: "Entry A", LandingName: "Landing A"}, Phase: "ready", ChildSubscription: "private-child-token", Material: landing.ControllerResult{BaseLink: link(parentUUID), FixedLink: link(childUUID)}},
+		grant.ID: {Task: landing.ControllerTask{Grant: grant, Revision: 1, Phase: "activate", ControllerID: "controller", InboundID: 9, FixedUUID: childUUID, EntryName: "Entry A", LandingRegionCode: "US"}, Phase: "ready", ChildSubscription: "private-child-token", Material: landing.ControllerResult{BaseLink: link(parentUUID), FixedLink: link(childUUID)}},
 	}, Accounts: map[string]landingControllerAccount{
 		parent: {ID: parent, Email: "Phone", SubscriptionToken: "parent-sub-token", Mode: landing.FixedMode, Enabled: true, Total: 1000, Expiry: store.now().Add(time.Hour).UnixMilli(), Members: []landing.QuotaMember{{ID: parent, Observed: 100, Active: true}, {ID: grant.FixedIdentity, Observed: 50, Active: true}}},
 	}}

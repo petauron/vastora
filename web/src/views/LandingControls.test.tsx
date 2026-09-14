@@ -74,7 +74,7 @@ it.each([false, true])("saves multiple exits from the node row (mobile: %s)", as
   await act(async () => { checks[2].click(); });
   expect(update).not.toHaveBeenCalled();
   await act(async () => { [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === "保存出口组合")?.click(); });
-  expect(update).toHaveBeenCalledWith("app-one", { ownExit: true, landingNodeIds: ["a", "b"], revision: 2, confirmSessionReset: true }, expect.any(AbortSignal));
+  expect(update).toHaveBeenCalledWith("app-one", { ownExit: true, landingNodeIds: ["a", "b"], landingRegionCodes: {}, revision: 2, confirmSessionReset: true }, expect.any(AbortSignal));
   expect(container.textContent).toContain("正在同步组合");
 });
 

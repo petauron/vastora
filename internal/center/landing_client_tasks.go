@@ -100,11 +100,11 @@ func (s *Store) hydrateLandingClientCommand(ctx context.Context, tx *sql.Tx, com
 	if err != nil || landing.Identity(string(credential)) != record.Grant.FixedIdentity {
 		return errors.New("center: landing credential is unavailable")
 	}
-	var landingName string
-	if err := tx.QueryRowContext(ctx, `SELECT name FROM agents WHERE id=?`, record.LandingNodeID).Scan(&landingName); err != nil {
+	policy, err := readNodeExitPolicy(ctx, tx, record.ApplicationID)
+	if err != nil {
 		return err
 	}
-	command.Landing = &landing.ControllerTask{Grant: record.Grant.Published(landing.PublishingMode(mode)), Revision: record.Revision, Phase: command.GrantPhase, ControllerID: controllerID, FixedUUID: string(credential), LandingName: landingName, Mode: landing.PublishingMode(mode)}
+	command.Landing = &landing.ControllerTask{Grant: record.Grant.Published(landing.PublishingMode(mode)), Revision: record.Revision, Phase: command.GrantPhase, ControllerID: controllerID, FixedUUID: string(credential), LandingRegionCode: policy.LandingRegionCodes[record.LandingNodeID], Mode: landing.PublishingMode(mode)}
 	if selected != nil {
 		command.Landing.InboundID = selected.ID
 		command.Landing.ConnectHostname = selected.ConnectHostname

@@ -73,7 +73,7 @@ func (s *Store) landingSubscriptionHandler(client *http.Client) http.Handler {
 					if grant.Task.Grant.ParentID != account.ID || grant.Phase != "ready" || !grant.Task.Grant.Enabled {
 						continue
 					}
-					grants = append(grants, landing.SubscriptionGrant{Grant: grant.Task.Grant.Published(account.Mode), EntryName: grant.Task.EntryName, LandingName: grant.Task.LandingName, BaseLink: grant.Material.BaseLink, FixedLink: grant.Material.FixedLink})
+					grants = append(grants, landing.SubscriptionGrant{Grant: grant.Task.Grant.Published(account.Mode), EntryName: grant.Task.EntryName, LandingRegionCode: grant.Task.LandingRegionCode, BaseLink: grant.Material.BaseLink, FixedLink: grant.Material.FixedLink})
 				}
 				slices.SortFunc(grants, func(a, b landing.SubscriptionGrant) int { return strings.Compare(a.Grant.ID, b.Grant.ID) })
 			}
