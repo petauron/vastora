@@ -64,6 +64,7 @@ validate_assets() {
   prefix="vastora/releases/$tag/"
   if ! jq -e --arg version "$version" --arg prefix "$prefix" '
     (.schema == 1) and (.version == $version) and
+    (.centerImage | test("^ghcr\\.io/petauron/vastora-center@sha256:[0-9a-f]{64}$")) and
     ((.assets | keys | sort) == ["install.sh", "vastora-center-install.tar.gz", "vastora-center-install.tar.gz.sha256"]) and
     (.assets["install.sh"].key == ($prefix + "install.sh")) and
     (.assets["vastora-center-install.tar.gz"].key == ($prefix + "vastora-center-install.tar.gz")) and

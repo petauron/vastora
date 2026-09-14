@@ -86,7 +86,10 @@ export type SystemDomainSwitchResult = SystemDomain & {
 
 export type CenterUpdateStatus = {
   currentVersion: string;
+  currentImageDigest?: string;
   latestVersion?: string;
+  latestImageDigest?: string;
+  imageMismatch?: boolean;
   updateAvailable: boolean;
   releaseCheckAvailable: boolean;
   automatic: boolean;

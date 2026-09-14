@@ -14,12 +14,20 @@ import (
 )
 
 type CenterReleaseChecker interface {
-	LatestVersion(context.Context, bool) (string, time.Time, error)
+	LatestRelease(context.Context, bool) (CenterRelease, time.Time, error)
+}
+
+type CenterRelease struct {
+	Version string
+	Image   string
 }
 
 type CenterUpdateStatus struct {
 	CurrentVersion        string                    `json:"currentVersion"`
+	CurrentImageDigest    string                    `json:"currentImageDigest,omitempty"`
 	LatestVersion         string                    `json:"latestVersion,omitempty"`
+	LatestImageDigest     string                    `json:"latestImageDigest,omitempty"`
+	ImageMismatch         bool                      `json:"imageMismatch"`
 	UpdateAvailable       bool                      `json:"updateAvailable"`
 	ReleaseCheckAvailable bool                      `json:"releaseCheckAvailable"`
 	Automatic             bool                      `json:"automatic"`
@@ -38,7 +46,7 @@ type ReleaseChecker struct {
 	url       string
 	client    *http.Client
 	mu        sync.Mutex
-	version   string
+	release   CenterRelease
 	checkedAt time.Time
 	expiresAt time.Time
 }
@@ -53,34 +61,39 @@ func NewReleaseChecker(endpoint string, client *http.Client) *ReleaseChecker {
 	}
 }
 
-func (checker *ReleaseChecker) LatestVersion(ctx context.Context, refresh bool) (string, time.Time, error) {
+func (checker *ReleaseChecker) LatestRelease(ctx context.Context, refresh bool) (CenterRelease, time.Time, error) {
 	checker.mu.Lock()
 	defer checker.mu.Unlock()
 	now := time.Now().UTC()
-	if !refresh && checker.version != "" && now.Before(checker.expiresAt) {
-		return checker.version, checker.checkedAt, nil
+	if !refresh && checker.release.Version != "" && now.Before(checker.expiresAt) {
+		return checker.release, checker.checkedAt, nil
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodHead, checker.url, nil)
 	if err != nil {
-		return "", time.Time{}, err
+		return CenterRelease{}, time.Time{}, err
 	}
 	request.Header.Set("User-Agent", "Vastora/"+Version)
 	response, err := checker.client.Do(request)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("center: check configured release source: %w", err)
+		return CenterRelease{}, time.Time{}, fmt.Errorf("center: check configured release source: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return "", time.Time{}, fmt.Errorf("center: release metadata endpoint returned HTTP %d", response.StatusCode)
+		return CenterRelease{}, time.Time{}, fmt.Errorf("center: release metadata endpoint returned HTTP %d", response.StatusCode)
 	}
 	version, err := releaseVersionFromHeader(response.Header.Get("X-Vastora-Version"))
 	if err != nil {
-		return "", time.Time{}, err
+		return CenterRelease{}, time.Time{}, err
 	}
-	checker.version = version
+	image := strings.TrimSpace(response.Header.Get("X-Vastora-Center-Image"))
+	if !validReleaseImage(image) {
+		return CenterRelease{}, time.Time{}, errors.New("center: release metadata endpoint returned an invalid Center image")
+	}
+	release := CenterRelease{Version: version, Image: image}
+	checker.release = release
 	checker.checkedAt = now
 	checker.expiresAt = now.Add(10 * time.Minute)
-	return version, now, nil
+	return release, now, nil
 }
 
 func releaseVersionFromHeader(value string) (string, error) {
@@ -89,6 +102,23 @@ func releaseVersionFromHeader(value string) (string, error) {
 		return "", errors.New("center: release metadata endpoint returned an invalid release version")
 	}
 	return version, nil
+}
+
+func validReleaseImage(image string) bool {
+	digest, found := strings.CutPrefix(image, "ghcr.io/petauron/vastora-center@sha256:")
+	if !found || len(digest) != 64 {
+		return false
+	}
+	for _, character := range digest {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func releaseImageDigest(image string) string {
+	return strings.TrimPrefix(image, "ghcr.io/petauron/vastora-center@sha256:")
 }
 
 func (s *Server) handleCenterUpdateStatus(writer http.ResponseWriter, request *http.Request) {
@@ -119,7 +149,7 @@ func (s *Server) handleStartCenterUpdate(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusConflict, err)
 		return
 	}
-	execution, err := s.updates.StartCenterUpdate(request.Context(), deployapi.CenterUpdateRequest{Version: status.LatestVersion, InstallerBaseURL: s.releaseInstallerBaseURL, InstallerHost: pin.Host, InstallerPort: pin.Port, InstallerAddress: pin.Address})
+	execution, err := s.updates.StartCenterUpdate(request.Context(), deployapi.CenterUpdateRequest{Version: status.LatestVersion, Image: "ghcr.io/petauron/vastora-center@sha256:" + status.LatestImageDigest, InstallerBaseURL: s.releaseInstallerBaseURL, InstallerHost: pin.Host, InstallerPort: pin.Port, InstallerAddress: pin.Address})
 	if err != nil {
 		writeError(writer, http.StatusConflict, err)
 		return
@@ -139,15 +169,16 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 		return result
 	}
 	result.ReleaseCheckAvailable = true
-	latest, checkedAt, err := s.releaseChecker.LatestVersion(ctx, refreshOfficial)
+	latest, checkedAt, err := s.releaseChecker.LatestRelease(ctx, refreshOfficial)
 	if err != nil {
 		result.Error = err.Error()
 		return result
 	}
-	result.LatestVersion = latest
+	result.LatestVersion = latest.Version
+	result.LatestImageDigest = releaseImageDigest(latest.Image)
 	result.CheckedAt = checkedAt.Format(time.RFC3339)
 	currentSemver := "v" + strings.TrimPrefix(Version, "v")
-	latestSemver := "v" + latest
+	latestSemver := "v" + latest.Version
 	if !semver.IsValid(currentSemver) {
 		result.Error = "center: current version is not a released semantic version"
 		return result
@@ -162,7 +193,10 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 		return result
 	}
 	result.Automatic = execution.Available
-	if execution.State == "queued" || execution.State == "applying" || execution.TargetVersion == latest {
+	result.CurrentImageDigest = releaseImageDigest(execution.InstalledImage)
+	result.ImageMismatch = latest.Version == strings.TrimPrefix(Version, "v") && execution.InstalledImage != latest.Image
+	result.UpdateAvailable = result.UpdateAvailable || result.ImageMismatch
+	if execution.State == "queued" || execution.State == "applying" || execution.TargetVersion == latest.Version {
 		result.State = execution.State
 		result.TargetVersion = execution.TargetVersion
 		result.Phase, result.Progress = centerUpdateProgress(execution)

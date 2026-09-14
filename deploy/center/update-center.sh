@@ -44,6 +44,7 @@ esac
 installer_host="$(awk 'NR == 3 {print; exit}' "$request")"
 installer_port="$(awk 'NR == 4 {print; exit}' "$request")"
 installer_address="$(awk 'NR == 5 {print; exit}' "$request")"
+target_image="$(awk 'NR == 6 {print; exit}' "$request")"
 if ! printf '%s\n' "$installer_host" | grep -Eq '^[0-9A-Za-z.-]+$' ||
    ! printf '%s\n' "$installer_port" | grep -Eq '^[0-9]{1,5}$' ||
    ! printf '%s\n' "$installer_address" | grep -Eq '^[0-9A-Fa-f:.]+$'; then
@@ -53,6 +54,14 @@ fi
 case "$installer_address" in
   *:*) installer_resolve="$installer_host:$installer_port:[$installer_address]" ;;
   *) installer_resolve="$installer_host:$installer_port:$installer_address" ;;
+esac
+case "$target_image" in
+  ghcr.io/petauron/vastora-center@sha256:????????????????????????????????????????????????????????????????) ;;
+  *) echo "The requested Center image is invalid." >&2; exit 2 ;;
+esac
+target_image_digest="${target_image##*@sha256:}"
+case "$target_image_digest" in
+  *[!0-9a-f]*) echo "The requested Center image digest is invalid." >&2; exit 2 ;;
 esac
 case "$installer_base_url" in
   *[!A-Za-z0-9.:/_~-]* | *'@'* | *'?'* | *'#'*)
@@ -74,7 +83,8 @@ write_status() {
 }
 
 installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
-if [ "$installed_version" = "$target_version" ]; then
+installed_image="$(awk -F= '$1 == "VASTORA_CENTER_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+if [ "$installed_version" = "$target_version" ] && [ "$installed_image" = "$target_image" ]; then
   write_status succeeded "$installed_version" "Center was updated successfully."
   rm -f "$request"
   exit 0
@@ -128,6 +138,19 @@ if [ "$installer_version" != "$target_version" ]; then
   failure_message="The immutable Center installer version did not match the requested update."
   exit 1
 fi
+installer_image="$(awk '
+  index($0, ":") > 0 && tolower(substr($0, 1, index($0, ":") - 1)) == "x-vastora-center-image" {
+    value = substr($0, index($0, ":") + 1)
+    sub(/^[[:space:]]+/, "", value)
+    sub(/\r$/, "", value)
+    result = value
+  }
+  END { print result }
+' "$installer_headers")"
+if [ "$installer_image" != "$target_image" ]; then
+  failure_message="The immutable Center installer image did not match the requested update."
+  exit 1
+fi
 expected_installer_digest="$(awk '
   index($0, ":") > 0 && tolower(substr($0, 1, index($0, ":") - 1)) == "x-vastora-sha256" {
     value = substr($0, index($0, ":") + 1)
@@ -156,8 +179,9 @@ if ! VASTORA_UPDATE_STATUS_FILE="$status_file" \
 fi
 
 installed_version="$(awk -F= '$1 == "VASTORA_VERSION" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
-if [ "$installed_version" != "$target_version" ]; then
-  failure_message="The Center update completed with an unexpected installed version."
+installed_image="$(awk -F= '$1 == "VASTORA_CENTER_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' "$install_dir/release.env")"
+if [ "$installed_version" != "$target_version" ] || [ "$installed_image" != "$target_image" ]; then
+  failure_message="The Center update completed with an unexpected installed release identity."
   exit 1
 fi
 write_status succeeded "$installed_version" "Center was updated successfully."

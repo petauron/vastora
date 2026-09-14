@@ -20,7 +20,8 @@ import (
 )
 
 type FileCenterUpdater struct {
-	InstallDir string
+	InstallDir   string
+	RuntimeImage string
 }
 
 func (updater FileCenterUpdater) CenterUpdateStatus(context.Context) (deployapi.CenterUpdateExecution, error) {
@@ -28,10 +29,23 @@ func (updater FileCenterUpdater) CenterUpdateStatus(context.Context) (deployapi.
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: Center installation directory is invalid")
 	}
 	available := regularFile(filepath.Join(updater.InstallDir, ".update-service-enabled")) && regularFile(filepath.Join(updater.InstallDir, "update-center.sh"))
+	installedImage := strings.TrimSpace(updater.RuntimeImage)
+	if installedImage != "" && !validCenterImage(installedImage) {
+		return deployapi.CenterUpdateExecution{}, errors.New("deployer: configured Center runtime image is invalid")
+	}
+	if regularFile(filepath.Join(updater.InstallDir, "release.env")) {
+		_, recordedImage, err := installedCenterRelease(filepath.Join(updater.InstallDir, "release.env"))
+		if err != nil {
+			return deployapi.CenterUpdateExecution{}, err
+		}
+		if installedImage == "" {
+			installedImage = recordedImage
+		}
+	}
 	statusPath := filepath.Join(updater.InstallDir, ".update-status.json")
 	file, err := os.Open(statusPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return deployapi.CenterUpdateExecution{Available: available, State: "idle"}, nil
+		return deployapi.CenterUpdateExecution{Available: available, State: "idle", InstalledImage: installedImage}, nil
 	}
 	if err != nil {
 		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: read Center update status: %w", err)
@@ -50,6 +64,7 @@ func (updater FileCenterUpdater) CenterUpdateStatus(context.Context) (deployapi.
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: Center update status is invalid")
 	}
 	result.Available = available
+	result.InstalledImage = installedImage
 	return result, nil
 }
 
@@ -58,6 +73,10 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, input de
 	if !semver.IsValid("v" + version) {
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: requested Center version is invalid")
 	}
+	image := strings.TrimSpace(input.Image)
+	if !validCenterImage(image) {
+		return deployapi.CenterUpdateExecution{}, errors.New("deployer: requested Center image is invalid")
+	}
 	installerBaseURL, err := validateInstallerBaseURL(input.InstallerBaseURL)
 	if err != nil {
 		return deployapi.CenterUpdateExecution{}, err
@@ -65,7 +84,7 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, input de
 	if err := validateInstallerPin(input, installerBaseURL); err != nil {
 		return deployapi.CenterUpdateExecution{}, err
 	}
-	requestPayload := []byte(strings.Join([]string{version, installerBaseURL, input.InstallerHost, input.InstallerPort, input.InstallerAddress, ""}, "\n"))
+	requestPayload := []byte(strings.Join([]string{version, installerBaseURL, input.InstallerHost, input.InstallerPort, input.InstallerAddress, image, ""}, "\n"))
 	status, err := updater.CenterUpdateStatus(ctx)
 	if err != nil {
 		return deployapi.CenterUpdateExecution{}, err
@@ -73,9 +92,13 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, input de
 	if !status.Available {
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: automatic Center updates are not installed")
 	}
-	currentVersion, err := installedCenterVersion(filepath.Join(updater.InstallDir, "release.env"))
+	currentVersion, recordedImage, err := installedCenterRelease(filepath.Join(updater.InstallDir, "release.env"))
 	if err != nil {
 		return deployapi.CenterUpdateExecution{}, err
+	}
+	currentImage := strings.TrimSpace(updater.RuntimeImage)
+	if currentImage == "" {
+		currentImage = recordedImage
 	}
 	if status.State == "queued" || status.State == "applying" {
 		if status.TargetVersion == version {
@@ -89,11 +112,12 @@ func (updater FileCenterUpdater) StartCenterUpdate(ctx context.Context, input de
 		}
 		return deployapi.CenterUpdateExecution{}, errors.New("deployer: another Center update is already running")
 	}
-	if semver.Compare("v"+version, "v"+currentVersion) <= 0 {
-		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: Center update %s is not newer than installed version %s", version, currentVersion)
+	comparison := semver.Compare("v"+version, "v"+currentVersion)
+	if comparison < 0 || (comparison == 0 && image == currentImage) {
+		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: Center release %s with image %s is already installed or older", version, image)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	queued := deployapi.CenterUpdateExecution{Available: true, State: "queued", TargetVersion: version, Message: "Waiting for the host update service.", UpdatedAt: now}
+	queued := deployapi.CenterUpdateExecution{Available: true, InstalledImage: currentImage, State: "queued", TargetVersion: version, Message: "Waiting for the host update service.", UpdatedAt: now}
 	statusPath := filepath.Join(updater.InstallDir, ".update-status.json")
 	if err := writeCenterUpdateStatus(statusPath, queued); err != nil {
 		return deployapi.CenterUpdateExecution{}, fmt.Errorf("deployer: queue Center update status: %w", err)
@@ -147,26 +171,48 @@ func writeCenterUpdateStatus(path string, status deployapi.CenterUpdateExecution
 	return writeCenterUpdateFile(path, append(payload, '\n'), 0o600)
 }
 
-func installedCenterVersion(path string) (string, error) {
+func installedCenterRelease(path string) (string, string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("deployer: read installed Center release: %w", err)
+		return "", "", fmt.Errorf("deployer: read installed Center release: %w", err)
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(io.LimitReader(file, 16<<10))
+	var version string
+	var image string
 	for scanner.Scan() {
-		if version, found := strings.CutPrefix(scanner.Text(), "VASTORA_VERSION="); found {
-			version = strings.TrimSpace(version)
-			if !semver.IsValid("v" + version) {
-				return "", errors.New("deployer: installed Center version is invalid")
-			}
-			return version, nil
+		line := scanner.Text()
+		if value, found := strings.CutPrefix(line, "VASTORA_VERSION="); found {
+			version = strings.TrimSpace(value)
+		}
+		if value, found := strings.CutPrefix(line, "VASTORA_CENTER_IMAGE="); found {
+			image = strings.TrimSpace(value)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("deployer: read installed Center release: %w", err)
+		return "", "", fmt.Errorf("deployer: read installed Center release: %w", err)
 	}
-	return "", errors.New("deployer: installed Center version is missing")
+	if !semver.IsValid("v" + version) {
+		return "", "", errors.New("deployer: installed Center version is invalid")
+	}
+	if !validCenterImage(image) {
+		return "", "", errors.New("deployer: installed Center image is invalid")
+	}
+	return version, image, nil
+}
+
+func validCenterImage(image string) bool {
+	const prefix = "ghcr.io/petauron/vastora-center@sha256:"
+	digest, found := strings.CutPrefix(image, prefix)
+	if !found || len(digest) != 64 {
+		return false
+	}
+	for _, character := range digest {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func writeCenterUpdateFile(path string, payload []byte, mode os.FileMode) error {

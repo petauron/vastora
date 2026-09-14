@@ -10,7 +10,11 @@ trap cleanup EXIT HUP INT TERM
 fake_bin="$temporary_dir/bin"
 install_dir="$temporary_dir/center"
 mkdir -p "$fake_bin" "$install_dir"
-printf '%s\n' 'VASTORA_VERSION=0.1.0-alpha.57' > "$install_dir/release.env"
+image_57="ghcr.io/petauron/vastora-center@sha256:5757575757575757575757575757575757575757575757575757575757575757"
+image_58="ghcr.io/petauron/vastora-center@sha256:5858585858585858585858585858585858585858585858585858585858585858"
+image_59="ghcr.io/petauron/vastora-center@sha256:5959595959595959595959595959595959595959595959595959595959595959"
+image_60="ghcr.io/petauron/vastora-center@sha256:6060606060606060606060606060606060606060606060606060606060606060"
+printf '%s\n' 'VASTORA_VERSION=0.1.0-alpha.57' "VASTORA_CENTER_IMAGE=$image_57" > "$install_dir/release.env"
 
 cat > "$fake_bin/id" <<'EOF'
 #!/bin/sh
@@ -40,7 +44,7 @@ done
 [ "$VASTORA_UPDATE_TARGET_VERSION" = "$expected_version" ]
 grep -Fq '"message":"Installing the verified release."' "$VASTORA_UPDATE_STATUS_FILE"
 printf '%s\n' "$release_url" > "$FAKE_INSTALLER_LOG"
-printf 'VASTORA_VERSION=%s\n' "$expected_version" > "$install_dir/release.env"
+printf 'VASTORA_VERSION=%s\nVASTORA_CENTER_IMAGE=%s\n' "$expected_version" "$FAKE_TARGET_IMAGE" > "$install_dir/release.env"
 EOF
 cat > "$fake_bin/curl" <<'EOF'
 #!/bin/sh
@@ -73,6 +77,7 @@ digest="$(sha256sum "$output" | awk 'NR == 1 {print $1}')"
 {
   printf 'HTTP/2 200\r\n'
   printf 'X-Vastora-Version: %s\r\n' "${FAKE_RESPONSE_VERSION:-$FAKE_TARGET_VERSION}"
+  printf 'X-Vastora-Center-Image: %s\r\n' "$FAKE_TARGET_IMAGE"
   printf 'X-Vastora-SHA256: %s\r\n\r\n' "$digest"
 } > "$headers"
 printf '%s' "$status"
@@ -82,29 +87,32 @@ chmod 0755 "$fake_bin/id" "$fake_bin/curl" "$temporary_dir/installer.sh"
 run_update() {
   target_version="$1"
   response_version="$2"
+  target_image="$3"
   printf '%s\n' \
     "$target_version" \
     "https://vastora.petauron.com/releases" \
     "vastora.petauron.com" \
     "443" \
-    "203.0.113.10" > "$install_dir/.update-request"
+    "203.0.113.10" \
+    "$target_image" > "$install_dir/.update-request"
   FAKE_INSTALLER_LOG="$temporary_dir/installer.log" \
   FAKE_INSTALLER_SOURCE="$temporary_dir/installer.sh" \
   FAKE_RESPONSE_VERSION="$response_version" \
-  FAKE_RESPONSE_STATUS="${3:-200}" \
   FAKE_TARGET_VERSION="$target_version" \
+  FAKE_TARGET_IMAGE="$target_image" \
   PATH="$fake_bin:$PATH" \
     "$project_dir/deploy/center/update-center.sh" --install-dir "$install_dir"
 }
 
-run_update 0.1.0-alpha.58 0.1.0-alpha.58
+run_update 0.1.0-alpha.58 0.1.0-alpha.58 "$image_58"
 grep -Fq '"state":"succeeded"' "$install_dir/.update-status.json"
 grep -Fq '"targetVersion":"0.1.0-alpha.58"' "$install_dir/.update-status.json"
 grep -Fqx 'VASTORA_VERSION=0.1.0-alpha.58' "$install_dir/release.env"
+grep -Fqx "VASTORA_CENTER_IMAGE=$image_58" "$install_dir/release.env"
 grep -Fqx 'https://vastora.petauron.com/releases/v0.1.0-alpha.58/vastora-center-install.tar.gz' "$temporary_dir/installer.log"
 test ! -e "$install_dir/.update-request"
 
-if run_update 0.1.0-alpha.59 0.1.0-alpha.58 >/dev/null 2>&1; then
+if run_update 0.1.0-alpha.59 0.1.0-alpha.58 "$image_59" >/dev/null 2>&1; then
   echo "Center updater accepted an installer for the wrong version." >&2
   exit 1
 fi
@@ -112,7 +120,7 @@ grep -Fq '"state":"failed"' "$install_dir/.update-status.json"
 grep -Fq 'installer version did not match' "$install_dir/.update-status.json"
 test ! -e "$install_dir/.update-request"
 
-if run_update 0.1.0-alpha.60 0.1.0-alpha.60 404 >/dev/null 2>&1; then
+if FAKE_RESPONSE_STATUS=404 run_update 0.1.0-alpha.60 0.1.0-alpha.60 "$image_60" >/dev/null 2>&1; then
   echo "Center updater accepted a pruned immutable release." >&2
   exit 1
 fi

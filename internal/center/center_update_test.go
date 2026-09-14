@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,15 +15,20 @@ import (
 
 type fixedReleaseChecker struct {
 	version string
+	image   string
 	err     error
 	checks  *[]bool
 }
 
-func (checker fixedReleaseChecker) LatestVersion(_ context.Context, refresh bool) (string, time.Time, error) {
+func (checker fixedReleaseChecker) LatestRelease(_ context.Context, refresh bool) (CenterRelease, time.Time, error) {
 	if checker.checks != nil {
 		*checker.checks = append(*checker.checks, refresh)
 	}
-	return checker.version, time.Date(2026, 8, 25, 1, 2, 3, 0, time.UTC), checker.err
+	image := checker.image
+	if image == "" {
+		image = "ghcr.io/petauron/vastora-center@sha256:" + strings.Repeat("a", 64)
+	}
+	return CenterRelease{Version: checker.version, Image: image}, time.Date(2026, 8, 25, 1, 2, 3, 0, time.UTC), checker.err
 }
 
 type fakeCenterUpdater struct {
@@ -45,13 +51,14 @@ func TestReleaseCheckerReadsTheConfiguredReleaseVersion(t *testing.T) {
 			t.Fatalf("method = %s", request.Method)
 		}
 		writer.Header().Set("X-Vastora-Version", "0.1.0-alpha.48")
+		writer.Header().Set("X-Vastora-Center-Image", "ghcr.io/petauron/vastora-center@sha256:"+strings.Repeat("a", 64))
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer installer.Close()
 	checker := NewReleaseChecker(installer.URL, installer.Client())
-	version, checkedAt, err := checker.LatestVersion(context.Background(), false)
-	if err != nil || version != "0.1.0-alpha.48" || checkedAt.IsZero() {
-		t.Fatalf("unexpected release: version=%q checked=%s err=%v", version, checkedAt, err)
+	release, checkedAt, err := checker.LatestRelease(context.Background(), false)
+	if err != nil || release.Version != "0.1.0-alpha.48" || checkedAt.IsZero() {
+		t.Fatalf("unexpected release: release=%#v checked=%s err=%v", release, checkedAt, err)
 	}
 	for _, value := range []string{"", "v0.1.0", "latest", "0.1.0/other"} {
 		if _, err := releaseVersionFromHeader(value); err == nil {
@@ -73,7 +80,7 @@ func TestReleaseCheckerRejectsRedirectsAndMissingVersionHeaders(t *testing.T) {
 				writer.WriteHeader(test.status)
 			}))
 			defer installer.Close()
-			if _, _, err := NewReleaseChecker(installer.URL, installer.Client()).LatestVersion(context.Background(), false); err == nil {
+			if _, _, err := NewReleaseChecker(installer.URL, installer.Client()).LatestRelease(context.Background(), false); err == nil {
 				t.Fatal("invalid installer response was accepted")
 			}
 		})
@@ -160,23 +167,24 @@ func TestReleaseCheckerBypassesItsCacheWhenRefreshIsRequested(t *testing.T) {
 	installer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		requests++
 		writer.Header().Set("X-Vastora-Version", fmt.Sprintf("0.1.0-alpha.%d", 47+requests))
+		writer.Header().Set("X-Vastora-Center-Image", "ghcr.io/petauron/vastora-center@sha256:"+strings.Repeat("a", 64))
 		writer.WriteHeader(http.StatusOK)
 	}))
 	defer installer.Close()
 	checker := NewReleaseChecker(installer.URL, installer.Client())
-	first, _, err := checker.LatestVersion(context.Background(), false)
+	first, _, err := checker.LatestRelease(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cached, _, err := checker.LatestVersion(context.Background(), false)
+	cached, _, err := checker.LatestRelease(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	refreshed, _, err := checker.LatestVersion(context.Background(), true)
+	refreshed, _, err := checker.LatestRelease(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first != "0.1.0-alpha.48" || cached != first || refreshed != "0.1.0-alpha.49" || requests != 2 {
+	if first.Version != "0.1.0-alpha.48" || cached != first || refreshed.Version != "0.1.0-alpha.49" || requests != 2 {
 		t.Fatalf("first=%q cached=%q refreshed=%q requests=%d", first, cached, refreshed, requests)
 	}
 }

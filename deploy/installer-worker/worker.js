@@ -7,6 +7,7 @@ const releaseAssets = new Map([
   ["vastora-center-install.tar.gz.sha256", "text/plain; charset=utf-8"],
 ]);
 const releaseVersionPattern = /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/;
+const centerImagePattern = /^ghcr\.io\/petauron\/vastora-center@sha256:[0-9a-f]{64}$/;
 const immutableCacheControl = "public, max-age=31536000, immutable";
 const currentCacheControl = "public, max-age=60";
 const currentManifestKey = "vastora/current.json";
@@ -18,7 +19,7 @@ const oauthSessionLifetimeMs = 10 * 60 * 1000;
 const oauthStatePattern = /^v1\.([A-Za-z0-9_-]{24,64})\.([A-Za-z0-9_-]{43})$/;
 
 function validManifest(manifest) {
-  if (!manifest || manifest.schema !== 1 || !releaseVersionPattern.test(manifest.version || "")) {
+  if (!manifest || manifest.schema !== 1 || !releaseVersionPattern.test(manifest.version || "") || !centerImagePattern.test(manifest.centerImage || "")) {
     return false;
   }
   if (!manifest.assets || Object.keys(manifest.assets).length !== releaseAssets.size) return false;
@@ -91,6 +92,7 @@ async function installerAssetResponse(request, env, manifest, asset, cacheContro
   headers.set("ETag", object.httpEtag);
   headers.set("X-Vastora-SHA256", descriptor.sha256);
   headers.set("X-Vastora-Version", manifest.version);
+  headers.set("X-Vastora-Center-Image", manifest.centerImage);
   return new Response(request.method === "HEAD" ? null : object.body, { headers });
 }
 

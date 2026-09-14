@@ -9,8 +9,10 @@ import (
 	"github.com/petauron/vastora/internal/deployapi"
 )
 
+const testCenterImage = "ghcr.io/petauron/vastora-center@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func centerUpdateRequest(version string) deployapi.CenterUpdateRequest {
-	return deployapi.CenterUpdateRequest{Version: version, InstallerBaseURL: "https://releases.example.com", InstallerHost: "releases.example.com", InstallerPort: "443", InstallerAddress: "203.0.113.10"}
+	return deployapi.CenterUpdateRequest{Version: version, Image: testCenterImage, InstallerBaseURL: "https://releases.example.com", InstallerHost: "releases.example.com", InstallerPort: "443", InstallerAddress: "203.0.113.10"}
 }
 
 func TestFileCenterUpdaterQueuesOneVerifiedRelease(t *testing.T) {
@@ -20,7 +22,7 @@ func TestFileCenterUpdaterQueuesOneVerifiedRelease(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.47\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.47\nVASTORA_CENTER_IMAGE="+testCenterImage+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	updater := FileCenterUpdater{InstallDir: installDir}
@@ -36,7 +38,7 @@ func TestFileCenterUpdaterQueuesOneVerifiedRelease(t *testing.T) {
 		t.Fatalf("unexpected queued status: %#v err=%v", queued, err)
 	}
 	request, err := os.ReadFile(filepath.Join(installDir, ".update-request"))
-	if err != nil || string(request) != "0.1.0-alpha.48\nhttps://releases.example.com\nreleases.example.com\n443\n203.0.113.10\n" {
+	if err != nil || string(request) != "0.1.0-alpha.48\nhttps://releases.example.com\nreleases.example.com\n443\n203.0.113.10\n"+testCenterImage+"\n" {
 		t.Fatalf("unexpected update request %q err=%v", request, err)
 	}
 	persisted, err := updater.CenterUpdateStatus(context.Background())
@@ -71,7 +73,7 @@ func TestFileCenterUpdaterDoesNotLeaveAStuckQueueWhenRequestWriteFails(t *testin
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.47\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.47\nVASTORA_CENTER_IMAGE="+testCenterImage+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(installDir, ".update-request"), 0o700); err != nil {
@@ -98,7 +100,7 @@ func TestFileCenterUpdaterRecreatesConsumedActiveRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.48\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(installDir, "release.env"), []byte("VASTORA_VERSION=0.1.0-alpha.48\nVASTORA_CENTER_IMAGE="+testCenterImage+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	status := []byte(`{"state":"applying","targetVersion":"0.1.0-alpha.48","message":"applying","updatedAt":"2026-08-30T00:00:00Z"}` + "\n")
@@ -112,7 +114,7 @@ func TestFileCenterUpdaterRecreatesConsumedActiveRequest(t *testing.T) {
 		t.Fatalf("active update was not recovered: %#v err=%v", recovered, err)
 	}
 	request, err := os.ReadFile(filepath.Join(installDir, ".update-request"))
-	if err != nil || string(request) != "0.1.0-alpha.48\nhttps://releases.example.com\nreleases.example.com\n443\n203.0.113.10\n" {
+	if err != nil || string(request) != "0.1.0-alpha.48\nhttps://releases.example.com\nreleases.example.com\n443\n203.0.113.10\n"+testCenterImage+"\n" {
 		t.Fatalf("recovered request = %q err=%v", request, err)
 	}
 }
