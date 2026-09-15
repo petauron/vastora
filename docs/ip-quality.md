@@ -1,7 +1,8 @@
 # IP quality diagnostics
 
-The 3x-ui node list, landing server manager and exit chooser expose a manual
-IP quality check. Each result describes that host's own observed public egress;
+The 3x-ui node list, landing server manager and exit chooser expose the same
+manual node-diagnostics panel. Its Overview and IP quality tabs describe that
+host's own observed public egress;
 it is **not** a VLESS/HY2 entry-to-landing route test. Center uses the Agent's
 reported public egress and local bind address. A report with a different IP is
 rejected. A later address change marks the retained report stale.
@@ -32,10 +33,52 @@ normal Activity workflow. Nothing automatically retries or starts a check.
   and streaming requests necessarily expose the tested exit IP to those sites.
 - No raw report, coordinates, command, upstream response or report URL is
   retained. The authenticated Center stores the latest normalized report/IP,
-  provider-specific risk values, unlock status/region/type and completion time.
+  bounded ASN/organization/location fields, provider classifications and risk
+  factors, provider-specific risk values, unlock status/region/type and
+  completion time.
   Missing values are not zero; sources are not averaged into a quality score.
-- Schema 77 is additive and forward-only using Center's existing migration
+- Schemas 78 and 80 are additive and forward-only using Center's existing migration
   backup/fail-closed flow. Agent deletion cascades its latest diagnostic record.
+
+## Network quality and return route
+
+The Network quality, Return route and International bandwidth tabs use three
+independent task classes: `node.network-quality`, `node.return-route` and
+`node.international-bandwidth`. Each class permits at most one
+pending/running task per node and retains only its latest bounded structured
+result. Both use the same encrypted Agent execution channel, leases, explicit
+error states and Activity recovery rules as IP quality.
+
+The three carrier targets were migrated from the operator's existing Komari
+configuration into Vastora target revision 1. Runtime execution does not read
+Komari, its database or its token. A network check performs four bounded TCP
+connection samples for China Telecom, China Unicom and China Mobile and reports
+mean latency, successive-sample jitter and connection-loss percentage. It is
+manual only and closes every connection immediately.
+
+Return route uses the maintained `golang.org/x/net/icmp` implementation already
+present in the project, with one bounded IPv4 ICMP probe per TTL and no reverse
+DNS or third-party geolocation requests. It reports at most 30 structured hops
+for node to carrier target. It never labels the result as a forward route.
+Only a root Linux Agent advertises the raw-socket capability.
+
+International bandwidth is manual-only and uses the public iPerf3 endpoints
+documented by Leaseweb for Singapore, Los Angeles and Frankfurt. It runs the
+three regions sequentially, tries at most ports 5201-5203 when a shared port is
+busy, and caps each download/upload direction at 8 MiB (48 MiB total). The
+whole task has a two-minute deadline. The result is a bounded structured record;
+raw command output is never retained.
+These shared endpoints are a diagnostic sample, not an SLA or an unattended
+capacity monitor. The Agent resolves each configured hostname to a public IPv4
+address before execution and binds the test to its Center-confirmed public
+egress address.
+
+Vastora does not execute TcpQuality or copy its implementation: that repository
+does not declare a software license. It only informed the choice of the same
+standard iPerf3 protocol. The actual endpoints and supported port range are
+verified against Leaseweb's own documentation. A Linux Agent advertises the
+bandwidth capability only when `iperf3` is already installed; Vastora does not
+silently install or modify host packages.
 
 No scan runs on page load or on a schedule. Opening the page reads saved
 results; polling only observes pending/running checks.
@@ -43,8 +86,11 @@ results; polling only observes pending/running checks.
 ## Targeted validation before release
 
 Run the parser, runner-options and Center IPQuality tests, migration-equivalence
-test, and the frontend IPQuality model/component checks when local verification
-is authorized. On a non-production Linux node, manually run one check, verify
+test, node-diagnostics validation and iPerf3 parser tests, and the frontend
+IPQuality model/component checks when local verification is authorized. On a
+non-production Linux node with iPerf3 installed, manually run one check, verify
 the IP matches, close/reopen the panel, then check cancellation and container
-cleanup. Verify old Agents/offline nodes cannot queue a check and that changing
-egress marks the previous report stale. Do not use production for validation.
+cleanup. Confirm the six bandwidth samples remain within 48 MiB and are
+sequential, then verify cancellation leaves no iPerf3 process. Verify old
+Agents/offline nodes cannot queue a check and that changing egress marks the
+previous report stale. Do not use production for validation.

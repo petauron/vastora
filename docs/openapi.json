@@ -5147,6 +5147,107 @@
         ]
       }
     },
+    "/api/v1/node-diagnostics": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "List Node Diagnostics",
+        "operationId": "listNodeDiagnostics_get",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{id}/node-diagnostics/{kind}": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Start Node Diagnostic",
+        "operationId": "startNodeDiagnostic_post",
+        "x-vastora-audience": "browser-admin",
+        "security": [
+          {
+            "AdminSession": [],
+            "AdminCSRF": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ]
+      }
+    },
     "/api/v1/regions": {
       "get": {
         "tags": [
@@ -6044,6 +6145,15 @@
                     "additionalProperties": false,
                     "properties": {
                       "ipQuality": {
+                        "type": "boolean"
+                      },
+                      "networkDiagnostics": {
+                        "type": "boolean"
+                      },
+                      "returnRoute": {
+                        "type": "boolean"
+                      },
+                      "bandwidthDiagnostics": {
                         "type": "boolean"
                       },
                       "docker": {

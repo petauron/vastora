@@ -13,6 +13,8 @@ import (
 	"github.com/petauron/vastora/internal/secret"
 )
 
+var errRetainedExecutionNotRecoverable = errors.New("center: retained execution result requires operator verification")
+
 // ConfirmExecution applies retained result evidence, never an Agent
 // command. The original failed/unknown execution and encrypted evidence remain
 // intact; the administrator's disposition is recorded in the same transaction
@@ -21,38 +23,73 @@ func (s *Store) ConfirmExecution(ctx context.Context, id, adminID string, input 
 	if input.Action != "confirm-completed" || !input.ExecutionStopped || strings.TrimSpace(input.Note) == "" || len(input.Note) > 1024 {
 		return errors.New("center: confirm stopped execution and record verification")
 	}
+	return s.projectRetainedExecutionResult(ctx, id, retainedExecutionResolution{adminID: adminID, note: input.Note})
+}
+
+type retainedExecutionResolution struct {
+	adminID   string
+	note      string
+	automatic bool
+}
+
+// projectRetainedExecutionResult applies an authenticated result that reached
+// Center before the reporting Agent process disappeared. Automatic recovery is
+// limited to successful, non-uncertain evidence in result_received; every other
+// interrupted execution remains fenced for an administrator to inspect.
+func (s *Store) projectRetainedExecutionResult(ctx context.Context, id string, resolution retainedExecutionResolution) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	var admin bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admins WHERE id=?)`, adminID).Scan(&admin); err != nil {
-		return err
-	}
-	if !admin {
-		return errors.New("center: administrator authorization required")
+	if !resolution.automatic {
+		var admin bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM admins WHERE id=?)`, resolution.adminID).Scan(&admin); err != nil {
+			return err
+		}
+		if !admin {
+			return errors.New("center: administrator authorization required")
+		}
 	}
 	var agentID, taskID, kind string
 	var attempt int64
 	var sealedTask, sealedResult []byte
-	if err := tx.QueryRowContext(ctx, `SELECT agent_id,task_id,kind,attempt,sealed_task,sealed_result FROM task_executions WHERE id=? AND state IN ('failed','unknown') AND disposition=''`, id).Scan(&agentID, &taskID, &kind, &attempt, &sealedTask, &sealedResult); err != nil {
+	stateFilter := "state IN ('failed','unknown')"
+	if resolution.automatic {
+		stateFilter = "state='unknown' AND phase='result_received'"
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT agent_id,task_id,kind,attempt,sealed_task,sealed_result FROM task_executions WHERE id=? AND `+stateFilter+` AND disposition=''`, id).Scan(&agentID, &taskID, &kind, &attempt, &sealedTask, &sealedResult); err != nil {
+		if resolution.automatic && errors.Is(err, sql.ErrNoRows) {
+			return errRetainedExecutionNotRecoverable
+		}
 		return errExecutionAuthorization
 	}
 	taskRaw, err := secret.Open(s.key, sealedTask, []byte("execution-task:"+id))
 	if err != nil {
+		if resolution.automatic {
+			return errRetainedExecutionNotRecoverable
+		}
 		return errors.New("center: execution evidence cannot be verified")
 	}
 	var task AgentTask
 	if json.Unmarshal(taskRaw, &task) != nil || task.ID != taskID || task.Kind != kind || task.Attempt != attempt {
+		if resolution.automatic {
+			return errRetainedExecutionNotRecoverable
+		}
 		return errExecutionAuthorization
 	}
 	resultRaw, err := secret.Open(s.key, sealedResult, []byte("execution-result:"+id))
 	if err != nil {
+		if resolution.automatic {
+			return errRetainedExecutionNotRecoverable
+		}
 		return errors.New("center: retained completion evidence is required")
 	}
 	var evidence executionResultEvidence
 	if json.Unmarshal(resultRaw, &evidence) != nil || !retainedResultSupportsConfirmation(kind, evidence) {
+		if resolution.automatic {
+			return errRetainedExecutionNotRecoverable
+		}
 		return errors.New("center: retained result does not prove completion; verify or replace the missing evidence before confirming")
 	}
 	// Do not overwrite a newer deployment, even if the old attempt still exists.
@@ -74,7 +111,12 @@ func (s *Store) ConfirmExecution(ctx context.Context, id, adminID string, input 
 			return err
 		}
 		now := s.now().UTC().Format(time.RFC3339Nano)
-		updated, err := tx.ExecContext(ctx, `UPDATE task_executions SET disposition='confirm-completed',disposition_note=?,disposition_actor=?,disposed_at=?,updated_at=? WHERE id=? AND disposition='' AND state IN ('failed','unknown')`, controlplane.SafeError(input.Note), adminID, now, now, id)
+		var updated sql.Result
+		if resolution.automatic {
+			updated, err = tx.ExecContext(ctx, `UPDATE task_executions SET state='succeeded',phase='reported',last_error='',updated_at=? WHERE id=? AND disposition='' AND state='unknown' AND phase='result_received'`, now, id)
+		} else {
+			updated, err = tx.ExecContext(ctx, `UPDATE task_executions SET disposition='confirm-completed',disposition_note=?,disposition_actor=?,disposed_at=?,updated_at=? WHERE id=? AND disposition='' AND state IN ('failed','unknown')`, controlplane.SafeError(resolution.note), resolution.adminID, now, now, id)
+		}
 		if err != nil {
 			return err
 		}

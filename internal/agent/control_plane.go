@@ -23,6 +23,7 @@ import (
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/pulse"
@@ -121,12 +122,15 @@ func taskOutcomeIsUncertain(err error) bool {
 }
 
 type Capabilities struct {
-	IPQuality bool `json:"ipQuality"`
-	Docker    bool `json:"docker"`
-	Gateway   bool `json:"gateway"`
-	Tunnel    bool `json:"tunnel"`
-	Metrics   bool `json:"metrics"`
-	Logs      bool `json:"logs"`
+	IPQuality            bool `json:"ipQuality"`
+	NetworkDiagnostics   bool `json:"networkDiagnostics"`
+	ReturnRoute          bool `json:"returnRoute"`
+	BandwidthDiagnostics bool `json:"bandwidthDiagnostics"`
+	Docker               bool `json:"docker"`
+	Gateway              bool `json:"gateway"`
+	Tunnel               bool `json:"tunnel"`
+	Metrics              bool `json:"metrics"`
+	Logs                 bool `json:"logs"`
 }
 
 type Enrollment struct {
@@ -139,6 +143,7 @@ type Enrollment struct {
 
 type DeploymentTask struct {
 	IPQuality                 *ipquality.Task                     `json:"ipQuality,omitempty"`
+	NodeDiagnostics           *nodediagnostics.Task               `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization `json:"-"`
 	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
@@ -194,6 +199,7 @@ type ApplicationServiceResult struct {
 
 type ApplicationTaskResult struct {
 	IPQuality           *ipquality.Result                `json:"ipQuality,omitempty"`
+	NodeDiagnostics     *nodediagnostics.Result          `json:"nodeDiagnostics,omitempty"`
 	PulseEnrollment     *pulse.EnrollmentResult          `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand     *nodeprotocol.Result             `json:"protocolCommand,omitempty"`
 	LandingPeer         *landing.PeerIdentity            `json:"landingPeer,omitempty"`
@@ -964,6 +970,36 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		} else {
 			value, checkErr := checker.CheckIPQuality(ctx, *task.IPQuality)
 			result.IPQuality, err = &value, checkErr
+		}
+	case nodediagnostics.NetworkKind:
+		checker, ok := c.Executor.(interface {
+			CheckNetworkQuality(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+		})
+		if !ok || !c.Capabilities.NetworkDiagnostics || task.NodeDiagnostics == nil {
+			err = errors.New("agent: network diagnostics capability is not configured")
+		} else {
+			value, checkErr := checker.CheckNetworkQuality(ctx, *task.NodeDiagnostics)
+			result.NodeDiagnostics, err = &value, checkErr
+		}
+	case nodediagnostics.ReturnRouteKind:
+		checker, ok := c.Executor.(interface {
+			CheckReturnRoutes(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+		})
+		if !ok || !c.Capabilities.ReturnRoute || task.NodeDiagnostics == nil {
+			err = errors.New("agent: return-route capability is not configured")
+		} else {
+			value, checkErr := checker.CheckReturnRoutes(ctx, *task.NodeDiagnostics)
+			result.NodeDiagnostics, err = &value, checkErr
+		}
+	case nodediagnostics.BandwidthKind:
+		checker, ok := c.Executor.(interface {
+			CheckInternationalBandwidth(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+		})
+		if !ok || !c.Capabilities.BandwidthDiagnostics || task.NodeDiagnostics == nil {
+			err = errors.New("agent: bandwidth diagnostics capability is not configured")
+		} else {
+			value, checkErr := checker.CheckInternationalBandwidth(ctx, *task.NodeDiagnostics)
+			result.NodeDiagnostics, err = &value, checkErr
 		}
 	case "application.apply":
 		if landingErr := store.checkLandingApplicationMutation(ctx, task.AppKey); landingErr != nil {

@@ -2523,6 +2523,22 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("请稍候，更新完成后节点会自动连接。");
   });
 
+  it("does not report completion while Agents are waiting for rollout readiness", () => {
+    const status = {
+      ...dashboard().centerUpdate,
+      currentVersion: "0.1.0-alpha.99",
+      latestVersion: "0.1.0-alpha.99",
+      updateAvailable: false,
+      state: "succeeded" as const,
+      targetVersion: "0.1.0-alpha.99",
+      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 16, updated: 1, updating: 0, pending: 15, failed: 0, offline: 0, manual: 0 },
+    };
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    expect(container.textContent).toContain("Center 已更新，Agent 等待发布");
+    expect(container.textContent).toContain("15 个正在等待发布条件");
+    expect(container.textContent).not.toContain("更新完成");
+  });
+
   it("bypasses the official release cache when update checking is requested", async () => {
     const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.59", updateAvailable: true };
     const refreshed = { ...status, latestVersion: "0.1.0-alpha.60" };

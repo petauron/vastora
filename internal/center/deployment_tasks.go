@@ -17,6 +17,7 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/pulse"
@@ -25,6 +26,7 @@ import (
 
 type AgentTask struct {
 	IPQuality                 *ipquality.Task                     `json:"ipQuality,omitempty"`
+	NodeDiagnostics           *nodediagnostics.Task               `json:"nodeDiagnostics,omitempty"`
 	Authorization             controlplane.ExecutionAuthorization `json:"-"`
 	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
@@ -249,6 +251,16 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
+					diagnostic, diagnosticErr := s.claimNodeDiagnostic(ctx, tx, agentID)
+					if diagnosticErr != nil {
+						return nil, diagnosticErr
+					}
+					if diagnostic != nil {
+						if err := commitTask(tx, diagnostic); err != nil {
+							return nil, err
+						}
+						return diagnostic, nil
+					}
 					check, err := s.claimIPQuality(ctx, tx, agentID)
 					if err != nil || check == nil {
 						return nil, err
@@ -434,6 +446,12 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeIPQuality(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
+	}
+	if strings.HasPrefix(taskID, "node-diagnostic-") {
+		if reconciliationRequired {
+			return errInvalidReconciliationDisposition
+		}
+		return s.completeNodeDiagnostic(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {

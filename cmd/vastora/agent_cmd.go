@@ -563,6 +563,10 @@ func runAgent(arguments []string) error {
 		}
 		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
 		client.Capabilities.IPQuality = capabilities.Docker && runtime.GOOS == "linux"
+		client.Capabilities.NetworkDiagnostics = runtime.GOOS == "linux"
+		client.Capabilities.ReturnRoute = runtime.GOOS == "linux" && os.Geteuid() == 0
+		_, iperfErr := exec.LookPath("iperf3")
+		client.Capabilities.BandwidthDiagnostics = runtime.GOOS == "linux" && iperfErr == nil
 		if capabilities.Docker {
 			client.NodeListener = agent.DockerLayer4Provisioner{Image: *haproxyImage}
 		}
