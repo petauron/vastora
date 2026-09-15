@@ -6156,6 +6156,9 @@
                       "bandwidthDiagnostics": {
                         "type": "boolean"
                       },
+                      "hostProfile": {
+                        "type": "boolean"
+                      },
                       "docker": {
                         "type": "boolean"
                       },
