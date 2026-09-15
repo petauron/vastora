@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { RuntimeRecoveryAlert } from "./RuntimeRecoveryAlert";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
-import { IPQualityButton, IPQualityProvider, NodeHealthCells, NodeHealthInline } from "./IPQuality";
+import { NodeDiagnosticsButton, NodeDiagnosticsProvider, NodeHealthCells, NodeHealthInline } from "./IPQuality";
 
 export { validCenterURL } from "../lib/network";
 
@@ -45,7 +45,7 @@ export function agentInstallCommand({ centerURL, enrollment, installerAvailable 
 type NodesViewProps = { data: AppData; language: Language; mutate: Mutate; onAddFirstNodeHandled?: () => void; onNavigate: (screen: Screen) => void; startAdding?: boolean };
 
 export function NodesView(props: NodesViewProps) {
-  return <IPQualityProvider agents={props.data.agents} enabled><NodesViewContent {...props} /></IPQualityProvider>;
+  return <NodeDiagnosticsProvider agents={props.data.agents} enabled><NodesViewContent {...props} /></NodeDiagnosticsProvider>;
 }
 
 function NodesViewContent({ data, language, mutate, onAddFirstNodeHandled, onNavigate, startAdding = false }: NodesViewProps) {
@@ -130,19 +130,18 @@ function NodesViewContent({ data, language, mutate, onAddFirstNodeHandled, onNav
       <Table aria-label={copy(language, "节点全局状态", "Fleet status")} className="nodes-health-table min-w-full table-fixed md:min-w-[960px]">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[22%]">{copy(language, "节点", "Node")}</TableHead>
+            <TableHead className="w-[24%]">{copy(language, "节点", "Node")}</TableHead>
             <TableHead className="w-[10%] max-md:hidden">{copy(language, "状态", "Status")}</TableHead>
-            <TableHead className="w-[12%] max-md:hidden">{copy(language, "三网延迟", "Carrier latency")}</TableHead>
-            <TableHead className="w-[11%] max-md:hidden">{copy(language, "IP 质量", "IP quality")}</TableHead>
-            <TableHead className="w-[11%] max-md:hidden">{copy(language, "主机", "Host")}</TableHead>
-            <TableHead className="w-[16%] max-md:hidden">{copy(language, "TCP 参数", "TCP values")}</TableHead>
+            <TableHead className="w-[14%] max-md:hidden">{copy(language, "三网延迟", "Carrier latency")}</TableHead>
+            <TableHead className="w-[13%] max-md:hidden">{copy(language, "主机", "Host")}</TableHead>
+            <TableHead className="w-[18%] max-md:hidden">{copy(language, "TCP 参数", "TCP values")}</TableHead>
             <TableHead className="w-[10%] max-md:hidden">{copy(language, "最近检测", "Last check")}</TableHead>
             <TableHead className="w-24"><span className="sr-only">{copy(language, "操作", "Actions")}</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {visibleGroups.map(({ site, agents }) => <NodeSiteRows agents={agents} data={data} key={site.id} language={language} onApplications={() => onNavigate("apps")} onConfigure={setEditing} onNetwork={() => onNavigate("network")} onReconnect={beginReconnect} onRemove={setRemovingID} site={site} />)}
-          {visibleAgents.length === 0 ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={8}>{copy(language, "没有符合当前筛选条件的节点", "No nodes match the current filters")}</TableCell></TableRow> : null}
+          {visibleAgents.length === 0 ? <TableRow><TableCell className="h-24 text-center text-muted-foreground" colSpan={7}>{copy(language, "没有符合当前筛选条件的节点", "No nodes match the current filters")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
     </div>}
@@ -174,7 +173,7 @@ function FleetSummary({ agents, connected, attention, gateways, sites, withAppli
 function NodeSiteRows({ agents, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove, site }: { agents: AgentView[]; data: AppData; language: Language; onApplications: () => void; onConfigure: (agent: AgentView) => void; onNetwork: () => void; onReconnect: (agent: AgentView) => void; onRemove: (id: string) => void; site: AppData["sites"][number] }) {
   return <>
     <TableRow className="bg-muted/25 hover:bg-muted/25">
-      <TableCell className="h-8 py-1" colSpan={8}>
+      <TableCell className="h-8 py-1" colSpan={7}>
         <div className="flex items-center gap-2 text-xs"><MapPinIcon aria-hidden="true" className="size-3.5 text-muted-foreground" /><span className="font-medium">{site.name}</span><Badge variant="secondary">{site.code}</Badge><span className="text-muted-foreground">{copy(language, `${agents.length} 台节点`, `${agents.length} node${agents.length === 1 ? "" : "s"}`)}</span></div>
       </TableCell>
     </TableRow>
@@ -192,9 +191,9 @@ function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNe
       <TableCell><div className="flex min-w-0 items-start gap-2"><ServerIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><p className="truncate font-medium" title={agent.name}>{agent.name}</p><span className="shrink-0 md:hidden"><StateBadge language={language} value={state} /></span></div><p className="truncate text-xs text-muted-foreground" title={agent.version}>{architecture} · {agent.version || "—"}{selectedGateway ? ` · ${copy(language, "网关", "Gateway")}` : ""}</p><NodeHealthInline agent={agent} /></div></div></TableCell>
       <TableCell className="max-md:hidden"><StateBadge language={language} value={state} />{!agent.networkProfile ? <span className="mt-1 block text-xs text-destructive">{copy(language, "网络未确认", "Network unconfirmed")}</span> : null}</TableCell>
       <NodeHealthCells agent={agent} language={language} />
-      <TableCell><div className="flex items-center justify-end gap-1 max-md:flex-wrap"><IPQualityButton nodeId={agent.id} name={agent.name} language={language} compact />{agent.status === "active" && !agent.networkProfile ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm"><NetworkIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "active" && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" variant="outline"><RotateCcwIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}{!agent.removal && agent.status === "active" ? <Button onClick={onConfigure} size="icon-sm" variant="ghost" aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)}><Settings2Icon aria-hidden="true" /></Button> : null}{!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}</div></TableCell>
+      <TableCell><div className="flex items-center justify-end gap-1 max-md:flex-wrap"><NodeDiagnosticsButton nodeId={agent.id} name={agent.name} language={language} compact />{agent.status === "active" && !agent.networkProfile ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm"><NetworkIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "active" && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" variant="outline"><RotateCcwIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}{!agent.removal && agent.status === "active" ? <Button onClick={onConfigure} size="icon-sm" variant="ghost" aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)}><Settings2Icon aria-hidden="true" /></Button> : null}{!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}</div></TableCell>
     </TableRow>
-    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={8}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
+    {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={7}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
   </>;
 }
 

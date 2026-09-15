@@ -17,6 +17,10 @@ func TestIPQualityLatestResultAndStaleAttempt(t *testing.T) {
 	defer s.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, s, "quality-test", NodeCapabilities{Docker: true, IPQuality: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,updated_at) VALUES(?,1,1,'{}','ready',?)`, node.ID, now); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE agents SET public_egress_address='203.0.113.8',public_egress_bind_address='10.0.0.18',public_egress_mode='nat',public_egress_observed_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), node.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +75,26 @@ func TestIPQualityLatestResultAndStaleAttempt(t *testing.T) {
 	values, err = s.ListIPQuality(ctx)
 	if err != nil || !values[0].Stale {
 		t.Fatal("IP change did not invalidate report")
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE landing_server_states SET status='stopped' WHERE node_id=?`, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	values, err = s.ListIPQuality(ctx)
+	if err != nil || len(values) != 0 {
+		t.Fatalf("stopped landing server remained in IP quality results: %#v %v", values, err)
+	}
+}
+
+func TestIPQualityRequiresVLESSOrLandingTarget(t *testing.T) {
+	s := openOrchestrationStore(t)
+	defer s.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, s, "compute-only", NodeCapabilities{Docker: true, IPQuality: true}, []networking.Candidate{{Address: "10.0.0.19", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.19", LANAddress: "10.0.0.19", EnabledKinds: []string{networking.KindLAN}})
+	if _, err := s.db.ExecContext(ctx, `UPDATE agents SET public_egress_address='203.0.113.9',public_egress_bind_address='10.0.0.19',public_egress_mode='nat',public_egress_observed_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.StartIPQuality(ctx, node.ID); err == nil || err.Error() != "ip_quality_target_required" {
+		t.Fatalf("compute-only node accepted IP quality check: %v", err)
 	}
 }
 

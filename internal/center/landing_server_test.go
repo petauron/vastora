@@ -25,10 +25,13 @@ func TestLandingSelectionUsesManagedNodeAndQueuesDisable(t *testing.T) {
  VALUES('agent-v3','100.64.0.8','100.64.0.8','["headscale"]',?,?) ON CONFLICT(agent_id) DO UPDATE SET headscale_address=excluded.headscale_address`, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"100.64.0.9"}}); err == nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"100.64.0.9"}, LandingRegionCodes: map[string]string{"100.64.0.9": "US"}}); err == nil {
 		t.Fatal("arbitrary address accepted as node")
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"agent-v3"}}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"agent-v3"}}); err == nil {
+		t.Fatal("landing server without a region accepted")
+	}
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"agent-v3"}, LandingRegionCodes: map[string]string{"agent-v3": "US"}}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := store.Landing(ctx)

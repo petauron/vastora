@@ -59,7 +59,7 @@ func TestLandingLatencyReportStreamsBeforeNextHeartbeat(t *testing.T) {
 	}
 	exec(`UPDATE agents SET tailscale_ownership='managed' WHERE id=?`, owner.ID)
 	exec(`UPDATE agent_network_profiles SET headscale_address='100.64.0.8' WHERE agent_id=?`, owner.ID)
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner.ID}}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner.ID}, LandingRegionCodes: map[string]string{owner.ID: "US"}}); err != nil {
 		t.Fatal(err)
 	}
 	peer := landing.PeerIdentity{ID: "peer", PublicKey: "key", Address: "100.64.0.8"}
