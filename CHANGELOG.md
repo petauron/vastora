@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.148](https://github.com/petauron/vastora/compare/v0.1.0-alpha.147...v0.1.0-alpha.148) (2026-09-15)
+
+
+### Bug Fixes
+
+* sanitize IP quality unlock results ([#493](https://github.com/petauron/vastora/issues/493)) ([a6c247e](https://github.com/petauron/vastora/commit/a6c247ee0f04084d0fd4c60b5a867594fd055d5a))
+
 ## [0.1.0-alpha.147](https://github.com/petauron/vastora/compare/v0.1.0-alpha.146...v0.1.0-alpha.147) (2026-09-15)
 
 
