@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.147](https://github.com/petauron/vastora/compare/v0.1.0-alpha.146...v0.1.0-alpha.147) (2026-09-15)
+
+
+### Bug Fixes
+
+* **center:** recover incomplete schema 80 marker ([#491](https://github.com/petauron/vastora/issues/491)) ([7af9e2b](https://github.com/petauron/vastora/commit/7af9e2b6cb3c48f7413d4300ac9c15d7425bcd36))
+
 ## [0.1.0-alpha.146](https://github.com/petauron/vastora/compare/v0.1.0-alpha.145...v0.1.0-alpha.146) (2026-09-15)
 
 
