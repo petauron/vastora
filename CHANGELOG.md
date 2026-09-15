@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.146](https://github.com/petauron/vastora/compare/v0.1.0-alpha.145...v0.1.0-alpha.146) (2026-09-15)
+
+
+### Features
+
+* complete node diagnostics and agent recovery ([#489](https://github.com/petauron/vastora/issues/489)) ([f89c785](https://github.com/petauron/vastora/commit/f89c78514a51ed2dd8c47ba25f2792ba977c6b38)), closes [#488](https://github.com/petauron/vastora/issues/488)
+
 ## [0.1.0-alpha.145](https://github.com/petauron/vastora/compare/v0.1.0-alpha.144...v0.1.0-alpha.145) (2026-09-14)
 
 
