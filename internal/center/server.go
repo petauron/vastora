@@ -462,7 +462,7 @@ func errorCode(status int, message string) string {
 	}
 	normalized := strings.ToLower(message)
 	switch normalized {
-	case "ip_quality_node_unavailable", "ip_quality_node_offline", "ip_quality_agent_upgrade_required", "ip_quality_tasks_paused", "ip_quality_node_busy", "ip_quality_address_unavailable",
+	case "ip_quality_node_unavailable", "ip_quality_node_offline", "ip_quality_agent_upgrade_required", "ip_quality_tasks_paused", "ip_quality_node_busy", "ip_quality_address_unavailable", "ip_quality_target_required",
 		"node_diagnostics_invalid_kind", "node_diagnostics_node_unavailable", "node_diagnostics_node_offline", "node_diagnostics_agent_upgrade_required", "node_diagnostics_tasks_paused", "node_diagnostics_node_busy", "node_diagnostics_address_unavailable":
 		return normalized
 	}

@@ -64,7 +64,7 @@ func TestLandingProxyOrdersSourceAuthorizationAndRouteRestoration(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner}}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner}, LandingRegionCodes: map[string]string{owner: "US"}}); err != nil {
 		t.Fatal(err)
 	}
 	completeServer(claim(true))

@@ -34,7 +34,10 @@ const LandingContext = createContext<LandingContextValue | null>(null);
 export function LandingProvider({ enabled, agents = [], children }: { enabled: boolean; agents?: AgentView[]; children: ReactNode }) {
   const [view, setView] = useState<LandingView | null>(null);
   const discoveredRegions = useLandingRegions(enabled ? [...(view?.nodeIds ?? []), ...(view?.candidates.map((candidate) => candidate.nodeId) ?? [])] : [], agents);
-  const regions = { ...(view?.landingRegionCodes ?? {}), ...discoveredRegions };
+  const regions = { ...(view?.landingRegionCodes ?? {}) };
+  for (const [nodeId, code] of Object.entries(discoveredRegions)) {
+    if (code) regions[nodeId] = code;
+  }
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [changeError, setChangeError] = useState<unknown>(null);
@@ -154,6 +157,9 @@ export function LandingManager({ language }: { language: Language }) {
     return code ? [[nodeId, code]] : [];
   }));
   const disabled = !view || busy || failed;
+  const missingRegionNodeIds = view?.nodeIds.filter((nodeId) => !view.landingRegionCodes?.[nodeId]) ?? [];
+  const repairRegionsReady = missingRegionNodeIds.length > 0 && missingRegionNodeIds.every((nodeId) => Boolean(state.regions[nodeId]));
+  const candidateRegionReady = Boolean(candidate && state.regions[candidate.nodeId]);
   return <Sheet open={open} onOpenChange={setOpen}>
     <SheetTrigger render={<Button variant="outline" size="sm" />}>
       <ServerIcon data-icon="inline-start" />{copy(language, "管理落地机", "Landing servers")}
@@ -166,6 +172,15 @@ export function LandingManager({ language }: { language: Language }) {
       <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-y-auto px-5 pb-5">
         <LandingNotice language={language} />
         {state.changeError != null ? <Alert variant="destructive"><AlertTitle>{copy(language, "全局落地池未更新", "Global landing pool was not updated")}</AlertTitle><AlertDescription>{userError(language, state.changeError)}</AlertDescription></Alert> : null}
+        {view && missingRegionNodeIds.length > 0 ? <Alert variant="destructive">
+          <AlertTitle>{copy(language, "落地地区信息未同步", "Landing region metadata is incomplete")}</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>{copy(language, "旧组合缺少落地区旗，会产生重名并导致 Mihomo 订阅无法解析。同步后将重新发布受影响的组合。", "Older combinations are missing landing flags, causing duplicate names and an invalid Mihomo subscription. Syncing republishes the affected combinations.")}</p>
+            <Button type="button" variant="outline" size="sm" disabled={disabled || !repairRegionsReady} onClick={() => {
+              void state.change((signal) => api.selectLanding(view.nodeIds, view.revision, regionCodes(view.nodeIds), signal));
+            }}>{repairRegionsReady ? copy(language, "同步地区并修复订阅", "Sync regions and repair subscription") : copy(language, "正在识别落地区域…", "Detecting landing regions…")}</Button>
+          </AlertDescription>
+        </Alert> : null}
         {view ? <Alert>
           <AlertTitle>{view.status === "ready" ? copy(language, "全局落地池已就绪", "Global landing pool ready") : view.status === "failed" ? copy(language, "部分组合需要处理", "Some combinations need attention") : copy(language, "正在同步全局落地池", "Syncing global landing pool")}</AlertTitle>
           <AlertDescription>{copy(language, `${view.eligibleEntries} 个 VLESS 入口 · ${view.readyCombinations} 个组合就绪 · ${view.failedCombinations} 个失败 · ${view.withheldCombinations} 个暂缓发布`, `${view.eligibleEntries} VLESS entries · ${view.readyCombinations} combinations ready · ${view.failedCombinations} failed · ${view.withheldCombinations} withheld`)}</AlertDescription>
@@ -196,7 +211,7 @@ export function LandingManager({ language }: { language: Language }) {
         </section>
         <form onSubmit={(event) => {
           event.preventDefault();
-          if (!disabled && view && candidate && view.nodeIds.length < 16) {
+          if (!disabled && view && candidate && candidateRegionReady && view.nodeIds.length < 16) {
             const nodeIds = [...view.nodeIds, candidate.nodeId];
             void state.change((signal) => api.selectLanding(nodeIds, view.revision, regionCodes(nodeIds), signal));
           }
@@ -209,9 +224,9 @@ export function LandingManager({ language }: { language: Language }) {
                   <SelectTrigger id={id} className="min-w-0 flex-1"><SelectValue placeholder={copy(language, "选择节点", "Choose a node")} /></SelectTrigger>
                   <SelectContent className="apps-workspace"><SelectGroup>{candidates.map((item) => <SelectItem key={item.nodeId} value={item.nodeId}>{item.name}</SelectItem>)}</SelectGroup></SelectContent>
                 </Select>
-                <Button type="submit" disabled={disabled || !candidate || (view?.nodeIds.length ?? 0) >= 16}>{copy(language, "添加", "Add")}</Button>
+                <Button type="submit" disabled={disabled || !candidate || !candidateRegionReady || (view?.nodeIds.length ?? 0) >= 16}>{copy(language, "添加", "Add")}</Button>
               </div>
-              <FieldDescription>{(view?.nodeIds.length ?? 0) >= 16 ? copy(language, "最多可配置 16 台落地机。", "Up to 16 landing servers.") : copy(language, "仅显示在线且已接入私网的节点。", "Only online nodes on the managed private network are listed.")}</FieldDescription>
+              <FieldDescription>{candidate && !candidateRegionReady ? copy(language, "正在识别落地区域，完成后才能添加。", "Detecting the landing region before it can be added.") : (view?.nodeIds.length ?? 0) >= 16 ? copy(language, "最多可配置 16 台落地机。", "Up to 16 landing servers.") : copy(language, "仅显示在线且已接入私网的节点。", "Only online nodes on the managed private network are listed.")}</FieldDescription>
             </Field>
           </FieldGroup>
         </form>

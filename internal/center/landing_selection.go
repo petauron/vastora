@@ -307,6 +307,9 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 		}
 		input.LandingRegionCodes[id] = code
 	}
+	if len(input.LandingRegionCodes) != len(input.NodeIDs) {
+		return errors.New("center: every landing server requires a region")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

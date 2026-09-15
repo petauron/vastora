@@ -44,7 +44,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	parent := landing.Identity(parentUUID)
 	metadata, _ := json.Marshal(ThreeXUIClientView{ID: parent, Email: "Phone", Enabled: true, InboundIDs: []int{9}, HasSubscription: true})
 	exec(`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,mode,observed_at) VALUES(?,'client-controller','Phone',?,'both',?)`, parent, metadata, now)
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner.ID}}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner.ID}, LandingRegionCodes: map[string]string{owner.ID: "US"}}); err != nil {
 		t.Fatal(err)
 	}
 	claimLanding := func(server bool) *AgentTask {

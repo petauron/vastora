@@ -246,7 +246,7 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
       {threeXUI && application.role === "master" && application.id !== instance.controller?.id ? <Badge className="mt-1" variant="outline">{copy(language, "待转为节点", "Converting to node")}</Badge> : null}
       {showSite || displayName || threeXUI ? <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
         {showSite || displayName ? <p className="min-w-0 truncate text-xs text-muted-foreground" title={displayName ?? instance.siteName}>{showSite ? instance.siteName : displayName}</p> : null}
-        {threeXUI ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} /> : null}
+        {threeXUI && instance.realityServices.length > 0 ? <IPQualityButton nodeId={application.nodeId} name={name} language={language} /> : null}
       </div> : null}
     </TableCell>
     <TableCell className="min-w-0 p-0 whitespace-normal lg:px-2 lg:py-3">

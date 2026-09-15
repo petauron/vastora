@@ -36,6 +36,7 @@ export function ipQualityError(language: Language, code: string) {
     ip_quality_node_unavailable: ["节点已停用或不可用。", "The node is disabled or unavailable."],
     ip_quality_node_offline: ["节点离线，上线后才能检测。", "The node must be online to run a check."],
     ip_quality_agent_upgrade_required: ["需要升级 Agent，并启用 Docker。", "Upgrade the Agent and enable Docker."],
+    ip_quality_target_required: ["IP 质量仅适用于 VLESS 节点和落地机。", "IP quality is available only for VLESS nodes and landing servers."],
     ip_quality_tasks_paused: ["任务领取已暂停，请先在活动中恢复。", "Task claims are paused. Resume them in Activity."],
     ip_quality_node_busy: ["节点已有执行中或待处理任务，请先在活动中查看。", "The node has an active or unresolved task. Check Activity first."],
     ip_quality_address_unavailable: ["节点尚未上报有效的公网出口。", "The node has not reported a valid public egress address."],

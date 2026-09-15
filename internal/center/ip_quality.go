@@ -43,7 +43,10 @@ type IPQualityView struct {
 func (s *Store) ListIPQuality(ctx context.Context) ([]IPQualityView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT q.agent_id,q.id,q.state,q.error,q.result_json,q.checked_at,q.updated_at,q.lease_expires_at,a.public_egress_address,
  EXISTS(SELECT 1 FROM task_executions e WHERE e.task_id=q.id AND e.agent_id=q.agent_id AND e.attempt=q.attempt AND e.disposition='' AND e.state IN ('unknown','failed'))
- FROM ip_quality_checks q JOIN agents a ON a.id=q.agent_id ORDER BY q.agent_id`)
+ FROM ip_quality_checks q JOIN agents a ON a.id=q.agent_id
+ WHERE EXISTS(SELECT 1 FROM services s JOIN applications app ON app.id=s.application_id WHERE app.node_id=q.agent_id AND s.app_protocol='vless/tcp/reality' AND s.status<>'stopped')
+    OR EXISTS(SELECT 1 FROM landing_server_states l WHERE l.node_id=q.agent_id AND l.status<>'stopped')
+ ORDER BY q.agent_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +93,15 @@ func (s *Store) StartIPQuality(ctx context.Context, agentID string) error {
 	var caps NodeCapabilities
 	if json.Unmarshal([]byte(capsRaw), &caps) != nil || !caps.Docker || !caps.IPQuality {
 		return errors.New("ip_quality_agent_upgrade_required")
+	}
+	var eligible bool
+	if err := tx.QueryRowContext(ctx, `SELECT
+	 EXISTS(SELECT 1 FROM services s JOIN applications app ON app.id=s.application_id WHERE app.node_id=? AND s.app_protocol='vless/tcp/reality' AND s.status<>'stopped')
+	 OR EXISTS(SELECT 1 FROM landing_server_states l WHERE l.node_id=? AND l.status<>'stopped')`, agentID, agentID).Scan(&eligible); err != nil {
+		return err
+	}
+	if !eligible {
+		return errors.New("ip_quality_target_required")
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return err

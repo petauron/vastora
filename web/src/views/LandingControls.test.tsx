@@ -83,6 +83,25 @@ it("removes an in-use server through the global draining operation", async () =>
   expect(update).toHaveBeenCalledWith(["a"], 4, { a: "US" }, expect.any(AbortSignal));
 });
 
+it("repairs missing landing regions before republishing subscriptions", async () => {
+  const view = overview();
+  view.landingRegionCodes = { a: "US" };
+  vi.spyOn(api, "landing").mockResolvedValue(view);
+  vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "b", publicAddress: "203.0.113.2", regionCode: "TW", prefix: "", source: "configured_helper" });
+  const update = vi.spyOn(api, "selectLanding").mockResolvedValue({ ...view, landingRegionCodes: { a: "US", b: "TW" }, revision: 5 });
+  const agents = [{ id: "b", publicEgress: { address: "203.0.113.2" } }] as AgentView[];
+  const container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => { root?.render(<LandingProvider enabled agents={agents}><LandingManager language="zh-CN" /></LandingProvider>); });
+  await act(async () => { container.querySelector<HTMLButtonElement>("button")?.click(); });
+  await act(async () => {});
+  const repair = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("同步地区并修复订阅"));
+  expect(repair).toBeTruthy();
+  await act(async () => { repair?.click(); });
+  expect(update).toHaveBeenCalledWith(["a", "b"], 4, { a: "US", b: "TW" }, expect.any(AbortSignal));
+});
+
 it("renders global latency as read-only state", async () => {
   vi.spyOn(api, "landing").mockResolvedValue(overview());
   const container = document.createElement("div");

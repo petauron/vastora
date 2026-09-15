@@ -844,6 +844,9 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("Singapore");
     expect(container.textContent).toContain("singapore");
     expect(container.querySelector('table[aria-label="节点全局状态"]')).not.toBeNull();
+    expect(container.textContent).not.toContain("IP 质量");
+    expect(container.textContent).not.toContain("Netflix");
+    expect(container.textContent).not.toContain("ChatGPT");
     expect(container.querySelectorAll("tbody tr").length).toBeGreaterThanOrEqual(4);
   });
 
@@ -2521,6 +2524,7 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("远端");
     expect(container.textContent).toContain("2/4 个 Agent 已是当前版本");
     expect(container.textContent).toContain("请稍候，更新完成后节点会自动连接。");
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("50");
   });
 
   it("does not report completion while Agents are waiting for rollout readiness", () => {
@@ -2537,6 +2541,23 @@ describe("network and app views", () => {
     expect(container.textContent).toContain("Center 已更新，Agent 等待发布");
     expect(container.textContent).toContain("15 个正在等待发布条件");
     expect(container.textContent).not.toContain("更新完成");
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow")).toBe("6");
+  });
+
+  it("shows a complete Agent rollout progress bar after the update", () => {
+    const status = {
+      ...dashboard().centerUpdate,
+      currentVersion: "0.1.0-alpha.151",
+      latestVersion: "0.1.0-alpha.151",
+      updateAvailable: false,
+      state: "succeeded" as const,
+      agentRollout: { targetVersion: "0.1.0-alpha.151", total: 17, updated: 17, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0 },
+    };
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    const progress = container.querySelector('[role="progressbar"]');
+    expect(progress?.getAttribute("aria-valuenow")).toBe("100");
+    expect(progress?.getAttribute("aria-valuetext")).toBe("17/17 个 Agent 已是当前版本");
+    expect(container.textContent).toContain("Agent 同步进度");
   });
 
   it("bypasses the official release cache when update checking is requested", async () => {

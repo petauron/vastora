@@ -156,7 +156,7 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 		}
 		return len(state.Plan.Sources)
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{a, b}}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{a, b}, LandingRegionCodes: map[string]string{a: "US", b: "TW"}}); err != nil {
 		t.Fatal(err)
 	}
 	ready(a)
@@ -264,7 +264,7 @@ func TestMultipleLandingSwitchRetainsOldGrantUntilConfirmed(t *testing.T) {
 	if grants(b) != 1 {
 		t.Fatal("restoration removed another node's source")
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{b}, Revision: 1}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{b}, LandingRegionCodes: map[string]string{b: "TW"}, Revision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := store.Landing(ctx)
