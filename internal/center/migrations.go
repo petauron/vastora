@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pressly/goose/v3"
@@ -86,10 +87,44 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 			return fmt.Errorf("center: migrate database from %d to %d (backup: %s): %w", current, target, backup, err)
 		}
 	}
+	if err := repairReleasedVersion80Marker(ctx, s.db, provider); err != nil {
+		return err
+	}
 	if err := s.activateMigratedSiteCertificates(ctx); err != nil {
 		return fmt.Errorf("center: activate migrated private HTTPS certificates: %w", err)
 	}
 	return verifyMigratedSchema(ctx, s.db, target)
+}
+
+// Version 80 was briefly released without advancing PRAGMA user_version after
+// goose committed the node diagnostics migration. Repair only that exact,
+// structurally complete state; every other mismatch remains fail-closed.
+func repairReleasedVersion80Marker(ctx context.Context, db *sql.DB, provider *goose.Provider) error {
+	version, err := sqliteSchemaVersion(ctx, db)
+	if err != nil || version != 79 {
+		return err
+	}
+	current, target, err := provider.GetVersions(ctx)
+	if err != nil {
+		return fmt.Errorf("center: inspect database migrations before schema marker repair: %w", err)
+	}
+	if current != 80 || target != 80 {
+		return nil
+	}
+	var storedSQL string
+	if err := db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='node_diagnostic_checks'`).Scan(&storedSQL); err != nil {
+		return fmt.Errorf("center: version 80 migration is incomplete; refusing schema marker repair: %w", err)
+	}
+	normalize := func(value string) string {
+		return strings.Join(strings.Fields(strings.TrimSuffix(strings.TrimSpace(value), ";")), " ")
+	}
+	if normalize(storedSQL) != normalize(nodeDiagnosticsSchemaSQL) {
+		return errors.New("center: version 80 migration schema is incomplete; refusing schema marker repair")
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 80`); err != nil {
+		return fmt.Errorf("center: repair released version 80 schema marker: %w", err)
+	}
+	return nil
 }
 
 func newMigrationProvider(db *sql.DB) (*goose.Provider, error) {

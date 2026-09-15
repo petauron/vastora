@@ -58,6 +58,66 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 	}
 }
 
+func TestOpenRepairsReleasedVersion80MarkerOmission(t *testing.T) {
+	directory := t.TempDir()
+	ctx := context.Background()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 79`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repaired, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repaired.Close()
+	version, err := sqliteSchemaVersion(ctx, repaired.db)
+	if err != nil || version != centerSchemaVersion {
+		t.Fatalf("schema version = %d, err = %v", version, err)
+	}
+}
+
+func TestOpenRejectsIncompleteReleasedVersion80Migration(t *testing.T) {
+	directory := t.TempDir()
+	ctx := context.Background()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.ExecContext(ctx, `DROP TABLE node_diagnostic_checks; PRAGMA user_version = 79`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "refusing schema marker repair") {
+		t.Fatalf("expected fail-closed marker repair, got %v", err)
+	}
+}
+
 func TestVersion57MigrationSelectsOneGlobalThreeXUIControllerAndQueuesLegacyConvergence(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
@@ -1380,6 +1440,8 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE node_diagnostic_checks`,
+		`DROP TABLE ip_quality_checks`,
 		`DROP TABLE agent_removals`,
 		`DROP TABLE execution_events`,
 		`DROP TABLE execution_claim_control_events`,

@@ -16,6 +16,7 @@ CREATE TABLE node_diagnostic_checks (
  updated_at TEXT NOT NULL,
  PRIMARY KEY(agent_id,kind)
 );
+PRAGMA user_version = 80;
 
 -- +goose Down
 SELECT 1;
