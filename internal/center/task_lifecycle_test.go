@@ -229,7 +229,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 		var count int
 		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
 			WHERE site_id = ? AND display_name = ? COLLATE NOCASE
-			AND kind IN (?, ?) AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, testSiteID(t, store), "🇺🇸 美国edge", realityCommandKind, realityRenameCommandKind).Scan(&count); err != nil {
+			AND kind IN (?, ?) AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, testSiteID(t, store), "🇺🇸 美国｜edge", realityCommandKind, realityRenameCommandKind).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
@@ -268,7 +268,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 	}
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands
 		WHERE site_id = ? AND display_name = ? COLLATE NOCASE
-		AND kind IN (?, ?) AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, testSiteID(t, store), "🇺🇸 美国edge", realityCommandKind, realityRenameCommandKind).Scan(&reservations); err != nil {
+		AND kind IN (?, ?) AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, testSiteID(t, store), "🇺🇸 美国｜edge", realityCommandKind, realityRenameCommandKind).Scan(&reservations); err != nil {
 		t.Fatal(err)
 	}
 	if state != "failed" || reconciliationRequired != 0 || reservations != 0 {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -8,9 +9,40 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/ipquality"
 )
+
+func TestReadIPQualityOutputBoundsReportWithoutCountingProgress(t *testing.T) {
+	var stream bytes.Buffer
+	progress := stdcopy.NewStdWriter(&stream, stdcopy.Stderr)
+	report := stdcopy.NewStdWriter(&stream, stdcopy.Stdout)
+	if _, err := progress.Write([]byte(strings.Repeat("progress", ipquality.MaxReportBytes))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := report.Write([]byte("{\"Head\":{}}")); err != nil {
+		t.Fatal(err)
+	}
+	value, err := readIPQualityOutput(&stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(value) != `{"Head":{}}` {
+		t.Fatalf("unexpected stdout: %q", value)
+	}
+}
+
+func TestReadIPQualityOutputRejectsOversizedReport(t *testing.T) {
+	var stream bytes.Buffer
+	report := stdcopy.NewStdWriter(&stream, stdcopy.Stdout)
+	if _, err := report.Write([]byte(strings.Repeat("x", ipquality.MaxReportBytes+1))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readIPQualityOutput(&stream); err == nil {
+		t.Fatal("oversized report accepted")
+	}
+}
 
 type fakeIPQualityCleanupEngine struct {
 	removeErr  error

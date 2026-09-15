@@ -451,13 +451,13 @@ func TestSucceededRealityPublicationRecoveryRequiresReadyGuardAndPreservesExplic
 	}
 	selectTestThreeXUIController(t, store, "reality-recovery-app")
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, region_code, protocol, container_port, host_port, endpoint, source, app_protocol, observed_listen, status, created_at, updated_at)
-		VALUES('reality-recovery-service', 'reality-recovery-app', ?, 'inbound-9', '🇺🇸 美国Recovery', 'US', 'tcp', 443, 443, '10.0.0.97:443', 'observed', 'vless/tcp/reality', '10.0.0.97', 'ready', ?, ?)`, siteID, now, now); err != nil {
+		VALUES('reality-recovery-service', 'reality-recovery-app', ?, 'inbound-9', '🇺🇸 美国｜Recovery', 'US', 'tcp', 443, 443, '10.0.0.97:443', 'observed', 'vless/tcp/reality', '10.0.0.97', 'ready', ?, ?)`, siteID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	input := RealityCommandTask{
 		Action:              "create",
 		RegionCode:          "US",
-		DisplayName:         "🇺🇸 美国Recovery",
+		DisplayName:         "🇺🇸 美国｜Recovery",
 		ConnectHostname:     "reality.recovery.example.test",
 		DNSProvider:         "manual",
 		TargetHost:          "www.example.com",

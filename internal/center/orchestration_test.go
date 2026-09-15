@@ -935,8 +935,8 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 	if task.ApplicationCommand.TargetHost != "www.example.com" || task.ApplicationCommand.ServerName != "www.example.com" {
 		t.Fatalf("explicit REALITY target was not preserved: %#v", task.ApplicationCommand)
 	}
-	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge"
-	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 443, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
+	shareURI := "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BD%EF%BD%9CEdge"
+	result := ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "create", InboundID: 9, DisplayName: "🇺🇸 美国｜Edge", ClientName: "MacBook", Listen: "10.0.0.61", Port: 443, TargetHost: "www.example.com", TargetIP: "203.0.113.10", ServerName: "www.example.com", NodeASN: 64500, TargetASN: 64500, TLS13: true, X25519: true, HTTP2: true, CertificateValid: true, GuardStatus: "ready", ProxyProtocol: true, ConnectHostname: "reality.edge.site.example.test", ShareURI: shareURI, InboundTag: task.ApplicationCommand.InboundTag, ClientCreated: true}}
 	encoded, _ := json.Marshal(result)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
@@ -1224,32 +1224,32 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.RegionCode != "US" || task.ApplicationCommand.DisplayName != "🇺🇸 美国Oracle" {
+	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.RegionCode != "US" || task.ApplicationCommand.DisplayName != "🇺🇸 美国｜Oracle" {
 		t.Fatalf("unexpected rename task: %#v", task)
 	}
-	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 美国Oracle"}})
+	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 美国｜Oracle"}})
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || completed.RegionCode != "US" || completed.DisplayName != "🇺🇸 美国Oracle" {
+	if err != nil || completed.State != "succeeded" || completed.RegionCode != "US" || completed.DisplayName != "🇺🇸 美国｜Oracle" {
 		t.Fatalf("unexpected completed rename: %#v err=%v", completed, err)
 	}
 	var displayName, region, serviceName, endpoint string
 	if err := store.db.QueryRowContext(ctx, `SELECT display_name, region_code, name, endpoint FROM services WHERE id = 'reality-service'`).Scan(&displayName, &region, &serviceName, &endpoint); err != nil {
 		t.Fatal(err)
 	}
-	if displayName != "🇺🇸 美国Oracle" || region != "US" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
+	if displayName != "🇺🇸 美国｜Oracle" || region != "US" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
 		t.Fatalf("renamed service = display %q, region %q, identity %q, endpoint %q", displayName, region, serviceName, endpoint)
 	}
 }
 
 func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
-	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", TargetHost: "www.example.com", ServerName: "www.example.com", TargetAddress: "10.0.0.61", InboundTag: "vastora-test", CreateInitialClient: true}
+	input := RealityCommandTask{Action: "create", RegionCode: "US", DisplayName: "🇺🇸 美国｜Edge", ClientName: "MacBook", ConnectHostname: "reality.edge.site.example.test", TargetHost: "www.example.com", ServerName: "www.example.com", TargetAddress: "10.0.0.61", InboundTag: "vastora-test", CreateInitialClient: true}
 	valid := RealityCommandResult{
 		Action:           "create",
 		InboundID:        9,
-		DisplayName:      "🇺🇸 美国Edge",
+		DisplayName:      "🇺🇸 美国｜Edge",
 		ClientName:       "MacBook",
 		Listen:           "10.0.0.61",
 		Port:             443,

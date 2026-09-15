@@ -21,7 +21,7 @@ func realityBaseName(displayName, code string) string {
 	}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(displayName, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(displayName, prefix))
+			return normalizeRealityBaseName(strings.TrimPrefix(displayName, prefix))
 		}
 	}
 	return strings.TrimSpace(displayName)

@@ -890,7 +890,7 @@ describe("network and app views", () => {
     await openRealityCreation(container);
 		expect(document.body.textContent).toContain("填写节点名称和套餐，再选择当前节点可用的连接目标");
     expect(document.querySelector<HTMLInputElement>("#reality-name")?.value).toBe("home-server");
-    expect(document.body.textContent).toContain("🇺🇸 美国home-server");
+    expect(document.body.textContent).toContain("🇺🇸 美国｜home-server");
     expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
     expect(document.body.textContent).toContain("VPS 月流量套餐");
     expect(document.body.textContent).toContain("客户端额度（可选）");
@@ -1129,7 +1129,7 @@ describe("network and app views", () => {
 		vi.useFakeTimers();
 		const data = realityDashboard();
 		data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国Old name", regionCode: "US", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
-		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 美国Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 美国｜Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		const rename = vi.spyOn(api, "renameRealityCommand").mockResolvedValue(pending);
 		vi.spyOn(api, "nodeProtocols").mockResolvedValue({ vless: true, hy2: false, state: "succeeded" });
@@ -1153,7 +1153,7 @@ describe("network and app views", () => {
 			await Promise.resolve();
 			await Promise.resolve();
 		});
-		expect(document.body.textContent).toContain("现在显示为“🇺🇸 美国Oracle”");
+		expect(document.body.textContent).toContain("现在显示为“🇺🇸 美国｜Oracle”");
 		expect(mutate).toHaveBeenCalled();
 	});
 
@@ -1456,7 +1456,7 @@ describe("network and app views", () => {
 		vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new Error("not found"));
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
-		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国｜Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.20", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64501, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
 		mockCommandEvent(pending);
