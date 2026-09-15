@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.151](https://github.com/petauron/vastora/compare/v0.1.0-alpha.150...v0.1.0-alpha.151) (2026-09-15)
+
+
+### Features
+
+* **nodes:** add native host diagnostics dashboard ([#499](https://github.com/petauron/vastora/issues/499)) ([d114f68](https://github.com/petauron/vastora/commit/d114f68358be918ecca119f3c2c5f06194b1e350))
+
 ## [0.1.0-alpha.150](https://github.com/petauron/vastora/compare/v0.1.0-alpha.149...v0.1.0-alpha.150) (2026-09-15)
 
 
