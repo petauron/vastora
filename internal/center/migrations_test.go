@@ -118,6 +118,43 @@ func TestOpenRejectsIncompleteReleasedVersion80Migration(t *testing.T) {
 	}
 }
 
+func TestVersion81MigrationAddsHostProfileDiagnostics(t *testing.T) {
+	directory := t.TempDir()
+	ctx := context.Background()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DROP TABLE node_diagnostic_checks`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, nodeDiagnosticsSchema80SQL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `PRAGMA user_version = 80`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 81`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var schema string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='node_diagnostic_checks'`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(schema, "'node.host-profile'") {
+		t.Fatalf("host profile kind missing after migration: %s", schema)
+	}
+}
+
 func TestVersion57MigrationSelectsOneGlobalThreeXUIControllerAndQueuesLegacyConvergence(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)

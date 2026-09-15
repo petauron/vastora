@@ -14,7 +14,7 @@ import (
 
 const carrierTargetRevision = 1
 
-const nodeDiagnosticsSchemaSQL = `CREATE TABLE node_diagnostic_checks (
+const nodeDiagnosticsSchema80SQL = `CREATE TABLE node_diagnostic_checks (
  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
  kind TEXT NOT NULL CHECK(kind IN ('node.network-quality','node.return-route','node.international-bandwidth')),
  id TEXT NOT NULL UNIQUE,
@@ -32,6 +32,8 @@ const nodeDiagnosticsSchemaSQL = `CREATE TABLE node_diagnostic_checks (
  PRIMARY KEY(agent_id,kind)
 );`
 
+var nodeDiagnosticsSchemaSQL = strings.Replace(nodeDiagnosticsSchema80SQL, "'node.international-bandwidth'))", "'node.international-bandwidth','node.host-profile'))", 1)
+
 type NodeDiagnosticView struct {
 	AgentID        string                                 `json:"agentId"`
 	Kind           string                                 `json:"kind"`
@@ -42,6 +44,7 @@ type NodeDiagnosticView struct {
 	Network        []nodediagnostics.NetworkMeasurement   `json:"network,omitempty"`
 	Routes         []nodediagnostics.Route                `json:"routes,omitempty"`
 	Bandwidth      []nodediagnostics.BandwidthMeasurement `json:"bandwidth,omitempty"`
+	Host           *nodediagnostics.HostProfile           `json:"host,omitempty"`
 	CheckedAt      string                                 `json:"checkedAt,omitempty"`
 	UpdatedAt      string                                 `json:"updatedAt"`
 }
@@ -64,7 +67,7 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 			if json.Unmarshal([]byte(raw), &result) != nil || result.Validate(value.Kind) != nil {
 				return nil, errors.New("center: invalid stored node diagnostic")
 			}
-			value.Network, value.Routes, value.Bandwidth = result.Network, result.Routes, result.Bandwidth
+			value.Network, value.Routes, value.Bandwidth, value.Host = result.Network, result.Routes, result.Bandwidth, result.Host
 		}
 		if value.State == "running" {
 			expires, err := time.Parse(time.RFC3339Nano, lease)
@@ -78,7 +81,7 @@ func (s *Store) ListNodeDiagnostics(ctx context.Context) ([]NodeDiagnosticView, 
 }
 
 func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) error {
-	if kind != nodediagnostics.NetworkKind && kind != nodediagnostics.ReturnRouteKind && kind != nodediagnostics.BandwidthKind {
+	if kind != nodediagnostics.NetworkKind && kind != nodediagnostics.ReturnRouteKind && kind != nodediagnostics.BandwidthKind && kind != nodediagnostics.HostProfileKind {
 		return errors.New("node_diagnostics_invalid_kind")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -95,7 +98,7 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 		return errors.New("node_diagnostics_node_offline")
 	}
 	var capabilities NodeCapabilities
-	if json.Unmarshal([]byte(capabilitiesJSON), &capabilities) != nil || kind == nodediagnostics.NetworkKind && !capabilities.NetworkDiagnostics || kind == nodediagnostics.ReturnRouteKind && !capabilities.ReturnRoute || kind == nodediagnostics.BandwidthKind && !capabilities.BandwidthDiagnostics {
+	if json.Unmarshal([]byte(capabilitiesJSON), &capabilities) != nil || kind == nodediagnostics.NetworkKind && !capabilities.NetworkDiagnostics || kind == nodediagnostics.ReturnRouteKind && !capabilities.ReturnRoute || kind == nodediagnostics.BandwidthKind && !capabilities.BandwidthDiagnostics || kind == nodediagnostics.HostProfileKind && !capabilities.HostProfile {
 		return errors.New("node_diagnostics_agent_upgrade_required")
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
@@ -110,23 +113,28 @@ func (s *Store) StartNodeDiagnostic(ctx context.Context, agentID, kind string) e
 	if busy {
 		return errors.New("node_diagnostics_node_busy")
 	}
-	egress, err := agentPublicEgress(ctx, tx, agentID)
-	if err != nil {
-		return err
+	input := nodediagnostics.Task{}
+	if kind != nodediagnostics.HostProfileKind {
+		egress, err := agentPublicEgress(ctx, tx, agentID)
+		if err != nil {
+			return err
+		}
+		if egress == nil {
+			return errors.New("node_diagnostics_address_unavailable")
+		}
+		input.BindAddress = egress.BindAddress
 	}
-	if egress == nil {
-		return errors.New("node_diagnostics_address_unavailable")
-	}
-	input := nodediagnostics.Task{BindAddress: egress.BindAddress}
 	var targetsJSON []byte
-	if kind == nodediagnostics.BandwidthKind {
+	if kind == nodediagnostics.HostProfileKind {
+		targetsJSON = []byte("[]")
+	} else if kind == nodediagnostics.BandwidthKind {
 		input.BandwidthTargets = append([]nodediagnostics.BandwidthTarget(nil), nodediagnostics.BandwidthTargets...)
 		targetsJSON, err = json.Marshal(input.BandwidthTargets)
 	} else {
 		input.Targets = append([]nodediagnostics.Target(nil), nodediagnostics.CarrierTargets...)
 		targetsJSON, err = json.Marshal(input.Targets)
 	}
-	if err != nil || kind == nodediagnostics.BandwidthKind && input.ValidateBandwidth() != nil || kind != nodediagnostics.BandwidthKind && input.Validate() != nil {
+	if err != nil || kind == nodediagnostics.BandwidthKind && input.ValidateBandwidth() != nil || kind == nodediagnostics.HostProfileKind && input.ValidateHostProfile() != nil || kind != nodediagnostics.BandwidthKind && kind != nodediagnostics.HostProfileKind && input.Validate() != nil {
 		return errors.New("node_diagnostics_address_unavailable")
 	}
 	id, err := randomToken(18)
@@ -150,7 +158,7 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 	var id, kind, bindAddress, targetsJSON string
 	var attempt int64
 	err := tx.QueryRowContext(ctx, `SELECT q.id,q.kind,q.bind_address,q.targets_json,q.attempt FROM node_diagnostic_checks q JOIN agents a ON a.id=q.agent_id
- WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1))
+ WHERE q.agent_id=? AND q.state='pending' AND ((q.kind='node.network-quality' AND json_extract(a.capabilities_json,'$.networkDiagnostics')=1) OR (q.kind='node.return-route' AND json_extract(a.capabilities_json,'$.returnRoute')=1) OR (q.kind='node.international-bandwidth' AND json_extract(a.capabilities_json,'$.bandwidthDiagnostics')=1) OR (q.kind='node.host-profile' AND json_extract(a.capabilities_json,'$.hostProfile')=1))
  ORDER BY q.created_at,q.kind LIMIT 1`, agentID).Scan(&id, &kind, &bindAddress, &targetsJSON, &attempt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -159,7 +167,11 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 		return nil, err
 	}
 	input := nodediagnostics.Task{BindAddress: bindAddress}
-	if kind == nodediagnostics.BandwidthKind {
+	if kind == nodediagnostics.HostProfileKind {
+		if targetsJSON != "[]" {
+			return nil, errors.New("center: invalid host profile targets")
+		}
+	} else if kind == nodediagnostics.BandwidthKind {
 		err = json.Unmarshal([]byte(targetsJSON), &input.BandwidthTargets)
 	} else {
 		err = json.Unmarshal([]byte(targetsJSON), &input.Targets)
@@ -167,7 +179,9 @@ func (s *Store) claimNodeDiagnostic(ctx context.Context, tx *sql.Tx, agentID str
 	if err != nil {
 		return nil, errors.New("center: invalid stored diagnostic targets")
 	}
-	if kind == nodediagnostics.BandwidthKind {
+	if kind == nodediagnostics.HostProfileKind {
+		err = input.ValidateHostProfile()
+	} else if kind == nodediagnostics.BandwidthKind {
 		err = input.ValidateBandwidth()
 	} else {
 		err = input.Validate()

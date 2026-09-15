@@ -126,6 +126,7 @@ type Capabilities struct {
 	NetworkDiagnostics   bool `json:"networkDiagnostics"`
 	ReturnRoute          bool `json:"returnRoute"`
 	BandwidthDiagnostics bool `json:"bandwidthDiagnostics"`
+	HostProfile          bool `json:"hostProfile"`
 	Docker               bool `json:"docker"`
 	Gateway              bool `json:"gateway"`
 	Tunnel               bool `json:"tunnel"`
@@ -999,6 +1000,16 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			err = errors.New("agent: bandwidth diagnostics capability is not configured")
 		} else {
 			value, checkErr := checker.CheckInternationalBandwidth(ctx, *task.NodeDiagnostics)
+			result.NodeDiagnostics, err = &value, checkErr
+		}
+	case nodediagnostics.HostProfileKind:
+		checker, ok := c.Executor.(interface {
+			CheckHostProfile(context.Context, nodediagnostics.Task) (nodediagnostics.Result, error)
+		})
+		if !ok || !c.Capabilities.HostProfile || task.NodeDiagnostics == nil {
+			err = errors.New("agent: host profile capability is not configured")
+		} else {
+			value, checkErr := checker.CheckHostProfile(ctx, *task.NodeDiagnostics)
 			result.NodeDiagnostics, err = &value, checkErr
 		}
 	case "application.apply":

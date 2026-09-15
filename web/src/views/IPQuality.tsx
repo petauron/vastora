@@ -4,7 +4,7 @@ import { api, APIError } from "../api";
 import type { AgentView } from "../types";
 import type { Language } from "../translations";
 import type { IPQualityCheck, IPQualityClassification } from "../ip-quality-types";
-import type { Carrier, NodeDiagnosticCheck } from "../node-diagnostics-types";
+import type { Carrier, NodeDiagnosticCheck, NetworkMeasurement } from "../node-diagnostics-types";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -37,6 +37,49 @@ function UnlockIndicators({ check, language }: { check: IPQualityCheck; language
     const label = unlockLabel(language, service?.status);
     return <span aria-hidden="true" className={cn("size-2.5 shrink-0 rounded-[2px] border", status === "yes" ? "border-transparent bg-latency-fast" : status === "no" ? "border-destructive bg-transparent" : "border-muted-foreground/40 bg-muted")} key={name} title={`${name} · ${label}`} />;
   })}</span>;
+}
+
+function latencyTone(value: number) {
+  return value < 80 ? "text-latency-fast" : value < 150 ? "text-latency-medium" : "text-destructive";
+}
+
+function networkSummary(network?: NetworkMeasurement[]) {
+  return ["telecom", "unicom", "mobile"].map((carrier) => network?.find((value) => value.carrier === carrier));
+}
+
+function humanBytes(bytes: number) {
+  return bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GiB` : `${Math.round(bytes / 1024 ** 2)} MiB`;
+}
+
+function recommendationReason(language: Language, reason?: string) {
+  if (reason === "available_low_latency_control") return copy(language, "内核支持", "Kernel supported");
+  if (reason === "available_pacing_queue") return copy(language, "已加载队列模块", "Queue module loaded");
+  if (reason === "avoid_idle_restart") return copy(language, "避免空闲后重新慢启动", "Avoid slow start after idle");
+  if (reason === "requires_path_measurement") return copy(language, "需结合线路实测，暂不更改", "Keep until path is measured");
+  return copy(language, "保持当前值", "Keep current value");
+}
+
+// The fleet table reads saved snapshots only. Page refreshes never start probes.
+export function NodeHealthCells({ agent, language }: { agent: AgentView; language: Language }) {
+  const state = useContext(QualityContext);
+  const quality = state?.checks.find((value) => value.agentId === agent.id);
+  const network = state?.diagnostics.find((value) => value.agentId === agent.id && value.kind === "node.network-quality");
+  const host = state?.diagnostics.find((value) => value.agentId === agent.id && value.kind === "node.host-profile");
+  const score = quality?.report && !quality.stale && !quality.error ? quality.report.scores.find((value) => value.source === "IPQS") : undefined;
+  const latest = [network?.checkedAt, quality?.checkedAt, host?.checkedAt].filter((value): value is string => Boolean(value)).sort().at(-1);
+  return <>
+    <TableCell className="max-md:hidden"><div className="flex min-w-0 flex-col gap-0.5 text-xs tabular-nums">{networkSummary(network?.network).map((value, index) => <span className="flex gap-1.5" key={index}><span className="w-5 text-muted-foreground">{["电", "联", "移"][index]}</span><span className={value ? latencyTone(value.latencyMs) : "text-muted-foreground"}>{value ? `${Math.round(value.latencyMs)} ms` : "—"}</span></span>)}</div></TableCell>
+    <TableCell className="max-md:hidden"><span className="inline-flex items-center gap-1.5 text-xs tabular-nums">{quality?.report && !quality.stale ? <RegionFlag code={quality.report.regionCode} language={language} /> : null}{score ? `IPQS ${score.value}` : quality?.stale ? copy(language, "已过期", "Stale") : "—"}</span>{quality?.report && !quality.stale && !quality.error ? <span className="mt-1 block"><UnlockIndicators check={quality} language={language} /></span> : null}</TableCell>
+    <TableCell className="max-md:hidden"><span className="block text-xs tabular-nums">{host?.host ? `${host.host.cpuCount} vCPU` : "—"}</span><span className="block text-xs tabular-nums text-muted-foreground">{host?.host ? humanBytes(host.host.memoryBytes) : copy(language, "未采集", "Not collected")}</span></TableCell>
+    <TableCell className="max-md:hidden"><span className="block text-xs">{host?.host ? `${host.host.congestionControl || "—"} / ${host.host.defaultQdisc || "—"}` : "—"}</span><span className="block text-xs text-muted-foreground">{host?.host ? host.host.persistentConfig ? copy(language, "发现配置文件", "Config file found") : copy(language, "无 tcpfit 配置", "No tcpfit config") : copy(language, "未采集", "Not collected")}</span></TableCell>
+    <TableCell className="text-xs tabular-nums text-muted-foreground max-md:hidden">{latest ? new Date(latest).toLocaleString(language, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</TableCell>
+  </>;
+}
+
+export function NodeHealthInline({ agent }: { agent: AgentView }) {
+  const state = useContext(QualityContext);
+  const network = state?.diagnostics.find((value) => value.agentId === agent.id && value.kind === "node.network-quality");
+  return <span className="mt-1 flex gap-2 text-[11px] tabular-nums md:hidden">{networkSummary(network?.network).map((value, index) => <span className={value ? latencyTone(value.latencyMs) : "text-muted-foreground"} key={index}>{["电", "联", "移"][index]} {value ? `${Math.round(value.latencyMs)} ms` : "—"}</span>)}</span>;
 }
 
 // One read per page, then poll only while an explicitly requested check exists.
@@ -81,6 +124,7 @@ export function IPQualityProvider({ agents, enabled, children }: { agents: Agent
 export function IPQualityButton({ nodeId, name, language, compact = false }: { nodeId: string; name: string; language: Language; compact?: boolean }) {
   const state = useContext(QualityContext);
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState("overview");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const pending = useRef<AbortController | null>(null);
@@ -92,6 +136,7 @@ export function IPQualityButton({ nodeId, name, language, compact = false }: { n
   const networkCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.network-quality");
   const routeCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.return-route");
   const bandwidthCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.international-bandwidth");
+  const hostCheck = state.diagnostics.find((value) => value.agentId === nodeId && value.kind === "node.host-profile");
   const active = checkPending(check);
   const unavailable = !agent || agent.status !== "active" || agent.credentialRevoked ? "ip_quality_node_unavailable"
     : !agent.connected ? "ip_quality_node_offline"
@@ -138,7 +183,7 @@ export function IPQualityButton({ nodeId, name, language, compact = false }: { n
   const summary = state.error ? copy(language, "节点诊断 · 读取失败", "Node diagnostics · Unavailable") : ipQualitySummary(language, check);
   const score = !check?.stale && !check?.error && !active ? report?.scores.find((value) => value.source === "IPQS") : undefined;
   const showUnlockIndicators = Boolean(!state.error && check?.report && !check.stale && !check.error && !active);
-  return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setError(""); void state.refresh(); } }}>
+  return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setTab("overview"); setError(""); void state.refresh(); } }}>
     <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "h-auto min-h-6 max-w-full justify-start px-1 py-0 text-left text-xs text-muted-foreground max-md:min-h-11"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : `${summary}${score ? ` · IPQS ${score.value}` : ""}`}>
       {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="inline-flex min-w-0 items-center gap-2 overflow-hidden">{showUnlockIndicators && check ? <UnlockIndicators check={check} language={language} /> : <span className="truncate whitespace-nowrap">{summary}</span>}{score ? <span className="shrink-0 whitespace-nowrap">· IPQS {score.value}</span> : null}</span><ChevronRightIcon className="shrink-0" aria-hidden="true" /></>}
     </SheetTrigger>
@@ -158,13 +203,14 @@ export function IPQualityButton({ nodeId, name, language, compact = false }: { n
         {active || submitting ? <p role="status" className="flex items-center gap-2 text-sm"><Spinner aria-hidden="true" />{submitting ? copy(language, "正在提交检测…", "Submitting check…") : check?.state === "pending" ? copy(language, "等待节点执行，可关闭此面板。", "Waiting for the node. You can close this panel.") : copy(language, "正在检测，可关闭此面板。", "Checking. You can close this panel.")}</p> : null}
         {state.error || error || check?.error ? <p role="alert" className="text-sm text-destructive">{ipQualityError(language, state.error ? "read_failed" : error || check!.error!)}</p> : null}
         {check?.stale ? <p role="status" className="text-sm text-destructive">{copy(language, "出口 IP 已变化。以下为旧 IP 的结果，请重新检测。", "The exit IP changed. The results below belong to the previous IP; run a new check.")}</p> : null}
-        <Tabs defaultValue="overview" className="min-w-0">
-          <TabsList className="grid h-auto w-full grid-cols-3 sm:grid-cols-5">
+        <Tabs value={tab} onValueChange={setTab} className="min-w-0">
+          <TabsList className="grid h-auto w-full grid-cols-3 sm:grid-cols-6">
             <TabsTrigger value="overview">{copy(language, "概览", "Overview")}</TabsTrigger>
             <TabsTrigger value="quality">{copy(language, "IP 质量", "IP quality")}</TabsTrigger>
             <TabsTrigger value="network">{copy(language, "网络质量", "Network")}</TabsTrigger>
             <TabsTrigger value="route">{copy(language, "回程路由", "Return route")}</TabsTrigger>
             <TabsTrigger value="bandwidth">{copy(language, "国际带宽", "Bandwidth")}</TabsTrigger>
+            <TabsTrigger value="host">{copy(language, "主机与 TCP", "Host & TCP")}</TabsTrigger>
           </TabsList>
           <TabsContent value="overview" className="space-y-4 pt-3">{report ? <>
             <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><RegionFlag code={report.regionCode} language={language} /><span className="break-words">{copy(language, "检测出口", "Checked exit")}: {report.address}</span><span>IPQuality {report.version}</span></p>
@@ -210,13 +256,24 @@ export function IPQualityButton({ nodeId, name, language, compact = false }: { n
             {!agent?.capabilities.bandwidthDiagnostics ? <p className="text-xs text-muted-foreground">{copy(language, "需要在 Linux 节点安装 iPerf3 并重启 Agent；Vastora 不会自动修改系统软件包。", "Install iPerf3 on the Linux host and restart the Agent. Vastora does not modify system packages automatically.")}</p> : null}
             <Button variant="outline" disabled={diagnosticsUnavailable || !agent?.capabilities.bandwidthDiagnostics || submitting || bandwidthCheck?.state === "pending" || bandwidthCheck?.state === "running"} onClick={() => void startDiagnostic("node.international-bandwidth")}>{bandwidthCheck?.state === "pending" || bandwidthCheck?.state === "running" ? copy(language, "测速中…", "Testing…") : copy(language, "测试国际带宽", "Test international bandwidth")}</Button>
           </TabsContent>
+          <TabsContent value="host" className="flex flex-col gap-6 pt-3">
+            <p className="text-xs text-muted-foreground">{copy(language, "由 Vastora Agent 只读采集本机实际生效值；不运行 tcpfit、不应用调优。配置文件存在不代表参数已生效。", "Vastora Agent reads effective host values only. It does not run tcpfit or apply tuning. A config file does not prove values are active.")}</p>
+            {hostCheck?.host ? <>
+              <section className="space-y-2"><h3 className="font-medium">{copy(language, "硬件与系统", "Hardware & system")}</h3><dl className="grid grid-cols-2 gap-x-6 gap-y-3 border-y py-3 text-sm">{[["vCPU", hostCheck.host.cpuCount.toString()], [copy(language, "内存总量", "Total memory"), humanBytes(hostCheck.host.memoryBytes)], [copy(language, "根文件系统容量", "Root filesystem size"), humanBytes(hostCheck.host.diskBytes)], [copy(language, "内核", "Kernel"), hostCheck.host.kernel], [copy(language, "架构", "Architecture"), hostCheck.host.architecture]].map(([label, value]) => <div key={label}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="mt-1 break-words">{value}</dd></div>)}</dl></section>
+              <section className="space-y-2"><h3 className="font-medium">{copy(language, "TCP 实际参数与建议", "Effective TCP values and recommendations")}</h3><Table><TableHeader><TableRow><TableHead>{copy(language, "参数", "Parameter")}</TableHead><TableHead>{copy(language, "当前值", "Current value")}</TableHead><TableHead>{copy(language, "建议值", "Recommended")}</TableHead><TableHead>{copy(language, "依据", "Basis")}</TableHead></TableRow></TableHeader><TableBody>{hostCheck.host.recommendations.map((value) => <TableRow key={value.parameter}><TableCell className="font-mono text-xs">{value.parameter}</TableCell><TableCell className="break-all font-mono text-xs">{value.current || "—"}</TableCell><TableCell className={cn("break-all font-mono text-xs", value.current !== value.value ? "text-amber-400" : "text-muted-foreground")}>{value.value || "—"}</TableCell><TableCell className="text-xs text-muted-foreground">{recommendationReason(language, value.reason)}</TableCell></TableRow>)}</TableBody></Table></section>
+              <p className="text-xs text-muted-foreground">{hostCheck.host.persistentConfig ? copy(language, "发现 tcpfit 配置文件；需与当前值对照，不能据此断言已优化。", "Found tcpfit config; compare against effective values before claiming tuning is applied.") : copy(language, "未发现 tcpfit 持久化配置文件。", "No tcpfit persistent config file found.")}</p>
+            </> : <p className="py-6 text-center text-sm text-muted-foreground">{copy(language, "尚未采集主机参数", "Host values not collected yet")}</p>}
+            {hostCheck?.error ? <p role="alert" className="text-sm text-destructive">{hostCheck.error}</p> : null}
+            <Button variant="outline" disabled={!agent?.connected || !agent.capabilities.hostProfile || submitting || hostCheck?.state === "pending" || hostCheck?.state === "running"} onClick={() => void startDiagnostic("node.host-profile")}>{hostCheck?.state === "pending" || hostCheck?.state === "running" ? copy(language, "采集中…", "Collecting…") : copy(language, "采集主机数据", "Collect host values")}</Button>
+            {!agent?.capabilities.hostProfile ? <p className="text-xs text-muted-foreground">{copy(language, "需要升级 Linux Agent 才能采集。", "Upgrade the Linux Agent to collect host values.")}</p> : null}
+          </TabsContent>
         </Tabs>
       </div>
-      <SheetFooter className="border-t">
+      {tab === "overview" || tab === "quality" ? <SheetFooter className="border-t">
         {unavailable ? <p className="text-xs text-muted-foreground">{ipQualityError(language, unavailable)}</p> : null}
         <p className="text-xs text-muted-foreground">{copy(language, "使用 IPQuality 访问第三方检测服务，会暴露该节点的出口 IP；不上传在线报告，不测速。首次需下载镜像。", "IPQuality contacts third-party services, revealing this node's exit IP. No online report upload or speed test. The first run downloads an image.")}</p>
         <Button disabled={!!unavailable || active || submitting || state.loading || state.error} onClick={() => void start()}>{report ? copy(language, "重新检测", "Run again") : copy(language, "开始检测", "Run check")}</Button>
-      </SheetFooter>
+      </SheetFooter> : null}
     </SheetContent> : null}
   </Sheet>;
 }
