@@ -118,7 +118,7 @@ func repairReleasedVersion80Marker(ctx context.Context, db *sql.DB, provider *go
 	normalize := func(value string) string {
 		return strings.Join(strings.Fields(strings.TrimSuffix(strings.TrimSpace(value), ";")), " ")
 	}
-	if normalize(storedSQL) != normalize(nodeDiagnosticsSchemaSQL) {
+	if normalize(storedSQL) != normalize(nodeDiagnosticsSchema80SQL) {
 		return errors.New("center: version 80 migration schema is incomplete; refusing schema marker repair")
 	}
 	if _, err := db.ExecContext(ctx, `PRAGMA user_version = 80`); err != nil {

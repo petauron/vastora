@@ -182,6 +182,23 @@
   .apps-workspace [data-slot="input-group-control"] { min-height: 44px; }
 }
 
+@media (width < 48rem) {
+  .nodes-health-table {
+    min-width: 100%;
+    table-layout: auto;
+  }
+  .nodes-health-table tr > :nth-child(n + 2):nth-child(-n + 7) {
+    display: none;
+  }
+  .nodes-health-table tr > :first-child {
+    width: auto;
+  }
+  .nodes-health-table tr > :last-child {
+    width: 6rem;
+    max-width: 6rem;
+  }
+}
+
 @keyframes progress-indeterminate {
   from {
     transform: translateX(-100%);

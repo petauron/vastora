@@ -3,9 +3,11 @@ export type NetworkMeasurement = { carrier: Carrier; latencyMs: number; jitterMs
 export type RouteHop = { ttl: number; address?: string; hostname?: string; latencyMs?: number };
 export type ReturnRoute = { carrier: Carrier; stopReason: string; hops: RouteHop[] };
 export type BandwidthMeasurement = { region: "apac" | "north-america" | "europe"; location: string; direction: "download" | "upload"; state: "completed" | "unavailable" | "failed"; error?: "endpoint_busy" | "probe_failed"; megabitsPerSecond: number; bytes: number; durationSeconds: number };
+export type ParameterRecommendation = { parameter: string; current: string; value: string; reason: "available_low_latency_control" | "available_pacing_queue" | "avoid_idle_restart" | "requires_path_measurement" | "preserve_current" };
+export type HostProfile = { cpuCount: number; memoryBytes: number; diskBytes: number; kernel: string; architecture: string; congestionControl?: string; defaultQdisc?: string; tcpRmem?: string; tcpWmem?: string; tcpSlowStartAfterIdle?: string; persistentConfig: boolean; recommendations: ParameterRecommendation[] };
 export type NodeDiagnosticCheck = {
   agentId: string;
-  kind: "node.network-quality" | "node.return-route" | "node.international-bandwidth";
+  kind: "node.network-quality" | "node.return-route" | "node.international-bandwidth" | "node.host-profile";
   id: string;
   state: "pending" | "running" | "succeeded" | "failed";
   error?: string;
@@ -13,6 +15,7 @@ export type NodeDiagnosticCheck = {
   network?: NetworkMeasurement[];
   routes?: ReturnRoute[];
   bandwidth?: BandwidthMeasurement[];
+  host?: HostProfile;
   checkedAt?: string;
   updatedAt: string;
 };

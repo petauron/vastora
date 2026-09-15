@@ -14,6 +14,7 @@ const (
 	NetworkKind     = "node.network-quality"
 	ReturnRouteKind = "node.return-route"
 	BandwidthKind   = "node.international-bandwidth"
+	HostProfileKind = "node.host-profile"
 	MaxResultBytes  = 64 * 1024
 	ProbeCount      = 4
 	BandwidthBytes  = 8 * 1024 * 1024
@@ -89,7 +90,39 @@ type Result struct {
 	Network   []NetworkMeasurement   `json:"network,omitempty"`
 	Routes    []Route                `json:"routes,omitempty"`
 	Bandwidth []BandwidthMeasurement `json:"bandwidth,omitempty"`
+	Host      *HostProfile           `json:"host,omitempty"`
 	Error     string                 `json:"error,omitempty"`
+}
+
+// HostProfile is a read-only snapshot of the host, not a recommendation or
+// evidence that a persistent sysctl configuration was applied.
+type HostProfile struct {
+	CPUCount          int                       `json:"cpuCount"`
+	MemoryBytes       int64                     `json:"memoryBytes"`
+	DiskBytes         int64                     `json:"diskBytes"`
+	Kernel            string                    `json:"kernel"`
+	Architecture      string                    `json:"architecture"`
+	CongestionControl string                    `json:"congestionControl,omitempty"`
+	DefaultQdisc      string                    `json:"defaultQdisc,omitempty"`
+	TCPRMem           string                    `json:"tcpRmem,omitempty"`
+	TCPWMem           string                    `json:"tcpWmem,omitempty"`
+	TCPSlowStart      string                    `json:"tcpSlowStartAfterIdle,omitempty"`
+	PersistentConfig  bool                      `json:"persistentConfig"`
+	Recommendations   []ParameterRecommendation `json:"recommendations"`
+}
+
+type ParameterRecommendation struct {
+	Parameter string `json:"parameter"`
+	Current   string `json:"current"`
+	Value     string `json:"value"`
+	Reason    string `json:"reason"`
+}
+
+func (t Task) ValidateHostProfile() error {
+	if t.BindAddress != "" || len(t.Targets) != 0 || len(t.BandwidthTargets) != 0 {
+		return errors.New("node diagnostics: invalid host profile task")
+	}
+	return nil
 }
 
 func ValidateBandwidthTargets(targets []BandwidthTarget) error {
@@ -132,6 +165,33 @@ func (r Result) Validate(kind string) error {
 			return nil
 		}
 		return errors.New("node diagnostics: invalid error")
+	}
+	if kind == HostProfileKind {
+		if r.Host == nil || len(r.Network) != 0 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 {
+			return errors.New("node diagnostics: invalid host profile")
+		}
+		h := r.Host
+		if h.CPUCount < 1 || h.CPUCount > 8192 || h.MemoryBytes < 1 || h.DiskBytes < 1 || len(h.Kernel) > 128 || len(h.Architecture) > 32 || len(h.CongestionControl) > 64 || len(h.DefaultQdisc) > 64 || len(h.TCPRMem) > 128 || len(h.TCPWMem) > 128 || len(h.TCPSlowStart) > 16 || len(h.Recommendations) > 8 {
+			return errors.New("node diagnostics: invalid host profile values")
+		}
+		seen := map[string]bool{}
+		allowedReasons := map[string]bool{
+			"available_low_latency_control": true,
+			"available_pacing_queue":        true,
+			"avoid_idle_restart":            true,
+			"preserve_current":              true,
+			"requires_path_measurement":     true,
+		}
+		for _, value := range h.Recommendations {
+			if seen[value.Parameter] || len(value.Parameter) < 1 || len(value.Parameter) > 64 || len(value.Current) > 128 || len(value.Value) > 128 || !allowedReasons[value.Reason] {
+				return errors.New("node diagnostics: invalid TCP recommendation")
+			}
+			seen[value.Parameter] = true
+		}
+		return nil
+	}
+	if r.Host != nil {
+		return errors.New("node diagnostics: unexpected host profile")
 	}
 	if kind == NetworkKind {
 		if len(r.Network) != 3 || len(r.Routes) != 0 || len(r.Bandwidth) != 0 {
