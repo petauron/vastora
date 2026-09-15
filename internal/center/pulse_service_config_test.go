@@ -48,3 +48,27 @@ func TestPulseServiceRejectsInvalidAuthenticationChange(t *testing.T) {
 		}
 	}
 }
+
+func TestPulseUpgradeFillsMissingLegacyHostSettings(t *testing.T) {
+	store, service, _, previous := pulseFixture(t)
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET app_version = '0.1.0-alpha.2', config_json = '{}', secret_id = NULL WHERE id = ?`, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	addPulsePrivateFixture(t, store, previous.ApplicationID, service.ID)
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: service.ID, AppKey: pulseAppKey, Operation: "upgrade", Config: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 || !created.OneTimeCredentialsAvailable {
+		t.Fatal("generated Pulse setup token was not delivered once")
+	}
+	task := claimTask(t, store, service)
+	config, secrets, err := pulse.DecodeServiceConfig(task.Config, task.Secrets)
+	if err != nil || config.PublicURL != "https://pulse.private.example.com" || secrets.SetupToken != created.OneTimeCredentials.SetupToken {
+		t.Fatal("legacy Pulse upgrade did not use its ready HTTPS entry and generated token")
+	}
+	if strings.Contains(string(task.Config), secrets.SetupToken) {
+		t.Fatal("setup token leaked into public deployment configuration")
+	}
+}

@@ -148,7 +148,8 @@ func (s *Store) deploymentCredentials(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, deploymentID string) (OneTimeCredentials, error) {
 	var sealed []byte
-	if err := queryer.QueryRowContext(ctx, `SELECT secret.sealed FROM deployments deployment JOIN secrets secret ON secret.id = deployment.secret_id WHERE deployment.id = ? AND deployment.app_key = ? AND deployment.operation = 'install'`, deploymentID, threeXUIAppKey).Scan(&sealed); errors.Is(err, sql.ErrNoRows) {
+	var appKey, operation string
+	if err := queryer.QueryRowContext(ctx, `SELECT secret.sealed, deployment.app_key, deployment.operation FROM deployments deployment JOIN secrets secret ON secret.id = deployment.secret_id WHERE deployment.id = ?`, deploymentID).Scan(&sealed, &appKey, &operation); errors.Is(err, sql.ErrNoRows) {
 		return OneTimeCredentials{}, errors.New("center: one-time deployment credentials are unavailable")
 	} else if err != nil {
 		return OneTimeCredentials{}, fmt.Errorf("center: read one-time deployment credentials: %w", err)
@@ -158,10 +159,16 @@ func (s *Store) deploymentCredentials(ctx context.Context, queryer interface {
 		return OneTimeCredentials{}, errors.New("center: one-time deployment credentials are invalid")
 	}
 	var values map[string]string
-	if json.Unmarshal(plain, &values) != nil || strings.TrimSpace(values["username"]) == "" || strings.TrimSpace(values["password"]) == "" {
+	if json.Unmarshal(plain, &values) != nil {
 		return OneTimeCredentials{}, errors.New("center: one-time deployment credentials are invalid")
 	}
-	return OneTimeCredentials{Username: values["username"], Password: values["password"]}, nil
+	if appKey == pulseAppKey && (operation == "install" || operation == "upgrade") && len(values["setup_token"]) >= 32 {
+		return OneTimeCredentials{SetupToken: values["setup_token"]}, nil
+	}
+	if appKey == threeXUIAppKey && operation == "install" && strings.TrimSpace(values["username"]) != "" && strings.TrimSpace(values["password"]) != "" {
+		return OneTimeCredentials{Username: values["username"], Password: values["password"]}, nil
+	}
+	return OneTimeCredentials{}, errors.New("center: one-time deployment credentials are invalid")
 }
 
 func (s *Store) RevealDeploymentCredentials(ctx context.Context, deploymentID, ownerID, operationKey string) (OneTimeCredentials, error) {

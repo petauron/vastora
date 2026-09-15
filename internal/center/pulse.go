@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/pulse"
@@ -13,6 +14,51 @@ import (
 
 const pulseAppKey = pulse.ServiceKey
 const pulseAgentAppKey = pulse.AgentKey
+
+// Older Pulse installations have no host settings to retain. Fill only
+// absent values; explicit updates and already stored secrets remain intact.
+func (s *Store) withPulseHostDefaults(ctx context.Context, agentID, operation string, raw []byte) ([]byte, string, error) {
+	values, err := decodeJSONObject(raw, "center: Pulse configuration must be a JSON object")
+	if err != nil {
+		return nil, "", err
+	}
+	var publicURL string
+	if field, exists := values["public_url"]; exists && json.Unmarshal(field, &publicURL) != nil {
+		return nil, "", errors.New("center: Pulse dashboard HTTPS address is invalid")
+	}
+	if strings.TrimSpace(publicURL) == "" && operation == "upgrade" {
+		var hostname string
+		err = s.db.QueryRowContext(ctx, `SELECT p.hostname FROM publications p
+			JOIN services service ON service.id = p.service_id
+			JOIN applications app ON app.id = service.application_id
+			WHERE app.node_id = ? AND app.app_key = ? AND service.name = 'dashboard'
+			AND p.status = 'ready' AND p.tls_enabled = 1
+			ORDER BY CASE p.kind WHEN 'cloudflare_tunnel' THEN 0 WHEN 'public_direct' THEN 1
+				WHEN 'headscale_gateway' THEN 2 WHEN 'lan_gateway' THEN 3 ELSE 4 END, p.updated_at DESC LIMIT 1`, agentID, pulseAppKey).Scan(&hostname)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, "", errors.New("center: add a ready Pulse dashboard HTTPS access point before upgrading")
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		encoded, _ := json.Marshal((&url.URL{Scheme: "https", Host: hostname}).String())
+		values["public_url"] = encoded
+	}
+	var setupToken string
+	if field, exists := values["setup_token"]; exists && json.Unmarshal(field, &setupToken) != nil {
+		return nil, "", errors.New("center: Pulse administrator setup token is invalid")
+	}
+	generated := ""
+	if setupToken == "" && (operation == "install" || operation == "upgrade") {
+		generated, err = randomToken(32)
+		if err != nil {
+			return nil, "", err
+		}
+		values["setup_token"], _ = json.Marshal(generated)
+	}
+	encoded, err := json.Marshal(values)
+	return encoded, generated, err
+}
 
 func nativeApplication(appKey string) bool {
 	return appKey == komariAppKey || appKey == pulseAgentAppKey
