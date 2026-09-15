@@ -2,19 +2,33 @@ import type { IPQualityCheck } from "../ip-quality-types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
 
+const ansiEscapePattern = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+const serializedAnsiEscapePattern = /\\?x1b\[[0-?]*[ -/]*[@-~]/gi;
+
+export function cleanIPQualityValue(value?: string) {
+  return (value ?? "").replace(ansiEscapePattern, "").replace(serializedAnsiEscapePattern, "").replace(/\s+/g, " ").trim();
+}
+
 export function checkPending(check?: IPQualityCheck) {
   return check?.state === "pending" || check?.state === "running";
 }
 
 export function unlockLabel(language: Language, status?: string) {
-  switch (status?.trim().toLowerCase()) {
+  const value = cleanIPQualityValue(status);
+  switch (value.toLowerCase()) {
     case "yes": return copy(language, "解锁", "Unlocked");
     case "no": return copy(language, "未解锁", "Blocked");
     case "org": case "originals only": return copy(language, "仅自制", "Originals only");
     case "failed": case "fail": case "error": return copy(language, "检测失败", "Check failed");
-    case "": case "null": case undefined: return copy(language, "未知", "Unknown");
-    default: return status!.trim();
+    case "": case "null": return copy(language, "未知", "Unknown");
+    default: return value;
   }
+}
+
+export function unlockTypeLabel(language: Language, type?: string) {
+  const value = cleanIPQualityValue(type);
+  if (!value || value.toLowerCase() === "null") return "";
+  return value.toLowerCase() === "native" ? copy(language, "原生", "Native") : value;
 }
 
 export function ipQualityError(language: Language, code: string) {

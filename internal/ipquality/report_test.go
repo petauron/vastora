@@ -28,6 +28,26 @@ func TestParseRetainsOnlyAvailableScoresAndUnlockFields(t *testing.T) {
 	}
 }
 
+func TestParseRemovesTerminalFormattingFromUnlockFields(t *testing.T) {
+	for _, replacement := range []struct {
+		status string
+		typeOf string
+	}{
+		{status: `x1b[42mx1b[37m Yes x1b[0m`, typeOf: `x1b[42mx1b[37m Native x1b[0m`},
+		{status: `\u001b[42m\u001b[37m Yes \u001b[0m`, typeOf: `\u001b[42m\u001b[37m Native \u001b[0m`},
+	} {
+		raw := strings.Replace(reportFixture, `" Yes "`, `"`+replacement.status+`"`, 1)
+		raw = strings.Replace(raw, `"Type":"Native"`, `"Type":"`+replacement.typeOf+`"`, 1)
+		value, err := Parse([]byte(raw), "203.0.113.8")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if value.Services[0].Status != "Yes" || value.Services[0].Type != "Native" {
+			t.Fatalf("terminal formatting retained: %#v", value.Services[0])
+		}
+	}
+}
+
 func TestParseRejectsWrongExitAndInvalidReports(t *testing.T) {
 	for _, raw := range []string{strings.ReplaceAll(reportFixture, "203.0.113.8", "203.0.113.9"), "not-json", strings.Repeat("x", MaxReportBytes+1)} {
 		if _, err := Parse([]byte(raw), "203.0.113.8"); err == nil {

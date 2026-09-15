@@ -75,6 +75,7 @@ var services = []string{"TikTok", "DisneyPlus", "Netflix", "Youtube", "AmazonPri
 var scorePattern = regexp.MustCompile(`^\d{1,3}(\.\d{1,6})?%?$`)
 var regionPattern = regexp.MustCompile(`^[A-Z]{2}$`)
 var asnPattern = regexp.MustCompile(`^(AS)?[0-9]{1,10}$`)
+var terminalEscapePattern = regexp.MustCompile(`(\x1b|\\?x1b)\[[0-?]*[ -/]*[@-~]`)
 var classificationSources = []string{"IPinfo", "ipregistry", "ipapi", "AbuseIPDB", "IP2LOCATION"}
 var companySources = []string{"IPinfo", "ipregistry", "ipapi"}
 var factorSources = []string{"IP2LOCATION", "ipapi", "ipregistry", "IPQS", "SCAMALYTICS", "ipdata", "IPinfo", "IPWHOIS", "DBIP"}
@@ -214,13 +215,18 @@ func Parse(raw []byte, address string) (Report, error) {
 	}
 	for _, name := range services {
 		if item, ok := input.Media[name]; ok {
-			report.Services = append(report.Services, Service{Name: name, Status: strings.TrimSpace(item.Status), RegionCode: region(item.Region), Type: strings.TrimSpace(item.Type)})
+			report.Services = append(report.Services, Service{Name: name, Status: terminalValue(item.Status, 32), RegionCode: region(item.Region), Type: terminalValue(item.Type, 32)})
 		}
 	}
 	if (Result{Report: &report}).Validate(address) != nil || len(report.Scores)+len(report.Services) == 0 {
 		return Report{}, errors.New("invalid_report")
 	}
 	return report, nil
+}
+
+func terminalValue(value string, limit int) string {
+	value = terminalEscapePattern.ReplaceAllString(value, "")
+	return bounded(strings.Join(strings.Fields(value), " "), limit)
 }
 
 func bounded(value string, limit int) string {
