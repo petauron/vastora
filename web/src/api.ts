@@ -2,6 +2,7 @@ import type { Action, AgentEnrollment, AgentUpdate, AgentView, ApplicationComman
 
 import type { LandingView } from "./landing-types";
 import type { IPQualityCheck } from "./ip-quality-types";
+import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeProtocols } from "./types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
 
@@ -63,6 +64,8 @@ async function download(path: string, fallbackName: string, init: RequestInit = 
 export const api = {
   ipQuality: (signal?: AbortSignal) => request<{ checks: IPQualityCheck[] }>("/api/v1/ip-quality", { signal }),
   checkIPQuality: (id: string, signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/ip-quality`, { method: "POST", body: "{}", signal }),
+  nodeDiagnostics: (signal?: AbortSignal) => request<{ checks: NodeDiagnosticCheck[] }>("/api/v1/node-diagnostics", { signal }),
+  checkNodeDiagnostic: (id: string, kind: NodeDiagnosticCheck["kind"], signal?: AbortSignal) => request<{ queued: boolean }>(`/api/v1/agents/${encodeURIComponent(id)}/node-diagnostics/${encodeURIComponent(kind)}`, { method: "POST", body: "{}", signal }),
   executions: (before = 0, signal?: AbortSignal) => request<ExecutionPage>(`/api/v1/executions${before ? `?before=${before}` : ""}`, { signal }),
   executionClaimControl: (signal?: AbortSignal) => request<ExecutionClaimControl>("/api/v1/execution-claim-control", { signal }),
   setExecutionClaimControl: (paused: boolean) => request<{ recorded: boolean }>("/api/v1/execution-claim-control", { method: "PUT", body: JSON.stringify({ paused }) }),

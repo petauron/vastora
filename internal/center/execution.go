@@ -112,7 +112,11 @@ func (s *Store) RegisterExecutionSession(ctx context.Context, agentID, credentia
 		return err
 	}
 	if current == sessionID {
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		s.recoverReceivedExecutionResults(ctx, agentID)
+		return nil
 	}
 	// A retired process cannot re-register its old session after reconnecting.
 	// Keep this history at Center, never in the Agent's polling hot path.
@@ -134,7 +138,44 @@ func (s *Store) RegisterExecutionSession(ctx context.Context, agentID, credentia
 		ON CONFLICT(agent_id) DO UPDATE SET session_id=excluded.session_id,updated_at=excluded.updated_at`, agentID, sessionID, now); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.recoverReceivedExecutionResults(ctx, agentID)
+	return nil
+}
+
+func (s *Store) recoverReceivedExecutionResults(ctx context.Context, agentID string) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM task_executions
+		WHERE agent_id=? AND state='unknown' AND phase='result_received' AND disposition=''
+		ORDER BY created_at,id`, agentID)
+	if err != nil {
+		return
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return
+	}
+	if err := rows.Close(); err != nil {
+		return
+	}
+	for _, id := range ids {
+		if err := s.projectRetainedExecutionResult(ctx, id, retainedExecutionResolution{automatic: true}); err != nil {
+			// Recovery is opportunistic. Any invalid evidence, newer business
+			// state, or storage failure leaves the original fence intact for
+			// operator inspection, but must not reject the replacement process.
+			continue
+		}
+	}
 }
 
 func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID string) error {

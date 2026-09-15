@@ -45,9 +45,9 @@ func TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically(t *testi
 			if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, result, mode != "failed-result", mode == "unknown-result", "", generation); err != nil {
 				t.Fatal(err)
 			}
-			// Losing the original process makes the recorded execution uncertain;
-			// no result or command is replayed when the replacement connects.
-			if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, "confirmation-replacement-process-session", controlplane.ExecutionProtocol); err != nil {
+			// Model an older unresolved execution so the administrator recovery
+			// path remains covered independently from automatic result recovery.
+			if _, err := store.db.Exec(`UPDATE task_executions SET state='unknown',last_error='legacy interrupted execution' WHERE id=?`, task.Authorization.ID); err != nil {
 				t.Fatal(err)
 			}
 			cookie, csrf, err := store.CreateFirstAdmin(ctx, "confirmation-admin", "test-only-strong-password")
@@ -154,5 +154,48 @@ func TestExecutionApplicationConfirmationUsesRetainedEvidenceAtomically(t *testi
 				t.Fatal("failed confirmation left partial business changes")
 			}
 		})
+	}
+}
+
+func TestExecutionSessionRecoversRetainedSuccessfulResult(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "automatic-result-recovery", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.19", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.19", LANAddress: "10.0.0.19", EnabledKinds: []string{networking.KindLAN}})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := "automatic-result-original-session"
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.claimExecutionTask(ctx, node.ID, node.Credential, session, 0)
+	if err != nil || task == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := store.StartExecution(ctx, node.ID, session, task.Authorization.ID, task.Authorization.Digest); err != nil {
+		t.Fatal(err)
+	}
+	generation := task.RequiredRuntimeGeneration
+	if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, cpaApplicationResult("10.0.0.19"), true, false, "", &generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, "automatic-result-replacement-session", controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	var executionState, phase, disposition, deploymentState string
+	var services int
+	if err := store.db.QueryRow(`SELECT state,phase,disposition FROM task_executions WHERE id=?`, task.Authorization.ID).Scan(&executionState, &phase, &disposition); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT state FROM deployments WHERE id=?`, task.ID).Scan(&deploymentState); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM services WHERE application_id=?`, deployment.ApplicationID).Scan(&services); err != nil {
+		t.Fatal(err)
+	}
+	if executionState != "succeeded" || phase != "reported" || disposition != "" || deploymentState != "succeeded" || services == 0 {
+		t.Fatalf("retained result was not recovered: execution=%s phase=%s disposition=%q deployment=%s services=%d", executionState, phase, disposition, deploymentState, services)
 	}
 }

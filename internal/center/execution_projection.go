@@ -19,6 +19,8 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 	switch kind {
 	case "node.ip-quality":
 		query = `SELECT state FROM ip_quality_checks WHERE id=? AND agent_id=? AND attempt=?`
+	case "node.network-quality", "node.return-route", "node.international-bandwidth":
+		query = `SELECT state FROM node_diagnostic_checks WHERE id=? AND agent_id=? AND attempt=?`
 	case "application.apply":
 		query = `SELECT state FROM deployments WHERE id=? AND agent_id=? AND attempt=?`
 	case "application.command":

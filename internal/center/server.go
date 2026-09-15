@@ -189,6 +189,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/agents", s.requireAuth(false, s.handleListAgents))
 	mux.HandleFunc("GET /api/v1/ip-quality", s.requireAuth(false, s.handleListIPQuality))
 	mux.HandleFunc("POST /api/v1/agents/{id}/ip-quality", s.requireAuth(true, s.handleStartIPQuality))
+	mux.HandleFunc("GET /api/v1/node-diagnostics", s.requireAuth(false, s.handleListNodeDiagnostics))
+	mux.HandleFunc("POST /api/v1/agents/{id}/node-diagnostics/{kind}", s.requireAuth(true, s.handleStartNodeDiagnostic))
 	mux.HandleFunc("GET /api/v1/regions", s.requireAuth(false, s.handleListRegions))
 	mux.HandleFunc("GET /api/v1/agents/{id}/region-suggestion", s.requireAuth(false, s.handleSuggestAgentRegion))
 	mux.HandleFunc("POST /api/v1/agent-enrollments", s.requireAuth(true, s.handleCreateAgentEnrollment))
@@ -460,7 +462,8 @@ func errorCode(status int, message string) string {
 	}
 	normalized := strings.ToLower(message)
 	switch normalized {
-	case "ip_quality_node_unavailable", "ip_quality_node_offline", "ip_quality_agent_upgrade_required", "ip_quality_tasks_paused", "ip_quality_node_busy", "ip_quality_address_unavailable":
+	case "ip_quality_node_unavailable", "ip_quality_node_offline", "ip_quality_agent_upgrade_required", "ip_quality_tasks_paused", "ip_quality_node_busy", "ip_quality_address_unavailable",
+		"node_diagnostics_invalid_kind", "node_diagnostics_node_unavailable", "node_diagnostics_node_offline", "node_diagnostics_agent_upgrade_required", "node_diagnostics_tasks_paused", "node_diagnostics_node_busy", "node_diagnostics_address_unavailable":
 		return normalized
 	}
 	switch {
