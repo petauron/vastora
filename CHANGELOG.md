@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.152](https://github.com/petauron/vastora/compare/v0.1.0-alpha.151...v0.1.0-alpha.152) (2026-09-15)
+
+
+### Bug Fixes
+
+* stabilize updates diagnostics and subscriptions ([#501](https://github.com/petauron/vastora/issues/501)) ([613f203](https://github.com/petauron/vastora/commit/613f203a0dc495dd063ca52e36a8fbc3ea5164e3))
+
 ## [0.1.0-alpha.151](https://github.com/petauron/vastora/compare/v0.1.0-alpha.150...v0.1.0-alpha.151) (2026-09-15)
 
 
