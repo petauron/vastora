@@ -24,7 +24,7 @@ type SubscriptionGrant struct {
 }
 
 // ComposeLinks preserves original lines verbatim. Distinct combination UUIDs
-// keep ordinary converters from merging the compact A/B display names.
+// keep ordinary converters from merging nodes that have compact display names.
 func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []SubscriptionGrant, encoded bool) ([]byte, error) {
 	if len(native) > 4<<20 || !validGrantID(parentID) || !mode.Valid() {
 		return nil, errors.New("landing: invalid subscription input")
@@ -44,7 +44,6 @@ func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []
 			identities[link.User.Username()] = true
 		}
 	}
-	labels := combinationLabels(grants)
 	for _, item := range grants {
 		if err := validateSubscriptionGrant(item, parentID); err != nil {
 			return nil, err
@@ -60,7 +59,7 @@ func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []
 		if err != nil || fixed.Host != base.Host || !sameRealityTransport(fixed, base) || identities[fixed.User.Username()] {
 			return nil, errors.New("landing: invalid combination credentials")
 		}
-		fixed.Fragment = combinationName(item, labels[item.Grant.ID])
+		fixed.Fragment = combinationName(item)
 		lines = append(lines, fixed.String())
 		identities[fixed.User.Username()] = true
 	}
@@ -117,7 +116,6 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 		return nil
 	}
 	baseProxies := slices.Clone(proxies)
-	labels := combinationLabels(grants)
 	fixedNames := []any{}
 	replacements := map[string][]any{}
 	for _, item := range grants {
@@ -154,7 +152,7 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 					return nil, errors.New("landing: duplicated fixed subscription identity")
 				}
 			}
-			name := combinationName(item, labels[item.Grant.ID])
+			name := combinationName(item)
 			if err := reserve(name); err != nil {
 				return nil, err
 			}
@@ -246,35 +244,12 @@ func validateSubscriptionGrant(item SubscriptionGrant, parentID string) error {
 	return nil
 }
 
-func combinationLabels(grants []SubscriptionGrant) map[string]string {
-	byEntry := map[string][]SubscriptionGrant{}
-	for _, item := range grants {
-		if item.Grant.Enabled && item.Grant.Mode.Fixed() {
-			key := string(item.Grant.BaseIdentity) + "\x00" + item.EntryName
-			byEntry[key] = append(byEntry[key], item)
-		}
-	}
-	labels := make(map[string]string, len(grants))
-	for _, items := range byEntry {
-		slices.SortFunc(items, func(a, b SubscriptionGrant) int {
-			if order := strings.Compare(a.Grant.Peer.ID, b.Grant.Peer.ID); order != 0 {
-				return order
-			}
-			return strings.Compare(a.Grant.ID, b.Grant.ID)
-		})
-		for index, item := range items {
-			labels[item.Grant.ID] = string(rune('A' + index))
-		}
-	}
-	return labels
-}
-
-func combinationName(item SubscriptionGrant, label string) string {
+func combinationName(item SubscriptionGrant) string {
 	prefix := ""
 	if item.LandingRegionCode != "" {
 		prefix = regionFlag(item.LandingRegionCode) + "｜"
 	}
-	return prefix + item.EntryName + " " + label
+	return prefix + item.EntryName
 }
 
 func validRegionCode(code string) bool {

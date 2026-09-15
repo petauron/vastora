@@ -29,6 +29,16 @@ function ClassificationTable({ language, title, values }: { language: Language; 
   return <section className="space-y-2"><h3 className="font-medium">{title}</h3><Table><TableHeader><TableRow><TableHead>{copy(language, "来源", "Provider")}</TableHead><TableHead>{copy(language, "分类", "Classification")}</TableHead></TableRow></TableHeader><TableBody>{values.map((value) => <TableRow key={value.source}><TableCell>{value.source}</TableCell><TableCell>{value.value}</TableCell></TableRow>)}{!values.length ? <TableRow><TableCell colSpan={2}>{copy(language, "暂无分类数据", "No classification data")}</TableCell></TableRow> : null}</TableBody></Table></section>;
 }
 
+function UnlockIndicators({ check, language }: { check: IPQualityCheck; language: Language }) {
+  const summary = ipQualitySummary(language, check);
+  return <span aria-label={summary} className="inline-flex shrink-0 items-center gap-1.5">{["Netflix", "ChatGPT"].map((name) => {
+    const service = check.report?.services.find((item) => item.name === name);
+    const status = cleanIPQualityValue(service?.status).toLowerCase();
+    const label = unlockLabel(language, service?.status);
+    return <span aria-hidden="true" className={cn("size-2.5 shrink-0 rounded-[2px] border", status === "yes" ? "border-transparent bg-latency-fast" : status === "no" ? "border-destructive bg-transparent" : "border-muted-foreground/40 bg-muted")} key={name} title={`${name} · ${label}`} />;
+  })}</span>;
+}
+
 // One read per page, then poll only while an explicitly requested check exists.
 // A list refresh never starts a diagnostic on any node.
 export function IPQualityProvider({ agents, enabled, children }: { agents: AgentView[]; enabled: boolean; children: ReactNode }) {
@@ -127,9 +137,10 @@ export function IPQualityButton({ nodeId, name, language, compact = false }: { n
   };
   const summary = state.error ? copy(language, "节点诊断 · 读取失败", "Node diagnostics · Unavailable") : ipQualitySummary(language, check);
   const score = !check?.stale && !check?.error && !active ? report?.scores.find((value) => value.source === "IPQS") : undefined;
+  const showUnlockIndicators = Boolean(!state.error && check?.report && !check.stale && !check.error && !active);
   return <Sheet open={open} onOpenChange={(value) => { setOpen(value); if (value) { setError(""); void state.refresh(); } }}>
-    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "h-auto min-h-6 max-w-full justify-start px-1 py-0 text-left text-xs text-muted-foreground max-md:min-h-11"} />} aria-label={copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : `${summary}${score ? ` · IPQS ${score.value}` : ""}`}>
-      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="min-w-0 truncate whitespace-nowrap">{summary}{score ? ` · IPQS ${score.value}` : ""}</span><ChevronRightIcon className="shrink-0" aria-hidden="true" /></>}
+    <SheetTrigger render={<Button type="button" variant="ghost" size={compact ? "icon-sm" : "sm"} className={compact ? "shrink-0" : "h-auto min-h-6 max-w-full justify-start px-1 py-0 text-left text-xs text-muted-foreground max-md:min-h-11"} />} aria-label={compact ? copy(language, `查看 ${name} 的节点诊断`, `View node diagnostics for ${name}`) : copy(language, `查看 ${name} 的节点诊断：${summary}`, `View node diagnostics for ${name}: ${summary}`)} title={compact ? copy(language, "查看节点诊断", "View node diagnostics") : `${summary}${score ? ` · IPQS ${score.value}` : ""}`}>
+      {compact ? <ActivityIcon aria-hidden="true" /> : <><span className="inline-flex min-w-0 items-center gap-2 overflow-hidden">{showUnlockIndicators && check ? <UnlockIndicators check={check} language={language} /> : <span className="truncate whitespace-nowrap">{summary}</span>}{score ? <span className="shrink-0 whitespace-nowrap">· IPQS {score.value}</span> : null}</span><ChevronRightIcon className="shrink-0" aria-hidden="true" /></>}
     </SheetTrigger>
     {open ? <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-3xl">
       <SheetHeader className="pr-12">

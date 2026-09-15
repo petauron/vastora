@@ -39,9 +39,9 @@ function normalizedSearch(value: string) {
 
 export function regionDisplayName(code: string, name: string) {
   const normalizedCode = code.trim().toUpperCase();
-  const normalizedName = name.trim();
+  const normalizedName = name.trim().replace(/^[|｜]+\s*/, "");
   if (!normalizedCode || !normalizedName) return normalizedName;
-  return `${regionFlag(normalizedCode)} ${subscriptionRegionName(normalizedCode)}${normalizedName}`;
+  return `${regionFlag(normalizedCode)} ${subscriptionRegionName(normalizedCode)}｜${normalizedName}`;
 }
 
 export function regionBaseName(displayName: string, code?: string) {
@@ -55,7 +55,7 @@ export function regionBaseName(displayName: string, code?: string) {
     `${regionFlag(normalizedCode)} ${subscriptionRegionName(normalizedCode)}`,
   ].filter(Boolean);
   const prefix = prefixes.find((candidate) => displayName.startsWith(candidate));
-  return prefix ? displayName.slice(prefix.length).trim() : displayName;
+  return prefix ? displayName.slice(prefix.length).trim().replace(/^[|｜]+\s*/, "") : displayName;
 }
 
 function subscriptionRegionName(code: string) {

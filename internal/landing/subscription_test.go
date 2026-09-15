@@ -123,8 +123,8 @@ func TestMihomoFixedCombinationsNeedNoClientChain(t *testing.T) {
 	if strings.Contains(string(out), "dialer-proxy") || strings.Contains(string(out), "socks5") {
 		t.Fatal("client-side chain remains")
 	}
-	if !strings.Contains(string(out), "🇺🇸｜入口 A A") || !strings.Contains(string(out), "🇹🇼｜入口 A B") || strings.Contains(string(out), "落地") || strings.Contains(string(out), "combination-") {
-		t.Fatal("combination names did not use compact landing flags and stable labels")
+	if !strings.Contains(string(out), "🇺🇸｜入口 A") || !strings.Contains(string(out), "🇹🇼｜入口 A") || strings.Contains(string(out), "入口 A A") || strings.Contains(string(out), "入口 A B") || strings.Contains(string(out), "落地") || strings.Contains(string(out), "combination-") {
+		t.Fatal("combination names did not use flag-only landing labels")
 	}
 	links, err := ComposeLinks([]byte(item.BaseLink+"\n"), item.Grant.ParentID, FixedMode, items, false)
 	if err != nil || strings.Count(string(links), "vless://") != 3 {

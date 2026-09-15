@@ -107,20 +107,26 @@ func regionFullNameZH(code string) string {
 
 func composeRealityDisplayName(code, name string) (string, string, string, error) {
 	code, ok := regionCode(code)
-	name = strings.TrimSpace(name)
+	name = normalizeRealityBaseName(name)
 	if !ok || !validThreeXUIClientName(name) {
 		return "", "", "", errors.New("center: a standard region and valid node name are required")
 	}
-	displayName := regionPrefix(code) + name
+	displayName := regionPrefix(code) + "｜" + name
 	if !validThreeXUIClientName(displayName) {
 		return "", "", "", errors.New("center: the region-prefixed node name is too long")
 	}
 	return code, name, displayName, nil
 }
 
+func normalizeRealityBaseName(name string) string {
+	name = strings.TrimSpace(name)
+	name = strings.TrimLeft(name, "|｜")
+	return strings.TrimSpace(name)
+}
+
 func validRegionPrefixedRealityName(code, displayName string) bool {
 	code, ok := regionCode(code)
-	return ok && validThreeXUIClientName(displayName) && strings.HasPrefix(displayName, regionPrefix(code))
+	return ok && validThreeXUIClientName(displayName) && strings.HasPrefix(displayName, regionPrefix(code)+"｜")
 }
 
 func (s *Store) Regions() []RegionView {

@@ -16,7 +16,7 @@ func TestComposeRealityDisplayNameUsesStableRegionPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != "US" || name != "Oracle 9929" || displayName != "🇺🇸 美国Oracle 9929" {
+	if code != "US" || name != "Oracle 9929" || displayName != "🇺🇸 美国｜Oracle 9929" {
 		t.Fatalf("composed name = code %q, name %q, display %q", code, name, displayName)
 	}
 	if _, _, _, err := composeRealityDisplayName("ZZ", "Oracle"); err == nil {
@@ -28,6 +28,7 @@ func TestRealityBaseNameUnderstandsOldAndCurrentPrefixes(t *testing.T) {
 	for displayName, expected := range map[string]string{
 		"🇺🇸 US · CloudLead": "CloudLead",
 		"🇺🇸 美国CloudLead":    "CloudLead",
+		"🇺🇸 美国｜CloudLead":   "CloudLead",
 		"CloudLead-test":    "CloudLead-test",
 	} {
 		if actual := realityBaseName(displayName, "US"); actual != expected {
@@ -41,13 +42,13 @@ func TestHongKongRealityNamesUseShortPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != "HK" || name != "| VMISS DC2" || displayName != "🇭🇰 香港| VMISS DC2" {
+	if code != "HK" || name != "VMISS DC2" || displayName != "🇭🇰 香港｜VMISS DC2" {
 		t.Fatalf("composed name = code %q, name %q, display %q", code, name, displayName)
 	}
 	if !validRegionPrefixedRealityName(code, displayName) || validRegionPrefixedRealityName(code, "🇭🇰 中国香港特别行政区| VMISS DC2") {
 		t.Fatal("only the short Hong Kong prefix should be generated and accepted")
 	}
-	for _, stored := range []string{"🇭🇰 中国香港特别行政区| VMISS DC2", displayName} {
+	for _, stored := range []string{"🇭🇰 中国香港特别行政区| VMISS DC2", "🇭🇰 香港| VMISS DC2", displayName} {
 		base := realityBaseName(stored, code)
 		_, _, reconciled, err := composeRealityDisplayName(code, base)
 		if err != nil || base != name || reconciled != displayName {
@@ -89,7 +90,7 @@ func TestSubscriptionRegionNamesStayShortAndDistinct(t *testing.T) {
 			regionFlag(region.Code) + " " + region.Code + " · Edge",
 		} {
 			base := realityBaseName(stored, region.Code)
-			if base != "| Edge" && base != "Edge" {
+			if base != "Edge" {
 				t.Fatalf("region %s left part of its prefix in %q: %q", region.Code, stored, base)
 			}
 			_, _, canonical, err := composeRealityDisplayName(region.Code, base)

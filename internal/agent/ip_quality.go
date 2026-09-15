@@ -22,6 +22,33 @@ const ipQualityImage = "xykt/ipquality@sha256:26258a197cc03c186d41c26bd871d36ccc
 
 var errIPQualityCleanupUnconfirmed = errors.New("agent: IP quality container cleanup could not be confirmed")
 
+type cappedIPQualityOutput struct {
+	buffer bytes.Buffer
+	limit  int
+}
+
+func (w *cappedIPQualityOutput) Write(value []byte) (int, error) {
+	remaining := w.limit + 1 - w.buffer.Len()
+	if remaining > 0 {
+		if remaining > len(value) {
+			remaining = len(value)
+		}
+		_, _ = w.buffer.Write(value[:remaining])
+	}
+	return len(value), nil
+}
+
+func readIPQualityOutput(reader io.Reader) ([]byte, error) {
+	stdout := cappedIPQualityOutput{limit: ipquality.MaxReportBytes}
+	if _, err := stdcopy.StdCopy(&stdout, io.Discard, reader); err != nil {
+		return nil, err
+	}
+	if stdout.buffer.Len() > ipquality.MaxReportBytes {
+		return nil, errors.New("ipquality: report too large")
+	}
+	return stdout.buffer.Bytes(), nil
+}
+
 const ipQualityScript = `set -eu
 curl --proto '=https' --tlsv1.2 -fsSL --max-time 30 https://raw.githubusercontent.com/xykt/IPQuality/ad222ab16778be2a13a174cd1acbd69fb4cac6b7/ip.sh -o /tmp/upstream.sh
 echo 'ffb17dae790341c13023a94c5141775974dd73a3653ca5fba5c4648fc5588402  /tmp/upstream.sh' | sha256sum -c - >/dev/null
@@ -113,11 +140,11 @@ func (e ApplicationExecutor) CheckIPQuality(parent context.Context, task ipquali
 	if _, err = docker.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return ipquality.Result{Error: "detection_failed"}, nil
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(stream.Reader, ipquality.MaxReportBytes+1))
+	stdout, readErr := readIPQualityOutput(stream.Reader)
 	if ctx.Err() != nil {
 		return ipquality.Result{Error: "timeout"}, nil
 	}
-	if readErr != nil || len(raw) > ipquality.MaxReportBytes {
+	if readErr != nil {
 		return ipquality.Result{Error: "invalid_report"}, nil
 	}
 	select {
@@ -130,11 +157,7 @@ func (e ApplicationExecutor) CheckIPQuality(parent context.Context, task ipquali
 			return ipquality.Result{Error: "detection_failed"}, nil
 		}
 	}
-	var stdout bytes.Buffer
-	if _, err = stdcopy.StdCopy(&stdout, io.Discard, bytes.NewReader(raw)); err != nil {
-		return ipquality.Result{Error: "invalid_report"}, nil
-	}
-	report, parseErr := ipquality.Parse(stdout.Bytes(), task.Address)
+	report, parseErr := ipquality.Parse(stdout, task.Address)
 	if parseErr != nil {
 		return ipquality.Result{Error: parseErr.Error()}, nil
 	}
