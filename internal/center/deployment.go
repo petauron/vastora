@@ -56,8 +56,9 @@ type DeploymentView struct {
 }
 
 type OneTimeCredentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username   string `json:"username,omitempty"`
+	Password   string `json:"password,omitempty"`
+	SetupToken string `json:"setupToken,omitempty"`
 }
 
 const applicationTaskRevision int64 = 1
@@ -133,10 +134,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	if request.Operation == "" {
 		request.Operation = "install"
 	}
+	offersCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker || request.AppKey == pulseAppKey && (request.Operation == "install" || request.Operation == "upgrade")
 	producesCredentials := request.AppKey == threeXUIAppKey && request.Operation == "install" && request.Role != threeXUIRoleWorker
 	var secretOwner string
 	var operationKeyHash, secretRequestHash []byte
-	if producesCredentials {
+	if offersCredentials {
 		if request.SecretOperationOwner == "" {
 			request.SecretOperationOwner = "internal"
 			if request.SecretOperationKey == "" {
@@ -255,6 +257,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	var config, secrets []byte
+	var oneTimePulseToken string
 	if request.Operation == "uninstall" {
 		config, secrets = []byte(`{}`), []byte(`{}`)
 	} else {
@@ -307,6 +310,17 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 			}
 			secrets = []byte(`{}`)
 		} else {
+			if request.AppKey == pulseAppKey {
+				var generatedToken string
+				deploymentConfig, generatedToken, err = s.withPulseHostDefaults(ctx, request.AgentID, request.Operation, deploymentConfig)
+				if err != nil {
+					return DeploymentView{}, err
+				}
+				if generatedToken != "" {
+					producesCredentials = true
+					oneTimePulseToken = generatedToken
+				}
+			}
 			config, secrets, err = normalizeDeploymentConfig(manifest, deploymentConfig)
 		}
 		if err != nil {
@@ -335,6 +349,9 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	}
 	var oneTimeCredentials *OneTimeCredentials
+	if oneTimePulseToken != "" {
+		oneTimeCredentials = &OneTimeCredentials{SetupToken: oneTimePulseToken}
+	}
 	if request.AppKey == threeXUIAppKey && request.Operation != "uninstall" {
 		secrets, oneTimeCredentials, err = s.withThreeXUISecrets(ctx, request.AgentID, request.Operation, secrets)
 		if err != nil {
@@ -416,7 +433,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if producesCredentials {
 		if oneTimeCredentials == nil {
-			return DeploymentView{}, errors.New("center: generated 3x-ui credentials are unavailable")
+			return DeploymentView{}, errors.New("center: generated deployment credentials are unavailable")
 		}
 		if err := insertSecretDelivery(ctx, tx, deploymentCredentialsDelivery, secretOwner, operationKeyHash, secretRequestHash, deployment.ID, now); err != nil {
 			return DeploymentView{}, err
