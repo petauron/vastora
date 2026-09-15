@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.150](https://github.com/petauron/vastora/compare/v0.1.0-alpha.149...v0.1.0-alpha.150) (2026-09-15)
+
+
+### Bug Fixes
+
+* **pulse:** auto-fill missing settings during legacy upgrade ([#497](https://github.com/petauron/vastora/issues/497)) ([c652da8](https://github.com/petauron/vastora/commit/c652da8675cab17e43ef057a171e26886cca86fe))
+
 ## [0.1.0-alpha.149](https://github.com/petauron/vastora/compare/v0.1.0-alpha.148...v0.1.0-alpha.149) (2026-09-15)
 
 
