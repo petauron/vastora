@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "../api";
 import type { LandingView } from "../landing-types";
+import type { AgentView } from "../types";
 import { LandingLatency, LandingManager, LandingProvider } from "./LandingControls";
 import { selectedLandingLatencies } from "./landingLatency";
 
