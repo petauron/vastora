@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ipQualitySummary, unlockLabel } from "./ipQualityModel";
+import { ipQualitySummary, unlockLabel, unlockTypeLabel } from "./ipQualityModel";
 import type { IPQualityCheck } from "../ip-quality-types";
 
 describe("IP quality presentation", () => {
@@ -7,6 +7,14 @@ describe("IP quality presentation", () => {
     expect(unlockLabel("zh-CN", "null")).toBe("未知");
     expect(unlockLabel("zh-CN", " Yes ")).toBe("解锁");
     expect(unlockLabel("zh-CN", "No")).toBe("未解锁");
+  });
+  it("removes terminal formatting in detail and list labels", () => {
+    const status = "x1b[42mx1b[37m Yes x1b[0m";
+    const type = "\u001b[42m\u001b[37m Native \u001b[0m";
+    expect(unlockLabel("zh-CN", status)).toBe("解锁");
+    expect(unlockTypeLabel("zh-CN", type)).toBe("原生");
+    const check: IPQualityCheck = { agentId: "node", id: "check", state: "succeeded", stale: false, updatedAt: "", report: { address: "203.0.113.8", version: "test", scores: [], services: [{ name: "Netflix", status }, { name: "ChatGPT", status }] } };
+    expect(ipQualitySummary("zh-CN", check)).toBe("Netflix 解锁 · ChatGPT 解锁");
   });
   it("labels pending, failed and stale results without claiming success", () => {
     const check: IPQualityCheck = { agentId: "node", id: "check", state: "succeeded", stale: true, updatedAt: "", report: { address: "203.0.113.8", version: "test", scores: [], services: [{ name: "Netflix", status: "Yes" }] } };
