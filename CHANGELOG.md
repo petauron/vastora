@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.149](https://github.com/petauron/vastora/compare/v0.1.0-alpha.148...v0.1.0-alpha.149) (2026-09-15)
+
+
+### Bug Fixes
+
+* stabilize diagnostics and compact node labels ([#495](https://github.com/petauron/vastora/issues/495)) ([56b4ac0](https://github.com/petauron/vastora/commit/56b4ac02d786e063e70e7e722cf338dbc00f8939))
+
 ## [0.1.0-alpha.148](https://github.com/petauron/vastora/compare/v0.1.0-alpha.147...v0.1.0-alpha.148) (2026-09-15)
 
 
