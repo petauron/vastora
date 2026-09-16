@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.156](https://github.com/petauron/vastora/compare/v0.1.0-alpha.155...v0.1.0-alpha.156) (2026-09-16)
+
+
+### Bug Fixes
+
+* **agent:** recover native landing subscriptions ([#510](https://github.com/petauron/vastora/issues/510)) ([2f45f53](https://github.com/petauron/vastora/commit/2f45f531b84a1dbfd89872983eb20b25062d407c))
+
 ## [0.1.0-alpha.155](https://github.com/petauron/vastora/compare/v0.1.0-alpha.154...v0.1.0-alpha.155) (2026-09-16)
 
 
