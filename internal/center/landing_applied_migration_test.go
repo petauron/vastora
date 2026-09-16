@@ -12,13 +12,14 @@ func TestLandingAppliedExitMigrationOnlyBackfillsConfirmedRevision(t *testing.T)
 		name, status string
 		applied      int
 		enabled      bool
+		migrates     bool
 		want         sql.NullString
 	}{
-		{"ready", "ready", 2, true, sql.NullString{String: "agent-v3", Valid: true}},
-		{"restored", "stopped", 2, false, sql.NullString{Valid: true}},
-		{"switching", "applying", 1, true, sql.NullString{}},
-		{"failed_switch", "failed", 1, true, sql.NullString{}},
-		{"first_enable", "pending", 0, true, sql.NullString{}},
+		{"ready", "ready", 2, true, true, sql.NullString{String: "agent-v3", Valid: true}},
+		{"restored", "stopped", 2, false, true, sql.NullString{Valid: true}},
+		{"switching", "applying", 1, true, false, sql.NullString{}},
+		{"failed_switch", "failed", 1, true, false, sql.NullString{}},
+		{"first_enable", "pending", 0, true, false, sql.NullString{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			directory := t.TempDir()
@@ -32,10 +33,21 @@ func TestLandingAppliedExitMigrationOnlyBackfillsConfirmedRevision(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if _, err := old.db.Exec(`INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,updated_at)
+ VALUES('agent-v3',1,1,'{"revision":1,"plan":{"revision":1,"address":"100.64.0.1"}}','ready','')`); err != nil {
+				t.Fatal(err)
+			}
 			if err := old.Close(); err != nil {
 				t.Fatal(err)
 			}
 			store, err := Open(directory)
+			if !tc.migrates {
+				if err == nil {
+					store.Close()
+					t.Fatal("unresolved landing operation crossed the global-pool cutover")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

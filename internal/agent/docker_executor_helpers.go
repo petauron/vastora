@@ -16,15 +16,27 @@ import (
 	"github.com/moby/moby/api/types/registry"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 func reportedServices(ctx context.Context, task DeploymentTask, bindAddress string) (ApplicationTaskResult, error) {
 	result := ApplicationTaskResult{Services: make([]ApplicationServiceResult, 0, len(task.Manifest.Services))}
 	for _, service := range task.Manifest.Services {
-		// Center verifies the published subscription independently. During
-		// startup recovery, a disabled or unhealthy subscription must not block
-		// the Agent from receiving the role-reconciliation task that repairs it.
-		if task.AppKey == threeXUIKey && service.Name == "subscription" && task.ApplicationRole == "worker" {
+		if task.AppKey == threeXUIKey && service.Name == "subscription" {
+			// Workers never own a public subscription service. The controller's
+			// logical subscription service is implemented by the Agent listener,
+			// not the disabled 3x-ui 2096 endpoint. Preserve the catalog service
+			// identity while reporting its real native origin.
+			if task.ApplicationRole == "worker" {
+				continue
+			}
+			// A first install is not visible to the listener until Center commits
+			// this deployment result. Publication health remains the readiness gate;
+			// waiting here would deadlock the initial controller installation.
+			result.Services = append(result.Services, ApplicationServiceResult{
+				Name: service.Name, Protocol: service.Protocol, ContainerPort: service.ContainerPort,
+				HostPort: landing.SubscriptionPort, Address: bindAddress,
+			})
 			continue
 		}
 		hostPort, err := serviceHostPort(task.Config, service)

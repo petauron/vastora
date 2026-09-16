@@ -98,7 +98,7 @@ func TestIPQualityRequiresVLESSOrLandingTarget(t *testing.T) {
 	}
 }
 
-func TestIPQualityMigration77AddsEmptyLatestResults(t *testing.T) {
+func TestIPQualityMigration78AddsEmptyLatestResults(t *testing.T) {
 	directory := t.TempDir()
 	createLegacyVersion3Database(t, directory)
 	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
@@ -119,11 +119,11 @@ func TestIPQualityMigration77AddsEmptyLatestResults(t *testing.T) {
 	if _, err := provider.UpTo(ctx, 76); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 77); err != nil {
+	if _, err := provider.UpTo(ctx, 78); err != nil {
 		t.Fatal(err)
 	}
 	var version, count int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 77 {
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 78 {
 		t.Fatalf("version: %d %v", version, err)
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM ip_quality_checks`).Scan(&count); err != nil || count != 0 {

@@ -67,13 +67,22 @@ func TestExecutionRuntimeConfirmationPreservesEvidenceAndRevisionFence(t *testin
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
+				if kind == "tunnel.state.apply" {
+					// This test exercises retained-result projection, not the external
+					// Cloudflare preflight owned by StartExecution.
+					if _, err := store.db.Exec(`UPDATE task_executions SET state='running',phase='started' WHERE id=?`, auth.ID); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
 					t.Fatal(err)
 				}
 				if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), true, false, "", nil); err != nil {
 					t.Fatal(err)
 				}
-				if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, "runtime-confirmation-replacement-session", controlplane.ExecutionProtocol); err != nil {
+				// Persisted evidence becomes manually confirmable only after the
+				// original execution is fenced as unknown. Registering a replacement
+				// session would now trigger automatic projection of valid evidence.
+				if _, err := store.db.Exec(`UPDATE task_executions SET state='unknown' WHERE id=?`, auth.ID); err != nil {
 					t.Fatal(err)
 				}
 				cookie, _, err := store.CreateFirstAdmin(ctx, "confirmation-admin", "test-only-strong-password")

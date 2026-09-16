@@ -41,10 +41,23 @@ type landingControllerAccount struct {
 	LastOperation     string                 `json:"lastOperation,omitempty"`
 }
 
+type landingNativeSubscription struct {
+	ID        string   `json:"id"`
+	Email     string   `json:"email"`
+	Token     string   `json:"token"`
+	Enabled   bool     `json:"enabled"`
+	Total     int64    `json:"total"`
+	Used      int64    `json:"used"`
+	Expiry    int64    `json:"expiry"`
+	ResetDays int      `json:"resetDays"`
+	Links     []string `json:"links"`
+}
+
 type landingControllerState struct {
-	ControllerID string                              `json:"controllerId"`
-	Grants       map[string]landingControllerGrant   `json:"grants"`
-	Accounts     map[string]landingControllerAccount `json:"accounts"`
+	ControllerID  string                               `json:"controllerId"`
+	Grants        map[string]landingControllerGrant    `json:"grants"`
+	Accounts      map[string]landingControllerAccount  `json:"accounts"`
+	Subscriptions map[string]landingNativeSubscription `json:"subscriptions,omitempty"`
 }
 
 func (s *Store) landingController(ctx context.Context) (*landingControllerState, error) {
@@ -64,6 +77,9 @@ func (s *Store) landingController(ctx context.Context) (*landingControllerState,
 	if json.Unmarshal(plain, &state) != nil || state.ControllerID == "" || state.Grants == nil || state.Accounts == nil {
 		return nil, errors.New("agent: invalid landing account journal")
 	}
+	if state.Subscriptions == nil {
+		state.Subscriptions = map[string]landingNativeSubscription{}
+	}
 	installation, err := s.AppliedInstallation(ctx, threeXUIKey)
 	if err != nil || installation.ApplicationID != state.ControllerID {
 		return nil, errors.New("agent: subscription controller identity changed")
@@ -79,6 +95,20 @@ func (s *Store) landingController(ctx context.Context) (*landingControllerState,
 			if inboundID <= 0 || index > 0 && g.DetachInboundIDs[index-1] == inboundID {
 				return nil, errors.New("agent: invalid landing detach scope")
 			}
+		}
+	}
+	tokens := make(map[string]bool, len(state.Subscriptions))
+	emails := make(map[string]bool, len(state.Subscriptions))
+	for id, subscription := range state.Subscriptions {
+		if id != subscription.ID || subscription.Email == "" || !validSubscriptionToken(subscription.Token) || subscription.Total < 0 || subscription.Used < 0 || subscription.Expiry < 0 || subscription.ResetDays < 0 {
+			return nil, errors.New("agent: invalid native subscription inventory")
+		}
+		if tokens[subscription.Token] || emails[subscription.Email] {
+			return nil, errors.New("agent: ambiguous native subscription ownership")
+		}
+		tokens[subscription.Token], emails[subscription.Email] = true, true
+		if _, err := landing.RenderLinks(subscription.Links, id, landing.FixedMode, nil, false); err != nil {
+			return nil, errors.New("agent: invalid native subscription inventory")
 		}
 	}
 	return &state, nil

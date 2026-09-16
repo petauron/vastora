@@ -58,7 +58,7 @@ func TestFreshAndMigratedDatabasesHaveEquivalentSchema(t *testing.T) {
 	}
 }
 
-func TestOpenRepairsReleasedVersion80MarkerOmission(t *testing.T) {
+func TestOpenRejectsCurrentSchemaWithRegressedVersionMarker(t *testing.T) {
 	directory := t.TempDir()
 	ctx := context.Background()
 	store, err := Open(directory)
@@ -80,14 +80,8 @@ func TestOpenRepairsReleasedVersion80MarkerOmission(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repaired, err := Open(directory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer repaired.Close()
-	version, err := sqliteSchemaVersion(ctx, repaired.db)
-	if err != nil || version != centerSchemaVersion {
-		t.Fatalf("schema version = %d, err = %v", version, err)
+	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "migrated SQLite schema is version 79") {
+		t.Fatalf("regressed current-schema marker was accepted: %v", err)
 	}
 }
 
@@ -113,8 +107,8 @@ func TestOpenRejectsIncompleteReleasedVersion80Migration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "refusing schema marker repair") {
-		t.Fatalf("expected fail-closed marker repair, got %v", err)
+	if _, err := Open(directory); err == nil || !strings.Contains(err.Error(), "migrated SQLite schema is version 79") {
+		t.Fatalf("expected fail-closed schema marker validation, got %v", err)
 	}
 }
 

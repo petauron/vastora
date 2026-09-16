@@ -44,6 +44,17 @@ func TestThreeXUIPortsPublishOnlySelectedServices(t *testing.T) {
 	}
 }
 
+func TestThreeXUIMasterDoesNotPublishSupersededSubscriptionService(t *testing.T) {
+	exposed, bindings, err := threeXUIPorts("100.64.0.10", 2053, "master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := dockernetwork.MustParsePort("2096/tcp")
+	if _, exists := exposed[port]; exists || len(bindings[port]) != 0 {
+		t.Fatal("master still publishes the superseded 3x-ui subscription service")
+	}
+}
+
 func TestThreeXUIPortsRejectPublicOnlyServiceAddress(t *testing.T) {
 	if _, _, err := threeXUIPorts("198.51.100.10", 2053, "master"); err == nil {
 		t.Fatalf("public-only 3x-ui binding was accepted: %v", err)

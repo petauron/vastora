@@ -22,25 +22,9 @@ func writeLandingNativeChange(ctx context.Context, baseURL, token, endpoint stri
 		return err
 	}
 	// Resolve before the write, especially before detach removes attachments.
-	var nodeIDs []int
-	scope := slices.Clone(inboundIDs)
-	slices.Sort(scope)
-	for _, inboundID := range slices.Compact(scope) {
-		if inboundID <= 0 {
-			return errors.New("agent: invalid entry synchronization scope")
-		}
-		inbound, err := getThreeXUIInbound(ctx, baseURL, token, inboundID)
-		if err != nil {
-			return errors.New("agent: cannot resolve entry synchronization scope")
-		}
-		if inbound.NodeID != nil {
-			if *inbound.NodeID <= 0 {
-				return errors.New("agent: invalid entry synchronization node")
-			}
-			if !slices.Contains(nodeIDs, *inbound.NodeID) {
-				nodeIDs = append(nodeIDs, *inbound.NodeID)
-			}
-		}
+	nodeIDs, err := landingNativeNodeIDs(ctx, baseURL, token, inboundIDs)
+	if err != nil {
+		return err
 	}
 	result, err := threeXUIAPI(ctx, http.MethodPost, endpoint, token, "application/json", payload)
 	if err != nil {
@@ -51,6 +35,30 @@ func writeLandingNativeChange(ctx context.Context, baseURL, token, endpoint stri
 		return err
 	}
 	return waitLandingNativeSync(ctx, baseURL, token, nodeIDs)
+}
+
+func landingNativeNodeIDs(ctx context.Context, baseURL, token string, inboundIDs []int) ([]int, error) {
+	var nodeIDs []int
+	scope := slices.Clone(inboundIDs)
+	slices.Sort(scope)
+	for _, inboundID := range slices.Compact(scope) {
+		if inboundID <= 0 {
+			return nil, errors.New("agent: invalid entry synchronization scope")
+		}
+		inbound, err := getThreeXUIInbound(ctx, baseURL, token, inboundID)
+		if err != nil {
+			return nil, errors.New("agent: cannot resolve entry synchronization scope")
+		}
+		if inbound.NodeID != nil {
+			if *inbound.NodeID <= 0 {
+				return nil, errors.New("agent: invalid entry synchronization node")
+			}
+			if !slices.Contains(nodeIDs, *inbound.NodeID) {
+				nodeIDs = append(nodeIDs, *inbound.NodeID)
+			}
+		}
+	}
+	return nodeIDs, nil
 }
 
 func landingNativeWritePending(raw json.RawMessage) (bool, error) {

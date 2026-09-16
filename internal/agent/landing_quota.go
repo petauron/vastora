@@ -158,12 +158,32 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 			if actualTotal == limit.Total && actualEnabled == limit.Enabled && actualExpiry == expiry && actualReset == 0 {
 				continue
 			}
-			setClientJSONField(detail.Client, "totalGB", limit.Total)
-			setClientJSONField(detail.Client, "enable", limit.Enabled)
-			setClientJSONField(detail.Client, "expiryTime", expiry)
-			setClientJSONField(detail.Client, "reset", 0)
-			if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client, detail.InboundIDs); err != nil {
-				return err
+			// 3x-ui keeps the client record, inbound settings and traffic
+			// enforcement row separately. A remote-node reconciliation can leave
+			// the record disabled even though the inbound already contains the
+			// desired enabled client. Its ordinary update endpoint then treats the
+			// unchanged inbound JSON as a no-op and never repairs the stale traffic
+			// row. Retrying that update every monitor tick restarts Xray on every
+			// attached node. Force one supported disable/enable reconciliation so
+			// 3x-ui rebuilds all three layers without resetting traffic counters.
+			needsEnableReconciliation := limit.Enabled && !actualEnabled
+			if needsEnableReconciliation && actualTotal == limit.Total && actualExpiry == expiry && actualReset == 0 {
+				if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, detail.InboundIDs); err != nil {
+					return err
+				}
+			} else {
+				setClientJSONField(detail.Client, "totalGB", limit.Total)
+				setClientJSONField(detail.Client, "enable", limit.Enabled)
+				setClientJSONField(detail.Client, "expiryTime", expiry)
+				setClientJSONField(detail.Client, "reset", 0)
+				if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client, detail.InboundIDs); err != nil {
+					return err
+				}
+				if needsEnableReconciliation {
+					if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, detail.InboundIDs); err != nil {
+						return err
+					}
+				}
 			}
 			observed, err := getThreeXUIClient(ctx, baseURL, token, email)
 			var enabled bool
@@ -177,6 +197,30 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 	account.PendingLimits, account.PendingExpiry = nil, 0
 	state.Accounts[parentID] = account
 	return s.saveLandingController(ctx, state)
+}
+
+func reconcileLandingNativeClientEnabled(ctx context.Context, baseURL, token, email string, inboundIDs []int) error {
+	nodeIDs, err := landingNativeNodeIDs(ctx, baseURL, token, inboundIDs)
+	if err != nil {
+		return err
+	}
+	for _, action := range []string{"bulkDisable", "bulkEnable"} {
+		payload, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/"+action, token, "application/json", map[string]any{"emails": []string{email}})
+		if err != nil {
+			return errors.New("agent: native account enable reconciliation was not confirmed; explicit recovery required")
+		}
+		var result struct {
+			Changed int               `json:"changed"`
+			Skipped []json.RawMessage `json:"skipped"`
+		}
+		if json.Unmarshal(payload, &result) != nil || result.Changed != 1 || len(result.Skipped) != 0 {
+			return errors.New("agent: native account enable reconciliation was incomplete")
+		}
+	}
+	if len(nodeIDs) == 0 {
+		return nil
+	}
+	return waitLandingNativeSync(ctx, baseURL, token, nodeIDs)
 }
 
 // 3x-ui can save its controller DB while a worker is still pending. A DB
@@ -219,23 +263,34 @@ func (s *Store) runLandingAccounts(ctx context.Context, report func(error)) {
 		request, cancel := context.WithTimeout(ctx, 30*time.Second)
 		s.landingMutationMu.Lock()
 		state, err := s.landingController(request)
-		if err == nil && state != nil && len(state.Accounts) > 0 {
+		if err == nil {
 			baseURL, token, connectionErr := threeXUIClientAPIConnection(request, s)
-			ids := make([]string, 0, len(state.Accounts))
-			for id := range state.Accounts {
-				ids = append(ids, id)
+			if connectionErr == nil {
+				if refreshErr := s.refreshNativeSubscriptions(request, baseURL, token); refreshErr != nil {
+					err = errors.Join(err, refreshErr)
+				} else {
+					state, err = s.landingController(request)
+				}
+			} else if state != nil && (len(state.Accounts) > 0 || len(state.Subscriptions) > 0) {
+				err = errors.Join(err, connectionErr)
 			}
-			slices.Sort(ids)
-			for _, id := range ids {
-				if state.Accounts[id].Deleted || state.Accounts[id].PendingOperation != "" {
-					continue
+			if state != nil && len(state.Accounts) > 0 {
+				ids := make([]string, 0, len(state.Accounts))
+				for id := range state.Accounts {
+					ids = append(ids, id)
 				}
-				syncErr := connectionErr
-				if syncErr == nil {
-					syncErr = s.syncLandingAccount(request, baseURL, token, state, id)
-				}
-				if syncErr != nil {
-					err = errors.Join(err, syncErr)
+				slices.Sort(ids)
+				for _, id := range ids {
+					if state.Accounts[id].Deleted || state.Accounts[id].PendingOperation != "" {
+						continue
+					}
+					syncErr := connectionErr
+					if syncErr == nil {
+						syncErr = s.syncLandingAccount(request, baseURL, token, state, id)
+					}
+					if syncErr != nil {
+						err = errors.Join(err, syncErr)
+					}
 				}
 			}
 		}

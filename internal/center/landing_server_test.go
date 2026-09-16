@@ -25,27 +25,37 @@ func TestLandingSelectionUsesManagedNodeAndQueuesDisable(t *testing.T) {
  VALUES('agent-v3','100.64.0.8','100.64.0.8','["headscale"]',?,?) ON CONFLICT(agent_id) DO UPDATE SET headscale_address=excluded.headscale_address`, now, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.db.Exec(`UPDATE task_executions SET state='succeeded',phase='reported',last_error='' WHERE agent_id='agent-v3'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`INSERT INTO settings(key,value) VALUES('execution_claim_control','{"paused":false}') ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := store.Landing(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"100.64.0.9"}, LandingRegionCodes: map[string]string{"100.64.0.9": "US"}}); err == nil {
 		t.Fatal("arbitrary address accepted as node")
 	}
 	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"agent-v3"}}); err == nil {
 		t.Fatal("landing server without a region accepted")
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{"agent-v3"}, LandingRegionCodes: map[string]string{"agent-v3": "US"}}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{Revision: initial.Revision, NodeIDs: []string{"agent-v3"}, LandingRegionCodes: map[string]string{"agent-v3": "US"}}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := store.Landing(ctx)
-	if err != nil || len(view.NodeIDs) != 1 || view.NodeIDs[0] != "agent-v3" || view.Revision != 1 || len(view.Servers) != 1 || view.Servers[0].Status != "pending" {
+	if err != nil || len(view.NodeIDs) != 1 || view.NodeIDs[0] != "agent-v3" || view.Revision != initial.Revision+1 || len(view.Servers) != 1 || view.Servers[0].Status != "pending" {
 		t.Fatalf("selection not queued: %+v %v", view, err)
 	}
 	if err := store.SelectLanding(ctx, LandingSelection{}); err == nil {
 		t.Fatal("stale selection overwrote current node")
 	}
-	if err := store.SelectLanding(ctx, LandingSelection{Revision: 1}); err != nil {
+	if err := store.SelectLanding(ctx, LandingSelection{Revision: view.Revision}); err != nil {
 		t.Fatal(err)
 	}
 	view, err = store.Landing(ctx)
-	if err != nil || len(view.NodeIDs) != 0 || view.Revision != 2 {
+	if err != nil || len(view.NodeIDs) != 0 || view.Revision != initial.Revision+2 {
 		t.Fatal("selection not disabled")
 	}
 	var state string

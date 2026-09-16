@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -21,6 +22,101 @@ type SubscriptionGrant struct {
 	LandingRegionCode string
 	BaseLink          string
 	FixedLink         string
+}
+
+// RenderLinks produces a complete ordinary subscription from Vastora-owned
+// native credentials. The caller decides whether the public representation is
+// raw URI lines or the conventional base64 envelope.
+func RenderLinks(nativeLinks []string, parentID string, mode PublishingMode, grants []SubscriptionGrant, encoded bool) ([]byte, error) {
+	plain, err := nativeSubscriptionLines(nativeLinks, parentID)
+	if err != nil {
+		return nil, err
+	}
+	if encoded {
+		plain = []byte(base64.StdEncoding.EncodeToString(plain))
+	}
+	return ComposeLinks(plain, parentID, mode, grants, encoded)
+}
+
+// RenderMihomo builds the small, deterministic Mihomo surface Vastora owns.
+// It intentionally does not preserve a 3x-ui global template: user-specific
+// credentials and route grants are the source of truth for this subscription.
+func RenderMihomo(nativeLinks []string, parentID string, mode PublishingMode, grants []SubscriptionGrant) ([]byte, error) {
+	plain, err := nativeSubscriptionLines(nativeLinks, parentID)
+	if err != nil {
+		return nil, err
+	}
+	proxies := make([]any, 0, len(nativeLinks))
+	names := make([]any, 0, len(nativeLinks)+1)
+	for _, raw := range strings.Split(strings.TrimSpace(string(plain)), "\n") {
+		link, err := parseVLESSLink(raw)
+		if err != nil {
+			return nil, err
+		}
+		port, err := strconv.Atoi(link.Port())
+		if err != nil || port < 1 || port > 65535 {
+			return nil, errors.New("landing: invalid native subscription port")
+		}
+		query := link.Query()
+		name := strings.TrimSpace(link.Fragment)
+		if name == "" {
+			return nil, errors.New("landing: native subscription name is required")
+		}
+		realityOptions := map[string]any{"public-key": query.Get("pbk"), "short-id": query.Get("sid")}
+		if spiderX := query.Get("spx"); spiderX != "" {
+			realityOptions["spider-x"] = spiderX
+		}
+		proxy := map[string]any{
+			"name": name, "type": "vless", "server": link.Hostname(), "port": port,
+			"uuid": link.User.Username(), "network": query.Get("type"), "tls": true,
+			"servername": query.Get("sni"), "flow": query.Get("flow"), "udp": true,
+			"reality-opts": realityOptions,
+		}
+		if fingerprint := query.Get("fp"); fingerprint != "" {
+			proxy["client-fingerprint"] = fingerprint
+		}
+		proxies = append(proxies, proxy)
+		names = append(names, name)
+	}
+	names = append(names, "DIRECT")
+	config := map[string]any{
+		"proxies":      proxies,
+		"proxy-groups": []any{map[string]any{"name": "节点选择", "type": "select", "proxies": names}},
+		"rules":        []any{"MATCH,节点选择"},
+	}
+	native, err := yaml.Marshal(config)
+	if err != nil {
+		return nil, errors.New("landing: cannot encode native Mihomo subscription")
+	}
+	return ComposeMihomo(native, parentID, mode, grants)
+}
+
+func nativeSubscriptionLines(nativeLinks []string, parentID string) ([]byte, error) {
+	if !validGrantID(parentID) || len(nativeLinks) == 0 || len(nativeLinks) > 1024 {
+		return nil, errors.New("landing: invalid native subscription inventory")
+	}
+	seenNames, seenRoutes := map[string]bool{}, map[string]bool{}
+	lines := make([]string, 0, len(nativeLinks))
+	totalBytes := 0
+	for _, raw := range nativeLinks {
+		totalBytes += len(raw)
+		link, err := parseVLESSLink(strings.TrimSpace(raw))
+		if err != nil {
+			return nil, errors.New("landing: native subscription identity changed")
+		}
+		port, portErr := strconv.Atoi(link.Port())
+		if portErr != nil || port < 1 || port > 65535 || totalBytes > 4<<20 || Identity(link.User.Username()) != parentID || strings.TrimSpace(link.Fragment) == "" || len([]rune(link.Fragment)) > 512 || link.Query().Get("sni") == "" || link.Query().Get("pbk") == "" {
+			return nil, errors.New("landing: native subscription identity changed")
+		}
+		name := strings.TrimSpace(link.Fragment)
+		route := link.Host + "\x00" + link.Query().Get("sni") + "\x00" + link.Query().Get("pbk") + "\x00" + link.Query().Get("sid")
+		if seenNames[name] || seenRoutes[route] {
+			return nil, errors.New("landing: ambiguous native subscription inventory")
+		}
+		seenNames[name], seenRoutes[route] = true, true
+		lines = append(lines, link.String())
+	}
+	return []byte(strings.Join(lines, "\n") + "\n"), nil
 }
 
 // ComposeLinks preserves original lines verbatim. Distinct combination UUIDs
