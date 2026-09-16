@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.153](https://github.com/petauron/vastora/compare/v0.1.0-alpha.152...v0.1.0-alpha.153) (2026-09-16)
+
+
+### Bug Fixes
+
+* **landing:** stop periodic Xray reloads from unchanged quota sync ([24ef0ff](https://github.com/petauron/vastora/commit/24ef0fff8e1dd1fbc7bba498aaae09778571d4cd))
+
 ## [0.1.0-alpha.152](https://github.com/petauron/vastora/compare/v0.1.0-alpha.151...v0.1.0-alpha.152) (2026-09-15)
 
 
