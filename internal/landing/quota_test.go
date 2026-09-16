@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestSharedQuotaDoesNotMultiplyAcrossConcurrentIdentities(t *testing.T) {
+func TestSharedQuotaUsesOneAggregateGateWithoutPerIdentityRewrites(t *testing.T) {
 	for count := 1; count <= 32; count++ {
 		members := make([]QuotaMember, count)
 		for i := range members {
@@ -15,16 +15,14 @@ func TestSharedQuotaDoesNotMultiplyAcrossConcurrentIdentities(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		available := int64(0)
 		for _, limit := range limits {
-			for _, member := range members {
-				if member.ID == limit.ID {
-					available += limit.Total - member.Observed
-				}
+			if !limit.Enabled || limit.Total != 0 {
+				t.Fatalf("%d members received a changing native quota: %#v", count, limit)
 			}
 		}
-		if available+used != 10000 {
-			t.Fatalf("%d members created %d total budget", count, available+used)
+		wantUsed := int64(count * (count + 1) / 2)
+		if used != wantUsed {
+			t.Fatalf("%d members reported %d used, want %d", count, used, wantUsed)
 		}
 	}
 }
@@ -70,8 +68,8 @@ func TestSharedQuotaExpiryExhaustionAndUnlimited(t *testing.T) {
 			if limit.Enabled != tc.want {
 				t.Fatal("incorrect shared activation")
 			}
-			if tc.total == 0 && limit.Total != 0 {
-				t.Fatal("unlimited plan acquired a synthetic quota")
+			if limit.Total != 0 {
+				t.Fatal("aggregate plan acquired a per-identity quota")
 			}
 		}
 	}

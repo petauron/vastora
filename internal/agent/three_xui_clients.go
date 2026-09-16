@@ -211,7 +211,7 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 				clients[index].ID = landing.Identity(clientJSONText(detail.Client, "id"))
 				clients[index].InboundIDs = collapseProtocolInboundIDs(command.Inbounds, clients[index].InboundIDs)
 			}
-			result.Clients, err = store.projectLandingAccounts(ctx, clients)
+			result.Clients, err = store.projectLandingAccounts(ctx, baseURL, token, command.Inbounds, clients, command.Action != "list")
 			if err != nil {
 				return result, err
 			}
@@ -617,10 +617,6 @@ func revealThreeXUIClientSubscription(ctx context.Context, baseURL, token string
 		if err := syncThreeXUIRealityHost(ctx, baseURL, token, inbound.ID, inbound.ConnectHostname, inbound.SNIHostname); err != nil {
 			return "", err
 		}
-	}
-	_, err = configureThreeXUIPublicSubscription(ctx, baseURL, token, base.Hostname(), base.String())
-	if err != nil {
-		return "", err
 	}
 	subID, err := ensureThreeXUIClientSubscriptionID(ctx, baseURL, token, command.Email)
 	if err != nil {

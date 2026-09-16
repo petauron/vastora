@@ -203,6 +203,25 @@ inbounds remain owned by 3x-ui. Vastora can request a new VLESS REALITY inbound
 through Agent's node-local API, then observes its protocol, transport, security,
 port, listen address, and reachability without managing nftables.
 
+## Managed proxy subscription authority
+
+Vastora owns the public subscription boundary for managed VLESS/REALITY
+clients. During the 3x-ui transition, Agent imports each existing stable UUID,
+subscription token, managed public Host, REALITY transport material and traffic
+watermark into its encrypted controller journal. `/sub/<token>` and
+`/clash/<token>` are rendered only from that journal plus Center-approved,
+applied landing grants; a request never fetches or merges the 3x-ui subscription
+body. This keeps the existing public URL while removing 3x-ui's subscription
+database and templates from the authorization path.
+
+The transitional 3x-ui client API is a one-way Xray projection and counter
+adapter. It may create, attach, disable and observe a credential selected by
+Vastora, but a later upstream token change cannot rotate a distributed Vastora
+subscription. Missing or ambiguous material fails closed. Periodic observation
+does not rewrite unchanged Xray state. The Xray-only worker migration in #394
+must consume this same account, credential and revision model and then delete
+the adapter rather than introduce a second subscription implementation.
+
 ## Site Gateway, node-listener, and Tunnel desired state
 
 Caddy receives explicit listeners for LAN, Headscale, public, and control-plane

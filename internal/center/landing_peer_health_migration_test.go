@@ -34,7 +34,7 @@ func TestLandingPeerHealthMigrationIsForwardOnly(t *testing.T) {
 	if err := rows.Err(); err != nil || !found {
 		t.Fatalf("peer health column missing after migration: %v", err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v76-before-v77-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v76-before-v81-*.db"))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("pre-migration backup missing: %v %v", backups, err)
 	}

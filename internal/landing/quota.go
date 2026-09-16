@@ -23,10 +23,12 @@ type QuotaLimit struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// AllocateQuota divides ONE remaining budget between the parent and its
-// children. Giving each identity the parent's full limit would multiply that
-// limit. The caller journals this plan, confirms all decreases, then applies
-// increases; a lost response cannot make both allocations spendable.
+// AllocateQuota computes one authoritative parent ledger and projects only an
+// on/off gate to its native identities. Active identities have no individual
+// native cap: redistributing a shrinking remainder would rewrite Xray on every
+// observation. The Agent disables all identities after the aggregate reaches
+// the parent total, so enforcement can overshoot by at most one observation
+// interval plus in-flight traffic instead of multiplying the plan per child.
 func AllocateQuota(total int64, enabled bool, members []QuotaMember) ([]QuotaLimit, int64, error) {
 	if total < 0 || len(members) == 0 || len(members) > 513 {
 		return nil, 0, errors.New("landing: invalid shared traffic plan")
@@ -34,44 +36,16 @@ func AllocateQuota(total int64, enabled bool, members []QuotaMember) ([]QuotaLim
 	ordered := slices.Clone(members)
 	slices.SortFunc(ordered, func(a, b QuotaMember) int { return strings.Compare(a.ID, b.ID) })
 	var used int64
-	active := int64(0)
 	for i, member := range ordered {
 		if !validGrantID(member.ID) || i > 0 && member.ID == ordered[i-1].ID || member.Baseline < 0 || member.Observed < member.Baseline || member.Observed-member.Baseline > math.MaxInt64-used {
 			return nil, 0, errors.New("landing: invalid shared traffic observation")
 		}
 		used += member.Observed - member.Baseline
-		if member.Active {
-			active++
-		}
 	}
-	remaining := total - used
-	if remaining < 0 {
-		remaining = 0
-	}
-	share, remainder := int64(0), int64(0)
-	if active > 0 {
-		share, remainder = remaining/active, remaining%active
-	}
+	accountEnabled := enabled && (total == 0 || used < total)
 	limits := make([]QuotaLimit, 0, len(ordered))
 	for _, member := range ordered {
-		limit := QuotaLimit{ID: member.ID, Total: member.Observed, Enabled: enabled && member.Active}
-		if total == 0 {
-			limit.Total = 0
-		} else if member.Active {
-			addition := share
-			if remainder > 0 {
-				addition++
-				remainder--
-			}
-			if addition > math.MaxInt64-limit.Total {
-				return nil, 0, errors.New("landing: shared traffic limit overflow")
-			}
-			limit.Total += addition
-			limit.Enabled = limit.Enabled && addition > 0
-		} else {
-			limit.Enabled = false
-		}
-		limits = append(limits, limit)
+		limits = append(limits, QuotaLimit{ID: member.ID, Total: 0, Enabled: accountEnabled && member.Active})
 	}
 	return limits, used, nil
 }

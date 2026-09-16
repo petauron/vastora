@@ -43,7 +43,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	parentUUID := "11111111-2222-4333-8444-555555555555"
 	parent := landing.Identity(parentUUID)
 	metadata, _ := json.Marshal(ThreeXUIClientView{ID: parent, Email: "Phone", Enabled: true, InboundIDs: []int{9}, HasSubscription: true})
-	exec(`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,mode,observed_at) VALUES(?,'client-controller','Phone',?,'both',?)`, parent, metadata, now)
+	exec(`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,mode,observed_at) VALUES(?,'client-controller','Phone',?,'fixed',?)`, parent, metadata, now)
 	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{owner.ID}, LandingRegionCodes: map[string]string{owner.ID: "US"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,10 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		if task == nil {
 			t.Fatal("missing server task")
 		}
-		peer := &landing.PeerIdentity{ID: "landing", PublicKey: "landing-key", Address: "100.64.0.9"}
+		var peer *landing.PeerIdentity
+		if task.LandingServerState.Plan != nil {
+			peer = &landing.PeerIdentity{ID: "landing", PublicKey: "landing-key", Address: "100.64.0.9"}
+		}
 		if err := store.completeLandingServer(ctx, commitProjectionOnlyForTest, owner.ID, task.Revision, task.Attempt, true, peer); err != nil {
 			t.Fatal(err)
 		}
@@ -199,6 +202,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		}
 		if enabled {
 			completeController("prepare")
+			completeServer(claimLanding(true))
 		}
 		routes = claimLanding(false)
 		if routes == nil || routes.LandingProxyState.Clients.Grants[0].Enabled != enabled {
@@ -213,10 +217,17 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		}
 		if enabled {
 			completeController("activate")
+		} else {
+			completeController("retire")
+			server = claimLanding(true)
+			if server == nil || len(server.LandingServerState.Plan.Sources) != 0 {
+				t.Fatal("disabled parent retained its landing authorization")
+			}
+			completeServer(server)
 		}
 		grants, err = store.LandingClientGrants(ctx, parent)
-		if err != nil || len(grants) != 1 || enabled && grants[0].Status != "ready" || !enabled && grants[0].Status != "paused" {
-			t.Fatal("shared parent status was not reconciled", err)
+		if err != nil || enabled && (len(grants) != 1 || grants[0].Status != "ready") || !enabled && len(grants) != 0 {
+			t.Fatalf("shared parent status was not reconciled: enabled=%v grants=%+v err=%v", enabled, grants, err)
 		}
 	}
 	// The old landing can be offline: entry deny and controller retirement
@@ -247,8 +258,8 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	server = claimLanding(true)
-	if server == nil || len(server.LandingServerState.Plan.Sources) != 0 {
-		t.Fatal("last retired grant retained its network authorization")
+	if server == nil || server.LandingServerState == nil || server.LandingServerState.Plan != nil && len(server.LandingServerState.Plan.Sources) != 0 {
+		t.Fatalf("last retired grant retained its network authorization: task=%+v", server)
 	}
 	// A confirmed parent deletion removes old FK/secret references and queues
 	// restoration. The landing is offline and its server row may be removed.

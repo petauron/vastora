@@ -1051,7 +1051,7 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, result, true, false, "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, "subscription-confirmation-replacement-session", controlplane.ExecutionProtocol); err != nil {
+	if _, err := store.db.Exec(`UPDATE task_executions SET state='unknown' WHERE id=?`, auth.ID); err != nil {
 		t.Fatal(err)
 	}
 	cookie, _, err := store.CreateFirstAdmin(ctx, "subscription-confirmation-admin", "test-only-strong-password")
@@ -1265,7 +1265,7 @@ func TestValidateRealityCommandResultRejectsTamperedClientLink(t *testing.T) {
 		GuardStatus:      "ready",
 		ProxyProtocol:    true,
 		ConnectHostname:  "reality.edge.site.example.test",
-		ShareURI:         "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BDEdge",
+		ShareURI:         "vless://f47ac10b-58cc-4372-a567-0e02b2c3d479@reality.edge.site.example.test:443?type=tcp&security=reality&flow=xtls-rprx-vision&sni=www.example.com&pbk=public-key&sid=0123456789abcdef#%F0%9F%87%BA%F0%9F%87%B8%20%E7%BE%8E%E5%9B%BD%EF%BD%9CEdge",
 		InboundTag:       "vastora-test",
 		ClientCreated:    true,
 	}

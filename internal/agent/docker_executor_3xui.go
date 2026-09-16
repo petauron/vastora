@@ -24,8 +24,7 @@ import (
 )
 
 const (
-	threeXUISubscriptionPort = 2096
-	threeXUIRealityPort      = 443
+	threeXUIRealityPort = 443
 )
 
 func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentTask, bindAddress string) (string, error) {
@@ -170,9 +169,6 @@ func threeXUIPorts(bindAddress string, panelPort int, role string) (dockernetwor
 		bindings[port] = []dockernetwork.PortBinding{{HostIP: address.Unmap(), HostPort: strconv.Itoa(portNumber)}}
 	}
 	bind(panelPort)
-	if role == "master" {
-		bind(threeXUISubscriptionPort)
-	}
 	// REALITY is reachable only from the per-node HAProxy over the shared
 	// Docker network. Never publish the raw 3x-ui socket on the host.
 	expose(threeXUIRealityPort)
@@ -252,21 +248,18 @@ func startCommittedThreeXUIDeployment(ctx context.Context, docker threeXUIContai
 }
 
 func configureThreeXUISubscriptionRole(ctx context.Context, address string, panelPort int, apiToken, role string) error {
-	if role == "master" {
-		return configureThreeXUISubscription(ctx, address, panelPort, apiToken)
-	}
-	if role != "worker" {
+	if role != "master" && role != "worker" {
 		return errors.New("agent: invalid 3x-ui topology role")
 	}
 	baseURL := "http://" + net.JoinHostPort(address, strconv.Itoa(panelPort))
 	settings, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/all", apiToken, map[string]any{})
 	if err != nil {
-		return fmt.Errorf("agent: read 3x-ui worker settings: %w", err)
+		return fmt.Errorf("agent: read 3x-ui subscription settings: %w", err)
 	}
 	settings["subEnable"] = false
 	settings["subClashEnable"] = false
 	if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/update", apiToken, settings); err != nil {
-		return fmt.Errorf("agent: disable standalone 3x-ui worker subscription: %w", err)
+		return fmt.Errorf("agent: disable superseded 3x-ui subscription service: %w", err)
 	}
 	return restartThreeXUIPanel(ctx, baseURL, apiToken, threeXUIRestartSettleTime)
 }
@@ -326,26 +319,6 @@ func threeXUIAPIToken(ctx context.Context, docker *client.Client, containerID st
 		}
 	}
 	return "", errors.New("agent: 3x-ui did not return an API token")
-}
-
-func configureThreeXUISubscription(ctx context.Context, address string, panelPort int, apiToken string) error {
-	baseURL := "http://" + net.JoinHostPort(address, strconv.Itoa(panelPort))
-	settings, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/all", apiToken, map[string]any{})
-	if err != nil {
-		return fmt.Errorf("agent: read 3x-ui subscription settings: %w", err)
-	}
-	for key, value := range threeXUIManagedSubscriptionSettings() {
-		settings[key] = value
-	}
-	settings["subListen"] = "0.0.0.0"
-	settings["subPort"] = threeXUISubscriptionPort
-	if _, err := threeXUIRequest(ctx, http.MethodPost, baseURL+"/panel/api/setting/update", apiToken, settings); err != nil {
-		return fmt.Errorf("agent: update 3x-ui subscription settings: %w", err)
-	}
-	if err := restartThreeXUIPanel(ctx, baseURL, apiToken, threeXUIRestartSettleTime); err != nil {
-		return err
-	}
-	return waitForEndpoint(ctx, address, threeXUISubscriptionPort)
 }
 
 func threeXUIRequest(ctx context.Context, method, endpoint, token string, body any) (map[string]any, error) {

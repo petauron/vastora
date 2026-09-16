@@ -189,6 +189,69 @@ func TestLandingQuotaConfirmationDoesNotRewriteUnchangedClients(t *testing.T) {
 	}
 }
 
+func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
+	store, state, parent := landingSubscriptionTestState(t)
+	account := state.Accounts[parent]
+	account.Total, account.Expiry = 0, 0
+	limits, _, err := landing.AllocateQuota(account.Total, account.Enabled, account.Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account.Limits = slices.Clone(limits)
+	account.PendingLimits = slices.Clone(limits)
+	account.PendingExpiry = account.Expiry
+	state.Accounts[parent] = account
+	grant := state.Grants["grant-a"]
+	identities := map[string]string{account.Email: "11111111-2222-4333-8444-555555555555", grant.Task.Grant.FixedUser: grant.Task.FixedUUID}
+	enabled := map[string]bool{account.Email: true, grant.Task.Grant.FixedUser: false}
+	writes := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/panel/api/clients/get/"):
+			email := strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")
+			uuid, ok := identities[email]
+			if !ok {
+				t.Error("unexpected client read", email)
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"client": map[string]any{
+				"id": uuid, "totalGB": int64(0), "enable": enabled[email], "expiryTime": int64(0), "reset": int64(0),
+			}, "inboundIds": []int{9}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
+		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/nodes/get/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 7, "enable": true, "status": "online", "configDirty": false}})
+		case r.Method == http.MethodPost && (r.URL.Path == "/panel/api/clients/bulkDisable" || r.URL.Path == "/panel/api/clients/bulkEnable"):
+			var request struct {
+				Emails []string `json:"emails"`
+			}
+			if json.NewDecoder(r.Body).Decode(&request) != nil || !reflect.DeepEqual(request.Emails, []string{grant.Task.Grant.FixedUser}) {
+				t.Error("enable reconciliation changed the wrong identity")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			writes = append(writes, r.URL.Path)
+			enabled[grant.Task.Grant.FixedUser] = strings.HasSuffix(r.URL.Path, "bulkEnable")
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"changed": 1}})
+		default:
+			t.Error("unexpected native operation", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	if err := store.applyLandingQuotaPlan(context.Background(), server.URL, "native-token", state, parent); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(writes, []string{"/panel/api/clients/bulkDisable", "/panel/api/clients/bulkEnable"}) {
+		t.Fatal("stale enforcement was not repaired with one bounded reconciliation", writes)
+	}
+	if !enabled[grant.Task.Grant.FixedUser] || len(state.Accounts[parent].PendingLimits) != 0 {
+		t.Fatal("reconciled quota was not committed")
+	}
+}
+
 func TestLandingChildAgentRejectsUnscopedCommandsBeforeNativeAccess(t *testing.T) {
 	for _, action := range []string{"create", "update", "set_enabled", "delete", "reset_traffic", "reveal_link", "reveal_subscription"} {
 		_, err := applyThreeXUIClientCommand(context.Background(), nil, ThreeXUIClientCommandTask{Action: action, Email: landing.FixedUser("child"), NewEmail: landing.FixedUser("child")})

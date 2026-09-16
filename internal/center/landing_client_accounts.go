@@ -86,7 +86,7 @@ func (s *Store) observeLandingAccounts(ctx context.Context, tx *sql.Tx, commandI
 		return err
 	}
 	for _, id := range missing {
-		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_client_accounts SET metadata_json=json_set(metadata_json,'$.enabled',false),observed_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_client_accounts SET metadata_json=json_set(metadata_json,'$.enabled',json('false')),observed_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
 			return err
 		}
 	}

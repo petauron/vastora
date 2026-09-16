@@ -56,12 +56,9 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 
 func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T) {
 	updatedSubID := ""
-	var updatedSettings map[string]any
 	var syncedHost threeXUIHostGroup
 	var clientVersionUpdated atomic.Bool
 	var clientVersionUpdateCount atomic.Int32
-	var restartPending atomic.Bool
-	var restartCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.Method + " " + request.URL.Path {
@@ -106,22 +103,6 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 				t.Fatal("Reality subscription host was not decoded")
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":[]}`))
-		case "POST /panel/api/setting/all":
-			if restartPending.Swap(false) {
-				response.WriteHeader(http.StatusServiceUnavailable)
-				_, _ = response.Write([]byte(`{"success":false}`))
-				return
-			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"subEnable":true,"subPath":"/sub/","subClashEnable":false,"remarkTemplate":"{{INBOUND}}-{{EMAIL}}"}}`))
-		case "POST /panel/api/setting/update":
-			if json.NewDecoder(request.Body).Decode(&updatedSettings) != nil {
-				t.Fatal("Clash subscription settings were not decoded")
-			}
-			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
-		case "POST /panel/api/setting/restartPanel":
-			restartCount.Add(1)
-			restartPending.Store(true)
-			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
 		case "GET /panel/api/clients/list/paged":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[],"total":0}}`))
 		default:
@@ -150,15 +131,6 @@ func TestThreeXUIClientRevealsPublishedRealityAndSubscriptionLinks(t *testing.T)
 	}
 	if syncedHost.GroupID != "vastora-public-9" || len(syncedHost.InboundIDs) != 1 || syncedHost.InboundIDs[0] != 9 || len(syncedHost.Hosts) != 1 || syncedHost.Hosts[0] != "reality.example.test" || syncedHost.Port != 443 || syncedHost.SNI != "www.example.com" || syncedHost.Security != "same" {
 		t.Fatalf("public Reality endpoint was not synchronized into subscriptions: %#v", syncedHost)
-	}
-	if updatedSettings["subClashEnable"] != true || updatedSettings["subClashPath"] != "/clash/" || updatedSettings["subClashAutoDetect"] != true || updatedSettings["subClashUserAgentRegex"] != `(?i)(clash|mihomo)` {
-		t.Fatalf("Clash/Mihomo output was not enabled: %#v", updatedSettings)
-	}
-	if updatedSettings["remarkTemplate"] != "{{INBOUND}}" {
-		t.Fatalf("subscription node names still include client identity: %#v", updatedSettings["remarkTemplate"])
-	}
-	if restartCount.Load() != 1 {
-		t.Fatalf("3x-ui restart count = %d, want 1", restartCount.Load())
 	}
 	if clientVersionUpdateCount.Load() != 1 {
 		t.Fatalf("Reality compatibility update count = %d, want 1", clientVersionUpdateCount.Load())

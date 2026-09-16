@@ -82,6 +82,33 @@ func TestFixedSubscriptionPreservesNativeAndDistinctCredentials(t *testing.T) {
 	}
 }
 
+func TestVastoraRendersNativeSubscriptionsWithoutUpstreamBody(t *testing.T) {
+	item := subscriptionFixture()
+	native := []string{item.BaseLink}
+	ordinary, err := RenderLinks(native, item.Grant.ParentID, FixedMode, []SubscriptionGrant{item}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := base64.StdEncoding.DecodeString(string(ordinary))
+	if err != nil || strings.Count(string(plain), "vless://") != 2 || !strings.Contains(string(plain), "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee") {
+		t.Fatal("Vastora ordinary subscription lost a managed identity")
+	}
+	mihomo, err := RenderMihomo(native, item.Grant.ParentID, FixedMode, []SubscriptionGrant{item})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if yaml.Unmarshal(mihomo, &config) != nil || len(config["proxies"].([]any)) != 2 || len(config["proxy-groups"].([]any)) != 1 {
+		t.Fatal("Vastora Mihomo subscription is incomplete")
+	}
+	if strings.Contains(string(mihomo), "dialer-proxy") || !strings.Contains(string(mihomo), "节点选择") {
+		t.Fatal("fixed subscription unexpectedly depends on an upstream chain template")
+	}
+	if _, err := RenderLinks([]string{item.BaseLink, item.BaseLink}, item.Grant.ParentID, FixedMode, nil, false); err == nil {
+		t.Fatal("duplicate native route was accepted")
+	}
+}
+
 func TestSubscriptionTransportComparisonUsesValuesNotQueryOrder(t *testing.T) {
 	item := subscriptionFixture()
 	base, err := parseVLESSLink(item.BaseLink)

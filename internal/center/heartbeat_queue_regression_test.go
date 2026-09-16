@@ -28,7 +28,7 @@ func TestEmptyGatewayHeartbeatsDoNotQueueRoutes(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 8 {
-				if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Capabilities: NodeCapabilities{Gateway: true}, GatewayHealthy: true, NetworkCandidates: candidates}); err != nil {
+				if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test", Roles: []string{"gateway"}, Capabilities: NodeCapabilities{Gateway: true}, GatewayHealthy: true, NetworkCandidates: candidates}); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -208,8 +209,8 @@ func landingPoolClients(ctx context.Context, tx *sql.Tx, controller string) ([]T
 		if err := rows.Scan(&raw); err != nil {
 			return nil, err
 		}
-		if json.Unmarshal(raw, &client) != nil {
-			return nil, errors.New("center: invalid client inventory")
+		if err := json.Unmarshal(raw, &client); err != nil {
+			return nil, fmt.Errorf("center: invalid client inventory: %w", err)
 		}
 		clients = append(clients, client)
 	}

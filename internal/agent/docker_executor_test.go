@@ -16,6 +16,7 @@ import (
 	"github.com/moby/moby/api/pkg/authconfig"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 func TestDeclaredImagePullOptionsUseOnlyMatchingEphemeralCredential(t *testing.T) {
@@ -174,7 +175,7 @@ func TestWaitForServiceEndpointRejectsHTTPServerError(t *testing.T) {
 	}
 }
 
-func TestReportedServicesSkipsUnavailableThreeXUISubscriptionWhenNotAuthoritative(t *testing.T) {
+func TestReportedServicesProjectsNativeThreeXUISubscriptionByRole(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.WriteHeader(http.StatusOK)
 	}))
@@ -194,16 +195,27 @@ func TestReportedServicesSkipsUnavailableThreeXUISubscriptionWhenNotAuthoritativ
 			{Name: "subscription", Protocol: "http", DefaultHostPort: port + 1, ContainerPort: 2096, HealthPath: "/sub/"},
 		}},
 	}
-	for name, task := range map[string]DeploymentTask{
-		"worker deployment": func() DeploymentTask { value := baseTask; value.ApplicationRole = "worker"; return value }(),
+	for name, test := range map[string]struct {
+		task     DeploymentTask
+		services int
+	}{
+		"worker deployment": {task: func() DeploymentTask { value := baseTask; value.ApplicationRole = "worker"; return value }(), services: 1},
+		"controller deployment": {task: func() DeploymentTask {
+			value := baseTask
+			value.ApplicationRole = "master"
+			return value
+		}(), services: 2},
 	} {
 		t.Run(name, func(t *testing.T) {
-			result, err := reportedServices(context.Background(), task, address)
+			result, err := reportedServices(context.Background(), test.task, address)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(result.Services) != 1 || result.Services[0].Name != "panel" {
+			if len(result.Services) != test.services || result.Services[0].Name != "panel" {
 				t.Fatalf("reported services = %#v", result.Services)
+			}
+			if test.services == 2 && (result.Services[1].Name != "subscription" || result.Services[1].HostPort != landing.SubscriptionPort) {
+				t.Fatalf("native subscription service = %#v", result.Services[1])
 			}
 		})
 	}

@@ -1,12 +1,16 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/petauron/vastora/internal/landing"
@@ -157,15 +161,89 @@ func (s *Store) applyLandingParentMutation(ctx context.Context, baseURL, token s
 // Child identities are implementation details, not additional editable/free
 // clients. Present the durable aggregate and original parent plan instead of
 // the native per-identity enforcement limits.
-func (s *Store) projectLandingAccounts(ctx context.Context, clients []ThreeXUIClientView) ([]ThreeXUIClientView, error) {
+func (s *Store) projectLandingAccounts(ctx context.Context, baseURL, token string, inbounds []ThreeXUIClientInbound, clients []ThreeXUIClientView, acceptObservedPlan bool) ([]ThreeXUIClientView, error) {
 	state, err := s.landingController(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if state == nil {
+		installation, err := s.AppliedInstallation(ctx, threeXUIKey)
+		if err != nil {
+			return nil, errors.New("agent: subscription controller is unavailable")
+		}
+		state = &landingControllerState{ControllerID: installation.ApplicationID, Grants: map[string]landingControllerGrant{}, Accounts: map[string]landingControllerAccount{}, Subscriptions: map[string]landingNativeSubscription{}}
+	}
+	if state.Subscriptions == nil {
+		state.Subscriptions = map[string]landingNativeSubscription{}
+	}
+	// An empty journal is the one-time migration boundary. Afterwards only a
+	// successful Vastora client mutation may change credentials, routes or plan
+	// fields; background 3x-ui observations contribute traffic counters only.
+	acceptObservedPlan = acceptObservedPlan || len(state.Subscriptions) == 0
+	previousSubscriptions, _ := json.Marshal(state.Subscriptions)
+	priorIdentityByEmail := make(map[string]string, len(state.Subscriptions))
+	for id, subscription := range state.Subscriptions {
+		priorIdentityByEmail[subscription.Email] = id
+	}
 	result := make([]ThreeXUIClientView, 0, len(clients))
+	observedSubscriptions := map[string]bool{}
+	resolvedInbounds, err := resolveNativeSubscriptionInbounds(ctx, baseURL, token, inbounds)
+	if err != nil {
+		return nil, err
+	}
 	for _, client := range clients {
 		if strings.HasPrefix(client.Email, "vastora-combination-") {
 			continue
+		}
+		detail, detailErr := getThreeXUIClient(ctx, baseURL, token, client.Email)
+		observedID := landing.Identity(clientJSONText(detail.Client, "id"))
+		if client.ID == "" {
+			client.ID = observedID
+		}
+		if detailErr != nil || observedID == "" || observedID != client.ID {
+			return nil, errors.New("agent: native subscription identity inventory is incomplete")
+		}
+		if previousID := priorIdentityByEmail[client.Email]; previousID != "" && previousID != client.ID {
+			return nil, errors.New("agent: native subscription identity changed; explicit reconciliation required")
+		}
+		subscriptionToken := clientJSONText(detail.Client, "subId")
+		prior, hasPriorSubscription := state.Subscriptions[client.ID]
+		if !hasPriorSubscription && !acceptObservedPlan {
+			continue
+		}
+		if hasPriorSubscription && !acceptObservedPlan && prior.Email != client.Email {
+			return nil, errors.New("agent: native subscription display identity changed; explicit reconciliation required")
+		}
+		if hasPriorSubscription {
+			// After first import Vastora owns the public token. A later 3x-ui
+			// edit cannot silently rotate an already distributed subscription.
+			subscriptionToken = prior.Token
+		}
+		if subscriptionToken != "" {
+			links, linkErr := nativeSubscriptionLinks(inbounds, resolvedInbounds, detail)
+			if linkErr != nil {
+				return nil, linkErr
+			}
+			if len(links) > 0 {
+				if hasPriorSubscription && !sameNativeSubscriptionCredentials(prior.Links, links, acceptObservedPlan) {
+					return nil, errors.New("agent: native subscription credentials changed; explicit reconciliation required")
+				}
+				if hasPriorSubscription && !acceptObservedPlan {
+					prior.Used = client.UsedBytes
+					state.Subscriptions[client.ID] = prior
+				} else {
+					state.Subscriptions[client.ID] = landingNativeSubscription{
+						ID: client.ID, Email: client.Email, Token: subscriptionToken, Enabled: client.Enabled,
+						Total: client.TotalBytes, Used: client.UsedBytes, Expiry: client.ExpiryTime, ResetDays: client.ResetDays, Links: links,
+					}
+				}
+				observedSubscriptions[client.ID] = true
+			} else if prior, ok := state.Subscriptions[client.ID]; ok {
+				prior.Email, prior.Enabled = client.Email, false
+				prior.Total, prior.Used, prior.Expiry, prior.ResetDays = client.TotalBytes, client.UsedBytes, client.ExpiryTime, client.ResetDays
+				state.Subscriptions[client.ID] = prior
+				observedSubscriptions[client.ID] = true
+			}
 		}
 		if state != nil {
 			if account, ok := state.Accounts[client.ID]; ok {
@@ -183,5 +261,142 @@ func (s *Store) projectLandingAccounts(ctx context.Context, clients []ThreeXUICl
 		}
 		result = append(result, client)
 	}
+	for id := range state.Subscriptions {
+		if acceptObservedPlan && !observedSubscriptions[id] {
+			delete(state.Subscriptions, id)
+		}
+	}
+	currentSubscriptions, _ := json.Marshal(state.Subscriptions)
+	if !bytes.Equal(previousSubscriptions, currentSubscriptions) {
+		if err := s.saveLandingController(ctx, state); err != nil {
+			return nil, err
+		}
+	}
 	return result, nil
+}
+
+func sameNativeSubscriptionCredentials(previous, observed []string, allowRouteChange bool) bool {
+	byRoute := make(map[string]string, len(observed))
+	for _, raw := range observed {
+		link, err := url.Parse(raw)
+		if err != nil || link.User == nil {
+			return false
+		}
+		key := link.User.Username() + "\x00" + link.Host
+		link.Fragment = ""
+		if _, exists := byRoute[key]; exists {
+			return false
+		}
+		byRoute[key] = link.String()
+	}
+	if !allowRouteChange && len(previous) != len(observed) {
+		return false
+	}
+	for _, raw := range previous {
+		link, err := url.Parse(raw)
+		if err != nil || link.User == nil {
+			return false
+		}
+		key := link.User.Username() + "\x00" + link.Host
+		link.Fragment = ""
+		current, ok := byRoute[key]
+		if ok && current != link.String() || !allowRouteChange && !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func resolveNativeSubscriptionInbounds(ctx context.Context, baseURL, token string, inbounds []ThreeXUIClientInbound) (map[int]threeXUIRealityInbound, error) {
+	resolved := make(map[int]threeXUIRealityInbound, len(inbounds))
+	for _, ref := range inbounds {
+		if ref.ID <= 0 || ref.VLESSDisabled || ref.ConnectHostname == "" || ref.InboundTag == "" {
+			continue
+		}
+		inbound, err := getThreeXUIInbound(ctx, baseURL, token, ref.ID)
+		if err != nil || !inbound.Enable || inbound.Protocol != "vless" || inbound.Tag != ref.InboundTag {
+			return nil, errors.New("agent: native subscription entry is unavailable")
+		}
+		resolved[ref.ID] = inbound
+	}
+	return resolved, nil
+}
+
+func nativeSubscriptionLinks(inbounds []ThreeXUIClientInbound, resolved map[int]threeXUIRealityInbound, detail threeXUIClientDetail) ([]string, error) {
+	byID := make(map[int]ThreeXUIClientInbound, len(inbounds))
+	for _, inbound := range inbounds {
+		if _, ok := resolved[inbound.ID]; ok && inbound.ID > 0 && !inbound.VLESSDisabled && inbound.ConnectHostname != "" {
+			byID[inbound.ID] = inbound
+		}
+	}
+	ids := slices.Clone(detail.InboundIDs)
+	sort.Ints(ids)
+	links := make([]string, 0, len(ids))
+	for _, id := range ids {
+		ref, ok := byID[id]
+		if !ok {
+			continue
+		}
+		inbound, ok := resolved[id]
+		if !ok {
+			return nil, errors.New("agent: native subscription entry is unavailable")
+		}
+		link, err := realityClientLinkFromInbound(inbound, ref.ConnectHostname, clientJSONText(detail.Client, "email"))
+		if err != nil {
+			return nil, errors.New("agent: native subscription credential is unavailable")
+		}
+		parsed, err := url.Parse(link)
+		if err != nil {
+			return nil, errors.New("agent: native subscription credential is invalid")
+		}
+		name := strings.TrimSpace(ref.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(ref.NodeName)
+		}
+		if name == "" {
+			return nil, errors.New("agent: native subscription entry name is unavailable")
+		}
+		parsed.Fragment = name
+		links = append(links, parsed.String())
+	}
+	return links, nil
+}
+
+func nativeSubscriptionInbounds(ctx context.Context, baseURL, token string) ([]ThreeXUIClientInbound, error) {
+	observed, err := listRealityInbounds(ctx, baseURL, token)
+	if err != nil {
+		return nil, errors.New("agent: native subscription entry inventory is unavailable")
+	}
+	result := make([]ThreeXUIClientInbound, 0, len(observed))
+	for _, inbound := range observed {
+		if !inbound.Enable || inbound.Protocol != "vless" || inbound.ID < 1 || inbound.Tag == "" {
+			continue
+		}
+		groups, err := threeXUIRealityHostGroups(ctx, baseURL, token, inbound.ID)
+		if err != nil {
+			return nil, errors.New("agent: native subscription host inventory is unavailable")
+		}
+		groupID := "vastora-public-" + strconv.Itoa(inbound.ID)
+		for _, group := range groups {
+			if group.GroupID != groupID || group.IsDisabled || group.IsHidden || len(group.Hosts) != 1 || !validThreeXUIShareHostname(group.Hosts[0]) || group.Port != 443 {
+				continue
+			}
+			result = append(result, ThreeXUIClientInbound{ID: inbound.ID, DisplayName: inbound.Remark, NodeName: inbound.Remark, ConnectHostname: group.Hosts[0], InboundTag: inbound.Tag})
+			break
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) refreshNativeSubscriptions(ctx context.Context, baseURL, token string) error {
+	inbounds, err := nativeSubscriptionInbounds(ctx, baseURL, token)
+	if err != nil {
+		return err
+	}
+	clients, err := listThreeXUIClients(ctx, baseURL, token)
+	if err != nil {
+		return errors.New("agent: native subscription client inventory is unavailable")
+	}
+	_, err = s.projectLandingAccounts(ctx, baseURL, token, inbounds, clients, false)
+	return err
 }

@@ -19,7 +19,7 @@ func TestLandingAccountNameReuseDoesNotTransferAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	old, next := landing.Identity("old-uuid"), landing.Identity("new-uuid")
-	if _, err := store.db.Exec(`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,mode,observed_at) VALUES(?,'identity-controller','Phone','{}','both',?)`, old, now); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,mode,observed_at) VALUES(?,'identity-controller','Phone','{}','fixed',?)`, old, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at) VALUES('inventory','identity-controller',?,?,'3xui.clients.manage','{}','succeeded',?,?)`, node.ID, node.ID, now, now); err != nil {
