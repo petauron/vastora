@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.154](https://github.com/petauron/vastora/compare/v0.1.0-alpha.153...v0.1.0-alpha.154) (2026-09-16)
+
+
+### Features
+
+* **landing:** add native multi-egress subscriptions ([#506](https://github.com/petauron/vastora/issues/506)) ([4df2b4e](https://github.com/petauron/vastora/commit/4df2b4e60ca9f515f7661abbc0bde3407c4d3617))
+
 ## [0.1.0-alpha.153](https://github.com/petauron/vastora/compare/v0.1.0-alpha.152...v0.1.0-alpha.153) (2026-09-16)
 
 
