@@ -153,16 +153,31 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 			// The monitor verifies shared quota every 15 seconds. 3x-ui reloads
 			// Xray after a client update, so an unchanged plan must remain a
 			// read-only confirmation instead of interrupting active sessions.
-			if actualTotal == limit.Total && actualEnabled == limit.Enabled && listed.Enabled == limit.Enabled && actualExpiry == expiry && actualReset == 0 {
+			mainQuotaMatches := actualTotal == limit.Total && actualExpiry == expiry && actualReset == 0
+			if mainQuotaMatches && actualEnabled == limit.Enabled && listedLandingQuotaConfirmed(listed, limit, expiry) {
 				continue
+			}
+			// 3x-ui skips UpdateClientStat when the inbound JSON already matches
+			// the submitted client. Force an enabled client through a safe
+			// disabled/expired checkpoint before repairing stale traffic limits.
+			// Unlike bulk disable, the complete update also repairs a traffic row
+			// that drifted away from the inbound JSON.
+			if limit.Enabled && !listedLandingQuotaFieldsMatch(listed, limit, expiry) && (actualEnabled || listed.TrafficEnabled) {
+				setClientJSONField(detail.Client, "totalGB", limit.Total)
+				setClientJSONField(detail.Client, "enable", false)
+				setClientJSONField(detail.Client, "expiryTime", int64(1))
+				setClientJSONField(detail.Client, "reset", 0)
+				if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client, detail.InboundIDs); err != nil {
+					return err
+				}
 			}
 			// 3x-ui keeps the client record, inbound settings and traffic
 			// enforcement row separately. An ordinary update can be a no-op when
 			// the client record already matches, leaving the enforcement row stale.
 			// Use the supported bulk operation to rebuild all layers without
 			// resetting traffic counters.
-			needsEnforcementReconciliation := actualEnabled != limit.Enabled || listed.Enabled != limit.Enabled
-			if needsEnforcementReconciliation && actualTotal == limit.Total && actualExpiry == expiry && actualReset == 0 {
+			needsEnforcementReconciliation := actualEnabled != limit.Enabled || !listed.TrafficObserved || listed.TrafficEnabled != limit.Enabled
+			if needsEnforcementReconciliation && mainQuotaMatches && listedLandingQuotaFieldsMatch(listed, limit, expiry) {
 				if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, detail.InboundIDs, limit.Enabled); err != nil {
 					return err
 				}
@@ -179,14 +194,14 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 			observedListed, observedListedFound, observedListedErr := getListedThreeXUIClient(ctx, baseURL, token, email)
 			var enabled bool
 			var total, observedExpiry int64
-			if err == nil && observedListedErr == nil && observedListedFound && landing.Identity(clientJSONText(observed.Client, "id")) == limit.ID && json.Unmarshal(observed.Client["totalGB"], &total) == nil && total == limit.Total && json.Unmarshal(observed.Client["enable"], &enabled) == nil && json.Unmarshal(observed.Client["expiryTime"], &observedExpiry) == nil && observedExpiry == expiry && (enabled != limit.Enabled || observedListed.Enabled != limit.Enabled) {
+			if err == nil && observedListedErr == nil && observedListedFound && landing.Identity(clientJSONText(observed.Client, "id")) == limit.ID && json.Unmarshal(observed.Client["totalGB"], &total) == nil && total == limit.Total && json.Unmarshal(observed.Client["enable"], &enabled) == nil && json.Unmarshal(observed.Client["expiryTime"], &observedExpiry) == nil && observedExpiry == expiry && listedLandingQuotaFieldsMatch(observedListed, limit, expiry) && (enabled != limit.Enabled || observedListed.TrafficEnabled != limit.Enabled) {
 				if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, observed.InboundIDs, limit.Enabled); err != nil {
 					return err
 				}
 				observed, err = getThreeXUIClient(ctx, baseURL, token, email)
 				observedListed, observedListedFound, observedListedErr = getListedThreeXUIClient(ctx, baseURL, token, email)
 			}
-			if err != nil || observedListedErr != nil || !observedListedFound || landing.Identity(clientJSONText(observed.Client, "id")) != limit.ID || json.Unmarshal(observed.Client["totalGB"], &total) != nil || total != limit.Total || json.Unmarshal(observed.Client["enable"], &enabled) != nil || enabled != limit.Enabled || observedListed.Enabled != limit.Enabled || json.Unmarshal(observed.Client["expiryTime"], &observedExpiry) != nil || observedExpiry != expiry {
+			if err != nil || observedListedErr != nil || !observedListedFound || landing.Identity(clientJSONText(observed.Client, "id")) != limit.ID || json.Unmarshal(observed.Client["totalGB"], &total) != nil || total != limit.Total || json.Unmarshal(observed.Client["enable"], &enabled) != nil || enabled != limit.Enabled || !listedLandingQuotaConfirmed(observedListed, limit, expiry) || json.Unmarshal(observed.Client["expiryTime"], &observedExpiry) != nil || observedExpiry != expiry {
 				return errors.New("agent: shared quota write was not confirmed")
 			}
 		}
@@ -195,6 +210,14 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 	account.PendingLimits, account.PendingExpiry = nil, 0
 	state.Accounts[parentID] = account
 	return s.saveLandingController(ctx, state)
+}
+
+func listedLandingQuotaFieldsMatch(client ThreeXUIClientView, limit landing.QuotaLimit, expiry int64) bool {
+	return client.TrafficObserved && (!limit.Enabled || client.TrafficTotal == limit.Total && client.TrafficExpiry == expiry && client.TrafficReset == 0)
+}
+
+func listedLandingQuotaConfirmed(client ThreeXUIClientView, limit landing.QuotaLimit, expiry int64) bool {
+	return client.TrafficEnabled == limit.Enabled && listedLandingQuotaFieldsMatch(client, limit, expiry)
 }
 
 func reconcileLandingNativeClientEnabled(ctx context.Context, baseURL, token, email string, inboundIDs []int, enabled bool) error {

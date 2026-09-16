@@ -351,6 +351,11 @@ type ThreeXUIClientView struct {
 	LimitIP         int    `json:"limitIp"`
 	InboundIDs      []int  `json:"inboundIds"`
 	HasSubscription bool   `json:"hasSubscription"`
+	TrafficObserved bool   `json:"-"`
+	TrafficEnabled  bool   `json:"-"`
+	TrafficTotal    int64  `json:"-"`
+	TrafficExpiry   int64  `json:"-"`
+	TrafficReset    int    `json:"-"`
 }
 
 type ThreeXUIClientCommandResult struct {

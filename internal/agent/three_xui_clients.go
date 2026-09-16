@@ -32,9 +32,13 @@ type threeXUIClientPage struct {
 		Reset      int    `json:"reset"`
 		LimitIP    int    `json:"limitIp"`
 		InboundIDs []int  `json:"inboundIds"`
-		Traffic    struct {
-			Up   int64 `json:"up"`
-			Down int64 `json:"down"`
+		Traffic    *struct {
+			Enable     bool  `json:"enable"`
+			Up         int64 `json:"up"`
+			Down       int64 `json:"down"`
+			ExpiryTime int64 `json:"expiryTime"`
+			Total      int64 `json:"total"`
+			Reset      int   `json:"reset"`
 		} `json:"traffic"`
 	} `json:"items"`
 	Total int `json:"total"`
@@ -262,16 +266,25 @@ func listThreeXUIClients(ctx context.Context, baseURL, token string) ([]ThreeXUI
 			return nil, errors.New("agent: 3x-ui returned invalid client data")
 		}
 		for _, client := range response.Items {
-			if strings.TrimSpace(client.Email) == "" || client.TotalGB < 0 || client.Reset < 0 || client.Reset > maxThreeXUIResetDays || client.ExpiryTime < 0 || client.LimitIP < 0 || client.Traffic.Up < 0 || client.Traffic.Down < 0 || client.Traffic.Up > int64(^uint64(0)>>1)-client.Traffic.Down {
+			if strings.TrimSpace(client.Email) == "" || client.TotalGB < 0 || client.Reset < 0 || client.Reset > maxThreeXUIResetDays || client.ExpiryTime < 0 || client.LimitIP < 0 || client.Traffic != nil && (client.Traffic.Up < 0 || client.Traffic.Down < 0 || client.Traffic.Total < 0 || client.Traffic.ExpiryTime < 0 || client.Traffic.Reset < 0 || client.Traffic.Reset > maxThreeXUIResetDays || client.Traffic.Up > int64(^uint64(0)>>1)-client.Traffic.Down) {
 				return nil, errors.New("agent: 3x-ui returned invalid client traffic metadata")
 			}
 			inboundIDs := append([]int(nil), client.InboundIDs...)
 			sort.Ints(inboundIDs)
-			clients = append(clients, ThreeXUIClientView{
+			view := ThreeXUIClientView{
 				Email: client.Email, Enabled: client.Enable, TotalBytes: client.TotalGB,
-				UsedBytes: client.Traffic.Up + client.Traffic.Down, ExpiryTime: client.ExpiryTime,
-				ResetDays: client.Reset, LimitIP: client.LimitIP, InboundIDs: inboundIDs, HasSubscription: strings.TrimSpace(client.SubID) != "",
-			})
+				ExpiryTime: client.ExpiryTime,
+				ResetDays:  client.Reset, LimitIP: client.LimitIP, InboundIDs: inboundIDs, HasSubscription: strings.TrimSpace(client.SubID) != "",
+			}
+			if client.Traffic != nil {
+				view.UsedBytes = client.Traffic.Up + client.Traffic.Down
+				view.TrafficObserved = true
+				view.TrafficEnabled = client.Traffic.Enable
+				view.TrafficTotal = client.Traffic.Total
+				view.TrafficExpiry = client.Traffic.ExpiryTime
+				view.TrafficReset = client.Traffic.Reset
+			}
+			clients = append(clients, view)
 		}
 		if len(clients) >= response.Total || len(response.Items) < threeXUIClientPageSize {
 			break

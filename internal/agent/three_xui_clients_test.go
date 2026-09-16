@@ -24,7 +24,7 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 		switch request.URL.Path {
 		case "/panel/api/clients/list/paged":
 			clientListCalls.Add(1)
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","subId":"private-sub-id","enable":true,"totalGB":10737418240,"expiryTime":0,"reset":30,"limitIp":2,"inboundIds":[9],"traffic":{"up":1024,"down":2048}}],"total":1}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","subId":"private-sub-id","enable":true,"totalGB":10737418240,"expiryTime":0,"reset":30,"limitIp":2,"inboundIds":[9],"traffic":{"enable":false,"total":5368709120,"expiryTime":1,"reset":0,"up":1024,"down":2048}}],"total":1}}`))
 		case "/panel/api/clients/get/MacBook":
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","uuid":"11111111-2222-4333-8444-555555555555"},"inboundIds":[9]}}`))
 		case "/panel/api/inbounds/list":
@@ -41,7 +41,7 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Clients) != 1 || result.Clients[0].Email != "MacBook" || result.Clients[0].UsedBytes != 3072 || result.Clients[0].ResetDays != 30 || !result.Clients[0].HasSubscription || result.Secret != "" || !result.InboundsObserved || len(result.Inbounds) != 1 || result.Inbounds[0].TotalBytes != 20*gibibyteForTest || result.Inbounds[0].UsedBytes != 6144 || result.Inbounds[0].InboundTag != "vastora-node" {
+	if len(result.Clients) != 1 || result.Clients[0].Email != "MacBook" || result.Clients[0].UsedBytes != 3072 || result.Clients[0].ResetDays != 30 || !result.Clients[0].HasSubscription || !result.Clients[0].TrafficObserved || result.Clients[0].TrafficEnabled || result.Clients[0].TrafficTotal != 5*gibibyteForTest || result.Clients[0].TrafficExpiry != 1 || result.Clients[0].TrafficReset != 0 || result.Secret != "" || !result.InboundsObserved || len(result.Inbounds) != 1 || result.Inbounds[0].TotalBytes != 20*gibibyteForTest || result.Inbounds[0].UsedBytes != 6144 || result.Inbounds[0].InboundTag != "vastora-node" {
 		t.Fatalf("unexpected safe client projection: %#v", result)
 	}
 	encoded, _ := json.Marshal(result)
