@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"strings"
 	"testing"
@@ -16,12 +17,10 @@ import (
 
 func TestReadIPQualityOutputBoundsReportWithoutCountingProgress(t *testing.T) {
 	var stream bytes.Buffer
-	progress := stdcopy.NewStdWriter(&stream, stdcopy.Stderr)
-	report := stdcopy.NewStdWriter(&stream, stdcopy.Stdout)
-	if _, err := progress.Write([]byte(strings.Repeat("progress", ipquality.MaxReportBytes))); err != nil {
+	if err := writeIPQualityTestFrame(&stream, stdcopy.Stderr, []byte(strings.Repeat("progress", ipquality.MaxReportBytes))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := report.Write([]byte("{\"Head\":{}}")); err != nil {
+	if err := writeIPQualityTestFrame(&stream, stdcopy.Stdout, []byte("{\"Head\":{}}")); err != nil {
 		t.Fatal(err)
 	}
 	value, err := readIPQualityOutput(&stream)
@@ -35,13 +34,24 @@ func TestReadIPQualityOutputBoundsReportWithoutCountingProgress(t *testing.T) {
 
 func TestReadIPQualityOutputRejectsOversizedReport(t *testing.T) {
 	var stream bytes.Buffer
-	report := stdcopy.NewStdWriter(&stream, stdcopy.Stdout)
-	if _, err := report.Write([]byte(strings.Repeat("x", ipquality.MaxReportBytes+1))); err != nil {
+	if err := writeIPQualityTestFrame(&stream, stdcopy.Stdout, []byte(strings.Repeat("x", ipquality.MaxReportBytes+1))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := readIPQualityOutput(&stream); err == nil {
 		t.Fatal("oversized report accepted")
 	}
+}
+
+// Moby's stdcopy reader remains available, but its framed test writer is no
+// longer exported. Encode only the two frames needed by these reader tests.
+func writeIPQualityTestFrame(stream *bytes.Buffer, kind stdcopy.StdType, payload []byte) error {
+	header := [8]byte{byte(kind)}
+	binary.BigEndian.PutUint32(header[4:], uint32(len(payload)))
+	if _, err := stream.Write(header[:]); err != nil {
+		return err
+	}
+	_, err := stream.Write(payload)
+	return err
 }
 
 type fakeIPQualityCleanupEngine struct {

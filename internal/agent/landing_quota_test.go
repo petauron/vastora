@@ -122,7 +122,7 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 			if err := store.applyLandingQuotaPlan(context.Background(), server.URL, "native-token", recovered, parent); err != nil {
 				t.Fatal(err)
 			}
-			wantWrites := []string{grant.Task.Grant.FixedUser, grant.Task.Grant.FixedUser, account.Email}
+			wantWrites := []string{grant.Task.Grant.FixedUser, account.Email}
 			wantLimits := slices.Clone(account.PendingLimits)
 			if stop {
 				wantWrites = []string{grant.Task.Grant.FixedUser, account.Email, grant.Task.Grant.FixedUser}
@@ -146,6 +146,46 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 				t.Fatal("confirmed quota replay changed counters or failed to commit", err)
 			}
 		})
+	}
+}
+
+func TestLandingQuotaConfirmationDoesNotRewriteUnchangedClients(t *testing.T) {
+	store, state, parent := landingSubscriptionTestState(t)
+	account := state.Accounts[parent]
+	account.Total, account.Expiry = 0, 0
+	limits, _, err := landing.AllocateQuota(account.Total, account.Enabled, account.Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account.Limits = slices.Clone(limits)
+	account.PendingLimits = slices.Clone(limits)
+	account.PendingExpiry = account.Expiry
+	state.Accounts[parent] = account
+	grant := state.Grants["grant-a"]
+	identities := map[string]string{account.Email: "11111111-2222-4333-8444-555555555555", grant.Task.Grant.FixedUser: grant.Task.FixedUUID}
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		uuid, ok := identities[strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")]
+		if r.Method != http.MethodGet || !ok {
+			writes++
+			t.Error("unchanged quota attempted a native write", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"client": map[string]any{
+			"id": uuid, "totalGB": int64(0), "enable": true, "expiryTime": int64(0), "reset": int64(0),
+		}, "inboundIds": []int{9}}})
+	}))
+	defer server.Close()
+	if err := store.applyLandingQuotaPlan(context.Background(), server.URL, "native-token", state, parent); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 {
+		t.Fatal("unchanged shared quota interrupted Xray")
+	}
+	if len(state.Accounts[parent].PendingLimits) != 0 || !reflect.DeepEqual(state.Accounts[parent].Limits, limits) {
+		t.Fatal("unchanged quota confirmation did not commit")
 	}
 }
 

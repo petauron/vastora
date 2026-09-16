@@ -31,6 +31,16 @@ const updateStages: Readonly<Record<string, readonly [string, string]>> = {
 
 type AgentRollout = NonNullable<CenterUpdateStatus["agentRollout"]>;
 
+const updateIsRunning = (status: CenterUpdateStatus) => status.state === "queued" || status.state === "applying";
+const agentRolloutIsComplete = (rollout?: AgentRollout) => rollout !== undefined && rollout.updated >= rollout.total;
+const agentRolloutCanContinue = (rollout?: AgentRollout) => rollout !== undefined
+  && rollout.updated < rollout.total
+  && rollout.failed === 0
+  && rollout.offline === 0
+  && rollout.manual === 0;
+const shouldPollUpdate = (status: CenterUpdateStatus) => updateIsRunning(status)
+  || (status.state === "succeeded" && agentRolloutCanContinue(status.agentRollout));
+
 function AgentRolloutProgress({ language, rollout }: { language: Language; rollout: AgentRollout }) {
   const percentage = rollout.total > 0 ? Math.round((rollout.updated / rollout.total) * 100) : 0;
   const current = copy(language, `${rollout.updated}/${rollout.total} 个 Agent 已是当前版本`, `${rollout.updated}/${rollout.total} Agents are current`);
@@ -45,25 +55,27 @@ export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, o
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const reloadStarted = useRef(false);
-  const running = status.state === "queued" || status.state === "applying";
+  const running = updateIsRunning(status);
+  const polling = shouldPollUpdate(status);
   const stageCopy = updateStages[status.phase || (status.state === "queued" ? "queued" : "installing")] || updateStages.installing;
   const updateStage = copy(language, stageCopy[0], stageCopy[1]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!polling) return;
     let stopped = false;
     let timer = 0;
     const poll = async () => {
       try {
         const next = await api.centerUpdate();
         if (stopped) return;
-        if (next.state === "succeeded") {
+        onStatusChange(next);
+        if (next.state === "succeeded" && agentRolloutIsComplete(next.agentRollout)) {
           if (reloadStarted.current) return;
           reloadStarted.current = true;
           try { await onRefresh(); } finally { onReload(); }
           return;
         }
-        onStatusChange(next);
+        if (!shouldPollUpdate(next)) return;
       } catch {
         // Center restarts during a normal update. Keep the progress state and retry.
       }
@@ -71,7 +83,7 @@ export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, o
     };
     void poll();
     return () => { stopped = true; window.clearTimeout(timer); };
-  }, [onRefresh, onReload, onStatusChange, running]);
+  }, [onRefresh, onReload, onStatusChange, polling]);
 
   const refresh = async () => {
     setBusy(true); setError("");

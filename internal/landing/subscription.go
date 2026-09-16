@@ -245,9 +245,9 @@ func validateSubscriptionGrant(item SubscriptionGrant, parentID string) error {
 }
 
 func combinationName(item SubscriptionGrant) string {
-	prefix := ""
+	prefix := "🔀｜"
 	if item.LandingRegionCode != "" {
-		prefix = regionFlag(item.LandingRegionCode) + "｜"
+		prefix = "🔀 " + regionFlag(item.LandingRegionCode) + "｜"
 	}
 	return prefix + item.EntryName
 }

@@ -191,7 +191,7 @@ export function LandingManager({ language }: { language: Language }) {
             {view?.servers.map((server) => <li key={server.nodeId} className="flex items-center gap-3 py-4">
               <span aria-hidden="true" className={`apps-status-dot ${server.status === "ready" ? "bg-latency-fast" : server.status === "failed" || server.status === "offline" ? "bg-destructive" : "bg-muted-foreground"}`} />
               <div className="min-w-0 flex-1">
-                <p className="flex items-center gap-2 font-medium" title={server.name}><RegionFlag code={state.regions[server.nodeId]} language={language} /><span className="truncate">{server.name}</span></p>
+                <p className="flex items-center font-medium" title={server.name}><span aria-label={copy(language, "落地机", "Landing server")} className="mr-2" role="img">🔀</span><RegionFlag code={state.regions[server.nodeId]} language={language} /><span aria-hidden="true">｜</span><span className="min-w-0 truncate">{server.name}</span></p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {server.status === "ready" ? copy(language, "可用", "Available") : server.status === "draining" ? copy(language, "正在排空并移除…", "Draining and removing…") : server.status === "offline" ? copy(language, "离线", "Offline") : server.status === "failed" ? copy(language, "配置失败，请检查节点", "Setup failed. Check the node.") : copy(language, "正在准备…", "Preparing…")}
                 </p>

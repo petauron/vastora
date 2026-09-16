@@ -2,6 +2,7 @@ package landing
 
 import (
 	"encoding/base64"
+	"slices"
 	"strings"
 	"testing"
 
@@ -123,8 +124,12 @@ func TestMihomoFixedCombinationsNeedNoClientChain(t *testing.T) {
 	if strings.Contains(string(out), "dialer-proxy") || strings.Contains(string(out), "socks5") {
 		t.Fatal("client-side chain remains")
 	}
-	if !strings.Contains(string(out), "🇺🇸｜入口 A") || !strings.Contains(string(out), "🇹🇼｜入口 A") || strings.Contains(string(out), "入口 A A") || strings.Contains(string(out), "入口 A B") || strings.Contains(string(out), "落地") || strings.Contains(string(out), "combination-") {
-		t.Fatal("combination names did not use flag-only landing labels")
+	proxyNames := []string{}
+	for _, value := range config["proxies"].([]any) {
+		proxyNames = append(proxyNames, value.(map[string]any)["name"].(string))
+	}
+	if !slices.Contains(proxyNames, "🔀 🇺🇸｜入口 A") || !slices.Contains(proxyNames, "🔀 🇹🇼｜入口 A") || strings.Contains(strings.Join(proxyNames, " "), "入口 A A") || strings.Contains(strings.Join(proxyNames, " "), "入口 A B") || strings.Contains(strings.Join(proxyNames, " "), "落地") || strings.Contains(strings.Join(proxyNames, " "), "combination-") {
+		t.Fatal("combination names did not use the landing marker and region flag")
 	}
 	links, err := ComposeLinks([]byte(item.BaseLink+"\n"), item.Grant.ParentID, FixedMode, items, false)
 	if err != nil || strings.Count(string(links), "vless://") != 3 {

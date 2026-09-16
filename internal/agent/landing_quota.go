@@ -139,16 +139,27 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 				continue
 			}
 			detail, err := getThreeXUIClient(ctx, baseURL, token, email)
-			var actualTotal int64
-			if err != nil || landing.Identity(clientJSONText(detail.Client, "id")) != limit.ID || json.Unmarshal(detail.Client["totalGB"], &actualTotal) != nil || actualTotal != old.Total && actualTotal != limit.Total {
+			var actualTotal, actualExpiry, actualReset int64
+			var actualEnabled bool
+			if err != nil || landing.Identity(clientJSONText(detail.Client, "id")) != limit.ID ||
+				json.Unmarshal(detail.Client["totalGB"], &actualTotal) != nil || actualTotal != old.Total && actualTotal != limit.Total ||
+				json.Unmarshal(detail.Client["enable"], &actualEnabled) != nil ||
+				json.Unmarshal(detail.Client["expiryTime"], &actualExpiry) != nil ||
+				json.Unmarshal(detail.Client["reset"], &actualReset) != nil {
 				return errors.New("agent: native shared quota changed outside the saved plan")
 			}
-			setClientJSONField(detail.Client, "totalGB", limit.Total)
-			setClientJSONField(detail.Client, "enable", limit.Enabled)
 			expiry := account.PendingExpiry
 			if !limit.Enabled {
 				expiry = 1
 			}
+			// The monitor verifies shared quota every 15 seconds. 3x-ui reloads
+			// Xray after a client update, so an unchanged plan must remain a
+			// read-only confirmation instead of interrupting active sessions.
+			if actualTotal == limit.Total && actualEnabled == limit.Enabled && actualExpiry == expiry && actualReset == 0 {
+				continue
+			}
+			setClientJSONField(detail.Client, "totalGB", limit.Total)
+			setClientJSONField(detail.Client, "enable", limit.Enabled)
 			setClientJSONField(detail.Client, "expiryTime", expiry)
 			setClientJSONField(detail.Client, "reset", 0)
 			if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client, detail.InboundIDs); err != nil {

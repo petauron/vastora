@@ -2028,7 +2028,7 @@ describe("network and app views", () => {
     const remove = vi.spyOn(api, "deleteAgent").mockResolvedValue({ deleted: true });
     const close = vi.fn();
     const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={close} />);
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "删除节点")?.click());
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "删除")?.click());
     expect(document.body.textContent).toContain("服务器上的程序和数据不会被删除");
     const confirm = [...document.querySelectorAll("button")].filter((button) => button.textContent === "删除节点").at(-1);
     expect(confirm?.disabled).toBe(true);
@@ -2050,7 +2050,7 @@ describe("network and app views", () => {
     const remove = vi.spyOn(api, "deleteAgent");
     const deploy = vi.spyOn(api, "createDeployment");
     const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={() => undefined} />);
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 DMIT CN2"]')?.click());
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
     const input = document.querySelector<HTMLInputElement>("#stop-node-access-name")!;
     const confirm = () => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入" && button.type === "submit")!;
@@ -2078,7 +2078,7 @@ describe("network and app views", () => {
 
   it("does not offer offline access stop for a connected node", () => {
     const container = render(<NodesView data={dashboard()} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]')?.click());
     expect([...document.querySelectorAll("button")].some((button) => button.textContent === "停止接入")).toBe(false);
   });
 
@@ -2089,7 +2089,7 @@ describe("network and app views", () => {
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
     expect(container.textContent).toContain("已停止接入");
     expect(container.textContent).not.toContain("离线");
-    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "重新接入")).toBe(true);
+    expect(container.querySelector('[aria-label="重新接入 home-server"]')).not.toBeNull();
   });
 
   it("keeps access-stop failures inline and does nothing on cancellation", async () => {
@@ -2097,11 +2097,11 @@ describe("network and app views", () => {
     data.agents[0].connected = false;
     const revoke = vi.spyOn(api, "revokeAgentCredential").mockRejectedValue(new Error("Failed to fetch"));
     const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={() => undefined} />);
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]')?.click());
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "取消")?.click());
     expect(revoke).not.toHaveBeenCalled();
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]')?.click());
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
     const input = document.querySelector<HTMLInputElement>("#stop-node-access-name")!;
     expect(input.value).toBe("");
@@ -2120,7 +2120,7 @@ describe("network and app views", () => {
     data.agents[0].connected = false;
     const mutate = async () => undefined;
     const container = render(<NodesView data={data} language="zh-CN" mutate={mutate} onNavigate={() => undefined} />);
-    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "管理")?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]')?.click());
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
     const input = document.querySelector<HTMLInputElement>("#stop-node-access-name")!;
     act(() => {
@@ -2138,7 +2138,7 @@ describe("network and app views", () => {
     data.agents[0].version = "old";
     const update = vi.spyOn(api, "startAgentUpdate").mockResolvedValue({ id: "agent-update-1", targetVersion: "test", state: "pending", updatedAt: "2026-08-18T00:00:00Z" });
     const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={() => undefined} />);
-    const manage = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理"));
+    const manage = container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]');
     act(() => manage?.click());
     expect(document.body.textContent).toContain("节点用途");
     const updateButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("通过 Center 更新"));
@@ -2158,7 +2158,7 @@ describe("network and app views", () => {
     data.agents[0].version = "old";
     data.agents[0].update = { id: "agent-update-1", targetVersion: "test", state: "installing", lastError: "Recovery required: candidate startup failed", updatedAt: "2026-08-18T00:00:00Z" };
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
-    const manage = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理"));
+    const manage = container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]');
     act(() => manage?.click());
     expect(document.body.textContent).toContain("Recovery required: candidate startup failed");
     const updateButton = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("正在更新"));
@@ -2171,7 +2171,7 @@ describe("network and app views", () => {
     data.agents[0].version = "old";
     data.agents[0].remoteUpdateSupported = false;
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
-    const manage = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("管理"));
+    const manage = container.querySelector<HTMLButtonElement>('[aria-label="管理 home-server"]');
     act(() => manage?.click());
     expect(document.body.textContent).toContain("需要一次手动更新");
     expect(document.body.textContent).toContain("sudo /usr/local/bin/vastora agent update --data-dir /var/lib/vastora/agent");
@@ -2190,7 +2190,7 @@ describe("network and app views", () => {
       expiresAt: "2026-09-03T12:10:00Z"
     });
     const container = render(<NodesView data={data} language="zh-CN" mutate={async () => undefined} onNavigate={() => undefined} />);
-    const reconnectButton = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("重新接入"));
+    const reconnectButton = container.querySelector<HTMLButtonElement>('[aria-label="重新接入 home-server"]');
     await act(async () => {
       reconnectButton?.click();
       await Promise.resolve();
@@ -2480,17 +2480,64 @@ describe("network and app views", () => {
     expect(container.textContent?.match(/0\.1\.0-alpha\.51/g)).toHaveLength(2);
   });
 
-  it("refreshes the settings data and reloads the page when a Center update succeeds", async () => {
+  it("refreshes the settings data and reloads the page after every Agent is updated", async () => {
     const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.51", updateAvailable: true, state: "applying" as const };
     const onRefresh = vi.fn().mockResolvedValue(undefined);
     const onReload = vi.fn();
     const onStatusChange = vi.fn();
-    vi.spyOn(api, "centerUpdate").mockResolvedValue({ ...status, currentVersion: "0.1.0-alpha.51", updateAvailable: false, state: "succeeded" });
+    const completed = {
+      ...status,
+      currentVersion: "0.1.0-alpha.51",
+      updateAvailable: false,
+      state: "succeeded" as const,
+      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 3, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0 },
+    };
+    vi.spyOn(api, "centerUpdate").mockResolvedValue(completed);
     render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
     await act(async () => { await Promise.resolve(); });
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(onReload).toHaveBeenCalledOnce();
-    expect(onStatusChange).not.toHaveBeenCalled();
+    expect(onStatusChange).toHaveBeenCalledWith(completed);
+  });
+
+  it("keeps polling without reloading after Center succeeds while Agents are pending", async () => {
+    const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.51", updateAvailable: true, state: "applying" as const };
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const onReload = vi.fn();
+    const onStatusChange = vi.fn();
+    const pending = {
+      ...status,
+      currentVersion: "0.1.0-alpha.51",
+      updateAvailable: false,
+      state: "succeeded" as const,
+      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 1, updating: 0, pending: 2, failed: 0, offline: 0, manual: 0 },
+    };
+    vi.spyOn(api, "centerUpdate").mockResolvedValue(pending);
+    render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).toHaveBeenCalledWith(pending);
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(onReload).not.toHaveBeenCalled();
+  });
+
+  it("does not reload when the Agent rollout requires follow-up", async () => {
+    const status = { ...dashboard().centerUpdate, latestVersion: "0.1.0-alpha.51", updateAvailable: true, state: "applying" as const };
+    const onRefresh = vi.fn().mockResolvedValue(undefined);
+    const onReload = vi.fn();
+    const onStatusChange = vi.fn();
+    const failed = {
+      ...status,
+      currentVersion: "0.1.0-alpha.51",
+      updateAvailable: false,
+      state: "succeeded" as const,
+      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 2, updating: 0, pending: 0, failed: 1, offline: 0, manual: 0 },
+    };
+    vi.spyOn(api, "centerUpdate").mockResolvedValue(failed);
+    render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
+    await act(async () => { await Promise.resolve(); });
+    expect(onStatusChange).toHaveBeenCalledWith(failed);
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(onReload).not.toHaveBeenCalled();
   });
 
   it("shows the current verified update phase and progress", () => {
@@ -2519,7 +2566,7 @@ describe("network and app views", () => {
     };
     vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
-    expect(container.textContent).toContain("正在更新节点 Agent");
+    expect(container.textContent).toContain("Agent 同步进度");
     expect(container.textContent).not.toContain("并发");
     expect(container.textContent).not.toContain("远端");
     expect(container.textContent).toContain("2/4 个 Agent 已是当前版本");
