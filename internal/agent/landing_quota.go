@@ -139,9 +139,10 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 				continue
 			}
 			detail, err := getThreeXUIClient(ctx, baseURL, token, email)
+			listed, listedFound, listedErr := getListedThreeXUIClient(ctx, baseURL, token, email)
 			var actualTotal, actualExpiry, actualReset int64
 			var actualEnabled bool
-			if err != nil || landing.Identity(clientJSONText(detail.Client, "id")) != limit.ID ||
+			if err != nil || listedErr != nil || !listedFound || landing.Identity(clientJSONText(detail.Client, "id")) != limit.ID ||
 				json.Unmarshal(detail.Client["totalGB"], &actualTotal) != nil || actualTotal != old.Total && actualTotal != limit.Total ||
 				json.Unmarshal(detail.Client["enable"], &actualEnabled) != nil ||
 				json.Unmarshal(detail.Client["expiryTime"], &actualExpiry) != nil ||
@@ -149,26 +150,20 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 				return errors.New("agent: native shared quota changed outside the saved plan")
 			}
 			expiry := account.PendingExpiry
-			if !limit.Enabled {
-				expiry = 1
-			}
 			// The monitor verifies shared quota every 15 seconds. 3x-ui reloads
 			// Xray after a client update, so an unchanged plan must remain a
 			// read-only confirmation instead of interrupting active sessions.
-			if actualTotal == limit.Total && actualEnabled == limit.Enabled && actualExpiry == expiry && actualReset == 0 {
+			if actualTotal == limit.Total && actualEnabled == limit.Enabled && listed.Enabled == limit.Enabled && actualExpiry == expiry && actualReset == 0 {
 				continue
 			}
 			// 3x-ui keeps the client record, inbound settings and traffic
-			// enforcement row separately. A remote-node reconciliation can leave
-			// the record disabled even though the inbound already contains the
-			// desired enabled client. Its ordinary update endpoint then treats the
-			// unchanged inbound JSON as a no-op and never repairs the stale traffic
-			// row. Retrying that update every monitor tick restarts Xray on every
-			// attached node. Force one supported disable/enable reconciliation so
-			// 3x-ui rebuilds all three layers without resetting traffic counters.
-			needsEnableReconciliation := limit.Enabled && !actualEnabled
-			if needsEnableReconciliation && actualTotal == limit.Total && actualExpiry == expiry && actualReset == 0 {
-				if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, detail.InboundIDs); err != nil {
+			// enforcement row separately. An ordinary update can be a no-op when
+			// the client record already matches, leaving the enforcement row stale.
+			// Use the supported bulk operation to rebuild all layers without
+			// resetting traffic counters.
+			needsEnforcementReconciliation := actualEnabled != limit.Enabled || listed.Enabled != limit.Enabled
+			if needsEnforcementReconciliation && actualTotal == limit.Total && actualExpiry == expiry && actualReset == 0 {
+				if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, detail.InboundIDs, limit.Enabled); err != nil {
 					return err
 				}
 			} else {
@@ -179,16 +174,19 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 				if err := updateLandingNativeClient(ctx, baseURL, token, email, detail.Client, detail.InboundIDs); err != nil {
 					return err
 				}
-				if needsEnableReconciliation {
-					if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, detail.InboundIDs); err != nil {
-						return err
-					}
-				}
 			}
 			observed, err := getThreeXUIClient(ctx, baseURL, token, email)
+			observedListed, observedListedFound, observedListedErr := getListedThreeXUIClient(ctx, baseURL, token, email)
 			var enabled bool
 			var total, observedExpiry int64
-			if err != nil || landing.Identity(clientJSONText(observed.Client, "id")) != limit.ID || json.Unmarshal(observed.Client["totalGB"], &total) != nil || total != limit.Total || json.Unmarshal(observed.Client["enable"], &enabled) != nil || enabled != limit.Enabled || json.Unmarshal(observed.Client["expiryTime"], &observedExpiry) != nil || observedExpiry != expiry {
+			if err == nil && observedListedErr == nil && observedListedFound && landing.Identity(clientJSONText(observed.Client, "id")) == limit.ID && json.Unmarshal(observed.Client["totalGB"], &total) == nil && total == limit.Total && json.Unmarshal(observed.Client["enable"], &enabled) == nil && json.Unmarshal(observed.Client["expiryTime"], &observedExpiry) == nil && observedExpiry == expiry && (enabled != limit.Enabled || observedListed.Enabled != limit.Enabled) {
+				if err := reconcileLandingNativeClientEnabled(ctx, baseURL, token, email, observed.InboundIDs, limit.Enabled); err != nil {
+					return err
+				}
+				observed, err = getThreeXUIClient(ctx, baseURL, token, email)
+				observedListed, observedListedFound, observedListedErr = getListedThreeXUIClient(ctx, baseURL, token, email)
+			}
+			if err != nil || observedListedErr != nil || !observedListedFound || landing.Identity(clientJSONText(observed.Client, "id")) != limit.ID || json.Unmarshal(observed.Client["totalGB"], &total) != nil || total != limit.Total || json.Unmarshal(observed.Client["enable"], &enabled) != nil || enabled != limit.Enabled || observedListed.Enabled != limit.Enabled || json.Unmarshal(observed.Client["expiryTime"], &observedExpiry) != nil || observedExpiry != expiry {
 				return errors.New("agent: shared quota write was not confirmed")
 			}
 		}
@@ -199,12 +197,16 @@ func (s *Store) applyLandingQuotaPlan(ctx context.Context, baseURL, token string
 	return s.saveLandingController(ctx, state)
 }
 
-func reconcileLandingNativeClientEnabled(ctx context.Context, baseURL, token, email string, inboundIDs []int) error {
+func reconcileLandingNativeClientEnabled(ctx context.Context, baseURL, token, email string, inboundIDs []int, enabled bool) error {
 	nodeIDs, err := landingNativeNodeIDs(ctx, baseURL, token, inboundIDs)
 	if err != nil {
 		return err
 	}
-	for _, action := range []string{"bulkDisable", "bulkEnable"} {
+	actions := []string{"bulkDisable"}
+	if enabled {
+		actions = append(actions, "bulkEnable")
+	}
+	for _, action := range actions {
 		payload, err := threeXUIAPI(ctx, http.MethodPost, baseURL+"/panel/api/clients/"+action, token, "application/json", map[string]any{"emails": []string{email}})
 		if err != nil {
 			return errors.New("agent: native account enable reconciliation was not confirmed; explicit recovery required")
