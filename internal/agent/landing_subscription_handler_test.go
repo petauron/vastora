@@ -46,6 +46,12 @@ func TestLandingSubscriptionHandlerScopesMaterialAndLifecycle(t *testing.T) {
 	store, state, parent := landingSubscriptionTestState(t)
 	native := state.Grants["grant-a"].Material.BaseLink + "\n"
 	account := state.Accounts[parent]
+	// Account state is authoritative after Vastora adopts a native
+	// subscription. A stale 3x-ui lifecycle snapshot must not keep returning
+	// 404 after the saved account plan has been confirmed.
+	stale := state.Subscriptions[parent]
+	stale.Enabled, stale.Total, stale.Used, stale.Expiry = false, 1, 1, 1
+	state.Subscriptions[parent] = stale
 	handler := store.landingSubscriptionHandler()
 	run := func(method, token string) *httptest.ResponseRecorder {
 		t.Helper()

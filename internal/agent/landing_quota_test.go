@@ -67,7 +67,7 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 						_ = json.Unmarshal(item.Fields["totalGB"], &total)
 						_ = json.Unmarshal(item.Fields["expiryTime"], &expiry)
 						_ = json.Unmarshal(item.Fields["reset"], &reset)
-						items = append(items, map[string]any{"email": email, "subId": "sub", "enable": enabled, "totalGB": total, "expiryTime": expiry, "reset": reset, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+						items = append(items, map[string]any{"email": email, "subId": "sub", "enable": enabled, "totalGB": total, "expiryTime": expiry, "reset": reset, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]any{"enable": enabled, "total": total, "expiryTime": expiry, "reset": reset, "up": int64(0), "down": int64(0)}})
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
 				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
@@ -148,7 +148,7 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 			if err := store.applyLandingQuotaPlan(context.Background(), server.URL, "native-token", recovered, parent); err != nil {
 				t.Fatal(err)
 			}
-			wantWrites := []string{grant.Task.Grant.FixedUser, account.Email}
+			wantWrites := []string{grant.Task.Grant.FixedUser, grant.Task.Grant.FixedUser, account.Email, account.Email}
 			wantLimits := slices.Clone(account.PendingLimits)
 			if stop {
 				wantWrites = []string{grant.Task.Grant.FixedUser, account.Email, grant.Task.Grant.FixedUser}
@@ -195,7 +195,7 @@ func TestLandingQuotaConfirmationDoesNotRewriteUnchangedClients(t *testing.T) {
 		if r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged" {
 			items := make([]map[string]any, 0, len(identities))
 			for email := range identities {
-				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": true, "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": true, "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]any{"enable": true, "total": int64(0), "expiryTime": int64(0), "reset": 0, "up": int64(0), "down": int64(0)}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
 			return
@@ -246,7 +246,7 @@ func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged":
 			items := make([]map[string]any, 0, len(identities))
 			for email := range identities {
-				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": enforcementEnabled[email], "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": mainEnabled[email], "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]any{"enable": enforcementEnabled[email], "total": int64(0), "expiryTime": int64(0), "reset": 0, "up": int64(0), "down": int64(0)}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/panel/api/clients/get/"):
@@ -295,6 +295,83 @@ func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
 	}
 }
 
+func TestLandingQuotaRepairsExpiredEnabledEnforcementBeforeReenable(t *testing.T) {
+	store, state, parent := landingSubscriptionTestState(t)
+	account := state.Accounts[parent]
+	account.Total, account.Expiry = 0, 0
+	limits, _, err := landing.AllocateQuota(account.Total, account.Enabled, account.Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account.Limits = slices.Clone(limits)
+	account.PendingLimits = slices.Clone(limits)
+	account.PendingExpiry = account.Expiry
+	state.Accounts[parent] = account
+	grant := state.Grants["grant-a"]
+	identities := map[string]string{account.Email: "11111111-2222-4333-8444-555555555555", grant.Task.Grant.FixedUser: grant.Task.FixedUUID}
+	enforcementEnabled := map[string]bool{account.Email: true, grant.Task.Grant.FixedUser: false}
+	enforcementExpiry := map[string]int64{account.Email: 0, grant.Task.Grant.FixedUser: 1}
+	writes := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged":
+			items := make([]map[string]any, 0, len(identities))
+			for email := range identities {
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": true, "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]any{"enable": enforcementEnabled[email], "total": int64(0), "expiryTime": enforcementExpiry[email], "reset": 0, "up": int64(0), "down": int64(0)}})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/panel/api/clients/get/"):
+			email := strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")
+			uuid, ok := identities[email]
+			if !ok {
+				t.Error("unexpected client read", email)
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"client": map[string]any{
+				"id": uuid, "email": email, "totalGB": int64(0), "enable": true, "expiryTime": int64(0), "reset": int64(0),
+			}, "inboundIds": []int{9}}})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/panel/api/clients/update/"):
+			email := strings.TrimPrefix(r.URL.Path, "/panel/api/clients/update/")
+			var fields map[string]json.RawMessage
+			var enabled bool
+			var expiry int64
+			if email != grant.Task.Grant.FixedUser || json.NewDecoder(r.Body).Decode(&fields) != nil || json.Unmarshal(fields["enable"], &enabled) != nil || json.Unmarshal(fields["expiryTime"], &expiry) != nil {
+				t.Error("expired enforcement repair did not send the complete active plan")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			writes = append(writes, r.URL.Path)
+			if len(writes) == 1 && (enabled || expiry != 1) || len(writes) == 2 && (!enabled || expiry != 0) || len(writes) > 2 {
+				t.Error("expired enforcement repair did not transition through a disabled checkpoint")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			enforcementEnabled[email] = enabled
+			enforcementExpiry[email] = expiry
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"nodePending": false}})
+		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
+		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/nodes/get/7":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 7, "enable": true, "status": "online", "configDirty": false}})
+		default:
+			t.Error("unexpected native operation", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	if err := store.applyLandingQuotaPlan(context.Background(), server.URL, "native-token", state, parent); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(writes, []string{"/panel/api/clients/update/" + grant.Task.Grant.FixedUser, "/panel/api/clients/update/" + grant.Task.Grant.FixedUser}) {
+		t.Fatal("expired enforcement was not repaired through a full client update", writes)
+	}
+	if !enforcementEnabled[grant.Task.Grant.FixedUser] || enforcementExpiry[grant.Task.Grant.FixedUser] != 0 || len(state.Accounts[parent].PendingLimits) != 0 {
+		t.Fatal("repaired quota was not committed")
+	}
+}
+
 func TestLandingQuotaAcceptsNormalizedExpiryForDisabledClients(t *testing.T) {
 	store, state, parent := landingSubscriptionTestState(t)
 	account := state.Accounts[parent]
@@ -318,7 +395,7 @@ func TestLandingQuotaAcceptsNormalizedExpiryForDisabledClients(t *testing.T) {
 		if r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged" {
 			items := make([]map[string]any, 0, len(identities))
 			for email := range identities {
-				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": false, "totalGB": int64(0), "expiryTime": int64(1), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": false, "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]any{"enable": false, "total": int64(0), "expiryTime": int64(1), "reset": 0, "up": int64(0), "down": int64(0)}})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
 			return

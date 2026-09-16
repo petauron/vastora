@@ -46,7 +46,7 @@ func (s *Store) landingSubscriptionHandler() http.Handler {
 				native = &copy
 			}
 		}
-		if native == nil || !native.Enabled || native.Expiry > 0 && native.Expiry <= s.now().UnixMilli() || native.Total > 0 && native.Used >= native.Total {
+		if native == nil {
 			http.NotFound(w, r)
 			return
 		}
@@ -61,6 +61,10 @@ func (s *Store) landingSubscriptionHandler() http.Handler {
 		if value, ok := state.Accounts[native.ID]; ok {
 			copy := value
 			account = &copy
+		}
+		if account == nil && (!native.Enabled || native.Expiry > 0 && native.Expiry <= s.now().UnixMilli() || native.Total > 0 && native.Used >= native.Total) {
+			http.NotFound(w, r)
+			return
 		}
 		mode := landing.FixedMode
 		used, total, expiry := native.Used, native.Total, native.Expiry
