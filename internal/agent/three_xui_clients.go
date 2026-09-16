@@ -333,16 +333,21 @@ func findListedThreeXUIClient(ctx context.Context, baseURL, token, email string)
 }
 
 func listedThreeXUIClientExists(ctx context.Context, baseURL, token, email string) (bool, error) {
+	_, found, err := getListedThreeXUIClient(ctx, baseURL, token, email)
+	return found, err
+}
+
+func getListedThreeXUIClient(ctx context.Context, baseURL, token, email string) (ThreeXUIClientView, bool, error) {
 	clients, err := listThreeXUIClients(ctx, baseURL, token)
 	if err != nil {
-		return false, err
+		return ThreeXUIClientView{}, false, err
 	}
 	for _, client := range clients {
 		if client.Email == email {
-			return true, nil
+			return client, true, nil
 		}
 	}
-	return false, nil
+	return ThreeXUIClientView{}, false, nil
 }
 
 func deleteThreeXUIClientIfExists(ctx context.Context, baseURL, token, email string) error {

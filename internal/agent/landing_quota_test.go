@@ -57,6 +57,19 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 					return
 				}
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged":
+					items := make([]map[string]any, 0, len(clients))
+					for email, item := range clients {
+						var enabled bool
+						var total, expiry int64
+						var reset int
+						_ = json.Unmarshal(item.Fields["enable"], &enabled)
+						_ = json.Unmarshal(item.Fields["totalGB"], &total)
+						_ = json.Unmarshal(item.Fields["expiryTime"], &expiry)
+						_ = json.Unmarshal(item.Fields["reset"], &reset)
+						items = append(items, map[string]any{"email": email, "subId": "sub", "enable": enabled, "totalGB": total, "expiryTime": expiry, "reset": reset, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
 				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
 					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
 				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/nodes/get/7":
@@ -73,6 +86,19 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 						return
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"client": item.Fields, "inboundIds": []int{9}}})
+				case r.Method == http.MethodPost && (r.URL.Path == "/panel/api/clients/bulkDisable" || r.URL.Path == "/panel/api/clients/bulkEnable"):
+					var request struct {
+						Emails []string `json:"emails"`
+					}
+					if json.NewDecoder(r.Body).Decode(&request) != nil || len(request.Emails) != 1 || clients[request.Emails[0]] == nil {
+						t.Error("unexpected quota reconciliation")
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					email := request.Emails[0]
+					writes = append(writes, email)
+					clients[email].Fields["enable"], _ = json.Marshal(strings.HasSuffix(r.URL.Path, "bulkEnable"))
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"changed": 1}})
 				case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/panel/api/clients/update/"):
 					email := strings.TrimPrefix(r.URL.Path, "/panel/api/clients/update/")
 					item := clients[email]
@@ -166,6 +192,14 @@ func TestLandingQuotaConfirmationDoesNotRewriteUnchangedClients(t *testing.T) {
 	writes := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged" {
+			items := make([]map[string]any, 0, len(identities))
+			for email := range identities {
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": true, "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
+			return
+		}
 		uuid, ok := identities[strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")]
 		if r.Method != http.MethodGet || !ok {
 			writes++
@@ -203,11 +237,18 @@ func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
 	state.Accounts[parent] = account
 	grant := state.Grants["grant-a"]
 	identities := map[string]string{account.Email: "11111111-2222-4333-8444-555555555555", grant.Task.Grant.FixedUser: grant.Task.FixedUUID}
-	enabled := map[string]bool{account.Email: true, grant.Task.Grant.FixedUser: false}
+	mainEnabled := map[string]bool{account.Email: true, grant.Task.Grant.FixedUser: true}
+	enforcementEnabled := map[string]bool{account.Email: true, grant.Task.Grant.FixedUser: false}
 	writes := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged":
+			items := make([]map[string]any, 0, len(identities))
+			for email := range identities {
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": enforcementEnabled[email], "totalGB": int64(0), "expiryTime": int64(0), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/panel/api/clients/get/"):
 			email := strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")
 			uuid, ok := identities[email]
@@ -217,7 +258,7 @@ func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"client": map[string]any{
-				"id": uuid, "totalGB": int64(0), "enable": enabled[email], "expiryTime": int64(0), "reset": int64(0),
+				"id": uuid, "totalGB": int64(0), "enable": mainEnabled[email], "expiryTime": int64(0), "reset": int64(0),
 			}, "inboundIds": []int{9}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
@@ -233,7 +274,9 @@ func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
 				return
 			}
 			writes = append(writes, r.URL.Path)
-			enabled[grant.Task.Grant.FixedUser] = strings.HasSuffix(r.URL.Path, "bulkEnable")
+			value := strings.HasSuffix(r.URL.Path, "bulkEnable")
+			mainEnabled[grant.Task.Grant.FixedUser] = value
+			enforcementEnabled[grant.Task.Grant.FixedUser] = value
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"changed": 1}})
 		default:
 			t.Error("unexpected native operation", r.Method, r.URL.Path)
@@ -247,8 +290,56 @@ func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
 	if !reflect.DeepEqual(writes, []string{"/panel/api/clients/bulkDisable", "/panel/api/clients/bulkEnable"}) {
 		t.Fatal("stale enforcement was not repaired with one bounded reconciliation", writes)
 	}
-	if !enabled[grant.Task.Grant.FixedUser] || len(state.Accounts[parent].PendingLimits) != 0 {
+	if !mainEnabled[grant.Task.Grant.FixedUser] || !enforcementEnabled[grant.Task.Grant.FixedUser] || len(state.Accounts[parent].PendingLimits) != 0 {
 		t.Fatal("reconciled quota was not committed")
+	}
+}
+
+func TestLandingQuotaAcceptsNormalizedExpiryForDisabledClients(t *testing.T) {
+	store, state, parent := landingSubscriptionTestState(t)
+	account := state.Accounts[parent]
+	account.Total, account.Expiry, account.Blocked = 0, 0, true
+	limits, _, err := landing.AllocateQuota(account.Total, account.Enabled, account.Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range limits {
+		limits[i].Enabled = false
+	}
+	account.Limits = slices.Clone(limits)
+	account.PendingLimits = slices.Clone(limits)
+	account.PendingExpiry = account.Expiry
+	state.Accounts[parent] = account
+	grant := state.Grants["grant-a"]
+	identities := map[string]string{account.Email: "11111111-2222-4333-8444-555555555555", grant.Task.Grant.FixedUser: grant.Task.FixedUUID}
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged" {
+			items := make([]map[string]any, 0, len(identities))
+			for email := range identities {
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": false, "totalGB": int64(0), "expiryTime": int64(1), "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]int64{"up": 0, "down": 0}})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
+			return
+		}
+		uuid, ok := identities[strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")]
+		if r.Method != http.MethodGet || !ok {
+			writes++
+			t.Error("normalized disabled quota attempted a native write", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"client": map[string]any{
+			"id": uuid, "totalGB": int64(0), "enable": false, "expiryTime": int64(0), "reset": int64(0),
+		}, "inboundIds": []int{9}}})
+	}))
+	defer server.Close()
+	if err := store.applyLandingQuotaPlan(context.Background(), server.URL, "native-token", state, parent); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 0 || len(state.Accounts[parent].PendingLimits) != 0 {
+		t.Fatal("normalized disabled quota did not commit read-only")
 	}
 }
 
