@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.155](https://github.com/petauron/vastora/compare/v0.1.0-alpha.154...v0.1.0-alpha.155) (2026-09-16)
+
+
+### Bug Fixes
+
+* **landing:** reconcile split 3x-ui quota state ([#508](https://github.com/petauron/vastora/issues/508)) ([76d3afa](https://github.com/petauron/vastora/commit/76d3afaeb6af3c8b5a5329c88bf8763275d2b573))
+
 ## [0.1.0-alpha.154](https://github.com/petauron/vastora/compare/v0.1.0-alpha.153...v0.1.0-alpha.154) (2026-09-16)
 
 
