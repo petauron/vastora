@@ -242,19 +242,19 @@ func TestConfigureSetupDNSRejectsAnUnreportedPublicAddress(t *testing.T) {
 func TestSetupGatewayBindingAcceptsAnAutomaticallyObservedCloudMapping(t *testing.T) {
 	candidates := []networking.Candidate{{Address: "10.0.0.157", Interface: "enp0s6", Kind: networking.KindLAN}}
 	binding, err := validateSetupGatewayBinding(SetupDNSInput{
-		PublicAddress:  "192.9.143.79",
+		PublicAddress:  "203.0.113.79",
 		GatewayAddress: "10.0.0.157",
-	}, candidates, "192.9.143.79", "10.0.0.157")
+	}, candidates, "203.0.113.79", "10.0.0.157")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if binding.PublicAddress != "192.9.143.79" || binding.BindAddress != "10.0.0.157" {
+	if binding.PublicAddress != "203.0.113.79" || binding.BindAddress != "10.0.0.157" {
 		t.Fatalf("unexpected automatic cloud mapping: %#v", binding)
 	}
 	if _, err := validateSetupGatewayBinding(SetupDNSInput{
-		PublicAddress:  "192.9.143.80",
+		PublicAddress:  "203.0.113.80",
 		GatewayAddress: "10.0.0.157",
-	}, candidates, "192.9.143.79", "10.0.0.157"); err == nil || !strings.Contains(err.Error(), "confirm") {
+	}, candidates, "203.0.113.79", "10.0.0.157"); err == nil || !strings.Contains(err.Error(), "confirm") {
 		t.Fatalf("an unobserved cloud mapping was accepted without confirmation: %v", err)
 	}
 }

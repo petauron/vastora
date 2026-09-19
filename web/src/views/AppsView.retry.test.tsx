@@ -26,7 +26,7 @@ function fixture(id = "pulse-agent"): AppData {
     actions: [], integrations: [], threeXUIControllerMigrations: [],
     agents: [
       { id: "first", name: "AKKO CN2", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.1" } },
-      { id: "failed-node", name: "DataWave CN2", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } },
+      { id: "failed-node", name: "Edge Node A", connected: true, credentialRevoked: false, siteId: "site", capabilities: { docker: true }, networkProfile: { serviceAddress: "10.0.0.2" } },
     ],
     apps: [{ key: appKey, sourceId: "vastora-official", fetchedAt: "2026-09-11T00:00:00Z", app: {
       id, version: "0.1.0-alpha.2", name: { en: "Collector", "zh-CN": "探针" },
@@ -71,7 +71,7 @@ describe("application installation retry", () => {
     const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ ...data.deployments[0], state: "pending" } as Deployment);
     render(data);
     retry();
-    expect(selectedNode()?.textContent).toContain("DataWave CN2");
+    expect(selectedNode()?.textContent).toContain("Edge Node A");
     expect(selectedNode()?.disabled).toBe(true);
     expect(button("开始安装").disabled).toBe(false);
     await act(async () => button("开始安装").click());
@@ -84,7 +84,7 @@ describe("application installation retry", () => {
     const create = vi.spyOn(api, "createDeployment");
     render(data);
     retry();
-    expect(selectedNode()?.textContent).toContain("DataWave CN2");
+    expect(selectedNode()?.textContent).toContain("Edge Node A");
     expect(selectedNode()?.getAttribute("aria-invalid")).toBe("true");
     expect(button("开始安装").disabled).toBe(true);
     expect(document.getElementById("deployment-agent-error")?.textContent).toContain("原节点暂时无法安装");
@@ -99,13 +99,13 @@ describe("application installation retry", () => {
     retry();
     const unavailable = { ...data, agents: data.agents.filter((agent) => agent.id !== "failed-node") };
     render(unavailable);
-    expect(selectedNode()?.textContent).toContain("DataWave CN2");
+    expect(selectedNode()?.textContent).toContain("Edge Node A");
     expect(button("开始安装").disabled).toBe(true);
     // Even a direct form submission must not bypass the eligibility check.
     await act(async () => document.querySelector('[role="dialog"] form')?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
     expect(create).not.toHaveBeenCalled();
     render(data);
-    expect(selectedNode()?.textContent).toContain("DataWave CN2");
+    expect(selectedNode()?.textContent).toContain("Edge Node A");
     expect(button("开始安装").disabled).toBe(false);
   });
 
@@ -114,7 +114,7 @@ describe("application installation retry", () => {
     data.applications.push({ id: "installed", nodeId: "failed-node", appKey: data.apps[0].key, status: "running", installedVersion: "0.1.0-alpha.2" } as AppData["applications"][number]);
     render(data);
     retry();
-    expect(selectedNode()?.textContent).toContain("DataWave CN2");
+    expect(selectedNode()?.textContent).toContain("Edge Node A");
     expect(button("开始安装").disabled).toBe(true);
   });
 

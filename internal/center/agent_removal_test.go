@@ -31,7 +31,7 @@ func TestRemoveOfflineAgentCleansInstallationsAndPreservesOtherNodes(t *testing.
 	s := openOrchestrationStore(t)
 	defer s.Close()
 	ctx := context.Background()
-	node := enrollAccessTestNode(t, s, "DMIT CN2", "10.0.0.80")
+	node := enrollAccessTestNode(t, s, "Edge Node B", "10.0.0.80")
 	other := enrollAccessTestNode(t, s, "other", "10.0.0.81")
 	if _, err := s.db.Exec(`INSERT OR IGNORE INTO site_gateways(site_id,agent_id,created_at) SELECT site_id,id,'' FROM agents WHERE id=?`, other.ID); err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestRemoveOfflineAgentCleansInstallationsAndPreservesOtherNodes(t *testing.
 		t.Fatal(err)
 	}
 	expireRemovalNode(t, s, node.ID)
-	if err = s.StartAgentRemoval(ctx, node.ID, " DMIT CN2 "); err != nil {
+	if err = s.StartAgentRemoval(ctx, node.ID, " Edge Node B "); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{Version: "test"}); err == nil {

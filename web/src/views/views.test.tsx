@@ -152,11 +152,11 @@ describe("network and app views", () => {
   });
 
   it("keeps Cloudflare zones separate from the Vastora service namespace", () => {
-    expect(vastoraDomainDefaults("Kuddyx.COM.")).toEqual({
-      zone: "kuddyx.com",
-      namespace: "vastora.kuddyx.com",
-      centerURL: "https://center.vastora.kuddyx.com",
-      headscaleURL: "https://headscale.vastora.kuddyx.com"
+    expect(vastoraDomainDefaults("Example.COM.")).toEqual({
+      zone: "example.com",
+      namespace: "vastora.example.com",
+      centerURL: "https://center.vastora.example.com",
+      headscaleURL: "https://headscale.vastora.example.com"
     });
   });
 
@@ -1646,7 +1646,7 @@ describe("network and app views", () => {
     expect(container.textContent).not.toContain("Default");
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "DMIT");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Edge Site");
       location.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
@@ -1686,20 +1686,20 @@ describe("network and app views", () => {
 
   it("shows a cloud public mapping as unverified before the pre-install probe", () => {
     const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="192.9.143.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="203.0.113.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Oracle ARM");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Cloud Node A");
       location.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
     act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
 
-    expect(container.textContent).toContain("发现云公网地址 192.9.143.79");
+    expect(container.textContent).toContain("发现云公网地址 203.0.113.79");
     expect(container.textContent).toContain("本机 10.0.0.157");
     expect(container.textContent).toContain("这还不代表公网能够访问");
     expect(container.textContent).toContain("不需要先安装 Caddy");
-    expect(container.querySelector<HTMLInputElement>("#setup-public-address")?.value).toBe("192.9.143.79");
+    expect(container.querySelector<HTMLInputElement>("#setup-public-address")?.value).toBe("203.0.113.79");
     expect(container.querySelector<HTMLButtonElement>("#setup-gateway-address")?.textContent).toContain("10.0.0.157");
     expect(container.querySelector<HTMLButtonElement>("#setup-nat-confirmed")?.disabled).toBe(true);
   });
@@ -1707,14 +1707,14 @@ describe("network and app views", () => {
   it("verifies temporary public listeners before showing the setup review", async () => {
     let completeVerification: (() => void) | undefined;
     const verification = new Promise<{ status: "ready"; publicAddress: string; gatewayAddress: string; ports: number[] }>((resolve) => {
-      completeVerification = () => resolve({ status: "ready", publicAddress: "192.9.143.79", gatewayAddress: "10.0.0.157", ports: [80, 443] });
+      completeVerification = () => resolve({ status: "ready", publicAddress: "203.0.113.79", gatewayAddress: "10.0.0.157", ports: [80, 443] });
     });
     const verify = vi.spyOn(api, "verifySetupPublicEntry").mockReturnValue(verification);
     const gatewayAddresses = [{ address: "10.0.0.157", interface: "enp0s6", kind: "lan" as const, observedAt: "2026-08-24T00:00:00Z" }];
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="192.9.143.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={gatewayAddresses} language="zh-CN" observedPublicAddress="203.0.113.79" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={[]} publicAddressDetection="cloud_mapping_candidate" suggestedAgentConnectUrl="" suggestedGatewayAddress="10.0.0.157" />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Oracle ARM");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Cloud Node A");
       location.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
@@ -1724,7 +1724,7 @@ describe("network and app views", () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click();
       await Promise.resolve();
     });
-    expect(verify).toHaveBeenCalledWith({ publicAddress: "192.9.143.79", gatewayAddress: "10.0.0.157", natConfirmed: false });
+    expect(verify).toHaveBeenCalledWith({ publicAddress: "203.0.113.79", gatewayAddress: "10.0.0.157", natConfirmed: false });
     expect(container.textContent).toContain("正在检测公网入口");
     expect(container.textContent).toContain("完成后会立即释放端口");
 
@@ -1739,7 +1739,7 @@ describe("network and app views", () => {
   it("persists and submits an explicitly confirmed fixed endpoint during first setup", async () => {
     window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
       step: 2,
-      name: "Oracle ARM",
+      name: "Cloud Node A",
       timezone: "Asia/Singapore",
       domainSuffix: "vastora.example.com",
       mode: "headscale",
@@ -1781,7 +1781,7 @@ describe("network and app views", () => {
   it("offers a hardened direct Tunnel fallback during private-network setup", async () => {
     window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
       step: 2,
-      name: "Oracle ARM",
+      name: "Cloud Node A",
       timezone: "Asia/Singapore",
       domainSuffix: "vastora.example.com",
       mode: "headscale",
@@ -1837,7 +1837,7 @@ describe("network and app views", () => {
     let container = render(<SetupWizard {...props} />);
     const location = container.querySelector<HTMLInputElement>("#setup-location-name")!;
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "DMIT");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(location, "Edge Site");
       location.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
@@ -1857,21 +1857,21 @@ describe("network and app views", () => {
       step: 2,
       name: "Cloudlead",
       timezone: "Asia/Singapore",
-      domainSuffix: "kuddyx.com",
+      domainSuffix: "example.com",
       mode: "headscale",
-      agentConnectUrl: "https://center.kuddyx.com",
+      agentConnectUrl: "https://center.example.com",
       headscaleMode: "builtin",
-      headscaleUrl: "https://headscale.kuddyx.com",
+      headscaleUrl: "https://headscale.example.com",
       publicAddress: "203.0.113.10"
     }));
     const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
     const props = { builtinHeadscaleAvailable: true, cloudflareConfigured: false, cloudflareOAuthAvailable: true, gatewayAddressCandidates: addresses, language: "zh-CN" as const, observedPublicAddress: "203.0.113.10", onComplete: async () => undefined, onLanguage: () => undefined, publicAddressCandidates: addresses, publicAddressDetection: "direct" as const, suggestedAgentConnectUrl: "", suggestedGatewayAddress: "203.0.113.10" };
     const container = render(<SetupWizard {...props} />);
 
-    expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://center.vastora.kuddyx.com");
-    expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://headscale.vastora.kuddyx.com");
+    expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://center.vastora.example.com");
+    expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://headscale.vastora.example.com");
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("返回"))?.click());
-    expect(container.querySelector<HTMLInputElement>("#setup-domain")?.value).toBe("vastora.kuddyx.com");
+    expect(container.querySelector<HTMLInputElement>("#setup-domain")?.value).toBe("vastora.example.com");
     expect(container.textContent).toContain("服务域名空间");
   });
 
@@ -1888,7 +1888,7 @@ describe("network and app views", () => {
       publicAddress: "203.0.113.10"
     }));
     const addresses = [{ address: "203.0.113.10", interface: "eth0", kind: "public" as const, observedAt: "2026-08-19T00:00:00Z" }];
-    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="kuddyx.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
+    const container = render(<SetupWizard builtinHeadscaleAvailable cloudflareConfigured cloudflareOAuthAvailable cloudflareZone="example.com" gatewayAddressCandidates={addresses} language="zh-CN" observedPublicAddress="203.0.113.10" onComplete={async () => undefined} onLanguage={() => undefined} publicAddressCandidates={addresses} publicAddressDetection="direct" suggestedAgentConnectUrl="" suggestedGatewayAddress="203.0.113.10" />);
 
     expect(container.querySelector<HTMLInputElement>("#setup-center-url")?.value).toBe("https://control.ops.example.net");
     expect(container.querySelector<HTMLInputElement>("#setup-headscale-url")?.value).toBe("https://mesh.ops.example.net");
@@ -1897,7 +1897,7 @@ describe("network and app views", () => {
   });
 
   it("explains a conflicting DNS record instead of reporting an invalid form", () => {
-    const error = new APIError("center: DNS record center.vastora.kuddyx.com already exists with a different value", 400, "dns_record_conflict");
+    const error = new APIError("center: DNS record center.vastora.example.com already exists with a different value", 400, "dns_record_conflict");
     expect(userError("zh-CN", error)).toContain("已有指向其他服务器的 DNS 记录");
     expect(userError("en", error)).toContain("did not overwrite");
   });
@@ -2044,14 +2044,14 @@ describe("network and app views", () => {
 
   it("stops an offline node's access without requiring its apps or gateway to be removed", async () => {
     const data = dashboard();
-    data.agents[0].name = "DMIT CN2";
+    data.agents[0].name = "Edge Node B";
     data.agents[0].connected = false;
     const revoke = vi.spyOn(api, "revokeAgentCredential").mockResolvedValue({ revoked: true });
     const disable = vi.spyOn(api, "disableAgent");
     const remove = vi.spyOn(api, "deleteAgent");
     const deploy = vi.spyOn(api, "createDeployment");
     const container = render(<NodesView data={data} language="zh-CN" mutate={async (operation) => { await operation(); }} onNavigate={() => undefined} />);
-    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 DMIT CN2"]')?.click());
+    act(() => container.querySelector<HTMLButtonElement>('[aria-label="管理 Edge Node B"]')?.click());
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入")?.click());
     const input = document.querySelector<HTMLInputElement>("#stop-node-access-name")!;
     const confirm = () => [...document.querySelectorAll("button")].find((button) => button.textContent === "停止接入" && button.type === "submit")!;
@@ -2059,13 +2059,13 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("无需节点在线");
     expect(document.body.textContent).toContain("不会卸载应用、删除记录或清理服务器数据");
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "DMIT-CN2");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "Edge-Node-B");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(confirm().disabled).toBe(true);
     expect(input.getAttribute("aria-invalid")).toBe("true");
     act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, " DMIT CN2 ");
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, " Edge Node B ");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(confirm().disabled).toBe(false);

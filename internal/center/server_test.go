@@ -495,7 +495,7 @@ func TestSetupStatusSuggestsTheKernelRouteForACloudPublicAddress(t *testing.T) {
 			{Address: "10.77.0.6", Interface: "wg0", Kind: networking.KindLAN, ObservedAt: now},
 		}, nil
 	}
-	store.lookupPublicAddress = func(context.Context) (string, error) { return "192.9.143.79", nil }
+	store.lookupPublicAddress = func(context.Context) (string, error) { return "203.0.113.79", nil }
 	store.lookupGatewayAddress = func(string) (string, error) { return "10.0.0.157", nil }
 	server := NewServer(store, "", false).WithInfrastructureManager(&fakeBuiltinHeadscaleInstaller{})
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/setup/status", nil)
@@ -506,7 +506,7 @@ func TestSetupStatusSuggestsTheKernelRouteForACloudPublicAddress(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if status["observedPublicAddress"] != "192.9.143.79" || status["suggestedGatewayAddress"] != "10.0.0.157" || status["publicAddressDetection"] != "cloud_mapping_candidate" {
+	if status["observedPublicAddress"] != "203.0.113.79" || status["suggestedGatewayAddress"] != "10.0.0.157" || status["publicAddressDetection"] != "cloud_mapping_candidate" {
 		t.Fatalf("unexpected cloud public suggestion: %#v", status)
 	}
 }

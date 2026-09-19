@@ -13,13 +13,13 @@ describe("Center API client", () => {
     document.cookie = "vastora_csrf=csrf-value; Path=/";
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ removing: true }), { status: 202, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
-    await api.removeOfflineAgent("agent/a b", "DMIT CN2");
+    await api.removeOfflineAgent("agent/a b", "Edge Node B");
     const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(path).toBe("/api/v1/agents/agent%2Fa%20b/remove");
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("same-origin");
     expect(new Headers(init.headers).get("X-CSRF-Token")).toBe("csrf-value");
-    expect(JSON.parse(String(init.body))).toEqual({ confirmation: "DMIT CN2" });
+    expect(JSON.parse(String(init.body))).toEqual({ confirmation: "Edge Node B" });
   });
 
   it("stops access by node identity without requesting uninstall or deletion", async () => {

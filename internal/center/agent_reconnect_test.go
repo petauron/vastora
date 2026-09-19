@@ -21,7 +21,7 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?)`, agentConnectionModeSetting, "lan", agentConnectURLSetting, "https://center.example.com"); err != nil {
 		t.Fatal(err)
 	}
-	originalEnrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: siteID, Name: "DataWave 9929", CenterURL: "https://center.example.com", Gateway: true, Tunnel: true})
+	originalEnrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: siteID, Name: "Edge Node A", CenterURL: "https://center.example.com", Gateway: true, Tunnel: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.Name != "DataWave 9929" || !profile.Capabilities.Docker || !profile.Capabilities.Gateway || !profile.Capabilities.Tunnel || strings.Join(profile.Roles, ",") != "worker,gateway" {
+	if profile.Name != "Edge Node A" || !profile.Capabilities.Docker || !profile.Capabilities.Gateway || !profile.Capabilities.Tunnel || strings.Join(profile.Roles, ",") != "worker,gateway" {
 		t.Fatalf("reconnect profile changed: %#v", profile)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO agent_updates(id, agent_id, target_version, state, created_at, updated_at) VALUES('superseded-update', ?, '0.1.0-alpha.104', 'pending', ?, ?)`, original.ID, clock.Format(time.RFC3339Nano), clock.Format(time.RFC3339Nano)); err != nil {
@@ -74,7 +74,7 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replacement.ID != original.ID || replacement.Credential == original.Credential || replacement.Name != "DataWave 9929" {
+	if replacement.ID != original.ID || replacement.Credential == original.Credential || replacement.Name != "Edge Node A" {
 		t.Fatalf("replacement identity = %#v, original ID = %q", replacement, original.ID)
 	}
 	replayed, err := store.EnrollAgentOperation(ctx, current.Token, "reconnect-operation-1", "0.1.0-alpha.104", "linux", "arm64", replacementKey)
@@ -109,7 +109,7 @@ func TestAgentReconnectEnrollmentReusesOfflineIdentity(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT state FROM agent_updates WHERE id = 'superseded-update'`).Scan(&updateState); err != nil {
 		t.Fatal(err)
 	}
-	if name != "DataWave 9929" || storedSiteID != siteID || architecture != "arm64" || credentialRevokedAt != "" || !bytes.Equal(storedKey, replacementKey) || appliedInstallations != 0 || runtimeGeneration != 0 || remoteUpdateSupported != 0 || updateState != "failed" {
+	if name != "Edge Node A" || storedSiteID != siteID || architecture != "arm64" || credentialRevokedAt != "" || !bytes.Equal(storedKey, replacementKey) || appliedInstallations != 0 || runtimeGeneration != 0 || remoteUpdateSupported != 0 || updateState != "failed" {
 		t.Fatalf("reconnected Agent state changed incorrectly: name=%q site=%q arch=%q revoked=%q installs=%d runtime=%d update=%d updateState=%q", name, storedSiteID, architecture, credentialRevokedAt, appliedInstallations, runtimeGeneration, remoteUpdateSupported, updateState)
 	}
 }
