@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/platform"
 )
@@ -225,6 +227,76 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	}
 	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task != nil {
 		t.Fatalf("runtime migration was queued more than once: task=%#v err=%v", task, err)
+	}
+}
+
+func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "xray-runtime-migration", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.86", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.86", LANAddress: "10.0.0.86", EnabledKinds: []string{networking.KindLAN}})
+
+	value, _, err := readAcceptedOfficialCatalog(ctx, store.db, "stable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current catalog.AppManifest
+	for _, manifest := range value.Apps {
+		if manifest.ID == "3x-ui" {
+			current = manifest
+			break
+		}
+	}
+	if current.ID == "" {
+		t.Fatal("3x-ui manifest not found in official catalog fixture")
+	}
+	legacy := current
+	legacy.Version = "3.6.0"
+	legacy.Images = slices.DeleteFunc(slices.Clone(current.Images), func(image catalog.Image) bool {
+		return image.Name == "xray-core"
+	})
+	legacyJSON, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := store.now().UTC()
+	stamp := now.Format(time.RFC3339Nano)
+	applicationID := "xray-runtime-migration-app"
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id, name, node_id, site_id, app_key, image, status, runtime, role, runtime_generation, created_at, updated_at)
+		VALUES(?, 'Vastora Proxy', ?, ?, ?, '', 'running', 'docker', 'worker', 1, ?, ?)`, applicationID, node.ID, testSiteID(t, store), threeXUIAppKey, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, operation, state, created_at, updated_at, application_id, runtime_generation)
+		VALUES('legacy-xray-deployment', ?, ?, ?, ?, '{}', '10.0.0.86', 'configure', 'succeeded', ?, ?, ?, 1)`, node.ID, threeXUIAppKey, legacy.Version, legacyJSON, stamp, stamp, applicationID); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.queueRuntimeApplicationDeployments(ctx, tx, node.ID, platform.ApplicationRuntimeGeneration, now); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var version string
+	var manifestJSON []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT app_version, manifest_json FROM deployments WHERE application_id = ? AND state = 'pending'`, applicationID).Scan(&version, &manifestJSON); err != nil {
+		t.Fatal(err)
+	}
+	var queued catalog.AppManifest
+	if err := json.Unmarshal(manifestJSON, &queued); err != nil {
+		t.Fatal(err)
+	}
+	if version != current.Version || queued.Version != current.Version {
+		t.Fatalf("queued manifest version = %q/%q, want %q", version, queued.Version, current.Version)
+	}
+	if !slices.ContainsFunc(queued.Images, func(image catalog.Image) bool { return image.Name == "xray-core" }) {
+		t.Fatal("queued Xray worker migration did not use the accepted xray-core image")
 	}
 }
 
