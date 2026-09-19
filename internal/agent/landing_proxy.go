@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 func (s *Store) landingHealth() *landing.Health {
@@ -53,12 +55,87 @@ func (s *Store) checkLandingApplicationMutation(ctx context.Context, appKey stri
 	return nil
 }
 
+func isLandingXrayRuntimeMigration(task DeploymentTask) bool {
+	if task.AppKey != threeXUIKey || task.ApplicationRole != "worker" || task.Operation != "configure" || task.RequiredRuntimeGeneration != platform.ApplicationRuntimeGeneration {
+		return false
+	}
+	image, err := declaredImage(task.Manifest, "xray-core")
+	return err == nil && image == xrayWorkerImageReference
+}
+
+// Caller holds landingMutationMu. The route and its gates remain in force
+// while the audited worker replacement transfers ownership from the legacy
+// container to Vastora Xray.
+func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task DeploymentTask) (*landingRuntimeState, error) {
+	if !isLandingXrayRuntimeMigration(task) {
+		if err := s.checkLandingApplicationMutation(ctx, task.AppKey); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	state, err := s.landingRuntime(ctx)
+	if err != nil || state == nil || state.Route == nil {
+		return nil, err
+	}
+	if state.ApplicationID != task.ApplicationID || state.Phase != "applied" || state.Applied == nil || state.Applied.Revision != state.Desired.Revision || state.Retiring != nil {
+		return nil, errors.New("agent: active landing runtime requires reconciliation before Xray migration")
+	}
+	if err := s.stopLandingMonitor(ctx); err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+// Caller holds landingMutationMu. A successful replacement is not complete
+// until the landing checkpoint names the new container, its restart policy is
+// fenced again, and the fail-closed monitor has resumed.
+func (s *Store) finishLandingXrayRuntimeMigration(ctx context.Context, previous *landingRuntimeState, deploymentErr error) error {
+	if previous == nil {
+		return deploymentErr
+	}
+	recoveryContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if deploymentErr != nil {
+		if resumeErr := s.resumeLandingRuntimeLocked(recoveryContext); resumeErr != nil {
+			return uncertainTaskOutcome(errors.Join(deploymentErr, fmt.Errorf("agent: resume landing after Xray rollback: %w", resumeErr)))
+		}
+		return deploymentErr
+	}
+	docker, bridge, _, err := openLandingDocker(recoveryContext, previous.ApplicationID, "")
+	if err != nil {
+		return uncertainTaskOutcome(fmt.Errorf("agent: adopt migrated Xray landing runtime: %w", err))
+	}
+	defer docker.engine.Close()
+	if docker.component != "xray" || bridge != previous.Bridge {
+		return uncertainTaskOutcome(errors.New("agent: migrated Xray landing runtime identity changed"))
+	}
+	if err := docker.restartPolicy(recoveryContext, "no"); err != nil {
+		return uncertainTaskOutcome(fmt.Errorf("agent: fence migrated Xray landing runtime: %w", err))
+	}
+	updated := *previous
+	updated.ContainerID = docker.containerID
+	if err := s.saveLandingRuntime(recoveryContext, updated); err != nil {
+		return uncertainTaskOutcome(fmt.Errorf("agent: persist migrated Xray landing identity: %w", err))
+	}
+	if err := s.resumeLandingRuntimeLocked(recoveryContext); err != nil {
+		return uncertainTaskOutcome(fmt.Errorf("agent: resume migrated Xray landing runtime: %w", err))
+	}
+	return nil
+}
+
 // ResumeLandingRuntime restores only the fail-closed runtime monitor. It never
 // writes Xray routes, changes restart policy, starts a container, advances a
 // revision, or terminates existing sessions.
 func (s *Store) ResumeLandingRuntime(ctx context.Context) (result error) {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
+	return s.resumeLandingRuntimeLocked(ctx)
+}
+
+// Caller holds landingMutationMu. Keeping recovery under the same lock lets a
+// worker runtime replacement transfer the persisted container identity before
+// the monitor is restarted.
+func (s *Store) resumeLandingRuntimeLocked(ctx context.Context) (result error) {
 	if s.landingCancel != nil {
 		select {
 		case <-s.landingDone:

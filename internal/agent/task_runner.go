@@ -215,16 +215,20 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			result.NodeDiagnostics, err = &value, checkErr
 		}
 	case "application.apply":
-		if landingErr := store.checkLandingApplicationMutation(ctx, task.AppKey); landingErr != nil {
-			err = landingErr
-		} else if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
+		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
 			err = fmt.Errorf("agent: application task requires runtime generation %d, executor is generation %d", task.RequiredRuntimeGeneration, platform.ApplicationRuntimeGeneration)
 		} else if c.Executor == nil {
 			err = errors.New("agent: application capability is not configured")
 		} else if task.AppKey != komariKey && task.AppKey != pulse.AgentKey && !c.Capabilities.Docker {
 			err = errors.New("agent: Docker capability is not configured")
 		} else {
-			result, err = c.Executor.Deploy(ctx, task)
+			landingState, landingErr := store.prepareLandingXrayRuntimeMigration(ctx, task)
+			if landingErr != nil {
+				err = landingErr
+			} else {
+				result, err = c.Executor.Deploy(ctx, task)
+				err = store.finishLandingXrayRuntimeMigration(ctx, landingState, err)
+			}
 		}
 	case "application.command":
 		// Commands may restart the panel or replace its database. Do not let
