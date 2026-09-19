@@ -42,11 +42,9 @@ func renderXrayWorkerConfig(state xrayWorkerState) ([]byte, error) {
 		for _, field := range []string{"id", "enable", "remark", "up", "down", "total", "expiryTime", "trafficReset", "trafficResetDay", "clientStats", "nodeId", "fallbackParent"} {
 			delete(source, field)
 		}
-		// HAProxy owns public TCP/443. REALITY receives PROXY v2 on the
-		// private service address; HY2 remains host-network UDP/443.
-		if protocol == "vless" {
-			source["listen"] = state.Address
-		} else if protocol == "hysteria" {
+		// HAProxy owns public TCP/443 and reaches REALITY only through the
+		// shared Docker bridge. HY2 uses an explicit host UDP/443 publication.
+		if protocol == "vless" || protocol == "hysteria" {
 			source["listen"] = "0.0.0.0"
 		}
 		runtimeInbounds = append(runtimeInbounds, source)

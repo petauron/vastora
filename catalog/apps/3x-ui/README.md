@@ -6,18 +6,18 @@ forward migration. Runtime ownership is role-specific:
 
 - the single `master` keeps the pinned 3x-ui v3.7.0 image as a temporary,
   one-way migration adapter for its existing controller database;
-- every `worker` runs the pinned official Xray image directly in host-network
-  mode and has no panel, panel database or node-side subscription service;
+- every `worker` runs the pinned official Xray image on the shared private
+  Docker bridge and has no panel, panel database or node-side subscription service;
 - the Agent exposes only the authenticated private endpoints needed by the
   controller adapter and renders the accepted state into Xray configuration.
 
-Worker REALITY listens on the Center-confirmed private service address while
-the node HAProxy remains the only owner of public TCP/443. HY2 uses host-network
-UDP with the pinned Xray 26.9.9 multi-architecture image. Hysteria `finalmask`
+Worker REALITY listens only on bridge-scoped container port 443 while the node
+HAProxy remains the only owner of public TCP/443. HY2 explicitly publishes host
+UDP/443 to the same container port with the pinned Xray 26.9.9 multi-architecture image. Hysteria `finalmask`
 is rejected: upstream documents that a wildcard listener on a multi-homed host
 can reply from the wrong source address, and treats that behavior as a known
-limitation. The Agent rejects a listener route unless its upstream is the applied
-worker's exact private service address. It persists desired worker state
+limitation. The Agent rejects a listener route unless its upstream is the local
+managed Xray Docker alias. It persists desired worker state
 encrypted with separate desired/applied revisions, checkpoints traffic counters
 across Xray restarts, and snapshots the old 3x-ui database before the first
 cutover. Before promotion, a failed candidate restores the previous encrypted
@@ -27,11 +27,10 @@ rollback stops for explicit recovery instead of silently choosing a runtime.
 
 The worker runs as a dedicated non-root identity. Its complete configuration,
 including private protocol material, is readable only by that identity. Landing
-health gates for host-network workers use nftables' socket UID match plus the
-exact peer address and service ports; Agent probes remain outside that gate.
-Legacy controller adapters retain their bridge-scoped gate until they are
-retired. An active landing route must be explicitly disabled before changing a
-node between those runtime models so recovery never guesses which gate owns it.
+health gates use the bridge-scoped runtime identity and exact peer service
+ports; Agent probes remain outside that gate. An active landing route must be
+explicitly disabled before changing runtime ownership so recovery never guesses
+which gate owns it.
 
 Every effective configuration change is rendered completely and checked by the
 same pinned Xray image with `xray run -test` in a network-disabled validator.

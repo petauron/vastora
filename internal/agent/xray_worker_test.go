@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strconv"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	dockernetwork "github.com/moby/moby/api/types/network"
+	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
 func testXrayWorkerState() xrayWorkerState {
@@ -170,7 +173,7 @@ func TestRenderXrayWorkerConfigOwnsPrivateRealitySocket(t *testing.T) {
 	if json.Unmarshal(encoded, &config) != nil || len(config.Inbounds) != 2 {
 		t.Fatal("invalid rendered config")
 	}
-	if config.Inbounds[1]["listen"] != "100.64.0.10" || config.Inbounds[1]["id"] != nil || config.Inbounds[1]["total"] != nil {
+	if config.Inbounds[1]["listen"] != "0.0.0.0" || config.Inbounds[1]["id"] != nil || config.Inbounds[1]["total"] != nil {
 		t.Fatalf("panel metadata leaked into Xray config: %#v", config.Inbounds[1])
 	}
 	if slices.ContainsFunc(config.Outbounds, func(value map[string]any) bool { return value["tag"] == "api" }) || len(config.Routing.Rules) == 0 || config.Routing.Rules[0]["outboundTag"] != "api" {
@@ -359,20 +362,30 @@ func TestXrayWorkerLocalReconcilerAppliesExpiryOnce(t *testing.T) {
 	}
 }
 
-func TestXrayWorkerUsesHardenedHostNetworkRuntime(t *testing.T) {
-	options := xrayWorkerContainerOptions(DeploymentTask{ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json")
+func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
+	options := xrayWorkerContainerOptions(DeploymentTask{ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", false)
 	host := options.HostConfig
-	if host == nil || host.NetworkMode != container.NetworkMode("host") || !host.ReadonlyRootfs || len(host.PortBindings) != 0 || options.NetworkingConfig != nil {
+	if host == nil || host.NetworkMode != container.NetworkMode(dockerruntime.NetworkName) || !host.ReadonlyRootfs || len(host.PortBindings) != 0 || options.NetworkingConfig == nil {
 		t.Fatalf("unexpected Xray network/runtime options: %#v", host)
 	}
-	if options.Config == nil || options.Config.User != strconv.Itoa(xrayWorkerRuntimeUID()) {
+	if options.Config == nil {
+		t.Fatal("Xray worker container configuration is missing")
+	}
+	_, tcpExposed := options.Config.ExposedPorts[dockernetwork.MustParsePort("443/tcp")]
+	if options.Config.User != strconv.Itoa(xrayWorkerRuntimeUID()) || !tcpExposed {
 		t.Fatalf("Xray worker does not use its dedicated runtime identity: %#v", options.Config)
 	}
-	if len(host.CapDrop) != 1 || host.CapDrop[0] != "ALL" || len(host.CapAdd) != 1 || host.CapAdd[0] != "NET_BIND_SERVICE" || len(host.SecurityOpt) != 1 || host.SecurityOpt[0] != "no-new-privileges:true" {
+	if len(host.CapDrop) != 1 || host.CapDrop[0] != "ALL" || len(host.CapAdd) != 0 || len(host.SecurityOpt) != 1 || host.SecurityOpt[0] != "no-new-privileges:true" || host.Sysctls["net.ipv4.ip_unprivileged_port_start"] != "0" {
 		t.Fatalf("unexpected Xray capability boundary: %#v", host)
 	}
 	if host.PidsLimit == nil || *host.PidsLimit != 512 || host.LogConfig.Type != "json-file" || host.LogConfig.Config["max-size"] != "10m" || host.LogConfig.Config["max-file"] != "3" {
 		t.Fatalf("unexpected Xray resource/log boundary: %#v", host)
+	}
+	hy2 := xrayWorkerContainerOptions(DeploymentTask{ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", true)
+	bindings := hy2.HostConfig.PortBindings[hy2DockerPort]
+	_, udpExposed := hy2.Config.ExposedPorts[hy2DockerPort]
+	if len(bindings) != 1 || bindings[0].HostIP != netip.IPv4Unspecified() || bindings[0].HostPort != "443" || !udpExposed {
+		t.Fatalf("HY2 UDP publication = %#v", bindings)
 	}
 }
 

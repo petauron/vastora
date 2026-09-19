@@ -11,8 +11,6 @@ import (
 	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
-const landingUserGatePrefix = "uid-"
-
 // The instance stays available for its local management API while its business
 // route is kernel-blocked. Restart terminates old streams without stopping the
 // controller or HAProxy. Docker's automatic restart must remain disabled until
@@ -49,7 +47,7 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 		return nil, "", "", errors.New("agent: unsupported proxy restart policy")
 	}
 	if value.Config.Labels[xrayWorkerRuntimeLabel] == "xray" {
-		if !validXrayWorkerImageReference(value.Config.Image) || string(value.HostConfig.NetworkMode) != "host" {
+		if !validXrayWorkerImageReference(value.Config.Image) || string(value.HostConfig.NetworkMode) != dockerruntime.NetworkName {
 			return nil, "", "", errors.New("agent: managed Xray worker runtime identity changed")
 		}
 		uidText := strings.SplitN(value.Config.User, ":", 2)[0]
@@ -57,8 +55,6 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 		if parseErr != nil || uid != xrayWorkerRuntimeUID() {
 			return nil, "", "", errors.New("agent: managed Xray worker has no dedicated non-root identity")
 		}
-		failed = false
-		return &landingDocker{engine: docker, applicationID: applicationID, containerID: value.ID}, landingUserGatePrefix + strconv.Itoa(uid), policy, nil
 	}
 	if value.NetworkSettings == nil {
 		return nil, "", "", errors.New("agent: proxy bridge attachment is unavailable")

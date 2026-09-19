@@ -26,6 +26,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	dockernetwork "github.com/moby/moby/api/types/network"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/gatewayruntime"
 )
@@ -454,7 +455,7 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
 		Routes:    []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
 		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{
-			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 2443}}},
+			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: dockerruntime.ThreeXUIAlias, Port: 443}}},
 			{ID: "raw", Hostname: "raw.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 3443}}},
 		}},
 	}
@@ -471,7 +472,7 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	haproxy := string(configuration)
-	for _, wanted := range []string{"bind 0.0.0.0:443", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check", "server upstream-0 127.0.0.1:2443 check send-proxy-v2", "server upstream-0 127.0.0.1:3443 check"} {
+	for _, wanted := range []string{"bind 0.0.0.0:443", "nameserver docker 127.0.0.11:53", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check resolvers vastora-docker", "server upstream-0 vastora-3x-ui:443 check send-proxy-v2 resolvers vastora-docker", "server upstream-0 127.0.0.1:3443 check"} {
 		if !strings.Contains(haproxy, wanted) {
 			t.Fatalf("HAProxy configuration missing %q: %s", wanted, haproxy)
 		}

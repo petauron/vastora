@@ -2,14 +2,13 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/netip"
-	"slices"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/dockerruntime"
@@ -45,24 +44,50 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 		if err != nil || state.ApplicationID != applicationID || state.AppliedRevision != state.Revision {
 			return errors.Join(errors.New("agent: managed Xray worker state is unavailable"), err)
 		}
-		if current.Container.Config.Image != state.ImageReference || current.Container.HostConfig.NetworkMode != "host" {
+		if current.Container.Config.Image != state.ImageReference || current.Container.HostConfig.NetworkMode != container.NetworkMode(dockerruntime.NetworkName) {
 			return errors.New("agent: managed Xray worker runtime identity changed")
 		}
-		if !enabled || slices.ContainsFunc(state.Inbounds, func(raw json.RawMessage) bool {
-			var inbound struct {
-				Enable   bool   `json:"enable"`
-				Protocol string `json:"protocol"`
-				Port     int    `json:"port"`
-			}
-			return json.Unmarshal(raw, &inbound) == nil && inbound.Enable && inbound.Protocol == "hysteria" && inbound.Port == threeXUIRealityPort
-		}) {
+		bindings := current.Container.HostConfig.PortBindings[hy2DockerPort]
+		mapped := len(bindings) == 1 && bindings[0].HostIP == netip.IPv4Unspecified() && bindings[0].HostPort == "443"
+		if enabled == mapped {
 			return nil
 		}
-		probe, err := net.ListenPacket("udp4", ":443")
-		if err != nil {
-			return errors.New("agent: UDP 443 is already in use; stop the conflicting service before enabling HY2")
+		if enabled {
+			probe, err := net.ListenPacket("udp4", ":443")
+			if err != nil {
+				return errors.New("agent: UDP 443 is already in use; stop the conflicting service before enabling HY2")
+			}
+			_ = probe.Close()
 		}
-		return probe.Close()
+		config, host := current.Container.Config, current.Container.HostConfig
+		config.Image = current.Container.Image
+		if config.ExposedPorts == nil {
+			config.ExposedPorts = dockernetwork.PortSet{}
+		}
+		if host.PortBindings == nil {
+			host.PortBindings = dockernetwork.PortMap{}
+		}
+		config.ExposedPorts[dockernetwork.MustParsePort("443/tcp")] = struct{}{}
+		if enabled {
+			config.ExposedPorts[hy2DockerPort] = struct{}{}
+			host.PortBindings[hy2DockerPort] = []dockernetwork.PortBinding{{HostIP: netip.IPv4Unspecified(), HostPort: "443"}}
+		} else {
+			delete(config.ExposedPorts, hy2DockerPort)
+			delete(host.PortBindings, hy2DockerPort)
+		}
+		options := client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: config, HostConfig: host, NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias)}
+		_, replaceErr := replaceXrayWorkerContainer(ctx, docker, options, func() error {
+			return store.stopXrayWorkerAPI(ctx, false)
+		}, func(containerID string) (string, error) {
+			return state.APIToken, waitForXrayWorkerRuntime(ctx, docker, containerID)
+		}, func(string, string) error { return nil }, nil)
+		recoveryContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		resumeErr := store.ResumeXrayWorker(recoveryContext, socket)
+		if replaceErr != nil || resumeErr != nil {
+			return uncertainTaskOutcome(errors.Join(replaceErr, resumeErr))
+		}
+		return nil
 	}
 	routes, err := store.localThreeXUILandingRoutes(ctx, applicationID)
 	if err != nil {

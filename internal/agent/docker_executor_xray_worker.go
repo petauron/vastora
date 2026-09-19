@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,7 +19,9 @@ import (
 	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
 const xrayWorkerConfigPath = "/etc/vastora/config.json"
@@ -63,7 +66,7 @@ func deployXrayWorker(ctx context.Context, docker *client.Client, dockerSocket s
 	if err != nil {
 		return "", err
 	}
-	if existingRuntime && currentRuntime.Container.Config != nil && currentRuntime.Container.Config.Labels[xrayWorkerRuntimeLabel] == "xray" && currentRuntime.Container.Config.Labels[threeXUIDeploymentIDLabel] == task.ID && currentRuntime.Container.Config.Image == imageRef && state.ImageReference == imageRef {
+	if existingRuntime && currentRuntime.Container.Config != nil && currentRuntime.Container.HostConfig != nil && currentRuntime.Container.Config.Labels[xrayWorkerRuntimeLabel] == "xray" && currentRuntime.Container.Config.Labels[threeXUIDeploymentIDLabel] == task.ID && currentRuntime.Container.Config.Image == imageRef && state.ImageReference == imageRef && currentRuntime.Container.HostConfig.NetworkMode == container.NetworkMode(dockerruntime.NetworkName) {
 		if err := store.saveXrayWorkerState(ctx, state); err != nil {
 			return token, uncertainTaskOutcome(err)
 		}
@@ -143,7 +146,7 @@ func deployXrayWorker(ctx context.Context, docker *client.Client, dockerSocket s
 	// recoverable through ResumeXrayWorker instead of making the old, still
 	// valid container look like an identity mismatch.
 	state.ImageReference = imageRef
-	options := xrayWorkerContainerOptions(task, imageRef, configPath)
+	options := xrayWorkerContainerOptions(task, imageRef, configPath, xrayWorkerHY2Enabled(state))
 	if err := store.stopXrayWorkerAPI(ctx, false); err != nil {
 		return token, err
 	}
@@ -165,7 +168,7 @@ func deployXrayWorker(ctx context.Context, docker *client.Client, dockerSocket s
 		state = latest
 		return nil
 	}, func(containerID string) (string, error) {
-		if err := waitForXrayWorkerRuntime(ctx, state); err != nil {
+		if err := waitForXrayWorkerRuntime(ctx, docker, containerID); err != nil {
 			return token, err
 		}
 		if err := store.recordXrayWorkerApplied(state); err != nil {
@@ -206,27 +209,36 @@ func deployXrayWorker(ctx context.Context, docker *client.Client, dockerSocket s
 	return resultToken, nil
 }
 
-func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string) client.ContainerCreateOptions {
+func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string, hy2Enabled bool) client.ContainerCreateOptions {
 	pidsLimit := int64(512)
+	exposed := dockernetwork.PortSet{dockernetwork.MustParsePort("443/tcp"): struct{}{}}
+	bindings := dockernetwork.PortMap{}
+	if hy2Enabled {
+		exposed[hy2DockerPort] = struct{}{}
+		bindings[hy2DockerPort] = []dockernetwork.PortBinding{{HostIP: netip.IPv4Unspecified(), HostPort: "443"}}
+	}
 	options := client.ContainerCreateOptions{
 		Name: threeXUICandidateContainer,
 		Config: &container.Config{
-			Image:  imageRef,
-			Cmd:    []string{"run", "-c", xrayWorkerConfigPath},
-			User:   strconv.Itoa(xrayWorkerRuntimeUID()),
-			Labels: applicationResourceLabels(threeXUIKey, "3x-ui", task.ApplicationID, task.ID),
+			Image:        imageRef,
+			Cmd:          []string{"run", "-c", xrayWorkerConfigPath},
+			User:         strconv.Itoa(xrayWorkerRuntimeUID()),
+			Labels:       applicationResourceLabels(threeXUIKey, "3x-ui", task.ApplicationID, task.ID),
+			ExposedPorts: exposed,
 		},
 		HostConfig: &container.HostConfig{
 			RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyMode("unless-stopped")},
 			LogConfig:      container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "3"}},
-			NetworkMode:    container.NetworkMode("host"),
+			NetworkMode:    container.NetworkMode(dockerruntime.NetworkName),
+			PortBindings:   bindings,
 			ReadonlyRootfs: true,
 			CapDrop:        []string{"ALL"},
-			CapAdd:         []string{"NET_BIND_SERVICE"},
 			SecurityOpt:    []string{"no-new-privileges:true"},
+			Sysctls:        map[string]string{"net.ipv4.ip_unprivileged_port_start": "0"},
 			Resources:      container.Resources{PidsLimit: &pidsLimit},
 			Mounts:         []mount.Mount{{Type: mount.TypeBind, Source: filepath.Dir(configPath), Target: filepath.Dir(xrayWorkerConfigPath), ReadOnly: true}},
 		},
+		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias),
 	}
 	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
 	return options
@@ -457,20 +469,47 @@ func defaultXrayWorkerSettings() json.RawMessage {
 	return json.RawMessage(`{"log":{"loglevel":"warning"},"outbounds":[{"protocol":"freedom","tag":"direct"},{"protocol":"blackhole","tag":"blocked"}],"policy":{"levels":{"0":{"statsUserUplink":true,"statsUserDownlink":true}},"system":{"statsInboundUplink":true,"statsInboundDownlink":true}},"routing":{"domainStrategy":"IPIfNonMatch","rules":[]},"stats":{}}`)
 }
 
-func waitForXrayWorkerRuntime(ctx context.Context, state xrayWorkerState) error {
-	for _, raw := range state.Inbounds {
-		var inbound struct {
-			Enable   bool   `json:"enable"`
-			Protocol string `json:"protocol"`
+func waitForXrayWorkerRuntime(ctx context.Context, docker *client.Client, containerID string) error {
+	deadline := time.NewTimer(45 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := runXrayWorkerCommand(ctx, docker, containerID, []string{"xray", "api", "statsquery", "--server=127.0.0.1:10085", "-pattern", "", "-reset=false"}); err == nil {
+			return nil
 		}
-		_ = json.Unmarshal(raw, &inbound)
-		if inbound.Enable && inbound.Protocol == "vless" {
-			return waitForEndpoint(ctx, state.Address, threeXUIRealityPort)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("agent: Xray worker did not become ready")
+		case <-ticker.C:
 		}
 	}
-	// Empty/disabled configurations have no data socket; process liveness is
-	// checked by the replacement transaction's container inspection.
-	return nil
+}
+
+func runXrayWorkerCommand(ctx context.Context, docker *client.Client, containerID string, command []string) ([]byte, error) {
+	execution, err := docker.ExecCreate(ctx, containerID, client.ExecCreateOptions{TTY: true, AttachStdout: true, AttachStderr: true, Cmd: command})
+	if err != nil {
+		return nil, err
+	}
+	attached, err := docker.ExecAttach(ctx, execution.ID, client.ExecAttachOptions{TTY: true})
+	if err != nil {
+		return nil, err
+	}
+	defer attached.Close()
+	output, err := io.ReadAll(io.LimitReader(attached.Reader, (4<<20)+1))
+	if err != nil || len(output) > 4<<20 {
+		return nil, errors.New("agent: Xray command response is invalid")
+	}
+	inspection, err := docker.ExecInspect(ctx, execution.ID, client.ExecInspectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	if inspection.Running || inspection.ExitCode != 0 {
+		return nil, fmt.Errorf("agent: Xray command exited with status %d", inspection.ExitCode)
+	}
+	return bytes.TrimSpace(output), nil
 }
 
 func dockerXrayWorkerApply(store *Store, dockerSocket string) xrayWorkerApply {
@@ -516,7 +555,7 @@ func dockerXrayWorkerApply(store *Store, dockerSocket string) xrayWorkerApply {
 		if _, err := docker.ContainerRestart(ctx, inspected.Container.ID, client.ContainerRestartOptions{Timeout: &timeout}); err != nil && !errdefs.IsNotModified(err) {
 			restartErr = fmt.Errorf("agent: restart Xray worker: %w", err)
 		} else {
-			restartErr = waitForXrayWorkerRuntime(ctx, state)
+			restartErr = waitForXrayWorkerRuntime(ctx, docker, inspected.Container.ID)
 		}
 		if restartErr == nil {
 			return store.recordXrayWorkerApplied(state)
@@ -646,20 +685,11 @@ func dockerXrayWorkerObserve(dockerSocket string) xrayWorkerObserve {
 		if inspected.Container.Config == nil || inspected.Container.Config.Labels[xrayWorkerRuntimeLabel] != "xray" || inspected.Container.Config.Image != state.ImageReference || inspected.Container.State == nil || !inspected.Container.State.Running {
 			return state, errors.New("agent: managed Xray worker runtime is not active")
 		}
-		execution, err := docker.ExecCreate(ctx, inspected.Container.ID, client.ExecCreateOptions{TTY: true, AttachStdout: true, AttachStderr: true, Cmd: []string{"api", "statsquery", "--server=127.0.0.1:10085", "-pattern", "", "-reset=false"}})
+		output, err := runXrayWorkerCommand(ctx, docker, inspected.Container.ID, []string{"xray", "api", "statsquery", "--server=127.0.0.1:10085", "-pattern", "", "-reset=false"})
 		if err != nil {
 			return state, err
 		}
-		attached, err := docker.ExecAttach(ctx, execution.ID, client.ExecAttachOptions{TTY: true})
-		if err != nil {
-			return state, err
-		}
-		defer attached.Close()
-		output, err := io.ReadAll(io.LimitReader(attached.Reader, (4<<20)+1))
-		if err != nil || len(output) > 4<<20 {
-			return state, errors.New("agent: Xray statistics response is invalid")
-		}
-		return applyXrayWorkerStats(state, bytes.TrimSpace(output))
+		return applyXrayWorkerStats(state, output)
 	}
 }
 

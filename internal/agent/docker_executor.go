@@ -106,13 +106,8 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	if err := waitForBindAddress(ctx, bindAddress); err != nil {
 		return ApplicationTaskResult{}, err
 	}
-	// Xray-only workers use the host network and must not depend on creation or
-	// repair of the shared Docker bridge. Other application runtimes still use
-	// that network and retain the existing setup path.
-	if task.AppKey != threeXUIKey || task.ApplicationRole != "worker" {
-		if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
-			return ApplicationTaskResult{}, err
-		}
+	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
+		return ApplicationTaskResult{}, err
 	}
 	var deployErr error
 	generatedSecrets := map[string]string{}
