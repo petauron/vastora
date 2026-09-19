@@ -59,7 +59,7 @@ func TestConcurrentPeerMonitorsReleaseConnectionsAcrossGroupReplacement(t *testi
 			var reportOnce sync.Once
 			monitor := Monitor{Gate: gate, Links: checker, CheckBusiness: func(context.Context, PeerIdentity, uint64) (BusinessResult, error) {
 				return BusinessResult{}, errors.New("unexpected business probe")
-			}, StopConnections: func(context.Context) error { return nil }, Report: func(MonitorStatus) {
+			}, Report: func(MonitorStatus) {
 				reportOnce.Do(func() { reports <- struct{}{} })
 			}}
 			group.Add(1)
@@ -139,8 +139,7 @@ func TestMonitorOwnsUnixConnectionsAcrossReplacementAndSetupFailure(t *testing.T
 					CheckBusiness: func(context.Context, PeerIdentity, uint64) (BusinessResult, error) {
 						return BusinessResult{}, errors.New("unexpected probe")
 					},
-					StopConnections: func(context.Context) error { return nil },
-					Report:          func(MonitorStatus) { cancel() },
+					Report: func(MonitorStatus) { cancel() },
 				}
 				if mode == "invalid" {
 					monitor.Gate = nil
@@ -162,7 +161,7 @@ func TestMonitorOwnsUnixConnectionsAcrossReplacementAndSetupFailure(t *testing.T
 	}
 }
 
-func TestMonitorDoesNotRepeatCallerCutoverAndStillStopsOnExit(t *testing.T) {
+func TestMonitorBlocksWithoutProxyLifecycleOnExit(t *testing.T) {
 	gate := fixtureGate(t)
 	document, err := json.Marshal(fixtureNFT(t, gate))
 	if err != nil {
@@ -182,27 +181,26 @@ func TestMonitorDoesNotRepeatCallerCutoverAndStillStopsOnExit(t *testing.T) {
 	defer server.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	stops, reports := 0, 0
+	reports := 0
 	monitor := Monitor{Gate: gate, Links: &LinkChecker{HTTPClient: &http.Client{Transport: latencyTransport{server.URL}}},
 		CheckBusiness: func(context.Context, PeerIdentity, uint64) (BusinessResult, error) {
 			t.Fatal("business check ran without a direct peer")
 			return BusinessResult{}, nil
 		},
-		StopConnections: func(context.Context) error { stops++; return nil },
 		Report: func(status MonitorStatus) {
 			reports++
-			if stops != 0 || status.State != "blocked" || writes == 0 {
-				t.Fatalf("repeated initial cutover or opened gate: stops=%d writes=%d status=%+v", stops, writes, status)
+			if status.State != "blocked" || writes == 0 {
+				t.Fatalf("unconfirmed route was not blocked: writes=%d status=%+v", writes, status)
 			}
 			cancel()
 		},
 	}
-	if err := monitor.Run(ctx); err != context.Canceled || stops != 1 || reports != 1 {
-		t.Fatalf("shutdown cleanup changed: stops=%d reports=%d err=%v", stops, reports, err)
+	if err := monitor.Run(ctx); err != context.Canceled || reports != 1 {
+		t.Fatalf("shutdown cleanup changed: reports=%d err=%v", reports, err)
 	}
 }
 
-func TestRecoveredMonitorDoesNotRestartOnUnconfirmedInitialRenewal(t *testing.T) {
+func TestRecoveredMonitorKeepsGateClosedOnUnconfirmedInitialRenewal(t *testing.T) {
 	gate := fixtureGate(t)
 	document, err := json.Marshal(fixtureNFT(t, gate))
 	if err != nil {
@@ -227,23 +225,22 @@ func TestRecoveredMonitorDoesNotRestartOnUnconfirmedInitialRenewal(t *testing.T)
 	}))
 	defer server.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	stops, reports := 0, 0
-	monitor := Monitor{Gate: gate, Links: &LinkChecker{HTTPClient: &http.Client{Transport: latencyTransport{server.URL}}}, SkipInitialStop: true,
+	reports := 0
+	monitor := Monitor{Gate: gate, Links: &LinkChecker{HTTPClient: &http.Client{Transport: latencyTransport{server.URL}}},
 		CheckBusiness: func(_ context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
 			started := time.Now()
 			return BusinessResult{Peer: peer, Revision: revision, TCP: true, UDP: true, UDPRelay: peer.Address + ":1081", ExitIPv4: "1.1.1.1", StartedAt: started, CheckedAt: time.Now()}, nil
 		},
-		StopConnections: func(context.Context) error { stops++; return nil },
 		Report: func(status MonitorStatus) {
 			reports++
-			if status.State != "blocked" || stops != 0 {
-				t.Fatalf("startup renewal failure restarted the proxy: status=%+v stops=%d", status, stops)
+			if status.State != "blocked" {
+				t.Fatalf("startup renewal failure opened the gate: status=%+v", status)
 			}
 			cancel()
 		},
 	}
-	if err := monitor.Run(ctx); err != context.Canceled || reports != 1 || stops != 0 {
-		t.Fatalf("recovered monitor cleanup changed: reports=%d stops=%d err=%v", reports, stops, err)
+	if err := monitor.Run(ctx); err != context.Canceled || reports != 1 {
+		t.Fatalf("recovered monitor cleanup changed: reports=%d err=%v", reports, err)
 	}
 }
 

@@ -136,7 +136,7 @@ func (s *Store) ResumeLandingRuntime(ctx context.Context) (result error) {
 	if err := s.verifyLocalLandingPlan(ctx, routes, state.Desired); err != nil {
 		return err
 	}
-	return s.startLandingMonitor(*state, true)
+	return s.startLandingMonitor(*state)
 }
 
 func waitLandingRoutes(ctx context.Context, routes threeXUILandingRoutes) error {
@@ -267,9 +267,9 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 		if bridge != current.Bridge {
 			return errors.New("agent: landing proxy bridge changed")
 		}
-		// Stopping the previous monitor terminates connections and restarts
-		// this instance. Wait for its management API before taking the new
-		// checkpoint; a running container alone is not readiness evidence.
+		// The previous monitor closed its peer gates without changing the proxy
+		// lifecycle. Confirm the management API before taking the new checkpoint;
+		// a running container alone is not readiness evidence.
 		if err := waitLandingRoutes(ctx, routes); err != nil {
 			return err
 		}
@@ -352,7 +352,7 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if err := s.saveLandingRuntime(ctx, *current); err != nil {
 		return err
 	}
-	return s.startLandingMonitor(*current, false)
+	return s.startLandingMonitor(*current)
 }
 
 // Caller holds landingMutationMu. Direct routing is restored only on an
@@ -447,7 +447,7 @@ func removeRetiringLandingGate(ctx context.Context, state *landingRuntimeState) 
 	return nil
 }
 
-func (s *Store) startLandingMonitor(state landingRuntimeState, resumed bool) error {
+func (s *Store) startLandingMonitor(state landingRuntimeState) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	gates, err := landingGates(state.Desired, state.Bridge)
 	if err != nil {
@@ -470,30 +470,6 @@ func (s *Store) startLandingMonitor(state landingRuntimeState, resumed bool) err
 	go func() {
 		defer close(done)
 		var monitors sync.WaitGroup
-		// Several peers may fail together, but their session cutovers must not
-		// race Docker stop/start on the shared selected proxy instance.
-		var cutover sync.Mutex
-		shutdownStopped := false
-		stopConnections := func(stopCtx context.Context) error {
-			cutover.Lock()
-			defer cutover.Unlock()
-			if shutdownStopped {
-				return nil
-			}
-			docker, bridge, _, err := openLandingDocker(stopCtx, state.ApplicationID, state.ContainerID)
-			if err != nil {
-				return err
-			}
-			defer docker.engine.Close()
-			if bridge != state.Bridge {
-				return errors.New("agent: monitored proxy bridge changed")
-			}
-			err = docker.terminateConnections(stopCtx)
-			if ctx.Err() != nil && err == nil {
-				shutdownStopped = true
-			}
-			return err
-		}
 		uses := state.Desired.PeerUses()
 		for i, gate := range gates {
 			use := uses[i]
@@ -526,8 +502,8 @@ func (s *Store) startLandingMonitor(state landingRuntimeState, resumed bool) err
 					return (landing.Probe{TCPOnly: use.TCPOnly}).Check(checkCtx, peer, revision)
 				}
 				checker := landing.NewLinkChecker()
-				monitor := landing.Monitor{Gate: gate, Links: checker, TCPOnly: use.TCPOnly, SkipInitialStop: resumed, CheckBusiness: checkBusiness,
-					StopConnections: stopConnections, Report: func(status landing.MonitorStatus) {
+				monitor := landing.Monitor{Gate: gate, Links: checker, TCPOnly: use.TCPOnly, CheckBusiness: checkBusiness,
+					Report: func(status landing.MonitorStatus) {
 						s.setLandingPeerStatus(use.Peer, status)
 						s.landingStatusMu.Lock()
 						if state.Desired.Proxy != nil && use.Peer == state.Desired.Proxy.Peer {
