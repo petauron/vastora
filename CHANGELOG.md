@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.162](https://github.com/petauron/vastora/compare/v0.1.0-alpha.161...v0.1.0-alpha.162) (2026-09-19)
+
+
+### Bug Fixes
+
+* **proxy:** migrate workers with trusted Xray manifest ([#528](https://github.com/petauron/vastora/issues/528)) ([9484a6d](https://github.com/petauron/vastora/commit/9484a6d881ac495992078f484dfffc606f438640))
+
 ## [0.1.0-alpha.161](https://github.com/petauron/vastora/compare/v0.1.0-alpha.160...v0.1.0-alpha.161) (2026-09-19)
 
 
