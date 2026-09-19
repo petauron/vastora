@@ -270,6 +270,22 @@ func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testin
 		VALUES('legacy-xray-deployment', ?, ?, ?, ?, '{}', '10.0.0.86', 'configure', 'succeeded', ?, ?, ?, 1)`, node.ID, threeXUIAppKey, legacy.Version, legacyJSON, stamp, stamp, applicationID); err != nil {
 		t.Fatal(err)
 	}
+	secretTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applicationSecretID, err := store.putSecret(ctx, secretTx, []byte(`{"api_token":"current-worker-token"}`), "application:"+applicationID)
+	if err != nil {
+		secretTx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := secretTx.ExecContext(ctx, `INSERT INTO application_secrets(application_id,secret_id,updated_at) VALUES(?,?,?)`, applicationID, applicationSecretID, stamp); err != nil {
+		secretTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := secretTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -283,9 +299,9 @@ func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testin
 		t.Fatal(err)
 	}
 
-	var version string
+	var deploymentID, version, secretID string
 	var manifestJSON []byte
-	if err := store.db.QueryRowContext(ctx, `SELECT app_version, manifest_json FROM deployments WHERE application_id = ? AND state = 'pending'`, applicationID).Scan(&version, &manifestJSON); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT id,app_version,manifest_json,secret_id FROM deployments WHERE application_id = ? AND state = 'pending'`, applicationID).Scan(&deploymentID, &version, &manifestJSON, &secretID); err != nil {
 		t.Fatal(err)
 	}
 	var queued catalog.AppManifest
@@ -297,6 +313,13 @@ func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testin
 	}
 	if !slices.ContainsFunc(queued.Images, func(image catalog.Image) bool { return image.Name == "xray-core" }) {
 		t.Fatal("queued Xray worker migration did not use the accepted xray-core image")
+	}
+	secrets, err := store.getSecret(ctx, secretID, "deployment:"+deploymentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(secrets) != `{"api_token":"current-worker-token"}` {
+		t.Fatalf("queued Xray worker secrets = %s", secrets)
 	}
 }
 
