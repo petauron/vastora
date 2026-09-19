@@ -36,53 +36,35 @@ type MonitorStatus struct {
 }
 
 // Monitor is only for a route which has already been applied. Initial enable
-// must check before changing the old direct configuration. StopConnections
-// must terminate old connections in the selected proxy instance (not HAProxy,
-// the controller, or other nodes), and verify that termination before returning.
-// A configuration task must close the gate and terminate old connections
-// synchronously before Run. Startup recovery closes the gate but deliberately
-// does not restart the proxy merely because the Agent process restarted.
+// must check before changing the old direct configuration. A configuration task
+// closes the gate and terminates old connections synchronously before Run.
+// Runtime health failure is peer-scoped: closing that peer's gate blocks both
+// existing and new traffic without restarting the shared proxy process.
 type Monitor struct {
-	Gate            *BridgeGate
-	Links           *LinkChecker
-	CheckBusiness   func(context.Context, PeerIdentity, uint64) (BusinessResult, error)
-	StopConnections func(context.Context) error
-	Report          func(MonitorStatus)
-	TCPOnly         bool
-	// Startup recovery already installed a closed gate. A lost response to the
-	// first renewal must remain fail closed, but must not restart the proxy just
-	// because the Agent process restarted.
-	SkipInitialStop bool
+	Gate          *BridgeGate
+	Links         *LinkChecker
+	CheckBusiness func(context.Context, PeerIdentity, uint64) (BusinessResult, error)
+	Report        func(MonitorStatus)
+	TCPOnly       bool
 }
 
 // Run owns Links for this monitor's lifetime, including validation and setup
 // failures. A checker passed here must not be shared with another monitor.
 func (m *Monitor) Run(ctx context.Context) error {
 	defer m.Links.Close()
-	if m.Gate == nil || m.Links == nil || m.CheckBusiness == nil || m.StopConnections == nil {
+	if m.Gate == nil || m.Links == nil || m.CheckBusiness == nil {
 		return errors.New("landing: incomplete runtime monitor")
 	}
 	// No permission survives process restart. A kernel boot fence is separately
 	// required: a monitor cannot retroactively close a pre-start boot window.
 	if err := m.Gate.Install(ctx); err != nil {
-		if m.SkipInitialStop {
-			return err
-		}
-		return errors.Join(err, m.stop())
+		return err
 	}
-	everAllowed := false
-	defer func() {
-		_ = m.close()
-		if !m.SkipInitialStop || everAllowed {
-			_ = m.stop()
-		}
-	}()
+	defer func() { _ = m.close() }()
 	ticker := time.NewTicker(CheckInterval)
 	defer ticker.Stop()
 	var lastHealthy time.Time
-	wasAllowed := false
 	lastProbeFailure := ""
-	initialCheck := true
 	for {
 		status := MonitorStatus{Revision: m.Gate.revision, State: "blocked", LinkState: "unknown", Reason: "check_failed", LastHealthyAt: lastHealthy}
 		before := m.Links.Check(ctx, m.Gate.peer)
@@ -111,9 +93,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 			}
 		}
 		until, healthy := leaseDeadlineForTransport(m.Gate, before, business, after, time.Now(), m.TCPOnly)
-		attemptedRenewal := false
 		if healthy && checkErr == nil && ctx.Err() == nil {
-			attemptedRenewal = true
 			checkErr = m.Gate.renew(ctx, until)
 			if checkErr == nil {
 				status.State, status.Reason = "healthy", "direct_and_business_ready"
@@ -124,29 +104,20 @@ func (m *Monitor) Run(ctx context.Context) error {
 			}
 		}
 		if status.State != "healthy" {
-			// A failed renewal can have committed despite a lost response. Block
-			// and stop connections even if it was the first renewal attempt.
+			// A failed renewal can have committed despite a lost response. Closing
+			// the peer-scoped gate blocks both existing and new traffic without
+			// interrupting unrelated sessions in the shared proxy process.
 			if err := m.close(); err != nil {
-				return errors.Join(err, m.stop())
-			}
-			if wasAllowed || attemptedRenewal && !(initialCheck && m.SkipInitialStop) {
-				if err := m.stop(); err != nil {
-					return err
-				}
+				return err
 			}
 			if before.State == "direct" {
 				status.Reason = "business_or_link_check_failed"
 			}
 		}
-		if status.State == "healthy" {
-			everAllowed = true
-		}
-		wasAllowed = status.State == "healthy"
 		status.CheckedAt = time.Now().UTC()
 		if m.Report != nil {
 			m.Report(status)
 		}
-		initialCheck = false
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -159,12 +130,6 @@ func (m *Monitor) close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*nftTimeout)
 	defer cancel()
 	return m.Gate.Block(ctx)
-}
-
-func (m *Monitor) stop() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return m.StopConnections(ctx)
 }
 
 func leaseDeadline(gate *BridgeGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time) (time.Time, bool) {
