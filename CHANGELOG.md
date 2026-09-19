@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.165](https://github.com/petauron/vastora/compare/v0.1.0-alpha.164...v0.1.0-alpha.165) (2026-09-19)
+
+
+### Bug Fixes
+
+* **proxy:** restore Mihomo Reality compatibility ([#534](https://github.com/petauron/vastora/issues/534)) ([c3932be](https://github.com/petauron/vastora/commit/c3932bebc0eb03876eec2bee6f707b7cd27810d7))
+
 ## [0.1.0-alpha.164](https://github.com/petauron/vastora/compare/v0.1.0-alpha.163...v0.1.0-alpha.164) (2026-09-19)
 
 
