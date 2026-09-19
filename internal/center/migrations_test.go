@@ -162,7 +162,7 @@ func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at) VALUES('worker-app','Proxy',?,?,'vastora-official/3x-ui','','running','docker','worker',?,?)`, node.ID, siteID, now, now); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,runtime_generation,created_at,updated_at) VALUES('worker-app','Proxy',?,?,'vastora-official/3x-ui','','running','docker','worker',2,?,?)`, node.ID, siteID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,observed_listen,status,created_at,updated_at) VALUES('worker-service','worker-app',?,'inbound-9','tcp',443,443,'100.64.0.10:443','observed','vless/tcp/reality','100.64.0.10','ready',?,?)`, siteID, now, now); err != nil {

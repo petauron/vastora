@@ -103,7 +103,7 @@ func (s *Store) claimNodeListenerTask(ctx context.Context, tx *sql.Tx, nodeID st
 
 func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID string, revision int64) (gateway.NodeListenerState, error) {
 	routes := []gateway.Layer4Route{}
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, a.node_id, a.runtime, a.role, a.app_key, s.container_port,
+	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, a.node_id, a.runtime, a.role, a.app_key, a.runtime_generation, s.container_port,
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' THEN 1 ELSE 0 END,
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' AND g.status = 'ready' THEN 'v2' ELSE '' END
 		FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
@@ -117,8 +117,8 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 	for rows.Next() {
 		var route gateway.Layer4Route
 		var endpoint, applicationNodeID, runtime, role, appKey string
-		var containerPort, managedReality int
-		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationNodeID, &runtime, &role, &appKey, &containerPort, &managedReality, &route.ProxyProtocol); err != nil {
+		var containerPort, managedReality, runtimeGeneration int
+		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationNodeID, &runtime, &role, &appKey, &runtimeGeneration, &containerPort, &managedReality, &route.ProxyProtocol); err != nil {
 			return gateway.NodeListenerState{}, err
 		}
 		route.ManagedReality = managedReality != 0
@@ -128,7 +128,7 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		route.ApplicationNodeID = applicationNodeID
 		if route.ManagedReality {
 			alias := dockerruntime.ThreeXUIAlias
-			if role == threeXUIRoleWorker {
+			if role == threeXUIRoleWorker && runtimeGeneration >= 2 {
 				alias = dockerruntime.XrayAlias
 			}
 			endpoint = net.JoinHostPort(alias, strconv.Itoa(centerThreeXUIRealityPort))
@@ -141,7 +141,7 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		}
 		port, _ := strconv.Atoi(portValue)
 		expectedAlias := dockerruntime.ThreeXUIAlias
-		if role == threeXUIRoleWorker {
+		if role == threeXUIRoleWorker && runtimeGeneration >= 2 {
 			expectedAlias = dockerruntime.XrayAlias
 		}
 		if route.ManagedReality && (runtime != "docker" || host != expectedAlias || port != centerThreeXUIRealityPort || route.ProxyProtocol != gateway.ProxyProtocolV2) {

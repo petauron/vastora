@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
 	"golang.org/x/mod/semver"
 )
@@ -119,8 +120,8 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		*cleanups = append(*cleanups, values...)
 		return nil
 	}
-	var siteID, role string
-	if err := tx.QueryRowContext(ctx, `SELECT site_id, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &role); err != nil {
+	var siteID, appKey, role string
+	if err := tx.QueryRowContext(ctx, `SELECT site_id, app_key, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &appKey, &role); err != nil {
 		return fmt.Errorf("center: read application site: %w", err)
 	}
 	var manifestJSON []byte
@@ -129,6 +130,11 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', runtime_generation = ?, runtime = CASE WHEN app_key IN (?, ?) THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, executedRuntimeGeneration, komariAppKey, pulseAgentAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
 		return err
+	}
+	if appKey == threeXUIAppKey && role == threeXUIRoleWorker {
+		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint = ? || ':' || container_port, updated_at = ? WHERE application_id = ? AND status <> 'stopped'`, dockerruntime.XrayAlias, now.Format(time.RFC3339Nano), applicationID); err != nil {
+			return fmt.Errorf("center: switch worker services to Vastora Xray: %w", err)
+		}
 	}
 	var manifest catalog.AppManifest
 	if json.Unmarshal(manifestJSON, &manifest) != nil {
