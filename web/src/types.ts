@@ -110,6 +110,7 @@ export type CenterUpdateStatus = {
     failed: number;
     offline: number;
     manual: number;
+    blocked: number;
   };
 };
 

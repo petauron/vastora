@@ -28,6 +28,7 @@ type AgentUpdateRolloutStatus struct {
 	Failed        int    `json:"failed"`
 	Offline       int    `json:"offline"`
 	Manual        int    `json:"manual"`
+	Blocked       int    `json:"blocked"`
 }
 
 // This bounds the busy indicator, not the durable installation or its backup.
@@ -41,6 +42,12 @@ func agentUpdateFailureSuperseded(currentVersion, failedTarget string) bool {
 	current := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
 	failed := "v" + strings.TrimPrefix(strings.TrimSpace(failedTarget), "v")
 	return semver.IsValid(current) && semver.IsValid(failed) && semver.Compare(current, failed) > 0
+}
+
+func agentVersionBehindTarget(currentVersion, targetVersion string) bool {
+	current := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
+	target := "v" + strings.TrimPrefix(strings.TrimSpace(targetVersion), "v")
+	return semver.IsValid(current) && semver.IsValid(target) && semver.Compare(current, target) < 0
 }
 
 func isAgentUpdateTaskID(value string) bool {
@@ -278,7 +285,7 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 				continue
 			}
 			if updateTarget != targetVersion {
-				status.Manual++
+				status.Blocked++
 				continue
 			}
 			if updateState == "installing" && strings.TrimSpace(updateError) != "" {
@@ -302,7 +309,7 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			continue
 		}
 		if blocked || (updateState == "failed" && !agentUpdateFailureSuperseded(currentVersion, updateTarget)) {
-			status.Manual++
+			status.Blocked++
 			continue
 		}
 		if !supported {

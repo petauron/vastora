@@ -838,7 +838,7 @@ describe("network and app views", () => {
       currentVersion: "0.1.0-alpha.51",
       updateAvailable: false,
       state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 3, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0 },
+      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 3, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0, blocked: 0 },
     };
     vi.spyOn(api, "centerUpdate").mockResolvedValue(completed);
     render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
@@ -858,7 +858,7 @@ describe("network and app views", () => {
       currentVersion: "0.1.0-alpha.51",
       updateAvailable: false,
       state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 1, updating: 0, pending: 2, failed: 0, offline: 0, manual: 0 },
+      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 1, updating: 0, pending: 2, failed: 0, offline: 0, manual: 0, blocked: 0 },
     };
     vi.spyOn(api, "centerUpdate").mockResolvedValue(pending);
     render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
@@ -878,7 +878,7 @@ describe("network and app views", () => {
       currentVersion: "0.1.0-alpha.51",
       updateAvailable: false,
       state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 2, updating: 0, pending: 0, failed: 1, offline: 0, manual: 0 },
+      agentRollout: { targetVersion: "0.1.0-alpha.51", total: 3, updated: 2, updating: 0, pending: 0, failed: 1, offline: 0, manual: 0, blocked: 0 },
     };
     vi.spyOn(api, "centerUpdate").mockResolvedValue(failed);
     render(<CenterUpdateCard language="zh-CN" onRefresh={onRefresh} onReload={onReload} onStatusChange={onStatusChange} status={status} />);
@@ -886,6 +886,20 @@ describe("network and app views", () => {
     expect(onStatusChange).toHaveBeenCalledWith(failed);
     expect(onRefresh).not.toHaveBeenCalled();
     expect(onReload).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes unresolved task blockers from legacy Agents", () => {
+    const status = {
+      ...dashboard().centerUpdate,
+      currentVersion: "0.1.0-alpha.159",
+      latestVersion: "0.1.0-alpha.159",
+      updateAvailable: false,
+      state: "succeeded" as const,
+      agentRollout: { targetVersion: "0.1.0-alpha.159", total: 17, updated: 6, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0, blocked: 11 },
+    };
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    expect(container.textContent).toContain("11 个存在待处理任务，已暂停更新");
+    expect(container.textContent).not.toContain("旧版本需要手动更新");
   });
 
   it("shows the current verified update phase and progress", () => {
@@ -910,7 +924,7 @@ describe("network and app views", () => {
       targetVersion: "0.1.0-alpha.99",
       phase: "agents" as const,
       progress: 98,
-      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 4, updated: 2, updating: 1, pending: 1, failed: 0, offline: 0, manual: 0 },
+      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 4, updated: 2, updating: 1, pending: 1, failed: 0, offline: 0, manual: 0, blocked: 0 },
     };
     vi.spyOn(api, "centerUpdate").mockImplementation(() => new Promise(() => undefined));
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
@@ -930,7 +944,7 @@ describe("network and app views", () => {
       updateAvailable: false,
       state: "succeeded" as const,
       targetVersion: "0.1.0-alpha.99",
-      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 16, updated: 1, updating: 0, pending: 15, failed: 0, offline: 0, manual: 0 },
+      agentRollout: { targetVersion: "0.1.0-alpha.99", total: 16, updated: 1, updating: 0, pending: 15, failed: 0, offline: 0, manual: 0, blocked: 0 },
     };
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
     expect(container.textContent).toContain("Center 已更新，Agent 等待发布");
@@ -946,7 +960,7 @@ describe("network and app views", () => {
       latestVersion: "0.1.0-alpha.151",
       updateAvailable: false,
       state: "succeeded" as const,
-      agentRollout: { targetVersion: "0.1.0-alpha.151", total: 17, updated: 17, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0 },
+      agentRollout: { targetVersion: "0.1.0-alpha.151", total: 17, updated: 17, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0, blocked: 0 },
     };
     const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
     const progress = container.querySelector('[role="progressbar"]');
