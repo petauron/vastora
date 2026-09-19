@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.163](https://github.com/petauron/vastora/compare/v0.1.0-alpha.162...v0.1.0-alpha.163) (2026-09-19)
+
+
+### Bug Fixes
+
+* **proxy:** carry worker token into Xray migration ([#530](https://github.com/petauron/vastora/issues/530)) ([1b5e4e6](https://github.com/petauron/vastora/commit/1b5e4e690137983f3c028e13e9a242dd1755c6c8))
+
 ## [0.1.0-alpha.162](https://github.com/petauron/vastora/compare/v0.1.0-alpha.161...v0.1.0-alpha.162) (2026-09-19)
 
 
