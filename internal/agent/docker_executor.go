@@ -43,6 +43,7 @@ type HostApplicationManager interface {
 type ApplicationExecutor struct {
 	DockerSocket string
 	Host         HostApplicationManager
+	Store        *Store
 }
 
 func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (ApplicationTaskResult, error) {
@@ -88,13 +89,30 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	}
 	defer docker.Close()
 	if task.Operation == "uninstall" {
-		return ApplicationTaskResult{}, uninstallDockerApp(ctx, docker, task.AppKey, task.ApplicationID, task.DeleteData)
+		if task.AppKey == threeXUIKey && e.Store != nil {
+			// Stop every worker-side writer before removing its runtime. Leaving
+			// the reconciler active until after Docker removal creates a race in
+			// which it can journal or apply a new revision during uninstall.
+			if err := e.Store.stopXrayWorkerAPI(ctx, false); err != nil {
+				return ApplicationTaskResult{}, err
+			}
+		}
+		err := uninstallDockerApp(ctx, docker, task.AppKey, task.ApplicationID, task.DeleteData)
+		if err == nil && task.AppKey == threeXUIKey && e.Store != nil && task.DeleteData {
+			err = e.Store.stopXrayWorkerAPI(ctx, true)
+		}
+		return ApplicationTaskResult{}, err
 	}
 	if err := waitForBindAddress(ctx, bindAddress); err != nil {
 		return ApplicationTaskResult{}, err
 	}
-	if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
-		return ApplicationTaskResult{}, err
+	// Xray-only workers use the host network and must not depend on creation or
+	// repair of the shared Docker bridge. Other application runtimes still use
+	// that network and retain the existing setup path.
+	if task.AppKey != threeXUIKey || task.ApplicationRole != "worker" {
+		if err := dockerruntime.EnsureNetwork(ctx, docker); err != nil {
+			return ApplicationTaskResult{}, err
+		}
 	}
 	var deployErr error
 	generatedSecrets := map[string]string{}
@@ -103,7 +121,26 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 		deployErr = deployPulse(ctx, docker, task, bindAddress)
 	case threeXUIKey:
 		var apiToken string
-		apiToken, deployErr = deployThreeXUI(ctx, docker, task, bindAddress)
+		if task.ApplicationRole == "worker" {
+			apiToken, deployErr = deployXrayWorker(ctx, docker, socket, e.Store, task, bindAddress)
+		} else {
+			hadWorkerState := false
+			if e.Store != nil {
+				_, stateErr := e.Store.loadXrayWorkerState(ctx)
+				hadWorkerState = stateErr == nil
+				if hadWorkerState {
+					deployErr = e.Store.stopXrayWorkerAPI(ctx, false)
+				}
+			}
+			if deployErr == nil {
+				apiToken, deployErr = deployThreeXUI(ctx, docker, task, bindAddress)
+			}
+			if hadWorkerState && deployErr != nil {
+				deployErr = errors.Join(deployErr, e.Store.ResumeXrayWorker(ctx, socket))
+			} else if hadWorkerState && deployErr == nil {
+				deployErr = e.Store.retireXrayWorkerState(ctx)
+			}
+		}
 		if apiToken != "" {
 			generatedSecrets["api_token"] = apiToken
 		}
@@ -157,6 +194,9 @@ func validateApplicationTask(task DeploymentTask) error {
 	if task.AppKey != threeXUIKey && task.ApplicationRole != "" {
 		return errors.New("agent: application topology role is only valid for 3x-ui")
 	}
+	if task.AppKey == threeXUIKey && task.ApplicationRole != "master" && task.ApplicationRole != "worker" {
+		return errors.New("agent: proxy application requires an explicit controller or worker role")
+	}
 	if task.RegistryCredential != nil {
 		if strings.TrimSpace(task.RegistryCredential.Host) == "" || strings.TrimSpace(task.RegistryCredential.Username) == "" || task.RegistryCredential.Password == "" {
 			return errors.New("agent: incomplete Registry credential")
@@ -198,10 +238,25 @@ func validateApplicationTask(task DeploymentTask) error {
 		if err != nil {
 			return err
 		}
-		if _, err := decodeThreeXUISecrets(task.Secrets); err != nil {
-			return err
+		if task.ApplicationRole == "master" {
+			if _, err := decodeThreeXUISecrets(task.Secrets); err != nil {
+				return err
+			}
+		} else {
+			var secrets map[string]string
+			if json.Unmarshal(task.Secrets, &secrets) != nil || len(secrets) > 1 {
+				return errors.New("agent: invalid Xray worker credentials")
+			}
+			token := strings.TrimSpace(secrets["api_token"])
+			if len(secrets) == 1 && (token == "" || len(token) > 4096) {
+				return errors.New("agent: invalid Xray worker credentials")
+			}
 		}
-		if _, _, err := threeXUIPorts(bindAddress, config.PanelPort, task.ApplicationRole); err != nil {
+		if task.ApplicationRole == "worker" {
+			if err := validateThreeXUIServiceAddress(bindAddress, config.PanelPort, task.ApplicationRole); err != nil {
+				return err
+			}
+		} else if _, _, err := threeXUIPorts(bindAddress, config.PanelPort, task.ApplicationRole); err != nil {
 			return err
 		}
 	case cpaKey:

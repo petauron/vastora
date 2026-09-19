@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/petauron/vastora/internal/landing"
 )
 
 func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
@@ -26,7 +28,9 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 			clientListCalls.Add(1)
 			_, _ = response.Write([]byte(`{"success":true,"obj":{"items":[{"email":"MacBook","subId":"private-sub-id","enable":true,"totalGB":10737418240,"expiryTime":0,"reset":30,"limitIp":2,"inboundIds":[9],"traffic":{"enable":false,"total":5368709120,"expiryTime":1,"reset":0,"up":1024,"down":2048}}],"total":1}}`))
 		case "/panel/api/clients/get/MacBook":
-			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","uuid":"11111111-2222-4333-8444-555555555555"},"inboundIds":[9]}}`))
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"MacBook","uuid":"11111111-2222-4333-8444-555555555555","subId":"private-sub-id","flow":"xtls-rprx-vision"},"inboundIds":[9]}}`))
+		case "/panel/api/inbounds/get/9":
+			_, _ = response.Write([]byte(`{"success":true,"obj":{"id":9,"enable":true,"remark":"inbound-9","protocol":"vless","tag":"vastora-node","listen":"100.64.0.1","port":443,"settings":{"clients":[{"id":"11111111-2222-4333-8444-555555555555","email":"MacBook","flow":"xtls-rprx-vision"}]},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"serverNames":["www.example.com"],"shortIds":["deadbeef"],"settings":{"publicKey":"public-key"}}}}}`))
 		case "/panel/api/inbounds/list":
 			_, _ = response.Write([]byte(`{"success":true,"obj":[{"id":9,"tag":"vastora-node","enable":true,"protocol":"vless","up":2048,"down":4096,"total":21474836480,"streamSettings":{"security":"reality"}}]}`))
 		default:
@@ -37,7 +41,7 @@ func TestThreeXUIClientListReturnsOnlySafeMetadata(t *testing.T) {
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
 
-	result, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9", ConnectHostname: "reality.example.test", PlanStatus: "active"}}})
+	result, err := applyThreeXUIClientCommand(context.Background(), store, ThreeXUIClientCommandTask{Action: "list", Inbounds: []ThreeXUIClientInbound{{ID: 9, Name: "inbound-9", DisplayName: "US | inbound-9", ConnectHostname: "reality.example.test", InboundTag: "vastora-node", PlanStatus: "active"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,6 +331,32 @@ func TestThreeXUIClientDeleteRecoversLostResponse(t *testing.T) {
 	}
 }
 
+func TestNativeSubscriptionAuthorityDoesNotReimportAnEmptyInventory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.Method != http.MethodGet || request.URL.Path != "/panel/api/clients/get/Rogue" {
+			t.Fatalf("unexpected request: %s %s", request.Method, request.URL.Path)
+		}
+		_, _ = response.Write([]byte(`{"success":true,"obj":{"client":{"email":"Rogue","id":"11111111-2222-4333-8444-555555555555","subId":"","enable":true},"inboundIds":[]}}`))
+	}))
+	defer server.Close()
+	store := threeXUIClientTestStore(t, server, "local-token")
+	defer store.Close()
+	if err := store.saveLandingController(context.Background(), &landingControllerState{
+		ControllerID: "test-controller", AuthorityInitialized: true,
+		Grants: map[string]landingControllerGrant{}, Accounts: map[string]landingControllerAccount{}, Subscriptions: map[string]landingNativeSubscription{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rogueID := landing.Identity("11111111-2222-4333-8444-555555555555")
+	result, projectErr := store.projectLandingAccounts(context.Background(), server.URL, "local-token", nil, []ThreeXUIClientView{{ID: rogueID, Email: "Rogue", Enabled: true}}, nil)
+	state, loadErr := store.landingController(context.Background())
+	if result != nil || projectErr == nil || loadErr != nil || state == nil || !state.AuthorityInitialized || len(state.Subscriptions) != 0 {
+		t.Fatalf("empty authority changed after panel drift: result=%#v state=%#v projectErr=%v loadErr=%v", result, state, projectErr, loadErr)
+	}
+}
+
 const gibibyteForTest int64 = 1024 * 1024 * 1024
 
 func threeXUIClientTestStore(t *testing.T, server *httptest.Server, token string) *Store {
@@ -342,7 +372,7 @@ func threeXUIClientTestStore(t *testing.T, server *httptest.Server, token string
 	}
 	config, _ := json.Marshal(map[string]any{"timezone": "UTC", "panel_port": port, "enable_fail2ban": true, "vmess_aead_forced": false})
 	secrets, _ := json.Marshal(map[string]string{"api_token": token})
-	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", AppKey: threeXUIKey, Version: "3.7.0", Config: config, Secrets: secrets, ServiceAddress: host}); err != nil {
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "3x-install", ApplicationID: "test-controller", AppKey: threeXUIKey, Version: "3.7.0", Config: config, Secrets: secrets, ServiceAddress: host}); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}

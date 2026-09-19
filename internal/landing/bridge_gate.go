@@ -21,15 +21,17 @@ const (
 	nftOutputLimit = 16 << 20
 )
 
-// BridgeGate fences the managed Docker bridge's traffic to one landing SOCKS
-// listener, in both directions. Host-local Agent probes and management ports do
-// not traverse these rules. Native/host-network proxy instances are unsupported.
-// Install must be called by a boot prerequisite before Docker can restore a
-// saved landing route. This type does not install that prerequisite itself.
+// BridgeGate fences one managed proxy runtime's traffic to one landing SOCKS
+// listener. Bridge mode scopes forwarded container traffic by interface; user
+// mode scopes a host-network Xray process by its dedicated non-root UID so
+// host-local Agent probes do not traverse the rules. Install must be called by
+// a boot prerequisite before Docker can restore a saved landing route. This
+// type does not install that prerequisite itself.
 type BridgeGate struct {
 	mu       sync.Mutex
 	peer     PeerIdentity
 	bridge   string
+	uid      int
 	revision uint64
 	table    string
 	marker   string
@@ -43,13 +45,26 @@ func NewBridgeGate(peer PeerIdentity, bridge string, revision uint64) (*BridgeGa
 	if err != nil || !netip.MustParsePrefix("100.64.0.0/10").Contains(address) || address.String() != peer.Address || peer.ID == "" || peer.PublicKey == "" || !bridgeNamePattern.MatchString(bridge) || revision == 0 {
 		return nil, errors.New("landing: invalid bridge gate identity")
 	}
+	return newTrafficGate(peer, bridge, 0, revision)
+}
+
+func NewUserGate(peer PeerIdentity, uid int, revision uint64) (*BridgeGate, error) {
+	address, err := netip.ParseAddr(peer.Address)
+	if err != nil || !netip.MustParsePrefix("100.64.0.0/10").Contains(address) || address.String() != peer.Address || peer.ID == "" || peer.PublicKey == "" || uid < 1 || uid == 65534 || revision == 0 {
+		return nil, errors.New("landing: invalid user gate identity")
+	}
+	return newTrafficGate(peer, "", uid, revision)
+}
+
+func newTrafficGate(peer PeerIdentity, bridge string, uid int, revision uint64) (*BridgeGate, error) {
 	identity, _ := json.Marshal(struct {
 		Peer     PeerIdentity
 		Bridge   string
+		UID      int
 		Revision uint64
-	}{peer, bridge, revision})
+	}{peer, bridge, uid, revision})
 	hash := sha256.Sum256(identity)
-	return &BridgeGate{peer: peer, bridge: bridge, revision: revision,
+	return &BridgeGate{peer: peer, bridge: bridge, uid: uid, revision: revision,
 		table:  "vastora_landing_" + hex.EncodeToString(hash[:12]),
 		marker: "vastora-landing-v1:" + hex.EncodeToString(hash[:]), run: runNFT}, nil
 }
@@ -62,12 +77,18 @@ type nftDocument struct {
 // No packet-path update statement is emitted: traffic cannot refresh its own
 // permission. A persistent kernel set expires even if the Agent is killed.
 func (g *BridgeGate) objects() []map[string]nftObject {
+	hook := "forward"
+	if g.uid > 0 {
+		hook = "output"
+	}
 	objects := []map[string]nftObject{
 		{"table": {"family": "inet", "name": g.table, "comment": g.marker}},
 		{"set": {"family": "inet", "table": g.table, "name": "allowed", "type": "ipv4_addr", "flags": []string{"timeout"}, "timeout": int(AllowLifetime / time.Second), "size": 1}},
-		{"chain": {"family": "inet", "table": g.table, "name": "forward", "type": "filter", "hook": "forward", "prio": -300, "policy": "accept"}},
+		{"chain": {"family": "inet", "table": g.table, "name": hook, "type": "filter", "hook": hook, "prio": -300, "policy": "accept"}},
 		{"chain": {"family": "inet", "table": g.table, "name": "outbound"}},
-		{"chain": {"family": "inet", "table": g.table, "name": "inbound"}},
+	}
+	if g.uid == 0 {
+		objects = append(objects, map[string]nftObject{"chain": {"family": "inet", "table": g.table, "name": "inbound"}})
 	}
 	match := func(left, right any) any {
 		return nftObject{"match": nftObject{"op": "==", "left": left, "right": right}}
@@ -87,13 +108,19 @@ func (g *BridgeGate) objects() []map[string]nftObject {
 		if protocol == "udp" {
 			port = nftObject{"range": []int{UDPRelayFirst, UDPRelayLast}}
 		}
-		rule("forward", match(meta("iifname"), g.bridge), match(payload("ip", "daddr"), g.peer.Address), match(payload(protocol, "dport"), port), nftObject{"jump": nftObject{"target": "outbound"}})
-		rule("forward", match(meta("oifname"), g.bridge), match(payload("ip", "saddr"), g.peer.Address), match(payload(protocol, "sport"), port), nftObject{"jump": nftObject{"target": "inbound"}})
+		if g.uid > 0 {
+			rule("output", match(meta("skuid"), g.uid), match(payload("ip", "daddr"), g.peer.Address), match(payload(protocol, "dport"), port), nftObject{"jump": nftObject{"target": "outbound"}})
+		} else {
+			rule("forward", match(meta("iifname"), g.bridge), match(payload("ip", "daddr"), g.peer.Address), match(payload(protocol, "dport"), port), nftObject{"jump": nftObject{"target": "outbound"}})
+			rule("forward", match(meta("oifname"), g.bridge), match(payload("ip", "saddr"), g.peer.Address), match(payload(protocol, "sport"), port), nftObject{"jump": nftObject{"target": "inbound"}})
+		}
 	}
 	rule("outbound", match(payload("ip", "daddr"), "@allowed"), nftObject{"return": nil})
 	rule("outbound", nftObject{"drop": nil})
-	rule("inbound", match(payload("ip", "saddr"), "@allowed"), nftObject{"return": nil})
-	rule("inbound", nftObject{"drop": nil})
+	if g.uid == 0 {
+		rule("inbound", match(payload("ip", "saddr"), "@allowed"), nftObject{"return": nil})
+		rule("inbound", nftObject{"drop": nil})
+	}
 	return objects
 }
 

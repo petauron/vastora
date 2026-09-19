@@ -118,13 +118,24 @@ func TestLandingSubscriptionHandlerScopesMaterialAndLifecycle(t *testing.T) {
 
 func TestLandingSubscriptionHandlerFailsClosedOnUpstreamAndJournalErrors(t *testing.T) {
 	store, state, parent := landingSubscriptionTestState(t)
+	empty := state.Subscriptions[parent]
+	empty.Links = nil
+	state.Subscriptions[parent] = empty
+	if err := store.saveLandingController(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	store.landingSubscriptionHandler().ServeHTTP(w, httptest.NewRequest("GET", "/sub/"+state.Accounts[parent].SubscriptionToken, nil))
+	if w.Code != http.StatusNotFound || strings.Contains(w.Body.String(), "vless://") {
+		t.Fatal("account without an applied route published subscription material")
+	}
 	broken := state.Subscriptions[parent]
 	broken.Links = []string{"not a native subscription"}
 	state.Subscriptions[parent] = broken
 	if err := store.saveLandingController(context.Background(), state); err != nil {
 		t.Fatal(err)
 	}
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	store.landingSubscriptionHandler().ServeHTTP(w, httptest.NewRequest("GET", "/sub/"+state.Accounts[parent].SubscriptionToken, nil))
 	if w.Code < 400 || strings.Contains(w.Body.String(), "vless://") {
 		t.Fatal("invalid native output produced a usable subscription")

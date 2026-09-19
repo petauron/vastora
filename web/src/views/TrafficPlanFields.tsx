@@ -151,7 +151,7 @@ function RenewingTrafficPlanFields({ idPrefix, language, quota, resetValue, rene
         <FieldDescription>{renewalEnabled
           ? inbound
             ? copy(language, "该日期由 Center 按位置时区计算。到期后 Vastora 只重置这个入站，不会清零订阅用户流量。", "Center calculated this date in the location timezone. Vastora resets only this inbound without clearing subscriber usage.")
-            : copy(language, "到达该日期后，3x-ui 会清零用户用量、重新启用客户端，并把日期向后顺延。", "On this date, 3x-ui clears subscriber usage, re-enables the client, and advances the date.")
+            : copy(language, "到达该日期后，Vastora Proxy 会清零用户用量、重新启用客户端，并把日期向后顺延。", "On this date, Vastora Proxy clears subscriber usage, re-enables the client, and advances the date.")
           : inbound
             ? copy(language, "未开启每月重置；这个节点的已用流量不会自动清零。", "Monthly reset is off, so this node's usage will not reset automatically.")
             : copy(language, "留空表示永不过期。", "Leave empty to never expire.")}</FieldDescription>

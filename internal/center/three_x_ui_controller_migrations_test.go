@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/petauron/vastora/internal/networking"
@@ -118,6 +119,17 @@ func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T
 	if err := store.CompleteTask(ctx, master.ID, master.Credential, demoteTask.ID, demoteTask.Attempt, true, "", demoteResult, demoteTask.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Operation: "configure", Config: config}); err == nil || !strings.Contains(err.Error(), "migration is in progress") {
+		t.Fatalf("ordinary deployment bypassed worker conversion lock: %v", err)
+	}
+	if err := store.resumeThreeXUIWorkerConversion(ctx); err != nil {
+		t.Fatal(err)
+	}
+	conversionTask := claimTask(t, store, master)
+	if conversionTask.Kind != "application.apply" || conversionTask.ApplicationRole != threeXUIRoleWorker || (conversionTask.Operation != "upgrade" && conversionTask.Operation != "configure") {
+		t.Fatalf("legacy controller Xray conversion task = %#v", conversionTask)
+	}
+	completeThreeXUIDeployment(t, store, master, conversionTask, "100.64.0.10", "master-token")
 	wantReconciled := map[string]bool{masterDeployment.ApplicationID: true}
 	for _, applicationID := range remainingWorkerApplications {
 		wantReconciled[applicationID] = true

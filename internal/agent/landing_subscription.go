@@ -46,7 +46,7 @@ func (s *Store) landingSubscriptionHandler() http.Handler {
 				native = &copy
 			}
 		}
-		if native == nil {
+		if native == nil || len(native.Links) == 0 {
 			http.NotFound(w, r)
 			return
 		}
@@ -150,6 +150,7 @@ func (s *Store) runLandingSubscriptions(ctx context.Context, report func(error))
 	var address string
 	var blockedAddress string
 	var inputRule []string
+	workerCleanupAttempted := false
 	stop := func() {
 		s.landingSubscriptionMu.Lock()
 		s.landingSubscriptionAddress = ""
@@ -173,7 +174,23 @@ func (s *Store) runLandingSubscriptions(ctx context.Context, report func(error))
 		installation, err := s.AppliedInstallation(ctx, threeXUIKey)
 		if err != nil || (landing.ServerPlan{Revision: 1, Address: installation.ServiceAddress}).Validate() != nil {
 			stop()
+			workerCleanupAttempted = false
+		} else if installation.ApplicationRole == "worker" {
+			stop()
+			if !workerCleanupAttempted {
+				workerCleanupAttempted = true
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				cleanupErr := removeLandingSubscriptionAccess(cleanupCtx, installation.ServiceAddress)
+				cancel()
+				if cleanupErr != nil && report != nil {
+					report(cleanupErr)
+				}
+			}
+		} else if installation.ApplicationRole != "master" {
+			stop()
+			workerCleanupAttempted = false
 		} else if address != installation.ServiceAddress && blockedAddress != installation.ServiceAddress {
+			workerCleanupAttempted = false
 			stop()
 			listener, err := net.Listen("tcp4", net.JoinHostPort(installation.ServiceAddress, strconv.Itoa(landing.SubscriptionPort)))
 			if err == nil {

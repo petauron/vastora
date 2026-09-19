@@ -22,14 +22,17 @@ import (
 func reportedServices(ctx context.Context, task DeploymentTask, bindAddress string) (ApplicationTaskResult, error) {
 	result := ApplicationTaskResult{Services: make([]ApplicationServiceResult, 0, len(task.Manifest.Services))}
 	for _, service := range task.Manifest.Services {
+		if task.AppKey == threeXUIKey && task.ApplicationRole == "worker" && (service.Name == "panel" || service.Name == "subscription") {
+			// Xray-only workers expose neither a panel service nor a node-side
+			// subscription service. Their private compatibility receiver is a
+			// control channel, not an application service or publication origin.
+			continue
+		}
 		if task.AppKey == threeXUIKey && service.Name == "subscription" {
-			// Workers never own a public subscription service. The controller's
+			// The controller's
 			// logical subscription service is implemented by the Agent listener,
 			// not the disabled 3x-ui 2096 endpoint. Preserve the catalog service
 			// identity while reporting its real native origin.
-			if task.ApplicationRole == "worker" {
-				continue
-			}
 			// A first install is not visible to the listener until Center commits
 			// this deployment result. Publication health remains the readiness gate;
 			// waiting here would deadlock the initial controller installation.

@@ -25,14 +25,16 @@ when the Center is unavailable.
   paths; each host uses one Agent-managed Caddy with a private Unix socket,
   while optional HAProxy provides TLS SNI passthrough only when Web HTTPS and
   raw TCP must share `443`.
-- Signed 3x-ui, CPA, and Keeper images pinned by digest, plus a native Komari
-  Agent binary pinned by platform and SHA-256.
+- Signed Vastora Proxy, CPA, and Keeper runtimes pinned by digest, plus a native
+  Komari Agent binary pinned by platform and SHA-256. Vastora Proxy workers run
+  the official Xray image directly; only the temporary global controller keeps
+  the pinned 3x-ui migration adapter.
 - Separate CPA management and public client API entries: the public hostname
   routes only `/v1` through Cloudflare Tunnel and keeps CPA key authentication,
   while the management page remains on its protected entry.
-- One global 3x-ui subscription controller with cross-Site VLESS workers,
-  encrypted controller restore points, and sequential Alpha convergence from
-  legacy per-Site controllers.
+- One global Vastora-owned subscription authority with cross-Site Xray-only
+  workers, encrypted controller/worker journals, and sequential Alpha
+  convergence from legacy per-Site 3x-ui controllers.
 - An Ubuntu 24.04 Center installation path and an OS-aware Agent installer for
   Debian 12/13 and Ubuntu 22.04/24.04/26.04 on x86_64 and ARM64, including
   mixed-architecture Sites and architecture-aware Agent updates. The one-line

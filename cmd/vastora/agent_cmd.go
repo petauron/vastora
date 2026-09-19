@@ -561,7 +561,7 @@ func runAgent(arguments []string) error {
 			client.Updater = systemHostUpdater{dataDir: *dataDir, executable: executable}
 			client.LandingServer = agent.NativeLandingServer{}
 		}
-		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}}
+		client.Executor = agent.ApplicationExecutor{Host: agent.SystemdHostApplicationManager{}, Store: store}
 		client.Capabilities.IPQuality = capabilities.Docker && runtime.GOOS == "linux"
 		client.Capabilities.NetworkDiagnostics = runtime.GOOS == "linux"
 		client.Capabilities.ReturnRoute = runtime.GOOS == "linux" && os.Geteuid() == 0
@@ -594,6 +594,9 @@ func runAgent(arguments []string) error {
 		// Reconnection is observation only. A failed heartbeat must not trigger
 		// offline application restoration or replay a management operation.
 		go func() {
+			if err := store.ResumeXrayWorker(context.Background(), ""); err != nil {
+				controlLogger.Error("Xray worker recovery blocked", "event", "xray.worker.recovery", "error", controlplane.SafeError(err.Error()))
+			}
 			if err := store.ResumeLandingRuntime(context.Background()); err != nil {
 				controlLogger.Error("Landing monitor recovery blocked", "event", "landing.monitor.recovery", "error", controlplane.SafeError(err.Error()))
 			}

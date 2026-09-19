@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 81
+const centerSchemaVersion = 82
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -710,14 +710,26 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
 		`CREATE TRIGGER deployments_block_during_three_x_ui_migration
 			BEFORE INSERT ON deployments
-			WHEN NEW.app_key = 'vastora-official/3x-ui' AND EXISTS (
+			WHEN NEW.app_key = 'vastora-official/3x-ui'
+			AND NOT EXISTS (
+				SELECT 1 FROM three_x_ui_migrations
+				WHERE source_application_id=NEW.application_id AND state='switching'
+				AND step='convert_worker' AND last_error=''
+			)
+			AND EXISTS (
 				SELECT 1 FROM three_x_ui_migrations
 				WHERE state IN ('backing_up', 'restoring', 'switching')
 			)
 			BEGIN SELECT RAISE(ABORT, '3x-ui subscription host migration is in progress'); END`,
 		`CREATE TRIGGER deployments_block_during_three_x_ui_data_plane
 			BEFORE INSERT ON deployments
-			WHEN NEW.app_key = 'vastora-official/3x-ui' AND EXISTS (
+			WHEN NEW.app_key = 'vastora-official/3x-ui'
+			AND NOT EXISTS (
+				SELECT 1 FROM three_x_ui_migrations
+				WHERE source_application_id=NEW.application_id AND state='switching'
+				AND step='convert_worker' AND last_error=''
+			)
+			AND EXISTS (
 				SELECT 1 FROM application_commands command
 				JOIN applications command_app ON command_app.id = command.application_id
 				WHERE (command.state IN ('pending', 'running') OR command.reconciliation_required = 1)

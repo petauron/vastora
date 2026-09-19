@@ -3,11 +3,15 @@ package agent
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/dockerruntime"
 )
+
+const landingUserGatePrefix = "uid-"
 
 // The instance stays available for its local management API while its business
 // route is kernel-blocked. Restart terminates old streams without stopping the
@@ -30,7 +34,7 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 		}
 	}()
 	inspected, err := docker.ContainerInspect(ctx, threeXUIContainer, client.ContainerInspectOptions{})
-	if err != nil || inspected.Container.Config == nil || inspected.Container.HostConfig == nil || inspected.Container.NetworkSettings == nil {
+	if err != nil || inspected.Container.Config == nil || inspected.Container.HostConfig == nil {
 		return nil, "", "", errors.New("agent: selected proxy instance is unavailable")
 	}
 	value := inspected.Container
@@ -39,6 +43,25 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 	}
 	if err := validateApplicationResourceLabels(value.Config.Labels, threeXUIKey, "3x-ui", applicationID, anyApplicationDeployment); err != nil {
 		return nil, "", "", err
+	}
+	policy := string(value.HostConfig.RestartPolicy.Name)
+	if policy != "no" && policy != "always" && policy != "unless-stopped" {
+		return nil, "", "", errors.New("agent: unsupported proxy restart policy")
+	}
+	if value.Config.Labels[xrayWorkerRuntimeLabel] == "xray" {
+		if !validXrayWorkerImageReference(value.Config.Image) || string(value.HostConfig.NetworkMode) != "host" {
+			return nil, "", "", errors.New("agent: managed Xray worker runtime identity changed")
+		}
+		uidText := strings.SplitN(value.Config.User, ":", 2)[0]
+		uid, parseErr := strconv.Atoi(uidText)
+		if parseErr != nil || uid != xrayWorkerRuntimeUID() {
+			return nil, "", "", errors.New("agent: managed Xray worker has no dedicated non-root identity")
+		}
+		failed = false
+		return &landingDocker{engine: docker, applicationID: applicationID, containerID: value.ID}, landingUserGatePrefix + strconv.Itoa(uid), policy, nil
+	}
+	if value.NetworkSettings == nil {
+		return nil, "", "", errors.New("agent: proxy bridge attachment is unavailable")
 	}
 	if string(value.HostConfig.NetworkMode) != dockerruntime.NetworkName || len(value.NetworkSettings.Networks) != 1 {
 		return nil, "", "", errors.New("agent: landing requires the managed proxy bridge")
@@ -61,10 +84,6 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 			return nil, "", "", errors.New("agent: invalid proxy bridge identity")
 		}
 		bridge = "br-" + bridgeNetwork.ID[:12]
-	}
-	policy := string(value.HostConfig.RestartPolicy.Name)
-	if policy != "no" && policy != "always" && policy != "unless-stopped" {
-		return nil, "", "", errors.New("agent: unsupported proxy restart policy")
 	}
 	failed = false
 	return &landingDocker{engine: docker, applicationID: applicationID, containerID: value.ID}, bridge, policy, nil

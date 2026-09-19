@@ -13,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/secret"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -140,7 +142,10 @@ func (s *Store) resumeThreeXUIControllerConvergence(ctx context.Context) error {
 		return err
 	}
 	if activeMigrations != 0 {
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return s.resumeThreeXUIWorkerConversion(ctx)
 	}
 
 	controllerApplicationID, _, err := runningGlobalThreeXUIController(ctx, tx)
@@ -219,6 +224,81 @@ func (s *Store) resumeThreeXUIControllerConvergence(ctx context.Context) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// resumeThreeXUIWorkerConversion replaces a demoted legacy controller with the
+// signed Xray-only worker runtime before topology reconciliation is allowed to
+// continue. The role switch and the runtime replacement are deliberately two
+// durable steps: a failed replacement leaves the migration recoverable and
+// never makes a legacy 3x-ui container look like a ready worker.
+func (s *Store) resumeThreeXUIWorkerConversion(ctx context.Context) error {
+	var migrationID, applicationID, agentID, installedVersion string
+	var config json.RawMessage
+	var active int
+	err := s.db.QueryRowContext(ctx, `SELECT migration.id, source.id, source.node_id, deployment.app_version, deployment.config_json,
+		(EXISTS(SELECT 1 FROM deployments current WHERE current.application_id=source.id AND (current.state IN ('pending','running') OR current.reconciliation_required=1)) OR
+		EXISTS(SELECT 1 FROM application_commands current WHERE current.application_id=source.id AND (current.state IN ('pending','running') OR current.reconciliation_required=1)))
+		FROM three_x_ui_migrations migration
+		JOIN applications source ON source.id=migration.source_application_id AND source.role='worker'
+		JOIN deployments deployment ON deployment.rowid=(
+			SELECT latest.rowid FROM deployments latest WHERE latest.application_id=source.id
+			AND latest.state='succeeded' AND latest.operation IN ('install','upgrade','configure')
+			ORDER BY latest.updated_at DESC,latest.rowid DESC LIMIT 1
+		)
+		WHERE migration.state='switching' AND migration.step='convert_worker' AND migration.last_error=''
+		ORDER BY migration.created_at,migration.rowid LIMIT 1`).Scan(&migrationID, &applicationID, &agentID, &installedVersion, &config, &active)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if active != 0 {
+		return nil
+	}
+	apps, err := s.ListApps(ctx)
+	if err != nil {
+		return s.failThreeXUIWorkerConversion(ctx, migrationID, applicationID, err)
+	}
+	var catalogVersion string
+	for _, app := range apps {
+		if app.Key == threeXUIAppKey {
+			catalogVersion = app.App.Version
+			break
+		}
+	}
+	if catalogVersion == "" {
+		return s.failThreeXUIWorkerConversion(ctx, migrationID, applicationID, errors.New("verified Vastora Proxy catalog entry is unavailable"))
+	}
+	operation := "configure"
+	if comparison := semver.Compare(canonicalAppVersion(catalogVersion), canonicalAppVersion(installedVersion)); comparison < 0 {
+		return s.failThreeXUIWorkerConversion(ctx, migrationID, applicationID, fmt.Errorf("catalog version %s is older than installed version %s", catalogVersion, installedVersion))
+	} else if comparison > 0 {
+		operation = "upgrade"
+	}
+	request := DeploymentRequest{AgentID: agentID, AppKey: threeXUIAppKey, Operation: operation, MigrationID: migrationID}
+	if operation == "configure" {
+		request.Config = config
+	}
+	if _, err := s.CreateDeployment(ctx, request); err != nil {
+		// Another request may have won the race after the read above. Its
+		// completion will resume this migration.
+		if strings.Contains(err.Error(), "active deployment task") {
+			return nil
+		}
+		return s.failThreeXUIWorkerConversion(ctx, migrationID, applicationID, err)
+	}
+	return nil
+}
+
+func (s *Store) failThreeXUIWorkerConversion(ctx context.Context, migrationID, applicationID string, cause error) error {
+	message := controlplane.SafeError(cause.Error())
+	_, err := s.db.ExecContext(ctx, `UPDATE three_x_ui_migrations SET last_error=?,failed_worker_application_id=?,updated_at=?
+		WHERE id=? AND state='switching' AND step='convert_worker'`, message, applicationID, s.now().UTC().Format(time.RFC3339Nano), migrationID)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Shared-account host migration is outside the MVP. A native 3x-ui backup
@@ -476,14 +556,10 @@ func (s *Store) attachConsolidatedThreeXUIController(ctx context.Context, tx *sq
 		remote_node_id = NULL, status = 'pending', last_error = '', updated_at = excluded.updated_at`, sourceApplicationID, targetApplicationID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'switch', last_error = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), migrationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'convert_worker', last_error = '', failed_worker_application_id = '', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), migrationID); err != nil {
 		return err
 	}
-	var deploymentID string
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments WHERE application_id = ? AND state = 'succeeded' AND operation IN ('install','upgrade','configure') ORDER BY updated_at DESC, rowid DESC LIMIT 1`, sourceApplicationID).Scan(&deploymentID); err != nil {
-		return errors.New("center: legacy 3x-ui controller deployment is unavailable for VLESS reconciliation")
-	}
-	return s.queueThreeXUINodeReconcile(ctx, tx, deploymentID, sourceApplicationID, migrationID, now)
+	return nil
 }
 
 func (s *Store) ListThreeXUIControllerMigrations(ctx context.Context) ([]ThreeXUIControllerMigrationView, error) {
@@ -697,13 +773,10 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, commit pr
 				}
 				message = "legacy 3x-ui controller backed up and queued as a VLESS node"
 			} else {
-				if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'switch', last_error = '', updated_at = ? WHERE id = ? AND state = 'switching'`, now.Format(time.RFC3339Nano), input.MigrationID); err != nil {
+				if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step = 'convert_worker', last_error = '', failed_worker_application_id = '', updated_at = ? WHERE id = ? AND state = 'switching'`, now.Format(time.RFC3339Nano), input.MigrationID); err != nil {
 					return err
 				}
-				if err := s.queueNextThreeXUINodeAfterMigration(ctx, tx, input.MigrationID, now); err != nil {
-					return err
-				}
-				message = "previous 3x-ui subscription host prepared to reconnect as a VLESS node"
+				message = "previous 3x-ui subscription host prepared for Xray-only conversion"
 			}
 		}
 	}
@@ -713,9 +786,10 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, commit pr
 	return commit(tx)
 }
 
-// RetryThreeXUIControllerMigrationCleanup retries only the old controller
-// demotion. The new controller has already taken ownership at this stage, so
-// restarting the whole migration would restore stale data over the live copy.
+// RetryThreeXUIControllerMigrationCleanup retries only the current cleanup
+// boundary: either controller demotion or the subsequent Xray-only conversion.
+// The new controller already owns subscriptions, so neither path replays the
+// backup or restores stale data over the live copy.
 func (s *Store) RetryThreeXUIControllerMigrationCleanup(ctx context.Context, migrationID string) (ThreeXUIControllerMigrationView, error) {
 	migrationID = strings.TrimSpace(migrationID)
 	if migrationID == "" {
@@ -726,10 +800,10 @@ func (s *Store) RetryThreeXUIControllerMigrationCleanup(ctx context.Context, mig
 		return ThreeXUIControllerMigrationView{}, err
 	}
 	defer tx.Rollback()
-	var sourceApplicationID, sourceAgentID, state, lastError string
-	if err := tx.QueryRowContext(ctx, `SELECT m.source_application_id, source.node_id, m.state, m.last_error
+	var sourceApplicationID, sourceAgentID, state, step, lastError string
+	if err := tx.QueryRowContext(ctx, `SELECT m.source_application_id, source.node_id, m.state, m.step, m.last_error
 		FROM three_x_ui_migrations m JOIN applications source ON source.id = m.source_application_id
-		WHERE m.id = ?`, migrationID).Scan(&sourceApplicationID, &sourceAgentID, &state, &lastError); errors.Is(err, sql.ErrNoRows) {
+		WHERE m.id = ?`, migrationID).Scan(&sourceApplicationID, &sourceAgentID, &state, &step, &lastError); errors.Is(err, sql.ErrNoRows) {
 		return ThreeXUIControllerMigrationView{}, errors.New("center: 3x-ui controller migration not found")
 	} else if err != nil {
 		return ThreeXUIControllerMigrationView{}, err
@@ -738,6 +812,31 @@ func (s *Store) RetryThreeXUIControllerMigrationCleanup(ctx context.Context, mig
 		return ThreeXUIControllerMigrationView{}, errors.New("center: old 3x-ui controller cleanup does not need a retry")
 	}
 	var active int
+	if step == "convert_worker" {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE application_id=? AND (state IN ('pending','running') OR reconciliation_required=1)`, sourceApplicationID).Scan(&active); err != nil {
+			return ThreeXUIControllerMigrationView{}, err
+		}
+		if active != 0 {
+			return ThreeXUIControllerMigrationView{}, errors.New("center: Xray-only worker conversion is already running")
+		}
+		now := s.now().UTC()
+		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET last_error='',failed_worker_application_id='',updated_at=? WHERE id=? AND state='switching' AND step='convert_worker'`, now.Format(time.RFC3339Nano), migrationID); err != nil {
+			return ThreeXUIControllerMigrationView{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_nodes SET status='pending',last_error='',updated_at=? WHERE worker_application_id=?`, now.Format(time.RFC3339Nano), sourceApplicationID); err != nil {
+			return ThreeXUIControllerMigrationView{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return ThreeXUIControllerMigrationView{}, err
+		}
+		if err := s.resumeThreeXUIWorkerConversion(ctx); err != nil {
+			return ThreeXUIControllerMigrationView{}, err
+		}
+		return s.ThreeXUIControllerMigration(ctx, migrationID)
+	}
+	if step != "cleanup" {
+		return ThreeXUIControllerMigrationView{}, errors.New("center: controller migration is not at a retryable cleanup boundary")
+	}
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND kind = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, sourceApplicationID, controllerCommandKind).Scan(&active); err != nil {
 		return ThreeXUIControllerMigrationView{}, err
 	}
@@ -833,10 +932,10 @@ func (s *Store) switchThreeXUIController(ctx context.Context, tx *sql.Tx, input 
 		return err
 	}
 	command := ThreeXUIControllerCommandTask{Action: "demote", MigrationID: input.MigrationID, ApplicationID: input.SourceApplicationID}
-	if err := s.queueThreeXUIControllerCommand(ctx, tx, input.SourceApplicationID, sourceAgentID, command, now, "previous 3x-ui subscription host queued for VLESS-only mode"); err != nil {
+	if err := s.queueThreeXUIControllerCommand(ctx, tx, input.SourceApplicationID, sourceAgentID, command, now, "previous 3x-ui subscription host queued for Xray-only conversion"); err != nil {
 		return err
 	}
-	return s.queueNextThreeXUINodeAfterMigration(ctx, tx, input.MigrationID, now)
+	return nil
 }
 
 func (s *Store) copyApplicationSecrets(ctx context.Context, tx *sql.Tx, sourceApplicationID, targetApplicationID string, now time.Time) error {

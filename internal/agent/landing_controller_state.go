@@ -54,10 +54,11 @@ type landingNativeSubscription struct {
 }
 
 type landingControllerState struct {
-	ControllerID  string                               `json:"controllerId"`
-	Grants        map[string]landingControllerGrant    `json:"grants"`
-	Accounts      map[string]landingControllerAccount  `json:"accounts"`
-	Subscriptions map[string]landingNativeSubscription `json:"subscriptions,omitempty"`
+	ControllerID         string                               `json:"controllerId"`
+	AuthorityInitialized bool                                 `json:"authorityInitialized"`
+	Grants               map[string]landingControllerGrant    `json:"grants"`
+	Accounts             map[string]landingControllerAccount  `json:"accounts"`
+	Subscriptions        map[string]landingNativeSubscription `json:"subscriptions,omitempty"`
 }
 
 func (s *Store) landingController(ctx context.Context) (*landingControllerState, error) {
@@ -76,6 +77,19 @@ func (s *Store) landingController(ctx context.Context) (*landingControllerState,
 	var state landingControllerState
 	if json.Unmarshal(plain, &state) != nil || state.ControllerID == "" || state.Grants == nil || state.Accounts == nil {
 		return nil, errors.New("agent: invalid landing account journal")
+	}
+	// Journals written before the explicit authority marker already crossed the
+	// one-time import boundary. Treat them as initialized even when their
+	// authoritative subscription set is intentionally empty; otherwise a later
+	// observation could resurrect deleted 3x-ui accounts.
+	var marker struct {
+		AuthorityInitialized *bool `json:"authorityInitialized"`
+	}
+	if json.Unmarshal(plain, &marker) != nil {
+		return nil, errors.New("agent: invalid landing account journal")
+	}
+	if marker.AuthorityInitialized == nil {
+		state.AuthorityInitialized = true
 	}
 	if state.Subscriptions == nil {
 		state.Subscriptions = map[string]landingNativeSubscription{}
@@ -107,8 +121,10 @@ func (s *Store) landingController(ctx context.Context) (*landingControllerState,
 			return nil, errors.New("agent: ambiguous native subscription ownership")
 		}
 		tokens[subscription.Token], emails[subscription.Email] = true, true
-		if _, err := landing.RenderLinks(subscription.Links, id, landing.FixedMode, nil, false); err != nil {
-			return nil, errors.New("agent: invalid native subscription inventory")
+		if len(subscription.Links) != 0 {
+			if _, err := landing.RenderLinks(subscription.Links, id, landing.FixedMode, nil, false); err != nil {
+				return nil, errors.New("agent: invalid native subscription inventory")
+			}
 		}
 	}
 	return &state, nil

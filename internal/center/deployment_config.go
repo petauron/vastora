@@ -185,12 +185,33 @@ func (s *Store) withCPASecret(ctx context.Context, agentID string, raw json.RawM
 	return json.Marshal(values)
 }
 
-func (s *Store) withThreeXUISecrets(ctx context.Context, agentID, operation string, encoded []byte) ([]byte, *OneTimeCredentials, error) {
+func (s *Store) withThreeXUISecrets(ctx context.Context, agentID, operation, role string, encoded []byte) ([]byte, *OneTimeCredentials, error) {
 	values := map[string]string{}
 	if len(encoded) != 0 && json.Unmarshal(encoded, &values) != nil {
 		return nil, nil, errors.New("center: invalid 3x-ui secret configuration")
 	}
 	if operation == "upgrade" || operation == "configure" {
+		if role == threeXUIRoleWorker {
+			var applicationID string
+			var sealed []byte
+			err := s.db.QueryRowContext(ctx, `SELECT a.id,s.sealed FROM applications a JOIN application_secrets value ON value.application_id=a.id JOIN secrets s ON s.id=value.secret_id WHERE a.node_id=? AND a.app_key=? AND a.role=?`, agentID, threeXUIAppKey, threeXUIRoleWorker).Scan(&applicationID, &sealed)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, nil, errors.New("center: proxy worker API token was not found")
+			}
+			if err != nil {
+				return nil, nil, err
+			}
+			plain, err := secret.Open(s.key, sealed, []byte("application:"+applicationID))
+			if err != nil || json.Unmarshal(plain, &values) != nil {
+				return nil, nil, errors.New("center: stored proxy worker API token is invalid")
+			}
+			apiToken := strings.TrimSpace(values["api_token"])
+			if apiToken == "" || len(apiToken) > 4096 {
+				return nil, nil, errors.New("center: stored proxy worker API token is invalid")
+			}
+			result, err := json.Marshal(map[string]string{"api_token": apiToken})
+			return result, nil, err
+		}
 		var deploymentID, secretID string
 		err := s.db.QueryRowContext(ctx, `SELECT id, secret_id FROM deployments WHERE agent_id = ? AND app_key = ? AND state = 'succeeded' AND operation IN ('install', 'upgrade', 'configure') AND secret_id IS NOT NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1`, agentID, threeXUIAppKey).Scan(&deploymentID, &secretID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -203,11 +224,17 @@ func (s *Store) withThreeXUISecrets(ctx context.Context, agentID, operation stri
 		if err != nil {
 			return nil, nil, err
 		}
-		if json.Unmarshal(previous, &values) != nil || values["username"] == "" || values["password"] == "" {
+		if json.Unmarshal(previous, &values) != nil {
 			return nil, nil, errors.New("center: stored 3x-ui credentials are invalid")
+		}
+		if values["username"] == "" || values["password"] == "" {
+			return nil, nil, errors.New("center: stored 3x-ui controller credentials are invalid")
 		}
 		result, err := json.Marshal(values)
 		return result, nil, err
+	}
+	if role == threeXUIRoleWorker {
+		return []byte(`{}`), nil, nil
 	}
 	usernameToken, err := randomToken(6)
 	if err != nil {

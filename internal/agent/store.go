@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,6 +52,12 @@ type Store struct {
 	landingLatencyMu           sync.Mutex
 	landingLatencyTargets      []landing.LatencyTarget
 	landingLatencyChanged      chan struct{}
+	xrayWorkerMu               sync.Mutex
+	xrayWorkerStateMu          sync.Mutex
+	xrayWorkerServer           *http.Server
+	xrayWorkerListener         net.Listener
+	xrayWorkerCancel           context.CancelFunc
+	xrayWorkerDone             chan struct{}
 }
 
 type landingPeerStatus struct {
@@ -98,7 +106,7 @@ type Connection struct {
 	CACertificatePEM string `json:"-"`
 }
 
-const agentSchemaVersion = 19
+const agentSchemaVersion = 20
 
 // CurrentSchemaVersion is the highest Agent database schema this executable
 // can open. The persistent host updater records it before a candidate can
@@ -656,6 +664,38 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 19
 		}
+		if version == 19 {
+			// The worker state contains REALITY private keys and client UUIDs.
+			// Take a consistent database snapshot before adding its encrypted
+			// journal so an interrupted forward-only migration is recoverable.
+			backupDir, migrateErr := os.MkdirTemp(dataDir, "schema-19-backup-")
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`VACUUM INTO ?`, filepath.Join(backupDir, "agent.db"))
+			}
+			var tx *sql.Tx
+			if migrateErr == nil {
+				tx, migrateErr = db.Begin()
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE IF NOT EXISTS xray_worker_state (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					sealed_state BLOB NOT NULL
+				); PRAGMA user_version = 20`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`SELECT id, sealed_state FROM xray_worker_state LIMIT 0`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 19 to 20: %w", migrateErr)
+			}
+			version = 20
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -774,7 +814,11 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		` + taskReceiptIndexesSQL + `PRAGMA user_version = 19;`); err != nil {
+		CREATE TABLE xray_worker_state (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			sealed_state BLOB NOT NULL
+		);
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 20;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}
@@ -1103,12 +1147,15 @@ func (s *Store) Connection(ctx context.Context) (Connection, error) {
 func (s *Store) Close() error {
 	s.stopActiveExecution(errors.New("agent: store is closing"))
 	s.linkChecker.Close()
+	xrayContext, xrayCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	xrayErr := s.stopXrayWorkerAPI(xrayContext, false)
+	xrayCancel()
 	s.landingMutationMu.Lock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	err := s.stopLandingMonitor(ctx)
 	cancel()
 	s.landingMutationMu.Unlock()
-	return errors.Join(err, s.db.Close())
+	return errors.Join(xrayErr, err, s.db.Close())
 }
 
 // RecordApplied stores a configuration only after a deployment executor has

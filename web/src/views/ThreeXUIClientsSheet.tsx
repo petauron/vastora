@@ -59,7 +59,7 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
       () => api.createThreeXUIClientCommand({ applicationId: application.id, ...input }),
       (value) => setCommand((current) => mergeCommandUpdate(current, value))
     );
-    if (next?.state === "failed") throw new Error(next.error || "The 3x-ui operation failed");
+    if (next?.state === "failed") throw new Error(next.error || "The Vastora Proxy operation failed");
     return next;
   }, [application?.id, execute]);
 
@@ -168,8 +168,8 @@ export function ThreeXUIClientsSheet({ application, advancedURL, language, onClo
   return <Sheet onOpenChange={(open) => { if (!open) requestClose(); }} open={Boolean(application)}>
     <SheetContent className="w-full sm:max-w-3xl">
       <SheetHeader>
-        <SheetTitle>{copy(language, "管理 3x-ui 客户端", "Manage 3x-ui clients")}</SheetTitle>
-        <SheetDescription>{copy(language, "在这里完成日常管理；路由、协议参数等少用设置仍在 3x-ui 中调整。", "Handle everyday tasks here. Use 3x-ui only for advanced routing and protocol details.")}</SheetDescription>
+        <SheetTitle>{copy(language, "管理 Vastora Proxy 客户端", "Manage Vastora Proxy clients")}</SheetTitle>
+        <SheetDescription>{copy(language, "在这里管理客户端、订阅与套餐；节点运行时由 Vastora 自动维护。", "Manage clients, subscriptions, and plans here. Vastora maintains the node runtime automatically.")}</SheetDescription>
       </SheetHeader>
 
       {editor ? <ClientEditor busy={busy} editor={editor} inbounds={inbounds} language={language} onCancel={discardEditor} onDirtyChange={setEditorDirty} onSave={async (input) => { await run(input); setEditorDirty(false); setEditor(null); }} siteTimezone={siteTimezone} /> : <>

@@ -18,29 +18,9 @@ import (
 	"github.com/moby/moby/client"
 )
 
-func TestThreeXUIPortsPublishOnlySelectedServices(t *testing.T) {
-	exposed, bindings, err := threeXUIPorts("100.64.0.10", 2053, "worker")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := exposed[dockernetwork.MustParsePort("2096/tcp")]; exists {
-		t.Fatal("worker unexpectedly publishes the master subscription service")
-	}
-	for _, number := range []string{"2053/tcp", "443/tcp"} {
-		port := dockernetwork.MustParsePort(number)
-		if _, exists := exposed[port]; !exists {
-			t.Fatalf("3x-ui mapping %s is missing", number)
-		}
-	}
-	panel := dockernetwork.MustParsePort("2053/tcp")
-	if len(bindings[panel]) != 1 || bindings[panel][0].HostIP.String() != "100.64.0.10" {
-		t.Fatal("3x-ui panel private binding is missing")
-	}
-	if _, exists := bindings[dockernetwork.MustParsePort("443/tcp")]; exists {
-		t.Fatal("raw REALITY port was unexpectedly published on the host")
-	}
-	if len(exposed) != 2 {
-		t.Fatalf("worker published unexpected ports: %#v", exposed)
+func TestThreeXUIPortsRejectWorkerBridgeRuntime(t *testing.T) {
+	if _, _, err := threeXUIPorts("100.64.0.10", 2053, "worker"); err == nil {
+		t.Fatal("Xray-only worker retained the obsolete 3x-ui bridge deployment path")
 	}
 }
 
@@ -58,6 +38,55 @@ func TestThreeXUIMasterDoesNotPublishSupersededSubscriptionService(t *testing.T)
 func TestThreeXUIPortsRejectPublicOnlyServiceAddress(t *testing.T) {
 	if _, _, err := threeXUIPorts("198.51.100.10", 2053, "master"); err == nil {
 		t.Fatalf("public-only 3x-ui binding was accepted: %v", err)
+	}
+}
+
+func TestReplaceXrayWorkerRestoresLegacyRuntimeAfterCandidateFailure(t *testing.T) {
+	engine := newFakeThreeXUIContainerEngine(t, true)
+	options := threeXUITestCreateOptions("deployment-2")
+	options.Config.Image = xrayWorkerImageReference
+	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
+	restored := false
+	_, err := replaceXrayWorkerContainer(context.Background(), engine, options, nil, func(string) (string, error) {
+		return "worker-token", errors.New("Xray health check failed")
+	}, func(string, string) error {
+		t.Fatal("failed Xray candidate reached post-promotion verification")
+		return nil
+	}, func(context.Context) error {
+		restored = true
+		return nil
+	})
+	if err == nil || !taskOutcomeIsUncertain(err) || !strings.Contains(err.Error(), "Xray health check failed") {
+		t.Fatalf("replacement error = %v", err)
+	}
+	current, resolveErr := engine.resolve(threeXUIContainer)
+	if resolveErr != nil || current.id != "old" || !current.running || current.labels[xrayWorkerRuntimeLabel] == "xray" {
+		t.Fatalf("legacy worker was not restored: %#v err=%v", current, resolveErr)
+	}
+	if _, resolveErr := engine.resolve("candidate-id"); !errdefs.IsNotFound(resolveErr) {
+		t.Fatalf("failed Xray candidate was retained: %v", resolveErr)
+	}
+	if !restored {
+		t.Fatal("worker state rollback was not invoked")
+	}
+}
+
+func TestReplaceXrayWorkerRestoresLegacyRuntimeAfterPostPromotionFailure(t *testing.T) {
+	engine := newFakeThreeXUIContainerEngine(t, true)
+	options := threeXUITestCreateOptions("deployment-2")
+	options.Config.Image = xrayWorkerImageReference
+	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
+	_, err := replaceXrayWorkerContainer(context.Background(), engine, options, nil, func(string) (string, error) {
+		return "worker-token", nil
+	}, func(string, string) error {
+		return errors.New("worker receiver unavailable")
+	}, func(context.Context) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "worker receiver unavailable") {
+		t.Fatalf("post-promotion error = %v", err)
+	}
+	current, resolveErr := engine.resolve(threeXUIContainer)
+	if resolveErr != nil || current.id != "old" || !current.running {
+		t.Fatalf("legacy worker was not restored after post-promotion failure: %#v err=%v", current, resolveErr)
 	}
 }
 
@@ -402,6 +431,21 @@ func TestReplaceThreeXUIContainerPreservesFreshVolumeAfterPostPromotionFailure(t
 	}
 	if !engine.volumeExists {
 		t.Fatal("failed fresh install retained its newly created database volume")
+	}
+}
+
+func TestReplaceThreeXUIContainerRestoresControllerFromXrayWorker(t *testing.T) {
+	engine := newFakeThreeXUIContainerEngine(t, true)
+	engine.containers["old"].labels[xrayWorkerRuntimeLabel] = "xray"
+	token, err := replaceThreeXUIContainer(context.Background(), engine, threeXUITestCreateOptions("deployment-controller"), true, func(string) (string, error) {
+		return "controller-token", nil
+	}, acceptThreeXUIPromotion)
+	if err != nil || token != "controller-token" || len(engine.persisted) == 0 {
+		t.Fatalf("Xray worker to controller transition failed: token=%q snapshots=%d err=%v", token, len(engine.persisted), err)
+	}
+	current, resolveErr := engine.resolve(threeXUIContainer)
+	if resolveErr != nil || current.labels[xrayWorkerRuntimeLabel] == "xray" {
+		t.Fatalf("controller was not promoted: %#v err=%v", current, resolveErr)
 	}
 }
 

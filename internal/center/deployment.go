@@ -32,6 +32,7 @@ type DeploymentRequest struct {
 	SecretOperationKey   string               `json:"-"`
 	ChangeProposalID     string               `json:"-"`
 	InternalDeploymentID string               `json:"-"`
+	MigrationID          string               `json:"-"`
 	CPACredentials       *cpaCredentialValues `json:"-"`
 	CPAManagementKey     string               `json:"-"`
 	CredentialRotation   bool                 `json:"-"`
@@ -105,6 +106,7 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	s.deploymentCreateMu.Lock()
 	defer s.deploymentCreateMu.Unlock()
 	request.InternalDeploymentID = strings.TrimSpace(request.InternalDeploymentID)
+	request.MigrationID = strings.TrimSpace(request.MigrationID)
 	if request.InternalDeploymentID != "" {
 		if replay, err := s.deploymentByID(ctx, request.InternalDeploymentID); err == nil {
 			return replay, nil
@@ -183,6 +185,38 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		}
 	} else if request.Role != "" {
 		return DeploymentView{}, errors.New("center: application role is only valid while installing 3x-ui")
+	}
+	if request.AppKey == threeXUIAppKey {
+		var migrationActive bool
+		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM three_x_ui_migrations WHERE state IN ('backing_up','restoring','switching')
+		)`).Scan(&migrationActive); err != nil {
+			return DeploymentView{}, fmt.Errorf("center: inspect active subscription host migration: %w", err)
+		}
+		if migrationActive && request.MigrationID == "" {
+			return DeploymentView{}, errors.New("center: 3x-ui subscription host migration is in progress")
+		}
+		if request.MigrationID == "" {
+			// Ordinary deployments remain available when no migration owns the
+			// topology. Only the internal conversion path carries a migration ID.
+		} else if request.Operation != "upgrade" && request.Operation != "configure" {
+			return DeploymentView{}, errors.New("center: migration authorization is only valid for a 3x-ui worker conversion")
+		} else {
+			var authorized bool
+			if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM three_x_ui_migrations migration
+			JOIN applications source ON source.id=migration.source_application_id
+			WHERE migration.id=? AND migration.state='switching' AND migration.step='convert_worker'
+			AND migration.last_error='' AND source.node_id=? AND source.app_key=? AND source.role='worker'
+		)`, request.MigrationID, request.AgentID, request.AppKey).Scan(&authorized); err != nil {
+				return DeploymentView{}, fmt.Errorf("center: validate worker conversion authorization: %w", err)
+			}
+			if !authorized {
+				return DeploymentView{}, errors.New("center: worker conversion authorization is no longer valid")
+			}
+		}
+	} else if request.MigrationID != "" {
+		return DeploymentView{}, errors.New("center: migration authorization is only valid for a 3x-ui worker conversion")
 	}
 	var activeTasks int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE agent_id = ? AND app_key = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, request.AgentID, request.AppKey).Scan(&activeTasks); err != nil {
@@ -353,7 +387,13 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		oneTimeCredentials = &OneTimeCredentials{SetupToken: oneTimePulseToken}
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation != "uninstall" {
-		secrets, oneTimeCredentials, err = s.withThreeXUISecrets(ctx, request.AgentID, request.Operation, secrets)
+		role := request.Role
+		if request.Operation != "install" {
+			if err := s.db.QueryRowContext(ctx, `SELECT role FROM applications WHERE node_id=? AND app_key=?`, request.AgentID, request.AppKey).Scan(&role); err != nil {
+				return DeploymentView{}, errors.New("center: installed proxy role was not found")
+			}
+		}
+		secrets, oneTimeCredentials, err = s.withThreeXUISecrets(ctx, request.AgentID, request.Operation, role, secrets)
 		if err != nil {
 			return DeploymentView{}, err
 		}

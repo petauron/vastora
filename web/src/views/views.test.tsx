@@ -624,7 +624,7 @@ describe("network and app views", () => {
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("添加入口"))?.click());
     act(() => document.querySelector<HTMLButtonElement>("#publication-kind")?.click());
     act(() => [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent?.includes("节点直连 443"))?.click());
-    expect(document.body.textContent).toContain("容器内部 443 合法");
+    expect(document.body.textContent).toContain("Xray 只监听节点的私有服务地址");
     expect(document.body.textContent).toContain("宿主机公网 443 由 HAProxy 独占");
     expect(document.body.textContent).not.toContain("应用内部端口不能是 443");
   });
@@ -973,7 +973,7 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
 
-    expect(document.body.textContent).toContain("3x-ui 已配置，入口尚未确认");
+    expect(document.body.textContent).toContain("Vastora Proxy 已配置，入口尚未确认");
     expect(document.body.textContent).toContain("不需要继续等待");
     expect(document.body.textContent).not.toContain("正在自动配置");
     await act(async () => {
@@ -1001,7 +1001,7 @@ describe("network and app views", () => {
     expect([...document.querySelectorAll("button")].some((button) => button.textContent?.includes("重试配置"))).toBe(true);
   });
 
-  it("automatically installs later 3x-ui instances as VLESS-only nodes", async () => {
+  it("automatically installs later Vastora Proxy instances as Xray-only nodes", async () => {
     const data = realityDashboard();
     data.agents.push({ ...data.agents[0], id: "worker", name: "edge-worker", networkProfile: { serviceAddress: "100.64.0.20", headscaleAddress: "100.64.0.20", enabledKinds: ["headscale"], directPublic: false } });
     const create = vi.spyOn(api, "createDeployment").mockResolvedValue({ id: "worker-deployment", agentId: "worker", appKey: "vastora-official/3x-ui", appVersion: "3.7.0", state: "pending", operation: "install", deleteData: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
@@ -1009,8 +1009,8 @@ describe("network and app views", () => {
     const container = render(<AppsView data={data} language="zh-CN" mutate={mutate} />);
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("应用商店"))?.click());
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "安装")?.click());
-    expect(document.body.textContent).toContain("将作为 VLESS 节点");
-    expect(document.body.textContent).toContain("不会再创建独立面板或订阅地址");
+    expect(document.body.textContent).toContain("将作为 Xray 节点");
+    expect(document.body.textContent).toContain("只运行 Xray，不创建面板或独立订阅地址");
     await act(async () => {
       [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("开始安装"))?.click();
       await Promise.resolve();
@@ -1170,7 +1170,8 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("正在安全迁移");
     expect(document.body.textContent).toContain("保存最新配置");
     expect(document.body.textContent).toContain("恢复到新主机");
-    expect(document.body.textContent).toContain("清理旧主机并同步节点");
+    expect(document.body.textContent).toContain("替换为 Xray 节点");
+    expect(document.body.textContent).toContain("同步节点拓扑");
   });
 
   it("manages 3x-ui clients and reveals links without opening the panel", async () => {
@@ -1193,7 +1194,7 @@ describe("network and app views", () => {
     expect(document.querySelector<HTMLDetailsElement>('details:has([aria-label="已接入节点"])')?.open).toBe(false);
     expect(document.querySelector('[aria-label="已接入节点"]')?.textContent).toContain("edge-worker");
     expect(document.body.textContent).toContain("已用流量");
-    expect(document.body.textContent).toContain("日常管理");
+    expect(document.body.textContent).toContain("管理 Vastora Proxy 客户端");
     act(() => [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("编辑") || button.querySelector(".sr-only")?.textContent === "编辑")?.click());
     expect(document.body.textContent).toContain("客户端额度（可选）");
     expect(document.querySelector<HTMLInputElement>("#three-x-ui-client-quota")?.value).toBe("10");

@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,7 +39,7 @@ func TestGlobalLandingPoolMigrationRemovesPerEntryPolicy(t *testing.T) {
 	if err != nil || selection.LandingRegionCodes["landing"] != "US" || selection.Revision != 4 {
 		t.Fatalf("global selection not preserved: %+v %v", selection, err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v78-before-v81-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v78-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("migration backup missing: %v %v", backups, err)
 	}

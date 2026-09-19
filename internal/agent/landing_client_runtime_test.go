@@ -55,7 +55,7 @@ func TestLandingClientHeartbeatIdentityHasBoundedUnixConnections(t *testing.T) {
 	store.linkChecker.HTTPClient.Transport.(*http.Transport).DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", socket)
 	}
-	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "runtime-identity", AppKey: threeXUIKey, Version: "test", ServiceAddress: "100.64.0.20", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`)}); err != nil {
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{InstanceID: "runtime-identity", AppKey: threeXUIKey, Version: "test", ServiceAddress: "100.64.0.20", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`), ApplicationRole: "master"}); err != nil {
 		t.Fatal(err)
 	}
 	store.landingSubscriptionAddress = "100.64.0.20"

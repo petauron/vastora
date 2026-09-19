@@ -18,3 +18,16 @@ func TestNativeSubscriptionCredentialOwnershipIgnoresNamesButRejectsMaterialChan
 		t.Fatal("background observation changed the authoritative route inventory")
 	}
 }
+
+func TestNativeSubscriptionUpdateCannotReplaceIdentity(t *testing.T) {
+	mutation := &nativeSubscriptionMutation{action: "update", email: "Old", newEmail: "New"}
+	prior := landingNativeSubscription{ID: "old-id", Email: "Old"}
+	client := ThreeXUIClientView{ID: "new-id", Email: "New"}
+	if mutation.accepts(client, landingNativeSubscription{}, false) {
+		t.Fatal("client update accepted a controller-side identity replacement")
+	}
+	client.ID = prior.ID
+	if !mutation.accepts(client, prior, true) {
+		t.Fatal("client update rejected the journaled identity rename")
+	}
+}

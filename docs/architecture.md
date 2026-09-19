@@ -198,10 +198,10 @@ service, and only then removes the obsolete Docker container.
 | `cloudflare_tunnel` | HTTP/HTTPS | selected Tunnel-capable node | Cloudflare HTTPS to a private origin |
 
 Direct-public DNS managed through Cloudflare is always DNS-only. A standard
-Cloudflare Tunnel is not offered for arbitrary VLESS/TCP/UDP clients. Raw 3x-ui
-inbounds remain owned by 3x-ui. Vastora can request a new VLESS REALITY inbound
-through Agent's node-local API, then observes its protocol, transport, security,
-port, listen address, and reachability without managing nftables.
+Cloudflare Tunnel is not offered for arbitrary VLESS/TCP/UDP clients. Vastora
+owns managed proxy desired state. During the controller transition it projects
+that state through the remaining controller adapter; every worker persists it
+in an encrypted Agent journal and renders a complete Xray configuration.
 
 ## Managed proxy subscription authority
 
@@ -373,52 +373,56 @@ resolvers. Extra records such as the private Center hostname are therefore
 available through the operating system resolver, while unrelated queries are
 forwarded normally.
 
-## 3x-ui
+## Vastora Proxy and the 3x-ui transition
 
-Center owns exactly one global 3x-ui subscription control plane across all
-Sites. The selected controller owns the client database, administrator panel,
-subscription service, credentials, restore points, and controller replacement
-workflow. Every other 3x-ui installation is a VLESS worker, even when it belongs
-to another Site; Site remains a geographic and ingress boundary rather than a
-subscription ownership boundary. Workers reach the controller over their
-confirmed Headscale/Tailscale or private service address, while each worker's
-REALITY traffic still enters directly through that worker's own public address
-and node-local HAProxy.
+Center and Agent own one global subscription authority across all Sites. The
+historical package identity remains `3x-ui` only to preserve installations,
+tokens and recovery journals. The selected master temporarily runs pinned
+3x-ui v3.7.0 as a one-way controller adapter. Every worker runs pinned official
+Xray directly and has no panel, panel database, updater, or node-side
+subscription service. Site remains a geographic and ingress boundary rather
+than a subscription ownership boundary.
 
 The forward migration from legacy per-Site controllers records one canonical
 controller deterministically, preferring connected workers and existing
 panel/subscription publications. During Alpha, Center then processes each extra
 controller sequentially: it stores a fresh encrypted 3x-ui database restore
-point, switches that host and its former workers to the global controller,
+point, retires its controller role, replaces that host with the signed Xray-only
+worker runtime, switches it and its former workers to the global controller,
 reconciles them one at a time, and only then retires the obsolete panel and
-subscription publications. Existing clients, inbounds, or remote-node rows do
-not block this Alpha conversion. Durable migration and Agent task state allow a
-restart to resume without running two conversions concurrently; a failed host
-stops the sequence for explicit recovery.
+subscription publications. Runtime replacement is a separate durable
+`convert_worker` step: an old 3x-ui container can never satisfy worker readiness,
+and a failed replacement stops at an explicit retry boundary. Existing clients,
+inbounds, or remote-node rows do not block this Alpha conversion. Durable
+migration and Agent task state allow a restart to resume without running two
+conversions concurrently; a failed host stops the sequence for explicit recovery.
 
-3x-ui uses the private runtime bridge. Docker publishes the panel and the
-global controller subscription service only on a confirmed loopback, LAN, or
-Headscale/Tailscale address; a public-only service address fails closed. Each
-physical VLESS node exposes exactly one REALITY socket, `443`, only inside the
-shared Docker network. Its local HAProxy is the sole public listener and
-forwards an allowlisted REALITY SNI to `vastora-3x-ui:443`. The raw 3x-ui socket
-is never published on the host. On first
-install, Center generates a strong administrator username/password and displays
-it once. Agent applies those credentials locally, creates a local API token,
-and stores its copy encrypted. Center stores its copy under the Application
-secret boundary.
+The controller adapter uses the private runtime bridge. Its panel is bound only
+to a confirmed loopback, LAN, or Headscale/Tailscale address; a public-only
+service address fails closed. On first controller install, Center generates a
+strong administrator username/password and displays it once. Xray-only workers
+do not receive administrator credentials. They use host networking, run as a
+dedicated non-root identity with a read-only filesystem, and expose only an
+authenticated private compatibility receiver on the confirmed service address.
+Each worker's REALITY socket binds that same private address; node-local HAProxy
+is the sole public TCP/443 listener and forwards only an allowlisted SNI with
+Proxy Protocol v2. HY2 owns UDP/443 directly on the host.
 
-Panel and subscription are separate Web Services. Agent reads enabled inbounds
-through the local Bearer-token API on heartbeat and reports them as observed raw
-Services. The panel is a management Service and cannot be published publicly
-without explicit high-risk confirmation.
+The worker receiver supports only the node synchronization calls required by
+the transitional controller and rejects UI, updater, shell, Docker, controller
+inventory, and subscription endpoints. Complete routing writes are additionally
+restricted to the node-local Agent path; the transitional controller may read
+but cannot overwrite landing routes. The receiver journals desired/applied
+revisions, validates every complete candidate with the pinned Xray image before
+atomic promotion, checkpoints monotonic traffic, and stops on the first
+uncertain control-plane error for explicit recovery.
 
 The subscription Service has a dedicated one-click public workflow. Center
-creates only a public HTTPS Publication for that Service, then sends a typed
-command to the application Agent to update 3x-ui's `subDomain` and `subURI`.
-The management panel remains private and is never included implicitly. Each
-client's full subscription URL continues to be generated by 3x-ui with its own
-subscription identifier.
+creates only a public HTTPS Publication for that Service. Agent preserves each
+imported token and renders `/sub/<token>` and `/clash/<token>` exclusively from
+its encrypted Vastora journal plus applied landing grants; it never fetches or
+merges a 3x-ui subscription body. The controller panel remains private and is
+never included implicitly.
 
 For browser-trusted private HTTPS, Center completes ACME DNS-01 validation with
 the connected Cloudflare zone. The certificate and key are encrypted in Center,
