@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.159](https://github.com/petauron/vastora/compare/v0.1.0-alpha.158...v0.1.0-alpha.159) (2026-09-19)
+
+
+### Bug Fixes
+
+* **proxy:** name managed workers as Vastora Xray ([#522](https://github.com/petauron/vastora/issues/522)) ([a20aeac](https://github.com/petauron/vastora/commit/a20aeacf24d14a91c8e57e85d21c82ae6fc7e05c))
+
 ## [0.1.0-alpha.158](https://github.com/petauron/vastora/compare/v0.1.0-alpha.157...v0.1.0-alpha.158) (2026-09-19)
 
 
