@@ -15,6 +15,7 @@ import (
 type runtimeMigrationApplication struct {
 	applicationID        string
 	appKey               string
+	role                 string
 	deploymentID         string
 	appVersion           string
 	manifestJSON         []byte
@@ -71,7 +72,7 @@ func (s *Store) queueApplicationRuntimeMigration(ctx context.Context, tx *sql.Tx
 }
 
 func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.Tx, agentID string, generation int, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, `SELECT a.id, a.app_key, d.id, d.app_version, d.manifest_json, d.config_json, d.service_address, d.secret_id, d.registry_credential_id
+	rows, err := tx.QueryContext(ctx, `SELECT a.id, a.app_key, a.role, d.id, d.app_version, d.manifest_json, d.config_json, d.service_address, d.secret_id, d.registry_credential_id
 		FROM applications a
 		JOIN deployments d ON d.rowid = (
 			SELECT previous.rowid FROM deployments previous
@@ -91,7 +92,7 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 	applications := []runtimeMigrationApplication{}
 	for rows.Next() {
 		var app runtimeMigrationApplication
-		if err := rows.Scan(&app.applicationID, &app.appKey, &app.deploymentID, &app.appVersion, &app.manifestJSON, &app.configJSON, &app.serviceAddress, &app.secretID, &app.registryCredentialID); err != nil {
+		if err := rows.Scan(&app.applicationID, &app.appKey, &app.role, &app.deploymentID, &app.appVersion, &app.manifestJSON, &app.configJSON, &app.serviceAddress, &app.secretID, &app.registryCredentialID); err != nil {
 			rows.Close()
 			return err
 		}
@@ -105,9 +106,22 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		return err
 	}
 	for _, app := range applications {
+		manifestJSON := app.manifestJSON
+		appVersion := app.appVersion
+		if app.appKey == threeXUIAppKey && app.role == threeXUIRoleWorker && generation >= 2 {
+			manifest, err := currentOfficialApplicationManifest(ctx, tx, "3x-ui", now)
+			if err != nil {
+				return fmt.Errorf("center: authorize Xray worker runtime migration: %w", err)
+			}
+			manifestJSON, err = json.Marshal(manifest)
+			if err != nil {
+				return err
+			}
+			appVersion = manifest.Version
+		}
 		if app.registryCredentialID.Valid {
 			var manifest catalog.AppManifest
-			if err := json.Unmarshal(app.manifestJSON, &manifest); err != nil {
+			if err := json.Unmarshal(manifestJSON, &manifest); err != nil {
 				return errors.New("center: stored application manifest is invalid during runtime migration")
 			}
 			if err := validateRegistryCredentialBinding(ctx, tx, app.registryCredentialID.String, manifest); err != nil {
@@ -135,7 +149,7 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		}
 		formattedNow := now.Format(time.RFC3339Nano)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id, agent_id, app_key, app_version, manifest_json, config_json, service_address, secret_id, registry_credential_id, operation, delete_data, state, error, created_at, updated_at, application_id, runtime_generation)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'configure', 0, 'pending', '', ?, ?, ?, ?)`, deploymentID, agentID, app.appKey, app.appVersion, app.manifestJSON, app.configJSON, app.serviceAddress, newSecretID, nullableSQLString(app.registryCredentialID), formattedNow, formattedNow, app.applicationID, generation); err != nil {
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'configure', 0, 'pending', '', ?, ?, ?, ?)`, deploymentID, agentID, app.appKey, appVersion, manifestJSON, app.configJSON, app.serviceAddress, newSecretID, nullableSQLString(app.registryCredentialID), formattedNow, formattedNow, app.applicationID, generation); err != nil {
 			return fmt.Errorf("center: queue application runtime migration: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'pending', updated_at = ? WHERE id = ?`, formattedNow, app.applicationID); err != nil {
@@ -146,4 +160,25 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		}
 	}
 	return nil
+}
+
+func currentOfficialApplicationManifest(ctx context.Context, tx *sql.Tx, appID string, now time.Time) (catalog.AppManifest, error) {
+	value, _, err := readAcceptedOfficialCatalog(ctx, tx, "stable")
+	if err != nil {
+		return catalog.AppManifest{}, err
+	}
+	for _, manifest := range value.Apps {
+		if manifest.ID != appID {
+			continue
+		}
+		canonical, err := catalog.CanonicalAppManifest(manifest)
+		if err != nil {
+			return catalog.AppManifest{}, err
+		}
+		if err := authorizeOfficialManifest(ctx, tx, "stable", canonical, now); err != nil {
+			return catalog.AppManifest{}, err
+		}
+		return canonical, nil
+	}
+	return catalog.AppManifest{}, fmt.Errorf("official application %q was not found", appID)
 }
