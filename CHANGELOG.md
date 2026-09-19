@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.161](https://github.com/petauron/vastora/compare/v0.1.0-alpha.160...v0.1.0-alpha.161) (2026-09-19)
+
+
+### Bug Fixes
+
+* **proxy:** sequence Xray worker cutover safely ([#526](https://github.com/petauron/vastora/issues/526)) ([fcd5418](https://github.com/petauron/vastora/commit/fcd5418ba856968a5d1786ced1da20fdb1c21a35))
+
 ## [0.1.0-alpha.160](https://github.com/petauron/vastora/compare/v0.1.0-alpha.159...v0.1.0-alpha.160) (2026-09-19)
 
 
