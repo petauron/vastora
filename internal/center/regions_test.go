@@ -12,24 +12,24 @@ import (
 )
 
 func TestComposeRealityDisplayNameUsesStableRegionPrefix(t *testing.T) {
-	code, name, displayName, err := composeRealityDisplayName("us", " Oracle 9929 ")
+	code, name, displayName, err := composeRealityDisplayName("us", " Provider A Premium ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code != "US" || name != "Oracle 9929" || displayName != "🇺🇸 美国｜Oracle 9929" {
+	if code != "US" || name != "Provider A Premium" || displayName != "🇺🇸 美国｜Provider A Premium" {
 		t.Fatalf("composed name = code %q, name %q, display %q", code, name, displayName)
 	}
-	if _, _, _, err := composeRealityDisplayName("ZZ", "Oracle"); err == nil {
+	if _, _, _, err := composeRealityDisplayName("ZZ", "Provider A"); err == nil {
 		t.Fatal("unsupported ISO region was accepted")
 	}
 }
 
 func TestRealityBaseNameUnderstandsOldAndCurrentPrefixes(t *testing.T) {
 	for displayName, expected := range map[string]string{
-		"🇺🇸 US · CloudLead": "CloudLead",
-		"🇺🇸 美国CloudLead":    "CloudLead",
-		"🇺🇸 美国｜CloudLead":   "CloudLead",
-		"CloudLead-test":    "CloudLead-test",
+		"🇺🇸 US · Provider A": "Provider A",
+		"🇺🇸 美国Provider A":    "Provider A",
+		"🇺🇸 美国｜Provider A":   "Provider A",
+		"Provider A-test":    "Provider A-test",
 	} {
 		if actual := realityBaseName(displayName, "US"); actual != expected {
 			t.Fatalf("base name for %q = %q, want %q", displayName, actual, expected)

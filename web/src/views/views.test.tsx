@@ -633,8 +633,8 @@ describe("network and app views", () => {
     ["random-code", "请输入完整域名"],
     ["https://panel.example.com/", "不要包含 https://、端口或路径"],
     ["panel.example.com:8080", "不要包含 https://、端口或路径"],
-    ["panel.other.net", "域名必须属于当前 Cloudflare 域名 example.com"],
-    ["notexample.com", "域名必须属于当前 Cloudflare 域名 example.com"],
+    ["panel.example.net", "域名必须属于当前 Cloudflare 域名 example.com"],
+    ["not-example.example.net", "域名必须属于当前 Cloudflare 域名 example.com"],
   ])("explains invalid publication hostname %s without creating an entry", async (hostname, message) => {
     const data = dashboard();
     data.integrations = [{ kind: "cloudflare", mode: "oauth", endpoint: "example.com", accountId: "account", zoneId: "zone", secretSet: true, accessManagement: true, status: "configured" }];
@@ -1132,7 +1132,7 @@ describe("network and app views", () => {
 		vi.useFakeTimers();
 		const data = realityDashboard();
 		data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国Old name", regionCode: "US", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
-		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 美国｜Oracle", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		const pending: ApplicationCommand = { id: "rename-command", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.rename", state: "pending", hostname: "", dnsProvider: "manual", action: "rename", regionCode: "US", displayName: "🇺🇸 美国｜Provider A", inboundId: 9, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		const rename = vi.spyOn(api, "renameRealityCommand").mockResolvedValue(pending);
 		vi.spyOn(api, "nodeProtocols").mockResolvedValue({ vless: true, hy2: false, state: "succeeded" });
@@ -1143,20 +1143,20 @@ describe("network and app views", () => {
 		act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("编辑节点"))?.click());
 		const input = document.querySelector<HTMLInputElement>("#reality-rename-name")!;
 		act(() => {
-			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Oracle");
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "Provider A");
 			input.dispatchEvent(new Event("input", { bubbles: true }));
 		});
 		await act(async () => {
 			[...document.querySelectorAll("button")].find((button) => button.textContent?.includes("保存名称"))?.click();
 			await Promise.resolve();
 		});
-		expect(rename).toHaveBeenCalledWith("reality-service", "US", "Oracle");
+		expect(rename).toHaveBeenCalledWith("reality-service", "US", "Provider A");
 		await act(async () => {
 			vi.advanceTimersByTime(1300);
 			await Promise.resolve();
 			await Promise.resolve();
 		});
-		expect(document.body.textContent).toContain("现在显示为“🇺🇸 美国｜Oracle”");
+		expect(document.body.textContent).toContain("现在显示为“🇺🇸 美国｜Provider A”");
 		expect(mutate).toHaveBeenCalled();
 	});
 
@@ -1460,7 +1460,7 @@ describe("network and app views", () => {
 		vi.spyOn(api, "latestApplicationCommand").mockRejectedValue(new Error("not found"));
 		vi.spyOn(api, "regions").mockResolvedValue({ regions: [{ code: "US", nameZh: "美国", prefix: "🇺🇸 美国" }] });
 		vi.spyOn(api, "agentRegionSuggestion").mockResolvedValue({ agentId: "agent", publicAddress: "203.0.113.10", regionCode: "US", prefix: "🇺🇸 美国", source: "configured_helper" });
-		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国｜Oracle", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+		const pending: ApplicationCommand = { id: "create-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.create", state: "pending", hostname: "reality.home-server.home.vastora.example.com", dnsProvider: "manual", action: "create", regionCode: "US", displayName: "🇺🇸 美国｜Provider A", resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
 		const verify = vi.spyOn(api, "verifyRealityTarget").mockResolvedValue({ id: "verify-reality", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.reality.verify", state: "succeeded", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", targetIp: "203.0.113.20", serverName: "www.example.com", nodeAsn: 64500, targetAsn: 64501, tls13: true, x25519: true, h2: true, certificateValid: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" });
 		const create = vi.spyOn(api, "createRealityCommand").mockResolvedValue(pending);
 		mockCommandEvent(pending);
@@ -1470,7 +1470,7 @@ describe("network and app views", () => {
 		expect(nodeName.value).toBe("home-server");
 		expect(document.querySelector<HTMLInputElement>("#reality-client-name")?.value).toBe("我的设备");
 		act(() => {
-			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(nodeName, "Oracle");
+			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(nodeName, "Provider A");
 			nodeName.dispatchEvent(new Event("input", { bubbles: true }));
 			const targetHost = document.querySelector<HTMLInputElement>("#reality-target-host")!;
 			Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(targetHost, "www.example.com");
@@ -1490,7 +1490,7 @@ describe("network and app views", () => {
 			await Promise.resolve();
 		});
 		expect(verify).toHaveBeenCalledWith("three-x-ui", "www.example.com", "www.example.com");
-		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", verificationId: "verify-reality", targetIp: "203.0.113.20", regionCode: "US", name: "Oracle", clientName: "我的设备", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
+		expect(create).toHaveBeenCalledWith({ applicationId: "three-x-ui", verificationId: "verify-reality", targetIp: "203.0.113.20", regionCode: "US", name: "Provider A", clientName: "我的设备", hostname: "", dnsProvider: "manual", targetHost: "www.example.com", serverName: "www.example.com", inboundTotalBytes: 0, inboundResetDay: 1, clientTotalBytes: 0, clientResetDays: 0, clientExpiryTime: 0 });
 		});
 
   it("keeps subscriber quotas on the controller even when a worker creates the first VLESS node", async () => {
@@ -1545,9 +1545,9 @@ describe("network and app views", () => {
 
   it("edits an independent VLESS node plan from its service card", async () => {
     const data = realityDashboard();
-    const service = { id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp" as const, containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed" as const, appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
+    const service = { id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国Provider A", protocol: "tcp" as const, containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed" as const, appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" };
     data.services = [service];
-    const current: ApplicationCommand = { id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z", planStatus: "active" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+    const current: ApplicationCommand = { id: "traffic-list", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国Provider A", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z", planStatus: "active" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
     const updated = { ...current, id: "traffic-update", action: "update_inbound" as const, inbounds: [{ ...current.inbounds![0], totalBytes: 300 * 1024 ** 3, resetDay: 31 }] };
     const command = vi.spyOn(api, "createThreeXUIClientCommand").mockImplementation(async (input) => input.action === "update_inbound" ? updated : current);
     vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -1597,8 +1597,8 @@ describe("network and app views", () => {
     }
     vi.stubGlobal("EventSource", IdleEventSource);
     const data = realityDashboard();
-    data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
-    const cached: ApplicationCommand = { id: "cached-traffic", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
+    data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国Provider A", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
+    const cached: ApplicationCommand = { id: "cached-traffic", applicationId: "three-x-ui", gatewayNodeId: "agent", kind: "3xui.clients.manage", state: "succeeded", hostname: "", dnsProvider: "manual", action: "list_inbounds", clients: [], clientsObserved: false, inbounds: [{ id: 9, serviceId: "reality-service", name: "inbound-9", displayName: "🇺🇸 美国Provider A", totalBytes: 200 * 1024 ** 3, usedBytes: 12 * 1024 ** 3, resetDay: 22, nextResetAt: "2026-09-22T00:00:00Z" }], inboundsObserved: true, resultAvailable: false, createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:01Z" };
     vi.spyOn(api, "latestApplicationCommand").mockResolvedValue(cached);
     vi.spyOn(api, "createThreeXUIClientCommand").mockResolvedValue({ ...cached, id: "refresh-traffic", state: "pending", inbounds: undefined, inboundsObserved: false });
     const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
@@ -1616,7 +1616,7 @@ describe("network and app views", () => {
 
   it("keeps service origin details collapsed by default", () => {
     const data = realityDashboard();
-    data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国CloudLead", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
+    data.services = [{ id: "reality-service", applicationId: "three-x-ui", siteId: "site", name: "inbound-9", displayName: "🇺🇸 美国Provider A", protocol: "tcp", containerPort: 30443, hostPort: 30443, endpoint: "10.0.0.10:30443", source: "observed", appProtocol: "vless/tcp/reality", management: false, status: "ready", createdAt: "2026-08-23T00:00:00Z", updatedAt: "2026-08-23T00:00:00Z" }];
     const container = renderAppDetails(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
     const details = [...container.querySelectorAll("details")].find((value) => value.querySelector("summary")?.textContent?.includes("技术信息"));
     expect(details?.open).toBe(false);
@@ -1855,7 +1855,7 @@ describe("network and app views", () => {
   it("upgrades legacy zone-level setup defaults", () => {
     window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
       step: 2,
-      name: "Cloudlead",
+      name: "Example Site",
       timezone: "Asia/Singapore",
       domainSuffix: "example.com",
       mode: "headscale",
@@ -1878,7 +1878,7 @@ describe("network and app views", () => {
   it("preserves custom setup hostnames after Cloudflare is connected", () => {
     window.sessionStorage.setItem("vastora.initial-setup.v1", JSON.stringify({
       step: 2,
-      name: "Cloudlead",
+      name: "Example Site",
       timezone: "Asia/Singapore",
       domainSuffix: "services.ops.example.net",
       mode: "headscale",
@@ -1911,7 +1911,7 @@ describe("network and app views", () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     };
-    act(() => fill("#setup-location-name", "Cloudlead"));
+    act(() => fill("#setup-location-name", "Example Site"));
     act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("继续"))?.click());
 		act(() => container.querySelector<HTMLInputElement>('input[value="headscale"]')?.click());
 		const advanced = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("高级设置"))!;

@@ -1219,27 +1219,27 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 		VALUES('reality-service', ?, ?, 'inbound-9', 'Old name', 'tcp', 32009, 32009, '10.0.0.71:32009', 'observed', 'vless/tcp/reality', 0, '10.0.0.71', 'ready', ?, ?)`, deployment.ApplicationID, testSiteID(t, store), now, now); err != nil {
 		t.Fatal(err)
 	}
-	command, err := store.CreateRealityRenameCommand(ctx, RealityRenameCommandInput{ServiceID: "reality-service", RegionCode: "US", Name: "Oracle"})
+	command, err := store.CreateRealityRenameCommand(ctx, RealityRenameCommandInput{ServiceID: "reality-service", RegionCode: "US", Name: "Provider A"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	task := claimTask(t, store, node)
-	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.RegionCode != "US" || task.ApplicationCommand.DisplayName != "🇺🇸 美国｜Oracle" {
+	if task.ApplicationCommand == nil || task.ApplicationCommand.Action != "rename" || task.ApplicationCommand.InboundID != 9 || task.ApplicationCommand.RegionCode != "US" || task.ApplicationCommand.DisplayName != "🇺🇸 美国｜Provider A" {
 		t.Fatalf("unexpected rename task: %#v", task)
 	}
-	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 美国｜Oracle"}})
+	encoded, _ := json.Marshal(ApplicationTaskResult{ApplicationCommand: &RealityCommandResult{Action: "rename", InboundID: 9, DisplayName: "🇺🇸 美国｜Provider A"}})
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", encoded, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	completed, err := store.ApplicationCommand(ctx, command.ID)
-	if err != nil || completed.State != "succeeded" || completed.RegionCode != "US" || completed.DisplayName != "🇺🇸 美国｜Oracle" {
+	if err != nil || completed.State != "succeeded" || completed.RegionCode != "US" || completed.DisplayName != "🇺🇸 美国｜Provider A" {
 		t.Fatalf("unexpected completed rename: %#v err=%v", completed, err)
 	}
 	var displayName, region, serviceName, endpoint string
 	if err := store.db.QueryRowContext(ctx, `SELECT display_name, region_code, name, endpoint FROM services WHERE id = 'reality-service'`).Scan(&displayName, &region, &serviceName, &endpoint); err != nil {
 		t.Fatal(err)
 	}
-	if displayName != "🇺🇸 美国｜Oracle" || region != "US" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
+	if displayName != "🇺🇸 美国｜Provider A" || region != "US" || serviceName != "inbound-9" || endpoint != "10.0.0.71:32009" {
 		t.Fatalf("renamed service = display %q, region %q, identity %q, endpoint %q", displayName, region, serviceName, endpoint)
 	}
 }
@@ -1312,7 +1312,7 @@ func TestRealityTargetHostnameRequiresDotCom(t *testing.T) {
 			t.Fatalf("valid .com hostname %q was rejected", hostname)
 		}
 	}
-	for _, hostname := range []string{"example.xyz", "example.net", "com", "bad..com"} {
+	for _, hostname := range []string{"example.test", "example.net", "com", "bad..com"} {
 		if validRealityTargetHostname(hostname) {
 			t.Fatalf("non-.com or invalid hostname %q was accepted", hostname)
 		}

@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+project_dir="$(git rev-parse --show-toplevel)"
+exec node "$project_dir/scripts/check-public-fixtures.mjs" --staged

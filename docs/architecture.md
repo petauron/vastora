@@ -434,7 +434,7 @@ certificate is removed.
 The one-click REALITY flow is an authenticated, leased Application command.
 Center owns the subscription-facing node name and composes it from a structured
 ISO 3166-1 region plus the administrator-provided name (for example,
-`🇺🇸 US · Oracle 9929`). The region can be suggested from the VLESS node's own
+`🇺🇸 US · Provider A Premium`). The region can be suggested from the VLESS node's own
 public address and remains manually searchable and editable. This keeps client
 grouping prefixes stable while the global 3x-ui controller manages nodes across
 Sites.

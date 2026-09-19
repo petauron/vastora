@@ -28,4 +28,5 @@
 ## Security review
 
 - [ ] No secret, private host, account, or runtime data is added.
+- [ ] Test and documentation fixtures use reserved addresses, example domains, and neutral node names.
 - [ ] The change preserves the Center-Agent trust boundary.
