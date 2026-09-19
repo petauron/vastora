@@ -14,7 +14,7 @@ forward migration. Runtime ownership is role-specific:
 
 Worker REALITY listens only on bridge-scoped container port 443 while the node
 HAProxy remains the only owner of public TCP/443. HY2 explicitly publishes host
-UDP/443 to the same container port with the pinned Xray 26.9.9 multi-architecture image. Hysteria `finalmask`
+UDP/443 to the same container port with the pinned Xray 26.7.28 multi-architecture image. Hysteria `finalmask`
 is rejected: upstream documents that a wildcard listener on a multi-homed host
 can reply from the wrong source address, and treats that behavior as a known
 limitation. The Agent rejects a listener route unless its upstream is the local

@@ -30,9 +30,9 @@ func testXrayWorkerState() xrayWorkerState {
 
 func TestXrayWorkerImageReferenceMustBeOfficialTaggedAndPinned(t *testing.T) {
 	for _, value := range []string{
-		"ghcr.io/xtls/xray-core:26.9.9",
+		"ghcr.io/xtls/xray-core:26.7.28",
 		"ghcr.io/xtls/xray-core@sha256:45338c4df61fda061c47ce62aafda6c5d7d59cbdefc33f2e335d8b0c748b748a",
-		"example.test/xtls/xray-core:26.9.9@sha256:45338c4df61fda061c47ce62aafda6c5d7d59cbdefc33f2e335d8b0c748b748a",
+		"example.test/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558",
 	} {
 		if validXrayWorkerImageReference(value) {
 			t.Fatalf("accepted untrusted Xray image reference %q", value)

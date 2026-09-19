@@ -5,7 +5,7 @@ VLESS，可添加 HY2，也可只保留 HY2；至少保留一种协议。节点�
 客户端刷新原订阅即可获取已启用的协议，不生成第二个订阅地址。
 
 控制端过渡适配器仍使用 3x-ui 3.7.0 的原生 Hysteria2 数据结构；工作节点
-由 Agent 将其投影为官方 Xray 26.9.9 配置，不安装 3x-ui 面板、独立
+由 Agent 将其投影为官方 Xray 26.7.28 配置，不安装 3x-ui 面板、独立
 Hysteria 或 sing-box 服务，也不加入 AnyTLS。上游协议定义：
 [Hysteria 入站](https://github.com/MHSanaei/3x-ui/blob/v3.7.0/frontend/src/schemas/protocols/inbound/hysteria.ts)、
 [Hysteria 传输](https://github.com/MHSanaei/3x-ui/blob/v3.7.0/frontend/src/schemas/protocols/stream/hysteria.ts)。
