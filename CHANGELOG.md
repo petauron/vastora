@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.157](https://github.com/petauron/vastora/compare/v0.1.0-alpha.156...v0.1.0-alpha.157) (2026-09-19)
+
+
+### Features
+
+* **proxy:** replace 3x-ui workers with managed Xray ([#514](https://github.com/petauron/vastora/issues/514)) ([fee0fe8](https://github.com/petauron/vastora/commit/fee0fe81b964d628db7f2636f3f051f7336abd22))
+
 ## [0.1.0-alpha.156](https://github.com/petauron/vastora/compare/v0.1.0-alpha.155...v0.1.0-alpha.156) (2026-09-16)
 
 
