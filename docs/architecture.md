@@ -401,12 +401,13 @@ The controller adapter uses the private runtime bridge. Its panel is bound only
 to a confirmed loopback, LAN, or Headscale/Tailscale address; a public-only
 service address fails closed. On first controller install, Center generates a
 strong administrator username/password and displays it once. Xray-only workers
-do not receive administrator credentials. They use host networking, run as a
-dedicated non-root identity with a read-only filesystem, and expose only an
-authenticated private compatibility receiver on the confirmed service address.
-Each worker's REALITY socket binds that same private address; node-local HAProxy
-is the sole public TCP/443 listener and forwards only an allowlisted SNI with
-Proxy Protocol v2. HY2 owns UDP/443 directly on the host.
+do not receive administrator credentials. They use the shared private Docker
+bridge, run as a dedicated non-root identity with a read-only filesystem, and
+expose only an authenticated private compatibility receiver on the confirmed
+service address. Each worker's REALITY socket is bridge-scoped on container
+port 443; node-local HAProxy is the sole public TCP/443 listener and forwards
+only an allowlisted SNI with Proxy Protocol v2. HY2 alone publishes host UDP/443
+to the worker's container UDP/443.
 
 The worker receiver supports only the node synchronization calls required by
 the transitional controller and rejects UI, updater, shell, Docker, controller
@@ -457,7 +458,7 @@ inbounds.
 Each physical 3x-ui host can have only one managed REALITY inbound. REALITY
 points directly at the validated pinned IP on port 443 and permits exactly the
 verified `serverName`. The node-local HAProxy accepts that exact outer SNI,
-forwards Proxy Protocol v2 to the local 3x-ui `:443`, and rejects unmatched SNI
+forwards Proxy Protocol v2 to the local managed Xray alias on `:443`, and rejects unmatched SNI
 on VLESS-only nodes. A dual-role Site Gateway sends unmatched SNI only to its
 local Caddy. This blocks the usual alternate-SNI relay path, but SNI is not
 client authentication. TCP passthrough cannot authorize encrypted HTTP Host

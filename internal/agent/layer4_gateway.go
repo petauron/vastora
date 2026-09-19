@@ -634,7 +634,7 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 	}
 	desired = *state.Sorted().SharedHTTPS
 	var configuration strings.Builder
-	configuration.WriteString("global\n  log stdout format raw local0\n  maxconn 4096\n\ndefaults\n  log global\n  mode tcp\n  option tcplog\n  timeout connect 10s\n  timeout client 1m\n  timeout server 1m\n\n")
+	configuration.WriteString("global\n  log stdout format raw local0\n  maxconn 4096\n\ndefaults\n  log global\n  mode tcp\n  option tcplog\n  timeout connect 10s\n  timeout client 1m\n  timeout server 1m\n\nresolvers vastora-docker\n  nameserver docker 127.0.0.11:53\n  resolve_retries 3\n  timeout resolve 1s\n  timeout retry 1s\n\n")
 	configuration.WriteString("frontend vastora-shared-https\n  bind ")
 	configuration.WriteString(net.JoinHostPort("0.0.0.0", strconv.Itoa(desired.Port)))
 	configuration.WriteString("\n  tcp-request inspect-delay 5s\n  tcp-request content accept if { req_ssl_hello_type 1 }\n")
@@ -647,7 +647,7 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 		configuration.WriteString("  default_backend vastora-caddy\n\nbackend vastora-caddy\n")
 		configuration.WriteString("  server caddy ")
 		configuration.WriteString(net.JoinHostPort(desired.CaddyAddress, strconv.Itoa(desired.CaddyPort)))
-		configuration.WriteString(" check\n")
+		configuration.WriteString(" check resolvers vastora-docker init-addr libc,none\n")
 	}
 	for index, route := range desired.Routes {
 		configuration.WriteString(fmt.Sprintf("\nbackend vastora-raw-%d\n", index))
@@ -656,7 +656,11 @@ func haproxyConfiguration(desired gateway.SharedHTTPS) ([]byte, error) {
 			if route.ProxyProtocol == gateway.ProxyProtocolV2 {
 				proxyProtocol = " send-proxy-v2"
 			}
-			configuration.WriteString(fmt.Sprintf("  server upstream-%d %s check%s\n", upstreamIndex, net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port)), proxyProtocol))
+			resolver := ""
+			if net.ParseIP(upstream.Address) == nil {
+				resolver = " resolvers vastora-docker init-addr libc,none"
+			}
+			configuration.WriteString(fmt.Sprintf("  server upstream-%d %s check%s%s\n", upstreamIndex, net.JoinHostPort(upstream.Address, strconv.Itoa(upstream.Port)), proxyProtocol, resolver))
 		}
 	}
 	return []byte(configuration.String()), nil

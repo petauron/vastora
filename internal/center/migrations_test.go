@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/gateway"
 )
 
 type schemaColumn struct {
@@ -138,6 +142,67 @@ func TestVersion81MigrationAddsHostProfileDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(schema, "'node.host-profile'") {
 		t.Fatalf("host profile kind missing after migration: %s", schema)
+	}
+}
+
+func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
+	directory := t.TempDir()
+	ctx := context.Background()
+	store, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siteID := testSiteID(t, store)
+	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: siteID, Name: "Worker", CenterURL: "https://center.example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", testAgentPublicKey(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at) VALUES('worker-app','Proxy',?,?,'vastora-official/3x-ui','','running','docker','worker',?,?)`, node.ID, siteID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,observed_listen,status,created_at,updated_at) VALUES('worker-service','worker-app',?,'inbound-9','tcp',443,443,'100.64.0.10:443','observed','vless/tcp/reality','100.64.0.10','ready',?,?)`, siteID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	desired := `{"revision":4,"nodeId":"` + node.ID + `","listener":{"address":"203.0.113.10","port":443,"caddyAddress":"","caddyPort":0,"rejectUnmatched":true,"routes":[{"id":"managed","hostname":"reality.example.test","applicationNodeId":"` + node.ID + `","managedReality":true,"proxyProtocol":"v2","upstreams":[{"address":"100.64.0.10","port":443}]},{"id":"ordinary","hostname":"ordinary.example.test","upstreams":[{"address":"service","port":8443}]}]}}`
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO node_listener_states(node_id,desired_revision,applied_revision,desired_json,status,attempt,lease_expires_at,last_error,updated_at) VALUES(?,4,4,?,'ready',3,'lease','old error',?)`, node.ID, desired, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `PRAGMA user_version = 82; DELETE FROM goose_db_version WHERE version_id >= 83`); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var revision, applied, attempt int64
+	var raw, status, lease, lastError string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT desired_revision,applied_revision,attempt,CAST(desired_json AS TEXT),status,lease_expires_at,last_error FROM node_listener_states WHERE node_id=?`, node.ID).Scan(&revision, &applied, &attempt, &raw, &status, &lease, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	var state gateway.NodeListenerState
+	if json.Unmarshal([]byte(raw), &state) != nil || len(state.Listener.Routes) != 2 {
+		t.Fatalf("invalid migrated listener state: %s", raw)
+	}
+	managed, ordinary := state.Listener.Routes[0], state.Listener.Routes[1]
+	if revision != 5 || state.Revision != 5 || applied != 4 || attempt != 0 || status != "pending" || lease != "" || lastError != "" {
+		t.Fatalf("migration state = revision %d/%d applied %d attempt %d status %q lease %q error %q", revision, state.Revision, applied, attempt, status, lease, lastError)
+	}
+	if len(managed.Upstreams) != 1 || managed.Upstreams[0].Address != dockerruntime.ThreeXUIAlias || managed.Upstreams[0].Port != 443 || len(ordinary.Upstreams) != 1 || ordinary.Upstreams[0].Address != "service" || ordinary.Upstreams[0].Port != 8443 {
+		t.Fatalf("migration routes = %#v", state.Listener.Routes)
+	}
+	var endpoint, observedListen string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT endpoint,observed_listen FROM services WHERE id='worker-service'`).Scan(&endpoint, &observedListen); err != nil || endpoint != dockerruntime.ThreeXUIAlias+":443" || observedListen != "100.64.0.10" {
+		t.Fatalf("migrated service endpoint=%q observed=%q err=%v", endpoint, observedListen, err)
 	}
 }
 

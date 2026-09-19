@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"time"
+
+	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
 func (s *Store) completeRealityCreateCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID, applicationID, gatewayID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {
@@ -37,9 +39,9 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, commit project
 			if errors.Is(err, sql.ErrNoRows) {
 				err = nil
 			}
-			var siteID string
+			var siteID, applicationRole string
 			if err == nil {
-				err = tx.QueryRowContext(ctx, `SELECT site_id FROM applications WHERE id = ?`, applicationID).Scan(&siteID)
+				err = tx.QueryRowContext(ctx, `SELECT site_id, role FROM applications WHERE id = ?`, applicationID).Scan(&siteID, &applicationRole)
 			}
 			var duplicateDisplayName int
 			if err == nil {
@@ -48,13 +50,17 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, commit project
 			if err == nil && duplicateDisplayName != 0 {
 				err = errors.New("this Site already has a REALITY node with that display name")
 			}
+			serviceEndpoint := net.JoinHostPort(result.Listen, fmt.Sprint(result.Port))
+			if applicationRole == threeXUIRoleWorker {
+				serviceEndpoint = net.JoinHostPort(dockerruntime.ThreeXUIAlias, fmt.Sprint(result.Port))
+			}
 			if err == nil && serviceID == "" {
 				serviceID, err = randomToken(18)
 				if err == nil {
-					_, err = tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, region_code, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'tcp', ?, ?, ?, 'observed', 'vless/tcp/reality', 0, ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, serviceName, result.DisplayName, input.RegionCode, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+					_, err = tx.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, region_code, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, 'tcp', ?, ?, ?, 'observed', 'vless/tcp/reality', 0, ?, 'ready', ?, ?)`, serviceID, applicationID, siteID, serviceName, result.DisplayName, input.RegionCode, result.Port, result.Port, serviceEndpoint, result.Listen, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 				}
 			} else if err == nil {
-				_, err = tx.ExecContext(ctx, `UPDATE services SET display_name = ?, region_code = ?, protocol = 'tcp', container_port = ?, host_port = ?, endpoint = ?, source = 'observed', app_protocol = 'vless/tcp/reality', observed_listen = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, result.DisplayName, input.RegionCode, result.Port, result.Port, net.JoinHostPort(result.Listen, fmt.Sprint(result.Port)), result.Listen, now.Format(time.RFC3339Nano), serviceID)
+				_, err = tx.ExecContext(ctx, `UPDATE services SET display_name = ?, region_code = ?, protocol = 'tcp', container_port = ?, host_port = ?, endpoint = ?, source = 'observed', app_protocol = 'vless/tcp/reality', observed_listen = ?, status = 'ready', last_error = '', updated_at = ? WHERE id = ?`, result.DisplayName, input.RegionCode, result.Port, result.Port, serviceEndpoint, result.Listen, now.Format(time.RFC3339Nano), serviceID)
 			}
 			if err != nil {
 				succeeded = false

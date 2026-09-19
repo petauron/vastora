@@ -181,35 +181,6 @@ func TestNodeListenerRejectsManagedRealityThatIsNotLocal(t *testing.T) {
 	}
 }
 
-func TestNodeListenerRequiresAppliedWorkerServiceAddress(t *testing.T) {
-	store, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	ctx := context.Background()
-	if _, err := store.RecordApplied(ctx, AppliedInstallation{
-		InstanceID:      "worker-installation",
-		ApplicationID:   "proxy",
-		AppKey:          threeXUIKey,
-		Version:         "test",
-		ServiceAddress:  "100.64.0.8",
-		Config:          []byte(`{}`),
-		Secrets:         []byte(`{}`),
-		ApplicationRole: "worker",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	state := gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "route", Hostname: "reality.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "100.64.0.9", Port: 443}}}}}}
-	if err := validateManagedRealityInstallation(ctx, store, state); err == nil {
-		t.Fatal("listener accepted another worker address")
-	}
-	state.Listener.Routes[0].Upstreams[0].Address = "100.64.0.8"
-	if err := validateManagedRealityInstallation(ctx, store, state); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestNodeListenerRemovalIsIndependentFromGatewayState(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {

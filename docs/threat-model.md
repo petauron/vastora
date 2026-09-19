@@ -55,7 +55,7 @@
   shared-443 Publication is created. It performs TCP ClientHello SNI routing
   without terminating TLS, uses no Docker socket, and binds only that node's
   confirmed local receive address. A REALITY route can target only the same
-  node's applied Xray worker address; cross-node VLESS relaying is rejected. A
+  node's managed Xray Docker alias; cross-node VLESS relaying is rejected. A
   VLESS-only node rejects
   unknown SNI and does not install Caddy. Only a node separately selected as a
   Site Gateway sends unmatched SNI to that node's local Caddy.

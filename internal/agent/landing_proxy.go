@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -541,13 +540,6 @@ func landingGates(state landing.DesiredState, bridge string) ([]*landing.BridgeG
 }
 
 func newLandingGate(peer landing.PeerIdentity, scope string, revision uint64) (*landing.BridgeGate, error) {
-	if raw, ok := strings.CutPrefix(scope, landingUserGatePrefix); ok {
-		uid, err := strconv.Atoi(raw)
-		if err != nil || scope != landingUserGatePrefix+strconv.Itoa(uid) {
-			return nil, errors.New("agent: invalid landing user gate identity")
-		}
-		return landing.NewUserGate(peer, uid, revision)
-	}
 	return landing.NewBridgeGate(peer, scope, revision)
 }
 

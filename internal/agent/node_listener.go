@@ -10,7 +10,6 @@ import (
 
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
-	"github.com/petauron/vastora/internal/networking"
 )
 
 type NodeListenerAppliedState struct {
@@ -34,25 +33,9 @@ func validateAgentNodeListenerState(state gateway.NodeListenerState) error {
 			}
 			continue
 		}
-		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == threeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias || networking.IsPrivateServiceAddress(route.Upstreams[0].Address))
+		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == threeXUIRealityPort && route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias
 		if route.ProxyProtocol != gateway.ProxyProtocolV2 || !upstreamOK {
 			return errors.New("agent: managed REALITY listener must target the local managed Xray port 443 with Proxy Protocol v2")
-		}
-	}
-	return nil
-}
-
-func validateManagedRealityInstallation(ctx context.Context, store *Store, state gateway.NodeListenerState) error {
-	for _, route := range state.Listener.Routes {
-		if !route.ManagedReality || len(route.Upstreams) != 1 || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias {
-			continue
-		}
-		installation, err := store.AppliedInstallation(ctx, threeXUIKey)
-		if err != nil {
-			return errors.New("agent: managed Xray worker installation is unavailable")
-		}
-		if installation.ApplicationRole != "worker" || route.Upstreams[0].Address != installation.ServiceAddress {
-			return errors.New("agent: managed REALITY listener must target this Agent's applied Xray worker address")
 		}
 	}
 	return nil
@@ -68,9 +51,6 @@ func nodeListenerRuntimeStatus(ctx context.Context, store *Store, provisioner No
 	}
 	if len(state.Desired.Listener.Routes) == 0 {
 		return provisioner != nil && provisioner.Absent(ctx) == nil, state.Desired.Revision, state.ConfigHash
-	}
-	if validateManagedRealityInstallation(ctx, store, state.Desired) != nil {
-		return false, state.Desired.Revision, state.ConfigHash
 	}
 	if provisioner == nil || provisioner.Health(ctx) != nil {
 		return false, state.Desired.Revision, state.ConfigHash
@@ -121,9 +101,6 @@ func (s *Store) NodeListenerState(ctx context.Context) (NodeListenerAppliedState
 func (s *Store) RecordNodeListenerState(ctx context.Context, desired gateway.NodeListenerState) error {
 	desired = desired.Sorted()
 	if err := validateAgentNodeListenerState(desired); err != nil {
-		return err
-	}
-	if err := validateManagedRealityInstallation(ctx, s, desired); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(desired)
@@ -266,9 +243,6 @@ func restoreNodeListenerState(ctx context.Context, store *Store, provisioner Nod
 	}
 	if state.Desired.NodeID != connection.AgentID {
 		return errors.New("agent: stored node listener is owned by another Agent")
-	}
-	if err := validateManagedRealityInstallation(ctx, store, state.Desired); err != nil {
-		return err
 	}
 	if len(state.Desired.Listener.Routes) == 0 {
 		if err := provisioner.Remove(ctx); err != nil {
