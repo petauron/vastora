@@ -33,9 +33,9 @@ func validateCenterNodeListenerState(state gateway.NodeListenerState) error {
 			}
 			continue
 		}
-		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias
+		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == centerThreeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.XrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)
 		if route.ProxyProtocol != gateway.ProxyProtocolV2 || !upstreamOK {
-			return errors.New("center: managed REALITY listener must target the local managed Xray port 443 with Proxy Protocol v2")
+			return errors.New("center: managed REALITY listener must target the local managed proxy port 443 with Proxy Protocol v2")
 		}
 	}
 	return nil
@@ -103,7 +103,7 @@ func (s *Store) claimNodeListenerTask(ctx context.Context, tx *sql.Tx, nodeID st
 
 func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID string, revision int64) (gateway.NodeListenerState, error) {
 	routes := []gateway.Layer4Route{}
-	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, a.node_id, a.runtime, a.app_key, s.container_port,
+	rows, err := tx.QueryContext(ctx, `SELECT p.id, p.sni_hostname, s.endpoint, a.node_id, a.runtime, a.role, a.app_key, s.container_port,
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' THEN 1 ELSE 0 END,
 		CASE WHEN a.app_key = 'vastora-official/3x-ui' AND s.app_protocol = 'vless/tcp/reality' AND g.status = 'ready' THEN 'v2' ELSE '' END
 		FROM publications p JOIN services s ON s.id = p.service_id JOIN applications a ON a.id = s.application_id
@@ -116,9 +116,9 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 	defer rows.Close()
 	for rows.Next() {
 		var route gateway.Layer4Route
-		var endpoint, applicationNodeID, runtime, appKey string
+		var endpoint, applicationNodeID, runtime, role, appKey string
 		var containerPort, managedReality int
-		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationNodeID, &runtime, &appKey, &containerPort, &managedReality, &route.ProxyProtocol); err != nil {
+		if err := rows.Scan(&route.ID, &route.Hostname, &endpoint, &applicationNodeID, &runtime, &role, &appKey, &containerPort, &managedReality, &route.ProxyProtocol); err != nil {
 			return gateway.NodeListenerState{}, err
 		}
 		route.ManagedReality = managedReality != 0
@@ -127,16 +127,24 @@ func (s *Store) desiredNodeListenerState(ctx context.Context, tx *sql.Tx, nodeID
 		}
 		route.ApplicationNodeID = applicationNodeID
 		if route.ManagedReality {
-			endpoint = net.JoinHostPort(dockerruntime.ThreeXUIAlias, strconv.Itoa(centerThreeXUIRealityPort))
+			alias := dockerruntime.ThreeXUIAlias
+			if role == threeXUIRoleWorker {
+				alias = dockerruntime.XrayAlias
+			}
+			endpoint = net.JoinHostPort(alias, strconv.Itoa(centerThreeXUIRealityPort))
 		} else {
-			endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, nodeID, containerPort, endpoint)
+			endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, nodeID, containerPort, endpoint)
 		}
 		host, portValue, err := net.SplitHostPort(endpoint)
 		if err != nil {
 			return gateway.NodeListenerState{}, errors.New("center: invalid node-direct listener endpoint")
 		}
 		port, _ := strconv.Atoi(portValue)
-		if route.ManagedReality && (runtime != "docker" || host != dockerruntime.ThreeXUIAlias || port != centerThreeXUIRealityPort || route.ProxyProtocol != gateway.ProxyProtocolV2) {
+		expectedAlias := dockerruntime.ThreeXUIAlias
+		if role == threeXUIRoleWorker {
+			expectedAlias = dockerruntime.XrayAlias
+		}
+		if route.ManagedReality && (runtime != "docker" || host != expectedAlias || port != centerThreeXUIRealityPort || route.ProxyProtocol != gateway.ProxyProtocolV2) {
 			return gateway.NodeListenerState{}, nodeListenerPrerequisiteError{cause: errors.New("managed REALITY listener requires its local managed Xray port 443 with Proxy Protocol v2")}
 		}
 		route.Upstreams = []gateway.Upstream{{Address: host, Port: port}}

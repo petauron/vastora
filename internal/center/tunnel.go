@@ -172,7 +172,7 @@ func finishTunnelConnectorMigration(ctx context.Context, tx *sql.Tx) error {
 }
 
 func tunnelIngressForNode(ctx context.Context, queryer networkQueryer, agentID string) ([]TunnelTaskIngress, error) {
-	rows, err := queryer.QueryContext(ctx, `SELECT p.hostname, s.protocol, s.endpoint, a.app_key, a.runtime, a.node_id, s.name, s.container_port
+	rows, err := queryer.QueryContext(ctx, `SELECT p.hostname, s.protocol, s.endpoint, a.app_key, a.runtime, a.role, a.node_id, s.name, s.container_port
 		FROM publications p
 		JOIN services s ON s.id = p.service_id
 		JOIN applications a ON a.id = s.application_id
@@ -186,15 +186,15 @@ func tunnelIngressForNode(ctx context.Context, queryer networkQueryer, agentID s
 	ingress := []TunnelTaskIngress{}
 	for rows.Next() {
 		var value TunnelTaskIngress
-		var protocol, endpoint, appKey, runtime, applicationNodeID, serviceName string
+		var protocol, endpoint, appKey, runtime, role, applicationNodeID, serviceName string
 		var containerPort int
-		if err := rows.Scan(&value.Hostname, &protocol, &endpoint, &appKey, &runtime, &applicationNodeID, &serviceName, &containerPort); err != nil {
+		if err := rows.Scan(&value.Hostname, &protocol, &endpoint, &appKey, &runtime, &role, &applicationNodeID, &serviceName, &containerPort); err != nil {
 			return nil, err
 		}
 		if protocol != "http" && protocol != "https" {
 			return nil, errors.New("center: Tunnel connector received a non-Web service")
 		}
-		endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, applicationNodeID, agentID, containerPort, endpoint)
+		endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, agentID, containerPort, endpoint)
 		if _, _, err := net.SplitHostPort(endpoint); err != nil {
 			return nil, errors.New("center: Tunnel connector service endpoint is invalid")
 		}

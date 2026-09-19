@@ -27,6 +27,12 @@ import (
 const xrayWorkerConfigPath = "/etc/vastora/config.json"
 const xrayWorkerRuntimeLabel = "io.vastora.proxy-runtime"
 
+const (
+	xrayWorkerCandidateContainer = xrayWorkerContainer + "-candidate"
+	xrayWorkerBackupContainer    = xrayWorkerContainer + "-rollback"
+	xrayWorkerCleanupContainer   = xrayWorkerContainer + "-cleanup"
+)
+
 func deployXrayWorker(ctx context.Context, docker *client.Client, dockerSocket string, store *Store, task DeploymentTask, bindAddress string) (string, error) {
 	if store == nil {
 		return "", errors.New("agent: Xray worker state store is unavailable")
@@ -42,7 +48,7 @@ func deployXrayWorker(ctx context.Context, docker *client.Client, dockerSocket s
 	if imageRef != xrayWorkerImageReference {
 		return "", errors.New("agent: declared Xray image does not match the audited worker runtime")
 	}
-	currentRuntime, existingRuntime, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+	currentRuntime, _, existingRuntime, err := inspectCurrentXrayWorkerRuntime(ctx, docker)
 	if err != nil {
 		return "", err
 	}
@@ -218,12 +224,12 @@ func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string
 		bindings[hy2DockerPort] = []dockernetwork.PortBinding{{HostIP: netip.IPv4Unspecified(), HostPort: "443"}}
 	}
 	options := client.ContainerCreateOptions{
-		Name: threeXUICandidateContainer,
+		Name: xrayWorkerCandidateContainer,
 		Config: &container.Config{
 			Image:        imageRef,
 			Cmd:          []string{"run", "-c", xrayWorkerConfigPath},
 			User:         strconv.Itoa(xrayWorkerRuntimeUID()),
-			Labels:       applicationResourceLabels(threeXUIKey, "3x-ui", task.ApplicationID, task.ID),
+			Labels:       applicationResourceLabels(threeXUIKey, "xray", task.ApplicationID, task.ID),
 			ExposedPorts: exposed,
 		},
 		HostConfig: &container.HostConfig{
@@ -238,10 +244,91 @@ func xrayWorkerContainerOptions(task DeploymentTask, imageRef, configPath string
 			Resources:      container.Resources{PidsLimit: &pidsLimit},
 			Mounts:         []mount.Mount{{Type: mount.TypeBind, Source: filepath.Dir(configPath), Target: filepath.Dir(xrayWorkerConfigPath), ReadOnly: true}},
 		},
-		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias),
+		NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.XrayAlias),
 	}
 	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
 	return options
+}
+
+func inspectXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEngine, name string) (client.ContainerInspectResult, bool, error) {
+	return inspectOwnedApplicationContainer(ctx, docker, name, threeXUIKey, "xray", "", anyApplicationDeployment)
+}
+
+// inspectCurrentXrayWorkerRuntime recognizes the old worker name only as an
+// explicit, one-way migration source. Newly created and recovered workers use
+// the Vastora Xray identity exclusively.
+func inspectCurrentXrayWorkerRuntime(ctx context.Context, docker threeXUIContainerEngine) (client.ContainerInspectResult, string, bool, error) {
+	current, exists, err := inspectXrayWorkerContainer(ctx, docker, xrayWorkerContainer)
+	if err != nil || exists {
+		return current, xrayWorkerContainer, exists, err
+	}
+	legacy, legacyExists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+	if err != nil {
+		return client.ContainerInspectResult{}, "", false, err
+	}
+	return legacy, threeXUIContainer, legacyExists, nil
+}
+
+func validateXrayWorkerOwnership(ctx context.Context, docker threeXUIContainerEngine, expectedApplicationID string) error {
+	applicationID := ""
+	for _, name := range []string{xrayWorkerContainer, xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer} {
+		inspected, exists, err := inspectXrayWorkerContainer(ctx, docker, name)
+		if err != nil {
+			return fmt.Errorf("agent: verify Xray worker ownership: %w", err)
+		}
+		if !exists {
+			continue
+		}
+		value := inspected.Container.Config.Labels[applicationInstallationLabel]
+		if applicationID == "" {
+			applicationID = value
+		} else if applicationID != value {
+			return errors.New("agent: conflicting Xray worker ownership markers")
+		}
+	}
+	legacy, exists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+	if err != nil {
+		return fmt.Errorf("agent: verify legacy Xray worker ownership: %w", err)
+	}
+	if exists && legacy.Container.Config != nil {
+		value := legacy.Container.Config.Labels[applicationInstallationLabel]
+		if applicationID == "" {
+			applicationID = value
+		} else if applicationID != value {
+			return errors.New("agent: legacy Xray worker belongs to another application")
+		}
+	}
+	if expectedApplicationID != "" && applicationID != "" && applicationID != expectedApplicationID {
+		return errors.New("agent: refusing to mutate Xray resources owned by another application")
+	}
+	return nil
+}
+
+func requireNoInterruptedXrayWorkerDeploy(ctx context.Context, docker threeXUIContainerEngine) error {
+	for _, name := range []string{xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer} {
+		if _, exists, err := inspectXrayWorkerContainer(ctx, docker, name); err != nil {
+			return err
+		} else if exists {
+			return uncertainTaskOutcome(fmt.Errorf("agent: retained Xray replacement %s requires explicit review", name))
+		}
+	}
+	return nil
+}
+
+func prepareXrayWorkerKeepDataUninstall(ctx context.Context, docker threeXUIContainerEngine) error {
+	for _, name := range []string{xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer, xrayWorkerContainer} {
+		worker, exists, err := inspectXrayWorkerContainer(ctx, docker, name)
+		if err != nil {
+			return err
+		}
+		if !exists || worker.Container.State == nil || !worker.Container.State.Running {
+			continue
+		}
+		if _, err := docker.ContainerStop(ctx, worker.Container.ID, client.ContainerStopOptions{}); err != nil && !errdefs.IsNotModified(err) && !errdefs.IsNotFound(err) {
+			return uncertainTaskOutcome(fmt.Errorf("agent: stop Xray worker before preserving state: %w", err))
+		}
+	}
+	return nil
 }
 
 func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEngine, options client.ContainerCreateOptions, beforeStop func() error, validate func(string) (string, error), verify func(string, string) error, restoreState func(context.Context) error) (string, error) {
@@ -249,13 +336,13 @@ func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEng
 		return "", errors.New("agent: Xray worker candidate identity is missing")
 	}
 	applicationID := options.Config.Labels[applicationInstallationLabel]
-	if err := validateThreeXUIOwnership(ctx, docker, applicationID); err != nil {
+	if err := validateXrayWorkerOwnership(ctx, docker, applicationID); err != nil {
 		return "", err
 	}
-	if err := requireNoInterruptedThreeXUIDeploy(ctx, docker); err != nil {
+	if err := requireNoInterruptedXrayWorkerDeploy(ctx, docker); err != nil {
 		return "", err
 	}
-	previous, previousExists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+	previous, previousName, previousExists, err := inspectCurrentXrayWorkerRuntime(ctx, docker)
 	if err != nil {
 		return "", err
 	}
@@ -280,8 +367,8 @@ func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEng
 			current, inspectErr := docker.ContainerInspect(recoveryContext, previous.Container.ID, client.ContainerInspectOptions{})
 			if inspectErr != nil {
 				recoveryErr = errors.Join(recoveryErr, fmt.Errorf("inspect previous proxy worker during rollback: %w", inspectErr))
-			} else if strings.TrimPrefix(current.Container.Name, "/") != threeXUIContainer {
-				if _, renameErr := docker.ContainerRename(recoveryContext, previous.Container.ID, client.ContainerRenameOptions{NewName: threeXUIContainer}); renameErr != nil {
+			} else if strings.TrimPrefix(current.Container.Name, "/") != previousName {
+				if _, renameErr := docker.ContainerRename(recoveryContext, previous.Container.ID, client.ContainerRenameOptions{NewName: previousName}); renameErr != nil {
 					recoveryErr = errors.Join(recoveryErr, fmt.Errorf("restore previous proxy worker name: %w", renameErr))
 				}
 			}
@@ -319,7 +406,7 @@ func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEng
 		}
 	}
 	if previousExists {
-		if _, err := docker.ContainerRename(ctx, previous.Container.ID, client.ContainerRenameOptions{NewName: threeXUIBackupContainer}); err != nil {
+		if _, err := docker.ContainerRename(ctx, previous.Container.ID, client.ContainerRenameOptions{NewName: xrayWorkerBackupContainer}); err != nil {
 			return rollback("", err)
 		}
 	}
@@ -334,14 +421,14 @@ func replaceXrayWorkerContainer(ctx context.Context, docker threeXUIContainerEng
 	if err != nil || inspected.Container.State == nil || !inspected.Container.State.Running {
 		return rollback(result, errors.Join(errors.New("agent: Xray worker candidate did not remain running"), err))
 	}
-	if _, err := docker.ContainerRename(ctx, candidateID, client.ContainerRenameOptions{NewName: threeXUIContainer}); err != nil {
+	if _, err := docker.ContainerRename(ctx, candidateID, client.ContainerRenameOptions{NewName: xrayWorkerContainer}); err != nil {
 		return rollback(result, err)
 	}
 	if err := verify(candidateID, result); err != nil {
 		return rollback(result, err)
 	}
 	if previousExists {
-		if _, err := docker.ContainerRename(ctx, previous.Container.ID, client.ContainerRenameOptions{NewName: threeXUICleanupContainer}); err != nil {
+		if _, err := docker.ContainerRename(ctx, previous.Container.ID, client.ContainerRenameOptions{NewName: xrayWorkerCleanupContainer}); err != nil {
 			return result, uncertainTaskOutcome(err)
 		}
 		if _, err := docker.ContainerRemove(ctx, previous.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
@@ -532,7 +619,7 @@ func dockerXrayWorkerApply(store *Store, dockerSocket string) xrayWorkerApply {
 			return err
 		}
 		defer docker.Close()
-		inspected, exists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+		inspected, _, exists, err := inspectCurrentXrayWorkerRuntime(ctx, docker)
 		if err != nil || !exists {
 			return errors.Join(errors.New("agent: Xray worker container is unavailable"), err)
 		}
@@ -678,7 +765,7 @@ func dockerXrayWorkerObserve(dockerSocket string) xrayWorkerObserve {
 			return state, err
 		}
 		defer docker.Close()
-		inspected, exists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+		inspected, _, exists, err := inspectCurrentXrayWorkerRuntime(ctx, docker)
 		if err != nil || !exists {
 			return state, errors.Join(errors.New("agent: Xray worker container is unavailable"), err)
 		}

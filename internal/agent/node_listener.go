@@ -33,9 +33,9 @@ func validateAgentNodeListenerState(state gateway.NodeListenerState) error {
 			}
 			continue
 		}
-		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == threeXUIRealityPort && route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias
+		upstreamOK := len(route.Upstreams) == 1 && route.Upstreams[0].Port == threeXUIRealityPort && (route.Upstreams[0].Address == dockerruntime.XrayAlias || route.Upstreams[0].Address == dockerruntime.ThreeXUIAlias)
 		if route.ProxyProtocol != gateway.ProxyProtocolV2 || !upstreamOK {
-			return errors.New("agent: managed REALITY listener must target the local managed Xray port 443 with Proxy Protocol v2")
+			return errors.New("agent: managed REALITY listener must target the local managed proxy port 443 with Proxy Protocol v2")
 		}
 	}
 	return nil

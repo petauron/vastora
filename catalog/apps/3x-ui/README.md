@@ -7,7 +7,8 @@ forward migration. Runtime ownership is role-specific:
 - the single `master` keeps the pinned 3x-ui v3.7.0 image as a temporary,
   one-way migration adapter for its existing controller database;
 - every `worker` runs the pinned official Xray image on the shared private
-  Docker bridge and has no panel, panel database or node-side subscription service;
+  Docker bridge as component and container `xray` / `vastora-xray`, and has no
+  panel, panel database or node-side subscription service;
 - the Agent exposes only the authenticated private endpoints needed by the
   controller adapter and renders the accepted state into Xray configuration.
 

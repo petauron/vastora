@@ -49,7 +49,7 @@ func TestNodeListenerFailureStopsWithoutRestoringPreviousListener(t *testing.T) 
 		t.Fatal(err)
 	}
 	listener := &recordingNodeListener{}
-	previous := gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "old", Hostname: "old.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-3x-ui", Port: 443}}}}}}
+	previous := gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "old", Hostname: "old.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-xray", Port: 443}}}}}}
 	if err := applyNodeListenerState(ctx, store, listener, nil, previous); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestFirstNodeListenerFailureStopsWithoutGatewayRollback(t *testing.T) {
 	}
 	listener := &recordingNodeListener{apply: errors.New("replacement failed")}
 	coordinator := &recordingNodeListenerCoordinator{}
-	desired := gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "new", Hostname: "new.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-3x-ui", Port: 443}}}}}}
+	desired := gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "new", Hostname: "new.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-xray", Port: 443}}}}}}
 	if err := applyNodeListenerState(ctx, store, listener, coordinator, desired); err == nil || !strings.Contains(err.Error(), "replacement failed") {
 		t.Fatalf("expected replacement failure, got %v", err)
 	}
@@ -133,7 +133,7 @@ func TestNodeListenerRejectsCrossNodeStateAndPersistsLastAppliedRevision(t *test
 		t.Fatal(err)
 	}
 	listener := &recordingNodeListener{}
-	state := gateway.NodeListenerState{Revision: 1, NodeID: "node-b", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "route", Hostname: "reality.example.com", ApplicationNodeID: "node-b", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-3x-ui", Port: 443}}}}}}
+	state := gateway.NodeListenerState{Revision: 1, NodeID: "node-b", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "route", Hostname: "reality.example.com", ApplicationNodeID: "node-b", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-xray", Port: 443}}}}}}
 	if err := applyNodeListenerState(ctx, store, listener, nil, state); err == nil {
 		t.Fatal("cross-node listener state was accepted")
 	}
@@ -167,11 +167,11 @@ func TestNodeListenerRejectsCrossNodeStateAndPersistsLastAppliedRevision(t *test
 
 func TestNodeListenerRejectsManagedRealityThatIsNotLocal(t *testing.T) {
 	newState := func() gateway.NodeListenerState {
-		return gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "route", Hostname: "reality.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-3x-ui", Port: 443}}}}}}
+		return gateway.NodeListenerState{Revision: 1, NodeID: "node-a", Listener: gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, RejectUnmatched: true, Routes: []gateway.Layer4Route{{ID: "route", Hostname: "reality.example.com", ApplicationNodeID: "node-a", ManagedReality: true, ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: "vastora-xray", Port: 443}}}}}}
 	}
 	invalid := []gateway.NodeListenerState{newState(), newState(), newState(), newState()}
 	invalid[0].Listener.Routes[0].Upstreams = []gateway.Upstream{{Address: "203.0.113.20", Port: 443}}
-	invalid[1].Listener.Routes[0].Upstreams = []gateway.Upstream{{Address: "vastora-3x-ui", Port: 8443}}
+	invalid[1].Listener.Routes[0].Upstreams = []gateway.Upstream{{Address: "vastora-xray", Port: 8443}}
 	invalid[2].Listener.Routes[0].ProxyProtocol = ""
 	invalid[3].Listener.Routes[0].ManagedReality = false
 	for index, state := range invalid {
