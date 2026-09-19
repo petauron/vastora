@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.160](https://github.com/petauron/vastora/compare/v0.1.0-alpha.159...v0.1.0-alpha.160) (2026-09-19)
+
+
+### Bug Fixes
+
+* **update:** fence tasks behind agent rollout ([#524](https://github.com/petauron/vastora/issues/524)) ([fb28938](https://github.com/petauron/vastora/commit/fb28938a349a8526d8b5926125d4ddeb93b8e871))
+
 ## [0.1.0-alpha.159](https://github.com/petauron/vastora/compare/v0.1.0-alpha.158...v0.1.0-alpha.159) (2026-09-19)
 
 
