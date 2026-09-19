@@ -18,6 +18,7 @@ import (
 const (
 	threeXUIKey                  = "vastora-official/3x-ui"
 	threeXUIContainer            = "vastora-3x-ui"
+	xrayWorkerContainer          = "vastora-xray"
 	threeXUIDatabaseVolume       = "vastora-3x-ui-db"
 	cpaKey                       = "vastora-official/cpa"
 	cpaContainer                 = "vastora-cpa"
@@ -301,21 +302,43 @@ func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, 
 			}
 			return errors.New("agent: Docker engine cannot verify 3x-ui ownership before uninstall")
 		}
-		if err := validateThreeXUIOwnership(ctx, transactionalDocker, applicationID); err != nil {
+		xrayWorker := false
+		for _, workerName := range []string{xrayWorkerContainer, xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer} {
+			if _, exists, err := inspectXrayWorkerContainer(ctx, transactionalDocker, workerName); err != nil {
+				return err
+			} else if exists {
+				xrayWorker = true
+			}
+		}
+		if xrayWorker {
+			if err := validateXrayWorkerOwnership(ctx, transactionalDocker, applicationID); err != nil {
+				return err
+			}
+			containerNames = []string{xrayWorkerCandidateContainer, xrayWorkerBackupContainer, xrayWorkerCleanupContainer, xrayWorkerContainer}
+		} else if err := validateThreeXUIOwnership(ctx, transactionalDocker, applicationID); err != nil {
 			return err
 		}
 		if !deleteData {
 			// Stop volume writers without restoring snapshots or starting services.
-			if err := prepareThreeXUIKeepDataUninstall(ctx, transactionalDocker); err != nil {
+			prepare := prepareThreeXUIKeepDataUninstall
+			if xrayWorker {
+				prepare = prepareXrayWorkerKeepDataUninstall
+			}
+			if err := prepare(ctx, transactionalDocker); err != nil {
 				return fmt.Errorf("agent: preserve 3x-ui data before uninstall: %w", err)
 			}
 		}
 		// Delete-data uninstall is intentionally independent of rollback state:
 		// corrupt snapshots must not block an explicit destructive uninstall.
-		containerNames = []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUICleanupContainer, threeXUIContainer}
+		if !xrayWorker {
+			containerNames = []string{threeXUICandidateContainer, threeXUIBackupContainer, threeXUICleanupContainer, threeXUIContainer}
+		}
 	}
 	for _, containerName := range containerNames {
 		component := strings.TrimPrefix(appKey, "vastora-official/")
+		if appKey == threeXUIKey && strings.HasPrefix(containerName, xrayWorkerContainer) {
+			component = "xray"
+		}
 		if err := removeOwnedApplicationContainer(ctx, docker, containerName, appKey, component, applicationID, anyApplicationDeployment); err != nil {
 			return fmt.Errorf("agent: remove %s container: %w", appKey, err)
 		}

@@ -12,7 +12,7 @@ const (
 
 	// ApplicationRuntimeGeneration advances only when an Agent upgrade requires
 	// installed applications and network components to be reconciled in place.
-	ApplicationRuntimeGeneration = 1
+	ApplicationRuntimeGeneration = 2
 )
 
 type Target struct {

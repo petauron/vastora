@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/dockerruntime"
@@ -18,6 +19,7 @@ import (
 type landingDocker struct {
 	engine                     *client.Client
 	applicationID, containerID string
+	component                  string
 }
 
 func openLandingDocker(ctx context.Context, applicationID, expectedContainerID string) (*landingDocker, string, string, error) {
@@ -31,7 +33,14 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 			_ = docker.Close()
 		}
 	}()
-	inspected, err := docker.ContainerInspect(ctx, threeXUIContainer, client.ContainerInspectOptions{})
+	containerName, component := xrayWorkerContainer, "xray"
+	inspected, err := docker.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		// One-way compatibility for an installed worker that has not yet run the
+		// generation-2 application migration. New workers never use this name.
+		containerName, component = threeXUIContainer, "3x-ui"
+		inspected, err = docker.ContainerInspect(ctx, containerName, client.ContainerInspectOptions{})
+	}
 	if err != nil || inspected.Container.Config == nil || inspected.Container.HostConfig == nil {
 		return nil, "", "", errors.New("agent: selected proxy instance is unavailable")
 	}
@@ -39,7 +48,7 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 	if expectedContainerID != "" && value.ID != expectedContainerID {
 		return nil, "", "", errors.New("agent: selected proxy instance changed")
 	}
-	if err := validateApplicationResourceLabels(value.Config.Labels, threeXUIKey, "3x-ui", applicationID, anyApplicationDeployment); err != nil {
+	if err := validateApplicationResourceLabels(value.Config.Labels, threeXUIKey, component, applicationID, anyApplicationDeployment); err != nil {
 		return nil, "", "", err
 	}
 	policy := string(value.HostConfig.RestartPolicy.Name)
@@ -82,7 +91,7 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 		bridge = "br-" + bridgeNetwork.ID[:12]
 	}
 	failed = false
-	return &landingDocker{engine: docker, applicationID: applicationID, containerID: value.ID}, bridge, policy, nil
+	return &landingDocker{engine: docker, applicationID: applicationID, containerID: value.ID, component: component}, bridge, policy, nil
 }
 
 func (d *landingDocker) inspect(ctx context.Context) (client.ContainerInspectResult, error) {
@@ -90,7 +99,7 @@ func (d *landingDocker) inspect(ctx context.Context) (client.ContainerInspectRes
 	if err != nil || value.Container.ID != d.containerID || value.Container.Config == nil || value.Container.HostConfig == nil || value.Container.State == nil {
 		return value, errors.New("agent: proxy instance identity is unavailable")
 	}
-	if err := validateApplicationResourceLabels(value.Container.Config.Labels, threeXUIKey, "3x-ui", d.applicationID, anyApplicationDeployment); err != nil {
+	if err := validateApplicationResourceLabels(value.Container.Config.Labels, threeXUIKey, d.component, d.applicationID, anyApplicationDeployment); err != nil {
 		return value, err
 	}
 	return value, nil

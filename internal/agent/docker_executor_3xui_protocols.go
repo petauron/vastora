@@ -26,20 +26,28 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 		return err
 	}
 	defer docker.Close()
-	if err := requireNoInterruptedThreeXUIDeploy(ctx, docker); err != nil {
-		return uncertainTaskOutcome(err)
-	}
-	if err := validateThreeXUIOwnership(ctx, docker, applicationID); err != nil {
-		return err
-	}
-	current, exists, err := inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+	current, exists, err := inspectXrayWorkerContainer(ctx, docker, xrayWorkerContainer)
 	if err != nil {
 		return err
 	}
+	currentName := xrayWorkerContainer
+	if !exists {
+		current, exists, err = inspectThreeXUIContainer(ctx, docker, threeXUIContainer)
+		currentName = threeXUIContainer
+		if err != nil {
+			return err
+		}
+	}
 	if !exists || current.Container.Config == nil || current.Container.HostConfig == nil {
-		return errors.New("agent: local 3x-ui container is unavailable")
+		return errors.New("agent: local proxy container is unavailable")
 	}
 	if current.Container.Config.Labels[xrayWorkerRuntimeLabel] == "xray" {
+		if err := requireNoInterruptedXrayWorkerDeploy(ctx, docker); err != nil {
+			return uncertainTaskOutcome(err)
+		}
+		if err := validateXrayWorkerOwnership(ctx, docker, applicationID); err != nil {
+			return err
+		}
 		state, err := store.loadXrayWorkerState(ctx)
 		if err != nil || state.ApplicationID != applicationID || state.AppliedRevision != state.Revision {
 			return errors.Join(errors.New("agent: managed Xray worker state is unavailable"), err)
@@ -75,7 +83,7 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 			delete(config.ExposedPorts, hy2DockerPort)
 			delete(host.PortBindings, hy2DockerPort)
 		}
-		options := client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: config, HostConfig: host, NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.ThreeXUIAlias)}
+		options := client.ContainerCreateOptions{Name: xrayWorkerCandidateContainer, Config: config, HostConfig: host, NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.XrayAlias)}
 		_, replaceErr := replaceXrayWorkerContainer(ctx, docker, options, func() error {
 			return store.stopXrayWorkerAPI(ctx, false)
 		}, func(containerID string) (string, error) {
@@ -88,6 +96,15 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 			return uncertainTaskOutcome(errors.Join(replaceErr, resumeErr))
 		}
 		return nil
+	}
+	if currentName != threeXUIContainer {
+		return errors.New("agent: controller runtime identity is invalid")
+	}
+	if err := requireNoInterruptedThreeXUIDeploy(ctx, docker); err != nil {
+		return uncertainTaskOutcome(err)
+	}
+	if err := validateThreeXUIOwnership(ctx, docker, applicationID); err != nil {
+		return err
 	}
 	routes, err := store.localThreeXUILandingRoutes(ctx, applicationID)
 	if err != nil {

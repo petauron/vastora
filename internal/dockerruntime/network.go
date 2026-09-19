@@ -25,6 +25,7 @@ const (
 	CaddyAlias       = "vastora-gateway-caddy"
 	HAProxyAlias     = "vastora-gateway-haproxy"
 	ThreeXUIAlias    = "vastora-3x-ui"
+	XrayAlias        = "vastora-xray"
 	CloudflaredAlias = "vastora-cloudflared"
 )
 

@@ -43,7 +43,7 @@ func TestThreeXUIPortsRejectPublicOnlyServiceAddress(t *testing.T) {
 
 func TestReplaceXrayWorkerRestoresLegacyRuntimeAfterCandidateFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
-	options := threeXUITestCreateOptions("deployment-2")
+	options := xrayWorkerTestCreateOptions("deployment-2")
 	options.Config.Image = xrayWorkerImageReference
 	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
 	restored := false
@@ -73,7 +73,7 @@ func TestReplaceXrayWorkerRestoresLegacyRuntimeAfterCandidateFailure(t *testing.
 
 func TestReplaceXrayWorkerRestoresLegacyRuntimeAfterPostPromotionFailure(t *testing.T) {
 	engine := newFakeThreeXUIContainerEngine(t, true)
-	options := threeXUITestCreateOptions("deployment-2")
+	options := xrayWorkerTestCreateOptions("deployment-2")
 	options.Config.Image = xrayWorkerImageReference
 	options.Config.Labels[xrayWorkerRuntimeLabel] = "xray"
 	_, err := replaceXrayWorkerContainer(context.Background(), engine, options, nil, func(string) (string, error) {
@@ -105,6 +105,12 @@ func threeXUITestLabels(deploymentID string) map[string]string {
 
 func threeXUITestCreateOptions(deploymentID string) client.ContainerCreateOptions {
 	return client.ContainerCreateOptions{Name: threeXUICandidateContainer, Config: &container.Config{Image: "3x-ui:test", Labels: threeXUITestLabels(deploymentID)}}
+}
+
+func xrayWorkerTestCreateOptions(deploymentID string) client.ContainerCreateOptions {
+	labels := applicationResourceLabels(threeXUIKey, "xray", threeXUITestApplicationID, deploymentID)
+	labels[xrayWorkerRuntimeLabel] = "xray"
+	return client.ContainerCreateOptions{Name: xrayWorkerCandidateContainer, Config: &container.Config{Image: xrayWorkerImageReference, Labels: labels}}
 }
 
 func (engine *fakeThreeXUIContainerEngine) setVolumeState(id, state string) {
