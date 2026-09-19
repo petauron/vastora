@@ -36,7 +36,7 @@ func applyThreeXUINodeCommand(ctx context.Context, store *Store, command ThreeXU
 	if ip := net.ParseIP(command.Address); command.Action != "reconcile" || ip == nil || ip.To4() == nil || command.Port < 1024 || command.Port > 65535 || strings.TrimSpace(command.APIToken) == "" {
 		return ThreeXUINodeCommandResult{}, errors.New("agent: invalid 3x-ui VLESS node configuration")
 	}
-	if err := waitForThreeXUINodeReady(ctx, command.Address, command.Port, command.APIToken); err != nil {
+	if err := waitForThreeXUINodeReady(ctx, command.Address, command.Port, command.APIToken, command.WorkerApplicationID); err != nil {
 		return ThreeXUINodeCommandResult{}, err
 	}
 	desiredName := threeXUINodeAPIName(command.WorkerApplicationID)
@@ -79,7 +79,7 @@ func applyThreeXUINodeCommand(ctx context.Context, store *Store, command ThreeXU
 	return ThreeXUINodeCommandResult{RemoteNodeID: node.ID, Status: "ready"}, nil
 }
 
-func waitForThreeXUINodeReady(ctx context.Context, address string, port int, token string) error {
+func waitForThreeXUINodeReady(ctx context.Context, address string, port int, token, applicationID string) error {
 	waitCtx, cancel := context.WithTimeout(ctx, threeXUINodeReadyTimeout)
 	defer cancel()
 	endpoint := "http://" + net.JoinHostPort(address, strconv.Itoa(port)) + "/panel/api/server/status"
@@ -88,8 +88,20 @@ func waitForThreeXUINodeReady(ctx context.Context, address string, port int, tok
 	var lastErr error
 	for {
 		payload, err := threeXUIAPI(waitCtx, http.MethodGet, endpoint, token, "", nil)
-		if err == nil && len(payload) > 0 && string(payload) != "null" {
-			return nil
+		if err == nil {
+			var status struct {
+				Xray struct {
+					State   string `json:"state"`
+					Version string `json:"version"`
+				} `json:"xray"`
+				PanelGUID       string `json:"panelGuid"`
+				DesiredRevision uint64 `json:"desiredRevision"`
+				AppliedRevision uint64 `json:"appliedRevision"`
+			}
+			if json.Unmarshal(payload, &status) == nil && status.Xray.State == "running" && status.Xray.Version == xrayWorkerVersion && status.PanelGUID == applicationID && status.DesiredRevision > 0 && status.AppliedRevision == status.DesiredRevision {
+				return nil
+			}
+			err = errors.New("Xray worker status identity is not ready")
 		}
 		if err != nil {
 			lastErr = err

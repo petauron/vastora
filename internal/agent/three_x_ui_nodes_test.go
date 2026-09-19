@@ -19,7 +19,7 @@ func TestThreeXUINodeReconcileUsesControllerNodeAPI(t *testing.T) {
 			t.Fatalf("unexpected worker request: %s %s", request.Method, request.URL.Path)
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"success":true,"obj":{"xray":{"state":"running"}}}`))
+		_, _ = response.Write([]byte(`{"success":true,"obj":{"xray":{"state":"running","version":"` + xrayWorkerVersion + `"},"panelGuid":"` + applicationID + `","desiredRevision":1,"appliedRevision":1}}`))
 	}))
 	defer worker.Close()
 	workerAddress, workerPortValue, err := net.SplitHostPort(strings.TrimPrefix(worker.URL, "http://"))

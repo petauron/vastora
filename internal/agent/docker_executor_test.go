@@ -199,7 +199,7 @@ func TestReportedServicesProjectsNativeThreeXUISubscriptionByRole(t *testing.T) 
 		task     DeploymentTask
 		services int
 	}{
-		"worker deployment": {task: func() DeploymentTask { value := baseTask; value.ApplicationRole = "worker"; return value }(), services: 1},
+		"worker deployment": {task: func() DeploymentTask { value := baseTask; value.ApplicationRole = "worker"; return value }(), services: 0},
 		"controller deployment": {task: func() DeploymentTask {
 			value := baseTask
 			value.ApplicationRole = "master"
@@ -211,7 +211,7 @@ func TestReportedServicesProjectsNativeThreeXUISubscriptionByRole(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(result.Services) != test.services || result.Services[0].Name != "panel" {
+			if len(result.Services) != test.services || test.services > 0 && result.Services[0].Name != "panel" {
 				t.Fatalf("reported services = %#v", result.Services)
 			}
 			if test.services == 2 && (result.Services[1].Name != "subscription" || result.Services[1].HostPort != landing.SubscriptionPort) {

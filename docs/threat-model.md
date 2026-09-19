@@ -54,14 +54,17 @@
 - HAProxy is installed on each VLESS node when its explicit node-direct
   shared-443 Publication is created. It performs TCP ClientHello SNI routing
   without terminating TLS, uses no Docker socket, and binds only that node's
-  confirmed local receive address. A REALITY route can target only the same node's
-  3x-ui alias; cross-node VLESS relaying is rejected. A VLESS-only node rejects
+  confirmed local receive address. A REALITY route can target only the same
+  node's applied Xray worker address; cross-node VLESS relaying is rejected. A
+  VLESS-only node rejects
   unknown SNI and does not install Caddy. Only a node separately selected as a
   Site Gateway sends unmatched SNI to that node's local Caddy.
-- One global 3x-ui controller owns browser management, clients, subscriptions,
-  and encrypted restore points for every Site. Cross-Site control requests use
-  only the confirmed private Agent service addresses; public REALITY traffic
-  still terminates on the owning VLESS node. During the Alpha forward migration,
+- Vastora owns browser management, client/subscription identities and encrypted
+  restore points for every Site. A single pinned 3x-ui controller remains only
+  as a temporary one-way projection and traffic adapter; worker nodes run Xray
+  directly. Cross-Site control requests use only confirmed private Agent service
+  addresses; public REALITY traffic still terminates on the owning node. During
+  the Alpha forward migration,
   each legacy controller is backed up and converted separately. A failed backup,
   demotion, or node attachment pauses the sequence for an explicit retry, and
   its obsolete public panel and subscription entries are retired only after the
@@ -70,7 +73,8 @@
   `.com` target. Agent pins one resolved IP, rejects cdncheck CDN/WAF matches,
   verifies TLS 1.3, X25519, H2, SNI, and the certificate, and pins REALITY
   directly to that address on port 443. Node-local HAProxy permits only the
-  verified outer SNI and sends Proxy Protocol v2 to the local 3x-ui inbound;
+  verified outer SNI and sends Proxy Protocol v2 to the Agent-managed Xray
+  inbound on its confirmed private address;
   VLESS-only nodes reject unmatched SNI. Any missing, stale, or failed guard
   blocks Center publication and leaves the inbound disabled. Upgrades remove
   obsolete loopback guard inbounds and reserved Xray rules after read-back.

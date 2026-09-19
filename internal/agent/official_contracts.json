@@ -109,9 +109,10 @@
   },
   {
     "id": "3x-ui",
-    "hostAccess": false,
+    "hostAccess": true,
     "images": [
-      "3x-ui"
+      "3x-ui",
+      "xray-core"
     ],
     "artifacts": [],
     "services": [

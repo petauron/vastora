@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -554,13 +555,24 @@ func (s *Store) startLandingMonitor(state landingRuntimeState, resumed bool) err
 func landingGates(state landing.DesiredState, bridge string) ([]*landing.BridgeGate, error) {
 	gates := []*landing.BridgeGate{}
 	for _, use := range state.PeerUses() {
-		gate, err := landing.NewBridgeGate(use.Peer, bridge, state.Revision)
+		gate, err := newLandingGate(use.Peer, bridge, state.Revision)
 		if err != nil {
 			return nil, err
 		}
 		gates = append(gates, gate)
 	}
 	return gates, nil
+}
+
+func newLandingGate(peer landing.PeerIdentity, scope string, revision uint64) (*landing.BridgeGate, error) {
+	if raw, ok := strings.CutPrefix(scope, landingUserGatePrefix); ok {
+		uid, err := strconv.Atoi(raw)
+		if err != nil || scope != landingUserGatePrefix+strconv.Itoa(uid) {
+			return nil, errors.New("agent: invalid landing user gate identity")
+		}
+		return landing.NewUserGate(peer, uid, revision)
+	}
+	return landing.NewBridgeGate(peer, scope, revision)
 }
 
 func waitLandingPeers(ctx context.Context, state landing.DesiredState) error {

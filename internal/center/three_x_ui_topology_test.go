@@ -52,7 +52,14 @@ func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
 	if workerTask.ApplicationRole != threeXUIRoleWorker {
 		t.Fatalf("worker role = %q", workerTask.ApplicationRole)
 	}
+	if strings.TrimSpace(string(workerTask.Secrets)) != "{}" {
+		t.Fatalf("Xray-only worker received obsolete panel credentials: %s", workerTask.Secrets)
+	}
 	completeThreeXUIDeployment(t, store, worker, workerTask, "10.0.0.91", "worker-api-token")
+	workerUpgradeSecrets, workerCredentials, err := store.withThreeXUISecrets(ctx, worker.ID, "upgrade", threeXUIRoleWorker, nil)
+	if err != nil || workerCredentials != nil || string(workerUpgradeSecrets) != `{"api_token":"worker-api-token"}` {
+		t.Fatalf("Xray worker upgrade secrets=%s credentials=%#v err=%v", workerUpgradeSecrets, workerCredentials, err)
+	}
 
 	var storedInput string
 	if err := store.db.QueryRowContext(ctx, `SELECT CAST(input_json AS TEXT) FROM application_commands WHERE application_id = ? AND kind = ?`, workerDeployment.ApplicationID, nodeCommandKind).Scan(&storedInput); err != nil {
@@ -164,11 +171,12 @@ func completeThreeXUIDeployment(t *testing.T, store *Store, node AgentCredential
 	if _, err := store.db.Exec(`UPDATE agent_network_profiles SET public_address = '198.51.100.10' WHERE agent_id = ?`, node.ID); err != nil {
 		t.Fatal(err)
 	}
-	services := []ApplicationServiceResult{
-		{Name: "panel", Protocol: "http", ContainerPort: 2053, HostPort: 2053, Address: address},
-	}
+	services := []ApplicationServiceResult{}
 	if task.ApplicationRole != threeXUIRoleWorker {
-		services = append(services, ApplicationServiceResult{Name: "subscription", Protocol: "http", ContainerPort: 2096, HostPort: 2096, Address: address})
+		services = append(services,
+			ApplicationServiceResult{Name: "panel", Protocol: "http", ContainerPort: 2053, HostPort: 2053, Address: address},
+			ApplicationServiceResult{Name: "subscription", Protocol: "http", ContainerPort: 2096, HostPort: 2096, Address: address},
+		)
 	}
 	result, _ := json.Marshal(ApplicationTaskResult{
 		Services:         services,

@@ -10,7 +10,7 @@ import (
 func validateApplicationResult(manifest catalog.AppManifest, appKey, role string, configJSON []byte, serviceAddress string, result ApplicationTaskResult) error {
 	services := make(map[string]catalog.Service, len(manifest.Services))
 	for _, service := range manifest.Services {
-		if appKey == threeXUIAppKey && role == threeXUIRoleWorker && service.Name == "subscription" {
+		if appKey == threeXUIAppKey && role == threeXUIRoleWorker && (service.Name == "panel" || service.Name == "subscription") {
 			continue
 		}
 		services[service.Name] = service

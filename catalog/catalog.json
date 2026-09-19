@@ -75,20 +75,25 @@
     },
     {
       "id": "3x-ui",
-      "version": "3.7.0",
+      "version": "3.7.1",
       "name": {
-        "en": "3x-ui",
-        "zh-CN": "3x-ui"
+        "en": "Vastora Proxy",
+        "zh-CN": "Vastora 代理"
       },
       "description": {
-        "en": "Self-hosted Xray management panel with persistent local state and optional Fail2ban enforcement.",
-        "zh-CN": "自托管的 Xray 管理面板，持久化本地状态并可选启用 Fail2ban 限制。"
+        "en": "Vastora-managed subscriptions and Xray data nodes. The single controller retains the migration adapter; workers run Xray only.",
+        "zh-CN": "由 Vastora 管理订阅与 Xray 数据节点。仅全局控制端保留迁移适配器，工作节点只运行 Xray。"
       },
       "license": "GPL-3.0",
+      "hostAccess": true,
       "images": [
         {
           "name": "3x-ui",
           "reference": "ghcr.io/mhsanaei/3x-ui:v3.7.0@sha256:3b3131f1876e6bf35063a9ec4dd1c594e4525180bfc2e1c477dcc8a3c9550ca1"
+        },
+        {
+          "name": "xray-core",
+          "reference": "ghcr.io/xtls/xray-core:26.9.9@sha256:45338c4df61fda061c47ce62aafda6c5d7d59cbdefc33f2e335d8b0c748b748a"
         }
       ],
       "services": [

@@ -37,7 +37,7 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
       () => api.createThreeXUIClientCommand({ applicationId: controller.id, ...input }),
       (value) => setCommand((current) => mergeCommandUpdate(current, value))
     );
-    if (next?.state === "failed") throw new Error(next.error || "The 3x-ui operation failed");
+    if (next?.state === "failed") throw new Error(next.error || "The Vastora Proxy operation failed");
     return next;
   }, [controller?.id, execute]);
 
@@ -135,7 +135,7 @@ export function ThreeXUIInboundTrafficSheet({ controller, service, siteTimezone,
           <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3"><div><dt className="text-muted-foreground">{copy(language, "本月已用（上下行）", "Used this month (up + down)")}</dt><dd className="mt-1 font-medium tabular-nums">{formatBytes(inbound.usedBytes)}</dd></div><div><dt className="text-muted-foreground">{copy(language, "月套餐总量", "Monthly allowance")}</dt><dd className="mt-1 font-medium tabular-nums">{inbound.totalBytes ? formatBytes(inbound.totalBytes) : copy(language, "不限", "Unlimited")}</dd></div><div><dt className="text-muted-foreground">{copy(language, "下次月度重置", "Next monthly reset")}</dt><dd className="mt-1 font-medium tabular-nums">{inbound.resetDay && inbound.nextResetAt ? formatDate(inbound.nextResetAt, language, siteTimezone) : copy(language, "不自动重置", "No automatic reset")}</dd></div></dl>
         </div>
         {inbound.planStatus === "resetting" ? <Alert aria-live="polite"><Spinner /><AlertTitle>{copy(language, "正在执行月度流量重置", "Resetting monthly traffic")}</AlertTitle><AlertDescription>{copy(language, "Center 正在只清零这个 VLESS 入站的上下行用量；完成前请不要重复修改。执行过程会记录在“活动”中。", "Center is clearing upload and download usage for this VLESS inbound only. Do not change it again until completion; progress is recorded in Activity.")}</AlertDescription></Alert> : null}
-        {inbound.planStatus === "failed" ? <Alert variant="destructive"><ShieldAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, "节点月度重置失败", "Monthly node reset failed")}</AlertTitle><AlertDescription><p>{inbound.planError || copy(language, "Center 无法确认 3x-ui 已完成流量重置。", "Center could not confirm that 3x-ui completed the traffic reset.")}</p><Button className="mt-3" nativeButton={false} render={<a href="/activity" />} size="sm" variant="outline">{copy(language, "前往活动查看详情", "Open Activity for details")}</Button></AlertDescription></Alert> : null}
+        {inbound.planStatus === "failed" ? <Alert variant="destructive"><ShieldAlertIcon aria-hidden="true" /><AlertTitle>{copy(language, "节点月度重置失败", "Monthly node reset failed")}</AlertTitle><AlertDescription><p>{inbound.planError || copy(language, "Center 无法确认 Vastora Proxy 已完成流量重置。", "Center could not confirm that Vastora Proxy completed the traffic reset.")}</p><Button className="mt-3" nativeButton={false} render={<a href="/activity" />} size="sm" variant="outline">{copy(language, "前往活动查看详情", "Open Activity for details")}</Button></AlertDescription></Alert> : null}
         {notice ? <p aria-live="polite" className="text-sm text-muted-foreground">{notice}</p> : null}
         <Button className="w-fit" disabled={inbound.planStatus === "resetting"} onClick={() => { setNotice(""); setEditing(true); }} size="sm"><PencilIcon data-icon="inline-start" />{copy(language, "修改节点套餐", "Edit node plan")}</Button>
       </div> : null}

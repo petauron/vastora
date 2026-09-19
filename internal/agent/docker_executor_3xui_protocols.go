@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"time"
 
 	dockernetwork "github.com/moby/moby/api/types/network"
@@ -16,10 +18,6 @@ import (
 var hy2DockerPort = dockernetwork.MustParsePort("443/udp")
 
 func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store, applicationID string, enabled bool) error {
-	routes, err := store.localThreeXUILandingRoutes(ctx, applicationID)
-	if err != nil {
-		return err
-	}
 	socket := e.DockerSocket
 	if socket == "" {
 		socket = "unix:///var/run/docker.sock"
@@ -41,6 +39,34 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 	}
 	if !exists || current.Container.Config == nil || current.Container.HostConfig == nil {
 		return errors.New("agent: local 3x-ui container is unavailable")
+	}
+	if current.Container.Config.Labels[xrayWorkerRuntimeLabel] == "xray" {
+		state, err := store.loadXrayWorkerState(ctx)
+		if err != nil || state.ApplicationID != applicationID || state.AppliedRevision != state.Revision {
+			return errors.Join(errors.New("agent: managed Xray worker state is unavailable"), err)
+		}
+		if current.Container.Config.Image != state.ImageReference || current.Container.HostConfig.NetworkMode != "host" {
+			return errors.New("agent: managed Xray worker runtime identity changed")
+		}
+		if !enabled || slices.ContainsFunc(state.Inbounds, func(raw json.RawMessage) bool {
+			var inbound struct {
+				Enable   bool   `json:"enable"`
+				Protocol string `json:"protocol"`
+				Port     int    `json:"port"`
+			}
+			return json.Unmarshal(raw, &inbound) == nil && inbound.Enable && inbound.Protocol == "hysteria" && inbound.Port == threeXUIRealityPort
+		}) {
+			return nil
+		}
+		probe, err := net.ListenPacket("udp4", ":443")
+		if err != nil {
+			return errors.New("agent: UDP 443 is already in use; stop the conflicting service before enabling HY2")
+		}
+		return probe.Close()
+	}
+	routes, err := store.localThreeXUILandingRoutes(ctx, applicationID)
+	if err != nil {
+		return err
 	}
 	config, host := current.Container.Config, current.Container.HostConfig
 	config.Image = current.Container.Image

@@ -59,8 +59,8 @@ func (state landingRuntimeState) validate() error {
 			return errors.New("agent: landing checkpoint does not match its application revision")
 		}
 		for _, use := range owner.PeerUses() {
-			if _, err := landing.NewBridgeGate(use.Peer, state.Bridge, state.Route.Revision); err != nil {
-				return errors.New("agent: invalid landing checkpoint bridge identity")
+			if _, err := newLandingGate(use.Peer, state.Bridge, state.Route.Revision); err != nil {
+				return errors.New("agent: invalid landing checkpoint gate identity")
 			}
 		}
 	}

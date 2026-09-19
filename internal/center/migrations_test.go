@@ -128,7 +128,7 @@ func TestVersion81MigrationAddsHostProfileDiagnostics(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `PRAGMA user_version = 80`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id = 81`); err != nil {
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM goose_db_version WHERE version_id >= 81`); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

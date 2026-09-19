@@ -137,3 +137,28 @@ func TestBridgeGateCommandsNeverContainGlobalOrSelfRefreshingRules(t *testing.T)
 		}
 	}
 }
+
+func TestUserGateScopesHostNetworkTrafficToDedicatedUID(t *testing.T) {
+	peer := PeerIdentity{ID: "node-landing", PublicKey: "nodekey:expected", Address: "100.64.0.8"}
+	gate, err := NewUserGate(peer, 65532, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(gate.objects())
+	for _, required := range []string{`"hook":"output"`, `"key":"skuid"`, `"right":65532`, `"daddr"`, `"drop"`} {
+		if !bytes.Contains(data, []byte(required)) {
+			t.Fatalf("host-network gate is missing %s: %s", required, data)
+		}
+	}
+	for _, forbidden := range []string{`"hook":"forward"`, `"iifname"`, `"oifname"`, `"hook":"input"`} {
+		if bytes.Contains(data, []byte(forbidden)) {
+			t.Fatalf("host-network gate escaped its UID scope: %s", forbidden)
+		}
+	}
+	if found, err := gate.validate(fixtureNFT(t, gate)); err != nil || !found {
+		t.Fatalf("host-network gate fixture rejected: found=%v err=%v", found, err)
+	}
+	if _, err := NewUserGate(peer, 0, 7); err == nil {
+		t.Fatal("host-network gate accepted root UID")
+	}
+}

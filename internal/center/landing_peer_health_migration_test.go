@@ -1,6 +1,7 @@
 package center
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -34,7 +35,7 @@ func TestLandingPeerHealthMigrationIsForwardOnly(t *testing.T) {
 	if err := rows.Err(); err != nil || !found {
 		t.Fatalf("peer health column missing after migration: %v", err)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v76-before-v81-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v76-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("pre-migration backup missing: %v %v", backups, err)
 	}

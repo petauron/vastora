@@ -215,7 +215,7 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 				clients[index].ID = landing.Identity(clientJSONText(detail.Client, "id"))
 				clients[index].InboundIDs = collapseProtocolInboundIDs(command.Inbounds, clients[index].InboundIDs)
 			}
-			result.Clients, err = store.projectLandingAccounts(ctx, baseURL, token, command.Inbounds, clients, command.Action != "list")
+			result.Clients, err = store.projectLandingAccounts(ctx, baseURL, token, command.Inbounds, clients, nativeSubscriptionMutationForCommand(command))
 			if err != nil {
 				return result, err
 			}

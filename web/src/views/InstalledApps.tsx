@@ -107,7 +107,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
         </TableHeader>
         <TableBody className="block lg:table-row-group">
           {instances.map((instance) => <InstalledInstanceRow instance={instance} key={instance.application.id} language={language} mutate={mutate} onManage={onManage} onUpgrade={onUpgrade} onReality={onReality} showSite={showSite} threeXUI={threeXUI} />)}
-          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 5 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 VLESS 节点", "No VLESS nodes configured")}</TableCell></TableRow> : null}
+          {!instances.length ? <TableRow className="block lg:table-row"><TableCell colSpan={threeXUI ? 5 : 4} className="block py-8 text-center text-muted-foreground lg:table-cell">{search ? copy(language, "没有匹配的节点", "No matching nodes") : copy(language, "尚未配置 Xray 节点", "No Xray nodes configured")}</TableCell></TableRow> : null}
         </TableBody>
       </Table>
     </Content>
@@ -128,7 +128,7 @@ function ControllerConvergence({ group, language, onManage }: { group: Installed
     <AlertDescription>
       <p>{failed
         ? migration?.lastError || copy(language, "请检查对应节点后重试。", "Check the affected node, then retry.")
-        : copy(language, "系统会逐台保存恢复点、转成 VLESS 节点并接入上方的全局订阅主机。", "Each host is backed up, converted to a VLESS node, and attached to the global subscription controller above in sequence.")}</p>
+        : copy(language, "系统会逐台保存恢复点、替换为 Xray 节点并接入上方的全局订阅主机。", "Each host is backed up, replaced with an Xray node, and attached to the global subscription controller above in sequence.")}</p>
       {failed && source ? <Button className="mt-3" onClick={() => onManage(source.application)} size="sm" variant="outline">{copy(language, "查看并重试", "Review and retry")}</Button> : null}
     </AlertDescription>
   </Alert>;

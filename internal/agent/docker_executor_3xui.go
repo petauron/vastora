@@ -144,19 +144,13 @@ func deployThreeXUI(ctx context.Context, docker *client.Client, task DeploymentT
 }
 
 func threeXUIPorts(bindAddress string, panelPort int, role string) (dockernetwork.PortSet, dockernetwork.PortMap, error) {
-	address, err := netip.ParseAddr(bindAddress)
-	if err != nil || !address.Unmap().Is4() {
-		return nil, nil, errors.New("agent: 3x-ui requires a valid IPv4 service address")
+	if role != "master" {
+		return nil, nil, errors.New("agent: only the controller adapter may deploy 3x-ui")
 	}
-	if !networking.IsPrivateServiceAddress(address.String()) {
-		return nil, nil, errors.New("agent: 3x-ui REALITY ports require a LAN, Headscale/Tailscale, or loopback service address")
+	if err := validateThreeXUIServiceAddress(bindAddress, panelPort, role); err != nil {
+		return nil, nil, err
 	}
-	if role != "master" && role != "worker" {
-		return nil, nil, errors.New("agent: invalid 3x-ui topology role")
-	}
-	if panelPort == threeXUIRealityPort {
-		return nil, nil, errors.New("agent: 3x-ui panel port must not use the managed REALITY port")
-	}
+	address := netip.MustParseAddr(bindAddress)
 	exposed := dockernetwork.PortSet{}
 	bindings := dockernetwork.PortMap{}
 	expose := func(portNumber int) dockernetwork.Port {
@@ -170,9 +164,26 @@ func threeXUIPorts(bindAddress string, panelPort int, role string) (dockernetwor
 	}
 	bind(panelPort)
 	// REALITY is reachable only from the per-node HAProxy over the shared
-	// Docker network. Never publish the raw 3x-ui socket on the host.
+	// Docker network. Never publish the raw controller adapter socket.
 	expose(threeXUIRealityPort)
 	return exposed, bindings, nil
+}
+
+func validateThreeXUIServiceAddress(bindAddress string, panelPort int, role string) error {
+	address, err := netip.ParseAddr(bindAddress)
+	if err != nil || !address.Unmap().Is4() {
+		return errors.New("agent: proxy runtime requires a valid IPv4 service address")
+	}
+	if !networking.IsPrivateServiceAddress(address.String()) {
+		return errors.New("agent: proxy runtime requires a LAN, Headscale/Tailscale, or loopback service address")
+	}
+	if role != "master" && role != "worker" {
+		return errors.New("agent: invalid proxy topology role")
+	}
+	if panelPort == threeXUIRealityPort {
+		return errors.New("agent: proxy management port must not use the managed REALITY port")
+	}
+	return nil
 }
 
 func threeXUIRecoveryErrorIsPostCommitCleanup(ctx context.Context, docker threeXUIContainerEngine, deploymentID string) (bool, error) {

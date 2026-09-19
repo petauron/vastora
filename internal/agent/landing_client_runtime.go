@@ -11,10 +11,14 @@ func (s *Store) observeLandingClientRuntime(ctx context.Context) *landing.Client
 	if err != nil {
 		return nil
 	}
-	s.landingSubscriptionMu.RLock()
-	ready := s.landingSubscriptionAddress == installation.ServiceAddress
-	s.landingSubscriptionMu.RUnlock()
-	if !ready {
+	if installation.ApplicationRole == "master" {
+		s.landingSubscriptionMu.RLock()
+		ready := s.landingSubscriptionAddress == installation.ServiceAddress
+		s.landingSubscriptionMu.RUnlock()
+		if !ready {
+			return nil
+		}
+	} else if installation.ApplicationRole != "worker" {
 		return nil
 	}
 	peer, err := s.linkChecker.SelfIdentity(ctx, installation.ServiceAddress)

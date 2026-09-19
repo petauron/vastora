@@ -100,9 +100,13 @@ func replaceThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngin
 	}
 	var databaseSnapshot []byte
 	snapshotContainerID := ""
-	if previousExists {
+	previousIsXrayWorker := previousExists && previous.Container.Config != nil && previous.Container.Config.Labels[xrayWorkerRuntimeLabel] == "xray"
+	if previousExists && !previousIsXrayWorker {
 		snapshotContainerID = previous.Container.ID
 	} else if !databaseVolumeFresh {
+		// An Xray-only worker has no /etc/x-ui mount. The stopped 3x-ui
+		// candidate mounts the retained controller database volume and is the
+		// only valid snapshot source when changing the topology role back.
 		snapshotContainerID = candidateID
 	}
 	if snapshotContainerID != "" {

@@ -601,6 +601,29 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 			if err := s.completeApplication(ctx, tx, taskID, applicationID, operation, executedRuntimeGeneration, taskResult, now, &publicationCleanups); err != nil {
 				return "", nil, err
 			}
+			migrationID := ""
+			if operation != "uninstall" && appKey == threeXUIAppKey && role == threeXUIRoleWorker {
+				migrationErr := tx.QueryRowContext(ctx, `SELECT id FROM three_x_ui_migrations
+					WHERE source_application_id=? AND state='switching' AND step='convert_worker'`, applicationID).Scan(&migrationID)
+				if migrationErr != nil && !errors.Is(migrationErr, sql.ErrNoRows) {
+					return "", nil, migrationErr
+				}
+				if migrationID != "" {
+					if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET step='switch',last_error='',failed_worker_application_id='',updated_at=?
+						WHERE id=? AND state='switching' AND step='convert_worker'`, now.Format(time.RFC3339Nano), migrationID); err != nil {
+						return "", nil, err
+					}
+				}
+				var listenerExists int
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM node_listener_states WHERE node_id=?)`, agentID).Scan(&listenerExists); err != nil {
+					return "", nil, err
+				}
+				if listenerExists != 0 {
+					if err := s.queueNodeListenerState(ctx, tx, agentID, now); err != nil {
+						return "", nil, err
+					}
+				}
+			}
 			if succeeded && operation != "uninstall" {
 				if err := s.storeApplicationSecrets(ctx, tx, taskID, applicationID, taskResult.GeneratedSecrets, now); err != nil {
 					return "", nil, err
@@ -610,7 +633,7 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 				if operation == "uninstall" {
 					err = s.queueThreeXUINodeRemoval(ctx, tx, applicationID, now)
 				} else {
-					err = s.queueThreeXUINodeReconcile(ctx, tx, taskID, applicationID, "", now)
+					err = s.queueThreeXUINodeReconcile(ctx, tx, taskID, applicationID, migrationID, now)
 				}
 				if err != nil {
 					return "", nil, err
@@ -627,6 +650,12 @@ func (s *Store) projectApplicationDeployment(ctx context.Context, tx *sql.Tx, ag
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status = 'degraded', last_error = ?, updated_at = ? WHERE application_id = ? AND status <> 'stopped'`, taskError, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return "", nil, err
+		}
+		if appKey == threeXUIAppKey && role == threeXUIRoleWorker && operation != "uninstall" {
+			if _, err := tx.ExecContext(ctx, `UPDATE three_x_ui_migrations SET last_error=?,failed_worker_application_id=?,updated_at=?
+				WHERE source_application_id=? AND state='switching' AND step='convert_worker'`, taskError, applicationID, now.Format(time.RFC3339Nano), applicationID); err != nil {
+				return "", nil, err
+			}
 		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE deployments SET state = ?, reconciliation_required = ?, reconciliation_requested = 0, executed_runtime_generation = ?, lease_expires_at = '', error = ?, updated_at = ? WHERE id = ? AND agent_id = ? AND state = 'running'`, state, reconciliationRequired, executedRuntimeGeneration, taskError, now.Format(time.RFC3339Nano), taskID, agentID)
