@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.164](https://github.com/petauron/vastora/compare/v0.1.0-alpha.163...v0.1.0-alpha.164) (2026-09-19)
+
+
+### Bug Fixes
+
+* **proxy:** extract token from legacy worker secrets ([#532](https://github.com/petauron/vastora/issues/532)) ([2231f4f](https://github.com/petauron/vastora/commit/2231f4f7f2e8bd877f270edb29c519d0735c729e))
+
 ## [0.1.0-alpha.163](https://github.com/petauron/vastora/compare/v0.1.0-alpha.162...v0.1.0-alpha.163) (2026-09-19)
 
 
