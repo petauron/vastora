@@ -274,7 +274,7 @@ func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	applicationSecretID, err := store.putSecret(ctx, secretTx, []byte(`{"api_token":"current-worker-token"}`), "application:"+applicationID)
+	applicationSecretID, err := store.putSecret(ctx, secretTx, []byte(`{"api_token":"current-worker-token","username":"legacy-user","password":"legacy-password"}`), "application:"+applicationID)
 	if err != nil {
 		secretTx.Rollback()
 		t.Fatal(err)

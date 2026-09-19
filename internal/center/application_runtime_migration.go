@@ -189,7 +189,7 @@ func (s *Store) currentXrayWorkerMigrationSecrets(ctx context.Context, tx *sql.T
 		return nil, errors.New("center: stored proxy worker API token is invalid during runtime migration")
 	}
 	apiToken := strings.TrimSpace(values["api_token"])
-	if len(values) != 1 || apiToken == "" || len(apiToken) > 4096 {
+	if apiToken == "" || len(apiToken) > 4096 {
 		return nil, errors.New("center: stored proxy worker API token is invalid during runtime migration")
 	}
 	return json.Marshal(map[string]string{"api_token": apiToken})
