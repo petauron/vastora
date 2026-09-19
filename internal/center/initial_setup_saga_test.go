@@ -75,7 +75,7 @@ func TestInitialSetupResumesHeadscaleAfterPhasePersistenceFailure(t *testing.T) 
 		t.Fatal(err)
 	}
 	storeSystemCenterCertificateForTest(t, store, "center.example.com")
-	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"192.9.143.79","bindAddress":"10.0.0.157"}`); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.79","bindAddress":"10.0.0.157"}`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.Exec(`CREATE TRIGGER fail_initial_setup_phase BEFORE UPDATE OF phase ON initial_setup_operations

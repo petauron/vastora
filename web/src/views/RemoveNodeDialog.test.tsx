@@ -9,7 +9,7 @@ import { RemoveNodeDialog } from "./RemoveNodeDialog";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | undefined;
 const onClose = vi.fn();
-const node = { id: "expired/node", name: "DMIT CN2", connected: false } as AgentView;
+const node = { id: "expired/node", name: "Edge Node B", connected: false } as AgentView;
 const mutate = async (action: () => Promise<unknown>) => { await action(); };
 
 afterEach(() => {
@@ -49,12 +49,12 @@ describe("permanent offline node removal", () => {
     render();
     expect(document.body.textContent).toContain("离线服务器上的程序和数据不会被删除");
     expect(document.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(true);
-    name("DMIT");
+    name("Edge");
     await submit();
     expect(remove).not.toHaveBeenCalled();
-    name(" DMIT CN2 ");
+    name(" Edge Node B ");
     await submit();
-    expect(remove).toHaveBeenCalledExactlyOnceWith("expired/node", "DMIT CN2");
+    expect(remove).toHaveBeenCalledExactlyOnceWith("expired/node", "Edge Node B");
     expect(onClose).toHaveBeenCalledOnce();
   });
 

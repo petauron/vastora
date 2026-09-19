@@ -113,7 +113,7 @@ func TestSetupVerifiesPublicPortsBeforeInstallingInfrastructure(t *testing.T) {
 	store.discoverNetworkCandidates = func(time.Time) ([]networking.Candidate, error) {
 		return []networking.Candidate{{Address: "10.0.0.157", Interface: "enp0s6", Kind: networking.KindLAN}}, nil
 	}
-	store.lookupPublicAddress = func(context.Context) (string, error) { return "192.9.143.79", nil }
+	store.lookupPublicAddress = func(context.Context) (string, error) { return "203.0.113.79", nil }
 	store.lookupGatewayAddress = func(string) (string, error) { return "10.0.0.157", nil }
 	verifiedAddress := ""
 	store.verifyPublicEntry = func(_ context.Context, address string, probe deployapi.PublicEntryProbe) error {
@@ -125,17 +125,17 @@ func TestSetupVerifiesPublicPortsBeforeInstallingInfrastructure(t *testing.T) {
 	}
 	installer := &fakeBuiltinHeadscaleInstaller{}
 	server := NewServer(store, "", false).WithInfrastructureManager(installer)
-	result, err := server.verifySetupPublicEntry(context.Background(), SetupPublicEntryInput{PublicAddress: "192.9.143.79", GatewayAddress: "10.0.0.157"})
+	result, err := server.verifySetupPublicEntry(context.Background(), SetupPublicEntryInput{PublicAddress: "203.0.113.79", GatewayAddress: "10.0.0.157"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "ready" || result.PublicAddress != "192.9.143.79" || result.GatewayAddress != "10.0.0.157" {
+	if result.Status != "ready" || result.PublicAddress != "203.0.113.79" || result.GatewayAddress != "10.0.0.157" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if installer.probeInput.BindAddress != "10.0.0.157" || installer.stoppedProbeID != installer.probe.ID || verifiedAddress != "192.9.143.79" {
+	if installer.probeInput.BindAddress != "10.0.0.157" || installer.stoppedProbeID != installer.probe.ID || verifiedAddress != "203.0.113.79" {
 		t.Fatalf("unexpected probe lifecycle: input=%#v stopped=%q verified=%q", installer.probeInput, installer.stoppedProbeID, verifiedAddress)
 	}
-	if err := store.requireFreshPublicEntryVerification(context.Background(), setupGatewayBinding{PublicAddress: "192.9.143.79", BindAddress: "10.0.0.157"}); err != nil {
+	if err := store.requireFreshPublicEntryVerification(context.Background(), setupGatewayBinding{PublicAddress: "203.0.113.79", BindAddress: "10.0.0.157"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -150,7 +150,7 @@ func TestAgentReportedNATEnablesPublicWebProfileWithoutCenterCoLocation(t *testi
 		{Address: "10.0.0.27", Interface: "enp0s6", Kind: networking.KindLAN},
 		{Address: "100.64.0.1", Interface: "tailscale0", Kind: networking.KindHeadscale},
 	}
-	node := enrollOrchestrationNode(t, store, "Oracle A1", NodeCapabilities{Docker: true, Gateway: true}, candidates, networking.Profile{
+	node := enrollOrchestrationNode(t, store, "Cloud Node A", NodeCapabilities{Docker: true, Gateway: true}, candidates, networking.Profile{
 		ServiceAddress: "100.64.0.1", LANAddress: "10.0.0.27", HeadscaleAddress: "100.64.0.1",
 		EnabledKinds: []string{networking.KindLAN, networking.KindHeadscale},
 	})
@@ -205,13 +205,13 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	storeSystemCenterCertificateForTest(t, store, "center.example.com")
-	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"192.9.143.79","bindAddress":"10.0.0.157"}`); err != nil {
+	if _, err := store.db.Exec(`INSERT INTO settings(key, value) VALUES(?, ?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.79","bindAddress":"10.0.0.157"}`); err != nil {
 		t.Fatal(err)
 	}
 	installer := &fakeBuiltinHeadscaleInstaller{endpoint: headscaleEndpoint}
 	server := NewServer(store, "", false).WithInfrastructureManager(installer)
 	payload, _ := json.Marshal(InitialSetupInput{
-		Site:      SiteInput{Name: "DMIT", Code: "dmit", Timezone: "Asia/Singapore"},
+		Site:      SiteInput{Name: "Edge Site", Code: "edge-site", Timezone: "Asia/Singapore"},
 		Network:   CenterNetworkInput{AgentConnectionMode: "headscale", AgentConnectURL: "https://center.example.com"},
 		Headscale: &HeadscaleInput{Mode: "builtin", URL: "https://headscale.example.com", DNSPolicy: "custom", DNSResolvers: []string{"9.9.9.9", "149.112.112.112"}},
 	})
@@ -222,7 +222,7 @@ func TestSetupInstallsBuiltinHeadscaleWithoutAcceptingAnAPIKey(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("setup failed: %d %s", response.Code, response.Body.String())
 	}
-	if installer.input.CenterURL != "https://center.example.com" || installer.input.HeadscaleURL != "https://headscale.example.com" || installer.input.PublicAddress != "192.9.143.79" || installer.input.GatewayBindAddress != "10.0.0.157" {
+	if installer.input.CenterURL != "https://center.example.com" || installer.input.HeadscaleURL != "https://headscale.example.com" || installer.input.PublicAddress != "203.0.113.79" || installer.input.GatewayBindAddress != "10.0.0.157" {
 		t.Fatalf("unexpected deployment input: %#v", installer.input)
 	}
 	if installer.input.DNSPolicy != "custom" || len(installer.input.DNSResolvers) != 2 || installer.input.DNSResolvers[0] != "9.9.9.9" {

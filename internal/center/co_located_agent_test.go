@@ -86,7 +86,7 @@ func TestRestoredTailnetAddressQueuesPrivateGatewayListener(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key, value) VALUES(?, ?), (?, ?), (?, ?)`,
 		agentConnectionModeSetting, "headscale",
 		agentConnectURLSetting, "https://center.example.test",
-		setupGatewayBindingSetting, `{"publicAddress":"192.9.143.79","bindAddress":"10.0.0.10"}`); err != nil {
+		setupGatewayBindingSetting, `{"publicAddress":"203.0.113.79","bindAddress":"10.0.0.10"}`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE gateway_components SET status = 'ready', applied_generation = generation WHERE gateway_node_id = ?`, node.ID); err != nil {
