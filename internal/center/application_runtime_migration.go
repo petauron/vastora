@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
@@ -108,7 +109,8 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 	for _, app := range applications {
 		manifestJSON := app.manifestJSON
 		appVersion := app.appVersion
-		if app.appKey == threeXUIAppKey && app.role == threeXUIRoleWorker && generation >= 2 {
+		xrayWorkerMigration := app.appKey == threeXUIAppKey && app.role == threeXUIRoleWorker && generation >= 2
+		if xrayWorkerMigration {
 			manifest, err := currentOfficialApplicationManifest(ctx, tx, "3x-ui", now)
 			if err != nil {
 				return fmt.Errorf("center: authorize Xray worker runtime migration: %w", err)
@@ -133,7 +135,16 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 			return err
 		}
 		var newSecretID any
-		if app.secretID.Valid {
+		if xrayWorkerMigration {
+			plaintext, err := s.currentXrayWorkerMigrationSecrets(ctx, tx, app.applicationID)
+			if err != nil {
+				return err
+			}
+			newSecretID, err = s.putSecret(ctx, tx, plaintext, "deployment:"+deploymentID)
+			if err != nil {
+				return err
+			}
+		} else if app.secretID.Valid {
 			var sealed []byte
 			if err := tx.QueryRowContext(ctx, `SELECT sealed FROM secrets WHERE id = ?`, app.secretID.String).Scan(&sealed); err != nil {
 				return fmt.Errorf("center: read application secret for runtime migration: %w", err)
@@ -160,6 +171,28 @@ func (s *Store) queueRuntimeApplicationDeployments(ctx context.Context, tx *sql.
 		}
 	}
 	return nil
+}
+
+func (s *Store) currentXrayWorkerMigrationSecrets(ctx context.Context, tx *sql.Tx, applicationID string) ([]byte, error) {
+	var sealed []byte
+	if err := tx.QueryRowContext(ctx, `SELECT s.sealed FROM application_secrets value JOIN secrets s ON s.id=value.secret_id WHERE value.application_id=?`, applicationID).Scan(&sealed); errors.Is(err, sql.ErrNoRows) {
+		return nil, errors.New("center: proxy worker API token was not found during runtime migration")
+	} else if err != nil {
+		return nil, err
+	}
+	plaintext, err := secret.Open(s.key, sealed, []byte("application:"+applicationID))
+	if err != nil {
+		return nil, errors.New("center: stored proxy worker API token is invalid during runtime migration")
+	}
+	var values map[string]string
+	if json.Unmarshal(plaintext, &values) != nil {
+		return nil, errors.New("center: stored proxy worker API token is invalid during runtime migration")
+	}
+	apiToken := strings.TrimSpace(values["api_token"])
+	if len(values) != 1 || apiToken == "" || len(apiToken) > 4096 {
+		return nil, errors.New("center: stored proxy worker API token is invalid during runtime migration")
+	}
+	return json.Marshal(map[string]string{"api_token": apiToken})
 }
 
 func currentOfficialApplicationManifest(ctx context.Context, tx *sql.Tx, appID string, now time.Time) (catalog.AppManifest, error) {
