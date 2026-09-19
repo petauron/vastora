@@ -52,7 +52,7 @@ func TestNewerVersionDoesNotBypassRuntimeRecovery(t *testing.T) {
 	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.135"); err == nil {
 		t.Fatal("individual update bypassed recovery")
 	}
-	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.135"); err != nil || status.Manual != 1 || status.Pending != 0 {
+	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.135"); err != nil || status.Blocked != 1 || status.Manual != 0 || status.Pending != 0 {
 		t.Fatalf("recovery incorrectly displayed as pending: %+v %v", status, err)
 	}
 }

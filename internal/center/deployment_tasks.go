@@ -99,7 +99,8 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	}
 	var publicKey []byte
 	var agentRuntimeGeneration int
-	if err := s.db.QueryRowContext(ctx, `SELECT x25519_public_key, runtime_generation FROM agents WHERE id = ?`, agentID).Scan(&publicKey, &agentRuntimeGeneration); err != nil || controlplane.ValidatePublicKey(publicKey) != nil {
+	var agentVersion string
+	if err := s.db.QueryRowContext(ctx, `SELECT x25519_public_key, runtime_generation, version FROM agents WHERE id = ?`, agentID).Scan(&publicKey, &agentRuntimeGeneration, &agentVersion); err != nil || controlplane.ValidatePublicKey(publicKey) != nil {
 		return nil, errors.New("center: Agent must heartbeat before claiming encrypted tasks")
 	}
 	if err := s.recoverExpiredTasks(ctx, agentID); err != nil {
@@ -142,6 +143,13 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 			}
 			return updateTask, nil
 		}
+	}
+	// A newly restarted Center can expose migrated desired state before its
+	// rollout loop has queued Agent updates. Do not let an older Agent claim
+	// work produced by the newer Center during that window. Once the rollout
+	// queues an update, the update remains the first claim above.
+	if agentVersionBehindTarget(agentVersion, Version) {
+		return nil, nil
 	}
 	var task AgentTask
 	var manifest []byte

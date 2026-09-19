@@ -184,6 +184,39 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	}
 }
 
+func TestOutdatedAgentWaitsForUpdateBeforeClaimingMigratedWork(t *testing.T) {
+	previousVersion := Version
+	Version = "0.1.0-alpha.159"
+	defer func() { Version = previousVersion }()
+
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "rollout-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.96", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.96", LANAddress: "10.0.0.96", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.158", true)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.queueNodeListenerState(ctx, tx, node.ID, store.now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task != nil {
+		t.Fatalf("outdated Agent claimed migrated work before rollout: %#v, %v", task, err)
+	}
+	if queued, err := store.QueueAgentUpdates(ctx, Version); err != nil || len(queued) != 1 {
+		t.Fatalf("queue rollout: %#v, %v", queued, err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || task == nil || task.Kind != "agent.update" {
+		t.Fatalf("Agent update did not precede migrated work: %#v, %v", task, err)
+	}
+}
+
 func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
@@ -207,7 +240,7 @@ func TestAgentUpdateRolloutLeavesFailedTargetsForManualRetry(t *testing.T) {
 	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
 		t.Fatalf("new release bypassed the failed update: %#v, %v", queued, err)
 	}
-	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.90"); err != nil || status.Manual != 1 || status.Pending != 0 || status.Updating != 0 {
+	if status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.90"); err != nil || status.Blocked != 1 || status.Manual != 0 || status.Pending != 0 || status.Updating != 0 {
 		t.Fatalf("blocked new release still appears pending: %#v, %v", status, err)
 	}
 	status, err := store.AgentUpdateRolloutStatus(ctx, "0.1.0-alpha.89")
