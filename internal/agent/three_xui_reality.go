@@ -22,7 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 )
 
-const threeXUIRealityMinClientVersion = "1.8.2"
+const threeXUIRealityMinClientVersion = "0.0.0"
 
 type threeXUIRealityInbound struct {
 	ID              int             `json:"id"`
