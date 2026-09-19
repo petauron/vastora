@@ -148,7 +148,7 @@ func TestRenameThreeXUIRealityInboundPreservesConfiguration(t *testing.T) {
 			}
 			settings, _ := payload["settings"].(map[string]any)
 			stream, _ := payload["streamSettings"].(map[string]any)
-			if payload["remark"] != "US Oracle" || payload["listen"] != "100.64.0.2" || payload["port"] != float64(39871) || payload["nodeId"] != float64(7) || payload["customField"] != "preserve-me" || settings == nil || stream["security"] != "reality" || payload["id"] != nil || payload["clientStats"] != nil {
+			if payload["remark"] != "US Provider A" || payload["listen"] != "100.64.0.2" || payload["port"] != float64(39871) || payload["nodeId"] != float64(7) || payload["customField"] != "preserve-me" || settings == nil || stream["security"] != "reality" || payload["id"] != nil || payload["clientStats"] != nil {
 				t.Fatalf("rename changed the inbound configuration: %#v", payload)
 			}
 			_, _ = response.Write([]byte(`{"success":true,"obj":{}}`))
@@ -158,11 +158,11 @@ func TestRenameThreeXUIRealityInboundPreservesConfiguration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := renameThreeXUIRealityInbound(context.Background(), server.URL, "token", RealityCommandTask{Action: "rename", DisplayName: "US Oracle", InboundID: 9, TargetNodeID: 7})
+	result, err := renameThreeXUIRealityInbound(context.Background(), server.URL, "token", RealityCommandTask{Action: "rename", DisplayName: "US Provider A", InboundID: 9, TargetNodeID: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updates != 1 || result.Action != "rename" || result.InboundID != 9 || result.DisplayName != "US Oracle" {
+	if updates != 1 || result.Action != "rename" || result.InboundID != 9 || result.DisplayName != "US Provider A" {
 		t.Fatalf("unexpected rename result: %#v, updates=%d", result, updates)
 	}
 }
@@ -185,7 +185,7 @@ func TestApplyRealityRenameStopsAfterLostUpdateResponse(t *testing.T) {
 			trafficReset := ""
 			trafficResetDay := 0
 			if updated {
-				remark = "US Oracle"
+				remark = "US Provider A"
 				trafficReset = "never"
 				trafficResetDay = 1
 			}
@@ -203,7 +203,7 @@ func TestApplyRealityRenameStopsAfterLostUpdateResponse(t *testing.T) {
 	defer server.Close()
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
-	command := RealityCommandTask{Action: "rename", DisplayName: "US Oracle", InboundID: 9}
+	command := RealityCommandTask{Action: "rename", DisplayName: "US Provider A", InboundID: 9}
 
 	if _, err := applyRealityCommand(context.Background(), store, "application-command-rename-lost", 1, command); !taskOutcomeIsUncertain(err) {
 		t.Fatalf("lost rename response was not deferred for same-ID reconciliation: %v", err)
@@ -226,7 +226,7 @@ func TestApplyRealityRenameMissingTargetFailsWithoutReconciliation(t *testing.T)
 	store := threeXUIClientTestStore(t, server, "local-token")
 	defer store.Close()
 
-	_, err := applyRealityCommand(context.Background(), store, "application-command-rename-missing", 99, RealityCommandTask{Action: "rename", DisplayName: "US Oracle", InboundID: 9})
+	_, err := applyRealityCommand(context.Background(), store, "application-command-rename-missing", 99, RealityCommandTask{Action: "rename", DisplayName: "US Provider A", InboundID: 9})
 	if err == nil || taskOutcomeIsUncertain(err) {
 		t.Fatalf("missing rename target should be terminal, got %v", err)
 	}

@@ -176,7 +176,7 @@ func TestRealityTargetHostnameRequiresDotCom(t *testing.T) {
 			t.Fatalf("valid .com hostname %q was rejected", hostname)
 		}
 	}
-	for _, hostname := range []string{"example.xyz", "example.net", "com", "bad..com"} {
+	for _, hostname := range []string{"example.test", "example.net", "com", "bad..com"} {
 		if validRealityTargetHostname(hostname) {
 			t.Fatalf("non-.com or invalid hostname %q was accepted", hostname)
 		}

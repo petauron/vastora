@@ -177,7 +177,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 
 func TestThreeXUIClientInboundDisplayNameSurvivesAgentRoundTrip(t *testing.T) {
 	var task ThreeXUIClientCommandTask
-	if err := json.Unmarshal([]byte(`{"action":"list","inbounds":[{"id":7,"name":"inbound-7","displayName":"美国CloudLead","applicationId":"app-1","nodeId":"node-1","nodeName":"CloudLead"}]}`), &task); err != nil {
+	if err := json.Unmarshal([]byte(`{"action":"list","inbounds":[{"id":7,"name":"inbound-7","displayName":"美国Provider A","applicationId":"app-1","nodeId":"node-1","nodeName":"Provider A"}]}`), &task); err != nil {
 		t.Fatal(err)
 	}
 	result := ThreeXUIClientCommandResult{Inbounds: task.Inbounds}
@@ -185,7 +185,7 @@ func TestThreeXUIClientInboundDisplayNameSurvivesAgentRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(payload), `"displayName":"美国CloudLead"`) {
+	if !strings.Contains(string(payload), `"displayName":"美国Provider A"`) {
 		t.Fatalf("display name was lost from Agent result: %s", payload)
 	}
 }

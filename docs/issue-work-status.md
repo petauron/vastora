@@ -39,7 +39,7 @@
 ## 2026-09-09：最近 Issue 按编号复查
 
 基线为 `main@52b331a`（`v0.1.0-alpha.114`），本轮工作分支
-`kuddy/reconcile-recent-issues`。下表区分基线已有实现与本轮新增内容；
+`maintenance/reconcile-recent-issues`。下表区分基线已有实现与本轮新增内容；
 不能把历史 CI 的成功套用到本轮尚未提交的修改。
 
 | 顺序 | 代码核对结果 | 本轮处理 |
@@ -64,7 +64,7 @@ DNS、生产重启或反中转抓包的替代验收。
 
 ## 2026-09-08 历史记录
 
-2026-09-08，工作分支 `kuddy/complete-open-issues`。这是开发记录，
+2026-09-08，工作分支 `maintenance/complete-open-issues`。这是开发记录，
 不是 Issue 关闭证明、测试报告或发布公告。
 
 | Issue | 本轮代码 | 尚未完成 |

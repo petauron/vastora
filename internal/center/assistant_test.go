@@ -554,7 +554,7 @@ func TestAssistantRejectsPotentialCredentialsBeforePersistence(t *testing.T) {
 	for _, safe := range []string{
 		"检查提交 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		"检查节点 7a0a3214-4076-4ae4-9b77-96acbb143d42",
-		"检查域名 c7wcnfto2bz6zhucdqdxz7zkly.775811.xyz",
+		"检查域名 suspicious.example.net",
 	} {
 		if assistantTextContainsPotentialCredential(safe) {
 			t.Fatalf("safe identifier was treated as a credential: %q", safe)

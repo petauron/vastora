@@ -16,7 +16,7 @@ describe("subscription region names", () => {
   );
 
   it("does not change another region or an unprefixed node name", () => {
-    expect(regionDisplayName("US", "Oracle 9929")).toBe("🇺🇸 美国｜Oracle 9929");
+    expect(regionDisplayName("US", "Provider A Premium")).toBe("🇺🇸 美国｜Provider A Premium");
     expect(regionBaseName("VMISS DC2", "HK")).toBe("VMISS DC2");
   });
 

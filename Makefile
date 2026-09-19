@@ -4,13 +4,20 @@ GO_PACKAGES := ./cmd/... ./internal/...
 STATICCHECK_VERSION := v0.7.0
 GOVULNCHECK_VERSION := v1.7.0
 
-.PHONY: bootstrap check go-check go-format-check go-race-check go-static-check web-check deployment-check security-check dependency-security-check go-security-check web-security-check agent-binaries center-install-bundle image-center image-agent
+.PHONY: bootstrap check privacy-check hooks-install go-check go-format-check go-race-check go-static-check web-check deployment-check security-check dependency-security-check go-security-check web-security-check agent-binaries center-install-bundle image-center image-agent
 
 bootstrap:
 	$(GO) mod download
 	cd web && npm ci --ignore-scripts
 
-check: go-check web-check deployment-check
+check: privacy-check go-check web-check deployment-check
+
+privacy-check:
+	node --test scripts/check-public-fixtures.test.mjs
+	node scripts/check-public-fixtures.mjs --worktree
+
+hooks-install:
+	git config core.hooksPath .githooks
 
 go-check: go-format-check go-race-check go-static-check
 
