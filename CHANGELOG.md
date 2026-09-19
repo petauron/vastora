@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.158](https://github.com/petauron/vastora/compare/v0.1.0-alpha.157...v0.1.0-alpha.158) (2026-09-19)
+
+
+### Bug Fixes
+
+* **landing:** isolate failed exits without restarting Xray ([#516](https://github.com/petauron/vastora/issues/516)) ([bedf8ff](https://github.com/petauron/vastora/commit/bedf8ff6d2df615b9db8d1bd87966ec1e38320cb)), closes [#513](https://github.com/petauron/vastora/issues/513)
+* **proxy:** isolate Xray workers on runtime bridge ([afbcae3](https://github.com/petauron/vastora/commit/afbcae36aee8df7114064e3520398c0bda8ae9f0))
+
 ## [0.1.0-alpha.157](https://github.com/petauron/vastora/compare/v0.1.0-alpha.156...v0.1.0-alpha.157) (2026-09-19)
 
 
