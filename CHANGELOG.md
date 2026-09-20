@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.166](https://github.com/petauron/vastora/compare/v0.1.0-alpha.165...v0.1.0-alpha.166) (2026-09-20)
+
+
+### Bug Fixes
+
+* **agent:** reconcile recreated landing runtime ([#538](https://github.com/petauron/vastora/issues/538)) ([0551166](https://github.com/petauron/vastora/commit/055116606df72b3130a4dc2159a02f16cf2f8cec))
+* **catalog:** version Mihomo-compatible proxy runtime ([#536](https://github.com/petauron/vastora/issues/536)) ([d890b94](https://github.com/petauron/vastora/commit/d890b946b5a2776b68593c2d86af3eae7dd8496d))
+
 ## [0.1.0-alpha.165](https://github.com/petauron/vastora/compare/v0.1.0-alpha.164...v0.1.0-alpha.165) (2026-09-19)
 
 
