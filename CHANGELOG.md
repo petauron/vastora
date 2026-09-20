@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.173](https://github.com/petauron/vastora/compare/v0.1.0-alpha.172...v0.1.0-alpha.173) (2026-09-20)
+
+
+### Bug Fixes
+
+* **center:** release superseded update session fence ([#551](https://github.com/petauron/vastora/issues/551)) ([8620e0d](https://github.com/petauron/vastora/commit/8620e0d2fef8934ae625339cb9c7ad8774b236f8))
+
 ## [0.1.0-alpha.172](https://github.com/petauron/vastora/compare/v0.1.0-alpha.171...v0.1.0-alpha.172) (2026-09-20)
 
 
