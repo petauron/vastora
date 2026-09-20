@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.169](https://github.com/petauron/vastora/compare/v0.1.0-alpha.168...v0.1.0-alpha.169) (2026-09-20)
+
+
+### Features
+
+* **recovery:** add explicit Xray configuration reconciliation ([34eda98](https://github.com/petauron/vastora/commit/34eda98f792de36f06f06e92153670db2e92fd7f))
+
 ## [0.1.0-alpha.168](https://github.com/petauron/vastora/compare/v0.1.0-alpha.167...v0.1.0-alpha.168) (2026-09-20)
 
 
