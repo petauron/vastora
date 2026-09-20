@@ -12,6 +12,8 @@ import (
 	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
+var errLandingProxyInstanceChanged = errors.New("agent: selected proxy instance changed")
+
 // The instance stays available for its local management API while its business
 // route is kernel-blocked. Restart terminates old streams without stopping the
 // controller or HAProxy. Docker's automatic restart must remain disabled until
@@ -46,7 +48,7 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 	}
 	value := inspected.Container
 	if expectedContainerID != "" && value.ID != expectedContainerID {
-		return nil, "", "", errors.New("agent: selected proxy instance changed")
+		return nil, "", "", errLandingProxyInstanceChanged
 	}
 	if err := validateApplicationResourceLabels(value.Config.Labels, threeXUIKey, component, applicationID, anyApplicationDeployment); err != nil {
 		return nil, "", "", err
