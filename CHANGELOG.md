@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.171](https://github.com/petauron/vastora/compare/v0.1.0-alpha.170...v0.1.0-alpha.171) (2026-09-20)
+
+
+### Bug Fixes
+
+* **updates:** unblock installed agent versions ([#547](https://github.com/petauron/vastora/issues/547)) ([d317242](https://github.com/petauron/vastora/commit/d317242854c6eed06c1be5a1c1bf84dab014a2f9))
+
 ## [0.1.0-alpha.170](https://github.com/petauron/vastora/compare/v0.1.0-alpha.169...v0.1.0-alpha.170) (2026-09-20)
 
 
