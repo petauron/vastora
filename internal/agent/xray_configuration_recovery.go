@@ -103,6 +103,7 @@ func (e ApplicationExecutor) ApplyXrayConfigurationRecovery(ctx context.Context,
 		return xrayrecovery.Result{}, uncertainTaskOutcome(errors.New("agent: Xray recovery did not converge"))
 	}
 	result.Action, result.AppliedSource = task.Action, task.Action
+	e.Store.clearApplicationRecovery(threeXUIKey)
 	return result, nil
 }
 
@@ -125,10 +126,16 @@ func (e ApplicationExecutor) xrayRecoverySnapshot(ctx context.Context, applicati
 		return xrayWorkerState{}, nil, nil, errors.Join(errors.New("agent: managed Xray runtime is unavailable"), err)
 	}
 	labels := inspected.Container.Config.Labels
-	if labels[xrayWorkerRuntimeLabel] != "xray" || labels[applicationInstallationLabel] != applicationID || inspected.Container.Config.Image != state.ImageReference || inspected.Container.Config.User != strconv.Itoa(xrayWorkerRuntimeUID()) || inspected.Container.HostConfig.NetworkMode != container.NetworkMode(dockerruntime.NetworkName) {
+	image := inspected.Container.Config.Image
+	if labels[xrayWorkerRuntimeLabel] != "xray" || labels[applicationInstallationLabel] != applicationID || image != state.ImageReference && image != xrayWorkerImageReference || inspected.Container.Config.User != strconv.Itoa(xrayWorkerRuntimeUID()) || inspected.Container.HostConfig.NetworkMode != container.NetworkMode(dockerruntime.NetworkName) {
 		docker.Close()
 		return xrayWorkerState{}, nil, nil, errors.New("agent: managed Xray runtime identity is invalid")
 	}
+	// A transactional container replacement may have reached the audited image
+	// before the encrypted state and receipt were advanced. Recovery must be
+	// able to compare those two configurations without silently adopting the
+	// new image outside the operator-authorized recovery task.
+	state.ImageReference = image
 	active, err := os.ReadFile(filepath.Join(e.Store.dataDir, "xray-worker", "config.json"))
 	if err != nil || len(active) == 0 || len(active) > xrayWorkerMaxBody {
 		docker.Close()

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/petauron/vastora/internal/controlplane"
 )
 
 func TestExecutionHeartbeatObservesHealthyIngressWithoutStartupReplay(t *testing.T) {
@@ -48,5 +50,38 @@ func TestExecutionHeartbeatObservesHealthyIngressWithoutStartupReplay(t *testing
 	}
 	if !observed || len(driver.appliedStates()) != 1 {
 		t.Fatalf("heartbeat did not preserve read-only live observation: healthy=%v applies=%d", observed, len(driver.appliedStates()))
+	}
+}
+
+func TestHeartbeatReportsBlockedXrayRecovery(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.setApplicationRecovery(controlplane.RecoveryApplication{AppKey: threeXUIKey, ApplicationID: "application-1", Reason: "state_incomplete"})
+	observed := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			RuntimeRecovery             string                             `json:"runtimeRecovery"`
+			RuntimeRecoveryApplications []controlplane.RecoveryApplication `json:"runtimeRecoveryApplications"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		observed = body.RuntimeRecovery == "application" && len(body.RuntimeRecoveryApplications) == 1 && body.RuntimeRecoveryApplications[0].ApplicationID == "application-1"
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	ctx := context.Background()
+	if err := store.SaveConnection(ctx, testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Client{}).Heartbeat(ctx, store); err != nil {
+		t.Fatal(err)
+	}
+	if !observed {
+		t.Fatal("heartbeat omitted blocked Xray recovery")
 	}
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/moby/moby/api/types/mount"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
@@ -696,7 +697,18 @@ func validateXrayWorkerConfig(ctx context.Context, docker *client.Client, imageR
 	}
 }
 
-func (s *Store) ResumeXrayWorker(ctx context.Context, dockerSocket string) error {
+func (s *Store) ResumeXrayWorker(ctx context.Context, dockerSocket string) (result error) {
+	applicationID := ""
+	defer func() {
+		if applicationID == "" {
+			return
+		}
+		if result != nil {
+			s.setApplicationRecovery(controlplane.RecoveryApplication{AppKey: threeXUIKey, ApplicationID: applicationID, Reason: "state_incomplete"})
+			return
+		}
+		s.clearApplicationRecovery(threeXUIKey)
+	}()
 	state, err := s.loadXrayWorkerState(ctx)
 	if errors.Is(err, errApplicationNotInstalled) {
 		return nil
@@ -704,6 +716,7 @@ func (s *Store) ResumeXrayWorker(ctx context.Context, dockerSocket string) error
 	if err != nil {
 		return err
 	}
+	applicationID = state.ApplicationID
 	installation, err := s.AppliedInstallation(ctx, threeXUIKey)
 	if errors.Is(err, errApplicationNotInstalled) {
 		// A keep-data uninstall intentionally retains the encrypted worker state
