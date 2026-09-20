@@ -42,14 +42,14 @@ func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
 			} else if claimErr != nil {
 				t.Fatalf("installed update stranded the Agent task channel: %v", claimErr)
 			}
-			task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+			task, err := store.claimExecutionTask(ctx, node.ID, node.Credential, session, 0)
 			if state == "running" {
 				if !errors.Is(err, errExecutionBlocked) || task != nil {
 					t.Fatalf("active update did not retain the execution fence: %+v %v", task, err)
 				}
 				return
 			}
-			if err != nil || task == nil || task.ID != deployment.ID {
+			if err != nil || task == nil || task.ID != deployment.ID || task.Authorization.ID == "" {
 				t.Fatalf("installed update stranded ordinary work: %+v %v", task, err)
 			}
 			var preservedState, disposition string

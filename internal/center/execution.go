@@ -270,12 +270,23 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 		if blocked {
 			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 		}
+	} else if task.Kind != "xray.configuration.inspect" && task.Kind != "xray.configuration.apply" {
+		var currentVersion string
+		if err := tx.QueryRowContext(ctx, `SELECT version FROM agents WHERE id=?`, agentID).Scan(&currentVersion); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		blocked, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, currentVersion)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		if blocked {
+			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
+		}
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at)
-		SELECT ?,?,?,?,?,?,?,?,'offered','authorized',?,?,? WHERE EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)
-		AND (? IN ('xray.configuration.inspect','xray.configuration.apply','agent.update') OR NOT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded'))`,
+		SELECT ?,?,?,?,?,?,?,?,'offered','authorized',?,?,? WHERE EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)`,
 		id, agentID, task.ID, task.Kind, task.Attempt, sessionID, hex.EncodeToString(digest[:]), sealed,
-		now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, sessionID, task.Kind, agentID)
+		now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, sessionID)
 	if err != nil {
 		return controlplane.ExecutionAuthorization{}, err
 	}
