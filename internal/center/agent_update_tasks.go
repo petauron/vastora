@@ -87,6 +87,32 @@ func unresolvedExecutionBlocksAgentUpdate(ctx context.Context, queryer agentUpda
 	return false, rows.Err()
 }
 
+// Ordinary work must remain fenced by every unresolved business operation.
+// The only terminal execution that can be ignored is an Agent update whose
+// target is already proven by the running Agent version. Its evidence remains
+// available in Activity, but it must not strand unrelated application work.
+func unresolvedExecutionBlocksAgentWork(ctx context.Context, queryer agentUpdateExecutionQueryer, agentID, currentVersion string) (bool, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT execution.kind,execution.state,COALESCE(update_task.target_version,'')
+		FROM task_executions execution
+		LEFT JOIN agent_updates update_task ON execution.kind='agent.update' AND update_task.id=execution.task_id AND update_task.agent_id=execution.agent_id
+		WHERE execution.agent_id=? AND execution.disposition='' AND execution.state<>'succeeded'`, agentID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, state, targetVersion string
+		if err := rows.Scan(&kind, &state, &targetVersion); err != nil {
+			return false, err
+		}
+		if kind == "agent.update" && state != "offered" && state != "running" && state != "helper_running" && agentUpdateFailureSuperseded(currentVersion, targetVersion) {
+			continue
+		}
+		return true, nil
+	}
+	return false, rows.Err()
+}
+
 func (s *Store) QueueAgentUpdate(ctx context.Context, agentID, targetVersion string) (AgentUpdateView, error) {
 	return s.queueAgentUpdate(ctx, agentID, targetVersion, nil)
 }
