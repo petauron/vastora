@@ -333,7 +333,7 @@ export function App() {
               {loadedScreens.has(screen) && screen === "network" ? <NetworkView data={data} language={language} mutate={mutate} /> : null}
               {loadedScreens.has(screen) && screen === "activity" ? <ActivityView actions={data.actions} agents={data.agents} language={language} /> : null}
               {loadedScreens.has(screen) && screen === "assistant" ? <AssistantView language={language} /> : null}
-              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} onRefresh={refreshSettings} /> : null}
+              {loadedScreens.has(screen) && screen === "settings" ? <SettingsView data={data} language={language} mutate={mutate} onCenterUpdateStatus={updateCenterStatus} onLogout={async () => { await api.logout(); setData(null); setLoadedScreens(new Set()); setPhase("login"); }} onNavigate={navigate} onRefresh={refreshSettings} /> : null}
             </Suspense>
           </div>
         </SidebarInset>

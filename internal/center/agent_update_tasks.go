@@ -36,12 +36,13 @@ type AgentUpdateRolloutStatus struct {
 // reports that it needs attention.
 const agentUpdateProgressTimeout = 5 * time.Minute
 
-// A strictly newer running version supersedes an old update failure, but does
-// not rewrite its evidence or authorize replay of any unresolved execution.
+// A running version at or beyond the old update target supersedes that update
+// failure, but does not rewrite its evidence or authorize replay of unrelated
+// unresolved execution.
 func agentUpdateFailureSuperseded(currentVersion, failedTarget string) bool {
 	current := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
 	failed := "v" + strings.TrimPrefix(strings.TrimSpace(failedTarget), "v")
-	return semver.IsValid(current) && semver.IsValid(failed) && semver.Compare(current, failed) > 0
+	return semver.IsValid(current) && semver.IsValid(failed) && semver.Compare(current, failed) >= 0
 }
 
 func agentVersionBehindTarget(currentVersion, targetVersion string) bool {
@@ -61,7 +62,7 @@ type agentUpdateExecutionQueryer interface {
 // Terminal business-task evidence remains available for explicit recovery, but
 // it does not make restarting the Agent unsafe. Active work and unresolved host
 // lifecycle helpers still fence the update. An older Agent update is also safe
-// once a newer running version proves that attempt was superseded.
+// once the running version proves that target was installed or superseded.
 func unresolvedExecutionBlocksAgentUpdate(ctx context.Context, queryer agentUpdateExecutionQueryer, agentID, currentVersion string) (bool, error) {
 	rows, err := queryer.QueryContext(ctx, `SELECT execution.kind,execution.state,COALESCE(update_task.target_version,'')
 		FROM task_executions execution

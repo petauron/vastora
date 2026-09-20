@@ -12,4 +12,5 @@ it("shows a superseded gateway revision without rewriting its queued event", () 
   expect(html).toContain("不再排队");
   expect(html).not.toContain("已排队");
   expect(html).toContain("queued");
+  expect(html).toContain("任务执行");
 });
