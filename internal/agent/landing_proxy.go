@@ -183,7 +183,11 @@ func (s *Store) resumeLandingRuntimeLocked(ctx context.Context) (result error) {
 			return err
 		}
 	}
-	docker, bridge, policy, err := openLandingDocker(ctx, state.ApplicationID, state.ContainerID)
+	routes, err := s.localThreeXUILandingRoutes(ctx, state.ApplicationID)
+	if err != nil {
+		return err
+	}
+	docker, bridge, policy, err := s.openLandingDockerForRuntime(ctx, state, routes)
 	if err != nil {
 		return err
 	}
@@ -194,10 +198,6 @@ func (s *Store) resumeLandingRuntimeLocked(ctx context.Context) (result error) {
 	inspected, err := docker.inspect(ctx)
 	if err != nil || !inspected.Container.State.Running {
 		return errors.New("agent: landing proxy instance is not running")
-	}
-	routes, err := s.localThreeXUILandingRoutes(ctx, state.ApplicationID)
-	if err != nil {
-		return err
 	}
 	if err := waitLandingRoutes(ctx, routes); err != nil {
 		return err
@@ -228,6 +228,62 @@ func waitLandingRoutes(ctx context.Context, routes threeXUILandingRoutes) error 
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+// openLandingDockerForRuntime preserves the container identity fence while
+// allowing a managed Xray container recreated outside the deployment task to
+// be adopted after its complete runtime and applied route identity are read
+// back. This is reconciliation, not a fallback: legacy or drifting instances
+// remain blocked and the encrypted checkpoint is the only state advanced.
+func (s *Store) openLandingDockerForRuntime(ctx context.Context, state *landingRuntimeState, routes threeXUILandingRoutes) (*landingDocker, string, string, error) {
+	docker, bridge, policy, err := openLandingDocker(ctx, state.ApplicationID, state.ContainerID)
+	if err == nil || !errors.Is(err, errLandingProxyInstanceChanged) {
+		return docker, bridge, policy, err
+	}
+	if state.Route == nil || state.Phase != "applied" || state.Applied == nil || state.Retiring != nil || state.Applied.Revision != state.Desired.Revision || state.Route.Revision != state.Desired.Revision || state.ApplicationID != state.Desired.ApplicationID() {
+		return nil, "", "", errors.New("agent: recreated landing runtime requires explicit reconciliation")
+	}
+	docker, bridge, policy, err = openLandingDocker(ctx, state.ApplicationID, "")
+	if err != nil {
+		return nil, "", "", err
+	}
+	failed := true
+	defer func() {
+		if failed {
+			_ = docker.engine.Close()
+		}
+	}()
+	if docker.component != "xray" || bridge != state.Bridge {
+		return nil, "", "", errors.New("agent: recreated landing runtime identity changed")
+	}
+	inspected, err := docker.inspect(ctx)
+	if err != nil || !inspected.Container.State.Running {
+		return nil, "", "", errors.New("agent: recreated landing proxy instance is not running")
+	}
+	if err := waitLandingRoutes(ctx, routes); err != nil {
+		return nil, "", "", err
+	}
+	raw, _, err := routes.Read(ctx)
+	if err != nil {
+		return nil, "", "", errors.New("agent: recreated landing route is unavailable")
+	}
+	if _, write, err := state.Route.NextWrite(raw, true); err != nil || write {
+		return nil, "", "", errors.New("agent: recreated landing route identity changed")
+	}
+	if err := s.verifyLocalLandingPlan(ctx, routes, state.Desired); err != nil {
+		return nil, "", "", err
+	}
+	if err := docker.restartPolicy(ctx, "no"); err != nil {
+		return nil, "", "", errors.New("agent: recreated landing runtime could not be fenced")
+	}
+	updated := *state
+	updated.ContainerID = docker.containerID
+	if err := s.saveLandingRuntime(ctx, updated); err != nil {
+		return nil, "", "", err
+	}
+	*state = updated
+	failed = false
+	return docker, bridge, "no", nil
 }
 
 func (s *Store) stopLandingMonitor(ctx context.Context) error {
@@ -326,11 +382,22 @@ func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredSt
 	if err != nil {
 		return err
 	}
-	expectedID := ""
+	var docker *landingDocker
+	var bridge, policy string
 	if current != nil && current.Route != nil {
-		expectedID = current.ContainerID
+		currentGates, gateErr := landingGates(current.Desired, current.Bridge)
+		if gateErr != nil {
+			return gateErr
+		}
+		for _, gate := range currentGates {
+			if gateErr := gate.Install(ctx); gateErr != nil {
+				return gateErr
+			}
+		}
+		docker, bridge, policy, err = s.openLandingDockerForRuntime(ctx, current, routes)
+	} else {
+		docker, bridge, policy, err = openLandingDocker(ctx, desired.ApplicationID(), "")
 	}
-	docker, bridge, policy, err := openLandingDocker(ctx, desired.ApplicationID(), expectedID)
 	if err != nil {
 		return err
 	}
@@ -444,21 +511,11 @@ func (s *Store) disableLandingProxy(ctx context.Context, desired landing.Desired
 	if !owner.Active() {
 		return errors.New("agent: missing landing route owner")
 	}
-	current.Applied = &owner
-	current.Desired = desired
-	current.Phase = "restoring"
-	if err := s.saveLandingRuntime(ctx, *current); err != nil {
-		return err
-	}
-	docker, bridge, _, err := openLandingDocker(ctx, current.ApplicationID, current.ContainerID)
+	routes, err := s.localThreeXUILandingRoutes(ctx, current.ApplicationID)
 	if err != nil {
 		return err
 	}
-	defer docker.engine.Close()
-	if bridge != current.Bridge {
-		return errors.New("agent: landing recovery bridge changed")
-	}
-	gates, err := landingGates(owner, bridge)
+	gates, err := landingGates(owner, current.Bridge)
 	if err != nil {
 		return err
 	}
@@ -467,14 +524,24 @@ func (s *Store) disableLandingProxy(ctx context.Context, desired landing.Desired
 			return err
 		}
 	}
+	docker, bridge, _, err := s.openLandingDockerForRuntime(ctx, current, routes)
+	if err != nil {
+		return err
+	}
+	defer docker.engine.Close()
+	if bridge != current.Bridge {
+		return errors.New("agent: landing recovery bridge changed")
+	}
+	current.Applied = &owner
+	current.Desired = desired
+	current.Phase = "restoring"
+	if err := s.saveLandingRuntime(ctx, *current); err != nil {
+		return err
+	}
 	if err := docker.restartPolicy(ctx, "no"); err != nil {
 		return err
 	}
 	if err := docker.startForReconciliation(ctx); err != nil {
-		return err
-	}
-	routes, err := s.localThreeXUILandingRoutes(ctx, current.ApplicationID)
-	if err != nil {
 		return err
 	}
 	if err := waitLandingRoutes(ctx, routes); err != nil {
