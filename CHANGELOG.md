@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.172](https://github.com/petauron/vastora/compare/v0.1.0-alpha.171...v0.1.0-alpha.172) (2026-09-20)
+
+
+### Bug Fixes
+
+* **apps:** converge superseded update tasks ([#549](https://github.com/petauron/vastora/issues/549)) ([fcdb0cf](https://github.com/petauron/vastora/commit/fcdb0cf2b469502f05dae587d04c2cc263fac329))
+
 ## [0.1.0-alpha.171](https://github.com/petauron/vastora/compare/v0.1.0-alpha.170...v0.1.0-alpha.171) (2026-09-20)
 
 
