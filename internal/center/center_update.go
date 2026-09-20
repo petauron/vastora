@@ -216,14 +216,6 @@ func (s *Server) centerUpdateStatus(ctx context.Context, refreshOfficial bool) C
 			return result
 		}
 		result.AgentRollout = &rollout
-		// Waiting for rollout readiness is not an active update. Keep the
-		// completed Center update available for checks and subsequent upgrades.
-		if rollout.Updating != 0 {
-			result.State = "applying"
-			result.Phase = "agents"
-			result.Progress = 98
-			result.Message = fmt.Sprintf("Updating Agents (%d of %d current).", rollout.Updated, rollout.Total)
-		}
 	}
 	return result
 }
@@ -233,10 +225,10 @@ func (s *Server) RunAgentUpdateRollout(ctx context.Context, interval time.Durati
 		interval = 5 * time.Second
 	}
 	reconcile := func() {
-		ready, err := s.agentUpdateRolloutReady(ctx)
-		if err == nil && ready {
-			_, err = s.store.QueueAgentUpdates(ctx, Version)
+		if !s.agentUpdateRolloutAvailable() {
+			return
 		}
+		_, err := s.store.QueueAgentUpdates(ctx, Version)
 		if err != nil && ctx.Err() == nil && report != nil {
 			report(err)
 		}

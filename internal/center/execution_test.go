@@ -73,8 +73,8 @@ func TestExecutionAuthorizationCannotReplayAfterLostResponseOrRestart(t *testing
 				session = "execution-session-for-replacement-process"
 			}
 			clock = clock.Add(taskLeaseDuration + time.Second)
-			if err := store.executionClaimAllowed(ctx, node.ID, session); !errors.Is(err, errExecutionBlocked) {
-				t.Fatalf("interrupted task resumed: %v", err)
+			if err := store.executionClaimAllowed(ctx, node.ID, session); err != nil {
+				t.Fatalf("terminal business evidence blocked the independent Agent update: %v", err)
 			}
 			views, err := executionViewsForTest(ctx, store)
 			if err != nil || len(views) != 1 || views[0].State != "unknown" || views[0].Attempt != 1 {

@@ -148,7 +148,7 @@ func TestAgentUpdateRolloutDoesNotBlockCenterWhenUnqueuedOrOffline(t *testing.T)
 		t.Fatal(err)
 	}
 	status = server.centerUpdateStatus(context.Background(), false)
-	if status.State != "applying" || status.Phase != "agents" || status.Progress != 98 || status.AgentRollout == nil || status.AgentRollout.Updating != 1 {
+	if status.State != "succeeded" || status.Phase != "completed" || status.Progress != 100 || status.AgentRollout == nil || status.AgentRollout.Updating != 1 {
 		t.Fatalf("unexpected remote Agent rollout status: %#v", status)
 	}
 	task, err := store.ClaimNextTask(context.Background(), node.ID, node.Credential)

@@ -54,6 +54,38 @@ func isAgentUpdateTaskID(value string) bool {
 	return strings.HasPrefix(value, "agent-update-")
 }
 
+type agentUpdateExecutionQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+// Terminal business-task evidence remains available for explicit recovery, but
+// it does not make restarting the Agent unsafe. Active work and unresolved host
+// lifecycle helpers still fence the update. An older Agent update is also safe
+// once a newer running version proves that attempt was superseded.
+func unresolvedExecutionBlocksAgentUpdate(ctx context.Context, queryer agentUpdateExecutionQueryer, agentID, currentVersion string) (bool, error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT execution.kind,execution.state,COALESCE(update_task.target_version,'')
+		FROM task_executions execution
+		LEFT JOIN agent_updates update_task ON execution.kind='agent.update' AND update_task.id=execution.task_id AND update_task.agent_id=execution.agent_id
+		WHERE execution.agent_id=? AND execution.disposition='' AND execution.state<>'succeeded'`, agentID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, state, targetVersion string
+		if err := rows.Scan(&kind, &state, &targetVersion); err != nil {
+			return false, err
+		}
+		if state == "offered" || state == "running" || state == "helper_running" || kind == "agent.decommission" {
+			return true, nil
+		}
+		if kind == "agent.update" && !agentUpdateFailureSuperseded(currentVersion, targetVersion) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 func (s *Store) QueueAgentUpdate(ctx context.Context, agentID, targetVersion string) (AgentUpdateView, error) {
 	return s.queueAgentUpdate(ctx, agentID, targetVersion, nil)
 }
@@ -115,11 +147,15 @@ func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	if !errors.Is(err, sql.ErrNoRows) {
 		return AgentUpdateView{}, fmt.Errorf("center: inspect active Agent update: %w", err)
 	}
-	var blocked bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded') OR EXISTS(SELECT 1 FROM agents WHERE id=? AND runtime_recovery<>'')`, agentID, agentID).Scan(&blocked); err != nil {
+	var runtimeRecovery bool
+	if err := tx.QueryRowContext(ctx, `SELECT runtime_recovery<>'' FROM agents WHERE id=?`, agentID).Scan(&runtimeRecovery); err != nil {
 		return AgentUpdateView{}, err
 	}
-	if blocked {
+	executionBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, currentVersion)
+	if err != nil {
+		return AgentUpdateView{}, err
+	}
+	if runtimeRecovery || executionBlocked {
 		return AgentUpdateView{}, errors.New("center: resolve outstanding execution and runtime recovery before updating")
 	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
@@ -172,17 +208,12 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return nil, errors.New("center: Agent rollout target version is invalid")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
+	if paused, err := executionClaimsPaused(ctx, s.db); err != nil {
 		return nil, err
 	} else if paused {
 		return []string{}, nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT agent.id, agent.version, COALESCE(previous.state,''), COALESCE(previous.target_version,'')
+	rows, err := s.db.QueryContext(ctx, `SELECT agent.id, agent.version, COALESCE(previous.state,''), COALESCE(previous.target_version,'')
 		FROM agents agent
 		LEFT JOIN agent_updates previous ON previous.id=(SELECT id FROM agent_updates WHERE agent_id=agent.id ORDER BY created_at DESC,rowid DESC LIMIT 1)
 		WHERE agent.status = 'active'
@@ -191,7 +222,6 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 		  AND agent.last_seen_at > ?
 		  AND agent.version <> ?
 		  AND agent.runtime_recovery = ''
-		  AND NOT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=agent.id AND disposition='' AND state<>'succeeded')
 		  AND NOT EXISTS (
 			SELECT 1 FROM agent_updates active_task
 			WHERE active_task.agent_id = agent.id AND active_task.state IN ('pending', 'running', 'installing')
@@ -204,7 +234,10 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if err != nil {
 		return nil, fmt.Errorf("center: select Agent rollout targets: %w", err)
 	}
-	candidateIDs := []string{}
+	type rolloutCandidate struct {
+		id, currentVersion string
+	}
+	candidates := []rolloutCandidate{}
 	for rows.Next() {
 		var agentID, currentVersion, previousState, previousTarget string
 		if err := rows.Scan(&agentID, &currentVersion, &previousState, &previousTarget); err != nil {
@@ -218,7 +251,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 		if semver.IsValid(currentSemver) && semver.Compare("v"+targetVersion, currentSemver) <= 0 {
 			continue
 		}
-		candidateIDs = append(candidateIDs, agentID)
+		candidates = append(candidates, rolloutCandidate{id: agentID, currentVersion: currentVersion})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -227,15 +260,24 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	for _, agentID := range candidateIDs {
-		if _, err := s.queueAgentUpdateTx(ctx, tx, agentID, targetVersion, "Agent update to "+targetVersion+" queued automatically after Center upgrade"); err != nil {
-			return nil, err
+	queuedIDs := make([]string, 0, len(candidates))
+	queueErrors := make([]error, 0)
+	for _, candidate := range candidates {
+		blocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, s.db, candidate.id, candidate.currentVersion)
+		if err != nil {
+			queueErrors = append(queueErrors, fmt.Errorf("center: inspect Agent %s before independent update: %w", candidate.id, err))
+			continue
 		}
+		if blocked {
+			continue
+		}
+		if _, err := s.QueueAgentUpdate(ctx, candidate.id, targetVersion); err != nil {
+			queueErrors = append(queueErrors, fmt.Errorf("center: queue Agent %s independently: %w", candidate.id, err))
+			continue
+		}
+		queuedIDs = append(queuedIDs, candidate.id)
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return candidateIDs, nil
+	return queuedIDs, errors.Join(queueErrors...)
 }
 
 func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion string) (AgentUpdateRolloutStatus, error) {
@@ -244,37 +286,56 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return status, errors.New("center: Agent rollout target version is invalid")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT agent.version, agent.last_seen_at, agent.remote_update_supported,
+	rows, err := s.db.QueryContext(ctx, `SELECT agent.id,agent.version, agent.last_seen_at, agent.remote_update_supported,
 		COALESCE((SELECT update_task.state FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
 		COALESCE((SELECT update_task.target_version FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
 		COALESCE((SELECT update_task.last_error FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
 		COALESCE((SELECT update_task.updated_at FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
-		agent.runtime_recovery<>'' OR EXISTS(SELECT 1 FROM task_executions WHERE agent_id=agent.id AND disposition='' AND state<>'succeeded')
+		agent.runtime_recovery<>''
 		FROM agents agent
 		WHERE agent.status = 'active' AND agent.credential_revoked_at = ''
 		ORDER BY agent.name, agent.id`)
 	if err != nil {
 		return status, fmt.Errorf("center: inspect Agent rollout status: %w", err)
 	}
-	defer rows.Close()
-	connectedAfter := s.now().UTC().Add(-agentConnectedMaxAge)
+	type rolloutAgent struct {
+		id, currentVersion, lastSeenAt, updateState, updateTarget, updateError, updateUpdatedAt string
+		supported, runtimeRecovery                                                              bool
+	}
+	agents := []rolloutAgent{}
 	for rows.Next() {
-		var currentVersion, lastSeenAt, updateState, updateTarget, updateError, updateUpdatedAt string
-		var supported, blocked bool
-		if err := rows.Scan(&currentVersion, &lastSeenAt, &supported, &updateState, &updateTarget, &updateError, &updateUpdatedAt, &blocked); err != nil {
+		var agent rolloutAgent
+		if err := rows.Scan(&agent.id, &agent.currentVersion, &agent.lastSeenAt, &agent.supported, &agent.updateState, &agent.updateTarget, &agent.updateError, &agent.updateUpdatedAt, &agent.runtimeRecovery); err != nil {
+			rows.Close()
 			return status, err
 		}
-		currentSemver := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
-		activeUpdate := updateState == "pending" || updateState == "running" || updateState == "installing"
+		agents = append(agents, agent)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return status, err
+	}
+	if err := rows.Close(); err != nil {
+		return status, err
+	}
+	connectedAfter := s.now().UTC().Add(-agentConnectedMaxAge)
+	for _, agent := range agents {
+		executionBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, s.db, agent.id, agent.currentVersion)
+		if err != nil {
+			return status, err
+		}
+		blocked := agent.runtimeRecovery || executionBlocked
+		currentSemver := "v" + strings.TrimPrefix(strings.TrimSpace(agent.currentVersion), "v")
+		activeUpdate := agent.updateState == "pending" || agent.updateState == "running" || agent.updateState == "installing"
 		if !activeUpdate && semver.IsValid(currentSemver) && semver.Compare(currentSemver, "v"+targetVersion) > 0 {
 			continue
 		}
 		status.Total++
-		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(currentVersion), "v") == targetVersion && !(updateTarget == targetVersion && updateState == "failed") {
+		if !activeUpdate && strings.TrimPrefix(strings.TrimSpace(agent.currentVersion), "v") == targetVersion && !(agent.updateTarget == targetVersion && agent.updateState == "failed") {
 			status.Updated++
 			continue
 		}
-		seen, parseErr := time.Parse(time.RFC3339Nano, lastSeenAt)
+		seen, parseErr := time.Parse(time.RFC3339Nano, agent.lastSeenAt)
 		connected := parseErr == nil && seen.After(connectedAfter)
 		// An offline Agent cannot keep the completed Center update busy. Keep
 		// its durable task intact for inspection; connectivity is not permission
@@ -284,15 +345,15 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 				status.Offline++
 				continue
 			}
-			if updateTarget != targetVersion {
+			if agent.updateTarget != targetVersion {
 				status.Blocked++
 				continue
 			}
-			if updateState == "installing" && strings.TrimSpace(updateError) != "" {
+			if agent.updateState == "installing" && strings.TrimSpace(agent.updateError) != "" {
 				status.Failed++
 				continue
 			}
-			progressAt, progressErr := time.Parse(time.RFC3339Nano, updateUpdatedAt)
+			progressAt, progressErr := time.Parse(time.RFC3339Nano, agent.updateUpdatedAt)
 			if progressErr != nil || !progressAt.After(s.now().UTC().Add(-agentUpdateProgressTimeout)) {
 				status.Failed++
 				continue
@@ -304,15 +365,15 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			status.Offline++
 			continue
 		}
-		if updateTarget == targetVersion && (updateState == "failed" || updateState == "succeeded") {
+		if agent.updateTarget == targetVersion && (agent.updateState == "failed" || agent.updateState == "succeeded") {
 			status.Failed++
 			continue
 		}
-		if blocked || (updateState == "failed" && !agentUpdateFailureSuperseded(currentVersion, updateTarget)) {
+		if blocked || (agent.updateState == "failed" && !agentUpdateFailureSuperseded(agent.currentVersion, agent.updateTarget)) {
 			status.Blocked++
 			continue
 		}
-		if !supported {
+		if !agent.supported {
 			status.Manual++
 			continue
 		}
@@ -321,9 +382,6 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 			continue
 		}
 		status.Pending++
-	}
-	if err := rows.Err(); err != nil {
-		return status, err
 	}
 	return status, nil
 }

@@ -134,16 +134,34 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		if recoveryErr != nil {
 			return nil, recoveryErr
 		}
-		if recovery == nil {
-			return nil, errExecutionBlocked
+		if recovery != nil {
+			if err := commitTask(tx, recovery); err != nil {
+				return nil, err
+			}
+			return recovery, nil
 		}
-		if err := commitTask(tx, recovery); err != nil {
-			return nil, err
+		if requiredTaskID == "" {
+			updateBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, agentVersion)
+			if err != nil {
+				return nil, err
+			}
+			if !updateBlocked {
+				updateTask, err := s.claimAgentUpdate(ctx, tx, agentID)
+				if err != nil {
+					return nil, err
+				}
+				if updateTask != nil {
+					if err := commitTask(tx, updateTask); err != nil {
+						return nil, err
+					}
+					return updateTask, nil
+				}
+			}
 		}
-		return recovery, nil
+		return nil, errExecutionBlocked
 	}
-	// Self-update is subject to the same unresolved-execution fence as all
-	// other work. It has no recovery-mode bypass.
+	// Self-update is the first ordinary task so older Agents cannot consume
+	// desired state produced by the newer Center before restarting.
 	if requiredTaskID == "" {
 		updateTask, updateErr := s.claimAgentUpdate(ctx, tx, agentID)
 		if updateErr != nil {

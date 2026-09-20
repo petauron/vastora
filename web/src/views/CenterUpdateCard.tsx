@@ -26,21 +26,15 @@ const updateStages: Readonly<Record<string, readonly [string, string]>> = {
   health: ["正在等待健康检查", "Waiting for health checks"],
   reconciling: ["正在完成启动协调", "Finishing startup reconciliation"],
   finalizing: ["正在完成最终检查", "Finishing final checks"],
-  agents: ["正在更新节点 Agent", "Updating node Agents"],
 };
 
 type AgentRollout = NonNullable<CenterUpdateStatus["agentRollout"]>;
 
 const updateIsRunning = (status: CenterUpdateStatus) => status.state === "queued" || status.state === "applying";
-const agentRolloutIsComplete = (rollout?: AgentRollout) => rollout !== undefined && rollout.updated >= rollout.total;
-const agentRolloutCanContinue = (rollout?: AgentRollout) => rollout !== undefined
-  && rollout.updated < rollout.total
-  && rollout.failed === 0
-  && rollout.offline === 0
-  && rollout.manual === 0
-  && rollout.blocked === 0;
+const agentRolloutHasWork = (rollout?: AgentRollout) => rollout !== undefined && (rollout.updating > 0 || rollout.pending > 0);
 const shouldPollUpdate = (status: CenterUpdateStatus) => updateIsRunning(status)
-  || (status.state === "succeeded" && agentRolloutCanContinue(status.agentRollout));
+  || (status.state === "succeeded" && agentRolloutHasWork(status.agentRollout));
+const maxIdleAgentPolls = 8;
 
 function AgentRolloutProgress({ language, rollout }: { language: Language; rollout: AgentRollout }) {
   const percentage = rollout.total > 0 ? Math.round((rollout.updated / rollout.total) * 100) : 0;
@@ -56,6 +50,7 @@ export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, o
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const reloadStarted = useRef(false);
+  const idleAgentPolls = useRef(0);
   const running = updateIsRunning(status);
   const polling = shouldPollUpdate(status);
   const stageCopy = updateStages[status.phase || (status.state === "queued" ? "queued" : "installing")] || updateStages.installing;
@@ -70,12 +65,17 @@ export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, o
         const next = await api.centerUpdate();
         if (stopped) return;
         onStatusChange(next);
-        if (next.state === "succeeded" && agentRolloutIsComplete(next.agentRollout)) {
+        if (running && next.state === "succeeded") {
           if (reloadStarted.current) return;
           reloadStarted.current = true;
           try { await onRefresh(); } finally { onReload(); }
           return;
         }
+        if (next.agentRollout?.updating) idleAgentPolls.current = 0;
+        else if (next.agentRollout?.pending) {
+          idleAgentPolls.current += 1;
+          if (idleAgentPolls.current >= maxIdleAgentPolls) return;
+        } else idleAgentPolls.current = 0;
         if (!shouldPollUpdate(next)) return;
       } catch {
         // Center restarts during a normal update. Keep the progress state and retry.
@@ -84,7 +84,7 @@ export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, o
     };
     void poll();
     return () => { stopped = true; window.clearTimeout(timer); };
-  }, [onRefresh, onReload, onStatusChange, polling]);
+  }, [onRefresh, onReload, onStatusChange, polling, running]);
 
   const refresh = async () => {
     setBusy(true); setError("");
@@ -101,8 +101,9 @@ export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, o
       <CardContent className="flex flex-col gap-4">
         <dl className="grid gap-4 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{copy(language, "当前版本", "Current version")}</dt><dd className="mt-1 flex flex-wrap items-center gap-2 font-medium"><span>{status.currentVersion}</span><code className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground" title={status.currentImageDigest ? `sha256:${status.currentImageDigest}` : undefined}>{shortDigest(status.currentImageDigest)}</code></dd></div><div><dt className="text-muted-foreground">{copy(language, "可用版本", "Available version")}</dt><dd className="mt-1 flex flex-wrap items-center gap-2 font-medium"><span>{status.latestVersion || "—"}</span><code className="rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal text-muted-foreground" title={status.latestImageDigest ? `sha256:${status.latestImageDigest}` : undefined}>{shortDigest(status.latestImageDigest)}</code></dd></div></dl>
         {status.imageMismatch ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "版本相同，但镜像不一致", "Version matches, but the image does not")}</AlertTitle><AlertDescription>{copy(language, "当前安装的镜像不是该版本正式发布的镜像。可直接执行修复更新，无需等待新版本。", "The installed image is not the image officially published for this version. Run a repair update without waiting for another version.")}</AlertDescription></Alert> : null}
-        {running ? <Alert><Spinner /><AlertTitle>{copy(language, `正在更新到 ${status.targetVersion || status.latestVersion}`, `Updating to ${status.targetVersion || status.latestVersion}`)}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{status.phase === "agents" ? copy(language, "请稍候，更新完成后节点会自动连接。", "Please wait. Nodes reconnect automatically after the update.") : copy(language, "Center 会短暂重启，本页会自动重新连接。请不要关闭服务器或 Docker。", "Center briefly restarts and this page reconnects automatically. Do not stop the server or Docker.")}</span>{status.phase === "agents" && status.agentRollout ? <AgentRolloutProgress language={language} rollout={status.agentRollout} /> : <Progress value={status.progress ?? null}><ProgressLabel>{updateStage}</ProgressLabel><span aria-hidden="true" className="ml-auto text-xs text-muted-foreground tabular-nums">{status.progress !== undefined ? `${status.progress}%` : copy(language, "进行中", "In progress")}</span></Progress>}</AlertDescription></Alert> : null}
-        {status.state === "succeeded" && !status.updateAvailable ? <Alert>{status.agentRollout?.pending ? <Spinner /> : <ShieldCheckIcon />}<AlertTitle>{status.agentRollout?.pending ? copy(language, "Center 已更新，Agent 等待发布", "Center updated; Agent rollout is waiting") : copy(language, "更新完成", "Update complete")}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{status.agentRollout?.pending ? copy(language, `Center 已安全更新到 ${status.currentVersion}；${status.agentRollout.updated}/${status.agentRollout.total} 个 Agent 已同步，${status.agentRollout.pending} 个正在等待发布条件。`, `Center was safely updated to ${status.currentVersion}; ${status.agentRollout.updated}/${status.agentRollout.total} Agents are synchronized and ${status.agentRollout.pending} are waiting for rollout readiness.`) : copy(language, `Center 已安全更新到 ${status.currentVersion}${status.agentRollout ? `，${status.agentRollout.updated}/${status.agentRollout.total} 个 Agent 已同步` : ""}。`, `Center was safely updated to ${status.currentVersion}${status.agentRollout ? `; ${status.agentRollout.updated}/${status.agentRollout.total} Agents are synchronized` : ""}.`)}</span>{status.agentRollout && status.agentRollout.total > 0 ? <AgentRolloutProgress language={language} rollout={status.agentRollout} /> : null}</AlertDescription></Alert> : null}
+        {running ? <Alert><Spinner /><AlertTitle>{copy(language, `正在更新到 ${status.targetVersion || status.latestVersion}`, `Updating to ${status.targetVersion || status.latestVersion}`)}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{copy(language, "Center 会短暂重启，本页会自动重新连接。请不要关闭服务器或 Docker。", "Center briefly restarts and this page reconnects automatically. Do not stop the server or Docker.")}</span><Progress value={status.progress ?? null}><ProgressLabel>{updateStage}</ProgressLabel><span aria-hidden="true" className="ml-auto text-xs text-muted-foreground tabular-nums">{status.progress !== undefined ? `${status.progress}%` : copy(language, "进行中", "In progress")}</span></Progress></AlertDescription></Alert> : null}
+        {status.state === "succeeded" && !status.updateAvailable ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "Center 更新完成", "Center update complete")}</AlertTitle><AlertDescription className="flex flex-col gap-3"><span>{copy(language, `Center 已安全更新到 ${status.currentVersion}。Agent 会按节点独立在后台升级；单个节点异常不会阻塞其他节点或 Center。`, `Center was safely updated to ${status.currentVersion}. Agents upgrade independently in the background; one unhealthy node cannot block the others or Center.`)}</span>{status.agentRollout && status.agentRollout.total > 0 ? <AgentRolloutProgress language={language} rollout={status.agentRollout} /> : null}</AlertDescription></Alert> : null}
+        {status.state === "succeeded" && status.agentRollout && agentRolloutHasWork(status.agentRollout) ? <Alert>{status.agentRollout.updating > 0 ? <Spinner /> : <CircleArrowUpIcon />}<AlertTitle>{copy(language, "Agent 后台升级", "Agent background rollout")}</AlertTitle><AlertDescription>{copy(language, `${status.agentRollout.updating ? `${status.agentRollout.updating} 个正在更新；` : ""}${status.agentRollout.pending ? `${status.agentRollout.pending} 个等待领取更新任务。` : ""}`, `${status.agentRollout.updating ? `${status.agentRollout.updating} updating; ` : ""}${status.agentRollout.pending ? `${status.agentRollout.pending} waiting to claim an update task.` : ""}`)}</AlertDescription></Alert> : null}
         {status.state === "succeeded" && status.agentRollout && (status.agentRollout.failed > 0 || status.agentRollout.offline > 0 || status.agentRollout.manual > 0 || status.agentRollout.blocked > 0) ? <Alert><AlertTitle>{copy(language, "部分 Agent 需要后续处理", "Some Agents need follow-up")}</AlertTitle><AlertDescription>{copy(language, `${status.agentRollout.failed ? `${status.agentRollout.failed} 个更新失败；` : ""}${status.agentRollout.offline ? `${status.agentRollout.offline} 个离线，上线后会继续；` : ""}${status.agentRollout.manual ? `${status.agentRollout.manual} 个旧版本需要手动更新；` : ""}${status.agentRollout.blocked ? `${status.agentRollout.blocked} 个存在待处理任务，已暂停更新。` : ""}`, `${status.agentRollout.failed ? `${status.agentRollout.failed} failed; ` : ""}${status.agentRollout.offline ? `${status.agentRollout.offline} are offline and will continue after reconnecting; ` : ""}${status.agentRollout.manual ? `${status.agentRollout.manual} legacy Agents require a manual update; ` : ""}${status.agentRollout.blocked ? `${status.agentRollout.blocked} are blocked by unresolved tasks.` : ""}`)}</AlertDescription></Alert> : null}
         {status.state === "failed" ? <FieldError role="alert">{copy(language, "更新没有完成。系统保留了可诊断状态，请重试；若仍失败，请下载诊断报告。", "The update did not finish. Diagnostic state was preserved; retry, then download diagnostics if it still fails.")}</FieldError> : null}
         {!status.releaseCheckAvailable ? <Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "发布检查未配置", "Release checking is not configured")}</AlertTitle><AlertDescription>{copy(language, "当前打包没有提供发布元数据与不可变安装源。Center 不会连接任何默认外部服务；请按该打包方的升级说明操作。", "This package did not provide release metadata and an immutable installer source. Center will not contact a default external service; follow the package maintainer's upgrade instructions.")}</AlertDescription></Alert> : status.error ? <FieldError role="alert">{copy(language, "暂时无法检查配置的发布源，请稍后重试。", "The configured release source cannot be checked right now. Try again shortly.")}</FieldError> : null}
@@ -112,6 +113,6 @@ export function CenterUpdateCard({ language, onRefresh, onReload = reloadPage, o
       </CardContent>
       <CardFooter className="justify-end gap-2"><Button disabled={busy || running || !status.releaseCheckAvailable} onClick={() => void refresh()} size="sm" variant="outline">{busy && !confirming ? <Spinner data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}{copy(language, "检查更新", "Check again")}</Button>{status.updateAvailable && status.automatic ? <Button disabled={busy || running} onClick={() => setConfirming(true)} size="sm">{copy(language, status.state === "failed" ? "重试更新" : status.imageMismatch ? "修复镜像" : "更新 Center", status.state === "failed" ? "Retry update" : status.imageMismatch ? "Repair image" : "Update Center")}</Button> : null}</CardFooter>
     </Card>
-    <Sheet onOpenChange={(open) => { if (!open && !busy) setConfirming(false); }} open={confirming}><SheetContent><SheetHeader><SheetTitle>{copy(language, status.imageMismatch ? `修复 ${status.latestVersion} 镜像` : `更新到 ${status.latestVersion}`, status.imageMismatch ? `Repair the ${status.latestVersion} image` : `Update to ${status.latestVersion}`)}</SheetTitle><SheetDescription>{copy(language, "更新会保留配置与数据，并自动备份。Center 和在线节点的 Agent 将一起更新。", "Your configuration and data are preserved and backed up. Center and online node Agents will be updated together.")}</SheetDescription></SheetHeader><div className="flex-1 px-4"><Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "预计短暂断开连接", "Expect a brief reconnect")}</AlertTitle><AlertDescription>{copy(language, "更新期间会短暂断开连接，完成后自动恢复。请勿关闭服务器。更新后的数据不支持自动恢复到旧版本。", "Connections briefly disconnect and recover automatically. Keep the server running. Updated data cannot automatically revert to an older version.")}</AlertDescription></Alert>{error ? <FieldError className="mt-4" role="alert">{error}</FieldError> : null}</div><SheetFooter><Button disabled={busy} onClick={() => setConfirming(false)} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void start()}>{busy ? <Spinner data-icon="inline-start" /> : <CircleArrowUpIcon data-icon="inline-start" />}{copy(language, status.imageMismatch ? "开始修复" : "开始更新", status.imageMismatch ? "Start repair" : "Start update")}</Button></SheetFooter></SheetContent></Sheet>
+    <Sheet onOpenChange={(open) => { if (!open && !busy) setConfirming(false); }} open={confirming}><SheetContent><SheetHeader><SheetTitle>{copy(language, status.imageMismatch ? `修复 ${status.latestVersion} 镜像` : `更新到 ${status.latestVersion}`, status.imageMismatch ? `Repair the ${status.latestVersion} image` : `Update to ${status.latestVersion}`)}</SheetTitle><SheetDescription>{copy(language, "更新会保留配置与数据，并自动备份。Center 先完成更新，符合条件的在线 Agent 随后按节点独立升级。", "Configuration and data are preserved and backed up. Center updates first, then eligible online Agents upgrade independently.")}</SheetDescription></SheetHeader><div className="flex-1 px-4"><Alert><ShieldCheckIcon /><AlertTitle>{copy(language, "预计短暂断开连接", "Expect a brief reconnect")}</AlertTitle><AlertDescription>{copy(language, "更新期间会短暂断开连接，完成后自动恢复。请勿关闭服务器。更新后的数据不支持自动恢复到旧版本。", "Connections briefly disconnect and recover automatically. Keep the server running. Updated data cannot automatically revert to an older version.")}</AlertDescription></Alert>{error ? <FieldError className="mt-4" role="alert">{error}</FieldError> : null}</div><SheetFooter><Button disabled={busy} onClick={() => setConfirming(false)} variant="outline">{copy(language, "取消", "Cancel")}</Button><Button disabled={busy} onClick={() => void start()}>{busy ? <Spinner data-icon="inline-start" /> : <CircleArrowUpIcon data-icon="inline-start" />}{copy(language, status.imageMismatch ? "开始修复" : "开始更新", status.imageMismatch ? "Start repair" : "Start update")}</Button></SheetFooter></SheetContent></Sheet>
   </>;
 }
