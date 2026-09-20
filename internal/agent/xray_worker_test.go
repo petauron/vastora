@@ -104,6 +104,32 @@ func TestXrayWorkerAcceptsControllerFormPayload(t *testing.T) {
 	}
 }
 
+func TestXrayWorkerOwnsSubscriptionHostGroups(t *testing.T) {
+	state := testXrayWorkerState()
+	group := threeXUIHostGroup{
+		GroupID: "vastora-public-1", InboundIDs: []int{1}, Hosts: []string{"node.example.test"},
+		Remark: "{{INBOUND}}", ServerDescription: "Managed by Vastora", Tags: []string{"vastora"},
+		Port: 443, Security: "same", SNI: "www.example.test", Fingerprint: "chrome", MihomoIPVersion: "dual",
+	}
+	payload, _ := json.Marshal(group)
+	request := httptest.NewRequest(http.MethodPost, "/panel/api/hosts/add", bytes.NewReader(payload))
+	_, added, err := xrayWorkerRequest(state, request)
+	if err != nil || added == nil || len(added.HostGroups) != 1 {
+		t.Fatalf("subscription host group add failed: state=%#v err=%v", added, err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/panel/api/hosts/byInbound/1", nil)
+	object, mutation, err := xrayWorkerRequest(*added, request)
+	groups, ok := object.([]threeXUIHostGroup)
+	if err != nil || mutation != nil || !ok || len(groups) != 1 || groups[0].GroupID != group.GroupID {
+		t.Fatalf("subscription host group inventory failed: object=%#v mutation=%#v err=%v", object, mutation, err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/panel/api/inbounds/del/1", nil)
+	_, deleted, err := xrayWorkerRequest(*added, request)
+	if err != nil || deleted == nil || len(deleted.HostGroups) != 0 {
+		t.Fatalf("inbound delete retained subscription host group: state=%#v err=%v", deleted, err)
+	}
+}
+
 func TestXrayWorkerStatsSurviveRuntimeRestart(t *testing.T) {
 	state := testXrayWorkerState()
 	first := []byte(`{"stat":[{"name":"inbound>>>managed>>>traffic>>>uplink","value":100},{"name":"user>>>phone>>>traffic>>>downlink","value":"50"}]}`)

@@ -106,7 +106,7 @@ func xrayWorkerEndpointAllowed(method, path string) bool {
 		case "/panel/api/server/status", "/panel/api/inbounds/list", "/panel/api/hosts/list", "/panel/api/server/getWebCertFiles", "/panel/api/server/descendants", "/panel/api/server/clientIps":
 			return true
 		}
-		return strings.HasPrefix(path, "/panel/api/inbounds/get/")
+		return strings.HasPrefix(path, "/panel/api/inbounds/get/") || strings.HasPrefix(path, "/panel/api/hosts/byInbound/")
 	}
 	if method != http.MethodPost {
 		return false
@@ -114,6 +114,7 @@ func xrayWorkerEndpointAllowed(method, path string) bool {
 	switch path {
 	case "/panel/api/server/restartXrayService", "/panel/api/xray", "/panel/api/xray/update",
 		"/panel/api/inbounds/add", "/panel/api/inbounds/resetAllTraffics", "/panel/api/inbounds/pushClientTraffics",
+		"/panel/api/hosts/add",
 		"/panel/api/clients/add", "/panel/api/clients/onlines", "/panel/api/clients/lastOnline", "/panel/api/clients/onlinesByGuid", "/panel/api/clients/activeInbounds",
 		"/panel/api/clients/clientIpsByGuid", "/panel/api/server/clientIps":
 		return true
@@ -128,6 +129,7 @@ func xrayWorkerEndpointAllowed(method, path string) bool {
 		{"/panel/api/clients/del/", ""},
 		{"/panel/api/clients/resetTraffic/", ""},
 		{"/panel/api/clients/", "/detach"},
+		{"/panel/api/hosts/update/", ""},
 	} {
 		remaining, ok := strings.CutPrefix(path, rule.prefix)
 		if !ok || remaining == "" {
@@ -156,6 +158,49 @@ func xrayWorkerRequest(state xrayWorkerState, request *http.Request) (any, *xray
 	}
 	if request.Method == http.MethodGet && path == "/panel/api/inbounds/list" {
 		return rawMessages(state.Inbounds), nil, nil
+	}
+	if request.Method == http.MethodGet && path == "/panel/api/hosts/list" {
+		return state.HostGroups, nil, nil
+	}
+	if request.Method == http.MethodGet && strings.HasPrefix(path, "/panel/api/hosts/byInbound/") {
+		id, err := pathID(path, "/panel/api/hosts/byInbound/")
+		if err != nil {
+			return nil, nil, err
+		}
+		groups := make([]threeXUIHostGroup, 0, len(state.HostGroups))
+		for _, group := range state.HostGroups {
+			if slices.Contains(group.InboundIDs, id) {
+				groups = append(groups, group)
+			}
+		}
+		return groups, nil, nil
+	}
+	if request.Method == http.MethodPost && (path == "/panel/api/hosts/add" || strings.HasPrefix(path, "/panel/api/hosts/update/")) {
+		var group threeXUIHostGroup
+		if json.NewDecoder(request.Body).Decode(&group) != nil {
+			return nil, nil, errors.New("invalid subscription host group")
+		}
+		inboundIDs := make(map[int]bool, len(state.Inbounds))
+		for _, raw := range state.Inbounds {
+			inboundIDs[inboundID(raw)] = true
+		}
+		if !validXrayWorkerHostGroup(group, inboundIDs) {
+			return nil, nil, errors.New("invalid subscription host group")
+		}
+		index := slices.IndexFunc(state.HostGroups, func(current threeXUIHostGroup) bool { return current.GroupID == group.GroupID })
+		if path == "/panel/api/hosts/add" {
+			if index >= 0 {
+				return nil, nil, errors.New("subscription host group already exists")
+			}
+			state.HostGroups = append(state.HostGroups, group)
+		} else {
+			groupID := strings.TrimPrefix(path, "/panel/api/hosts/update/")
+			if groupID == "" || groupID != group.GroupID || index < 0 {
+				return nil, nil, errors.New("subscription host group not found")
+			}
+			state.HostGroups[index] = group
+		}
+		return group, &state, nil
 	}
 	if request.Method == http.MethodPost && path == "/panel/api/server/restartXrayService" {
 		return true, &state, nil
@@ -264,7 +309,7 @@ func xrayWorkerRequest(state xrayWorkerState, request *http.Request) (any, *xray
 		}
 		return object, nil, nil
 	}
-	if request.Method == http.MethodGet && (path == "/panel/api/hosts/list" || path == "/panel/api/server/descendants" || path == "/panel/api/server/clientIps") {
+	if request.Method == http.MethodGet && (path == "/panel/api/server/descendants" || path == "/panel/api/server/clientIps") {
 		return []any{}, nil, nil
 	}
 	if request.Method == http.MethodGet && path == "/panel/api/server/getWebCertFiles" {
@@ -300,6 +345,9 @@ func xrayWorkerRequest(state xrayWorkerState, request *http.Request) (any, *xray
 		}
 		if operation.kind == "delete" {
 			state.Inbounds = append(state.Inbounds[:index], state.Inbounds[index+1:]...)
+			state.HostGroups = slices.DeleteFunc(state.HostGroups, func(group threeXUIHostGroup) bool {
+				return slices.Contains(group.InboundIDs, id)
+			})
 			return true, &state, nil
 		}
 		var inbound map[string]any
