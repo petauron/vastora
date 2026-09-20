@@ -207,6 +207,16 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 				return result, err
 			}
 		} else {
+			// A list may cross the one-time subscription authority boundary.
+			// Finish every fallible read before that final journal write so a
+			// reported list failure is guaranteed not to have changed state.
+			if command.Action == "list" {
+				result.Inbounds, err = observeThreeXUIClientInbounds(ctx, baseURL, token, command.Inbounds)
+				if err != nil {
+					return result, err
+				}
+				result.InboundsObserved = true
+			}
 			for index := range clients {
 				detail, identityErr := getThreeXUIClient(ctx, baseURL, token, clients[index].Email)
 				if identityErr != nil {
@@ -215,14 +225,14 @@ func applyThreeXUIClientCommand(ctx context.Context, store *Store, command Three
 				clients[index].ID = landing.Identity(clientJSONText(detail.Client, "id"))
 				clients[index].InboundIDs = collapseProtocolInboundIDs(command.Inbounds, clients[index].InboundIDs)
 			}
-			result.Clients, err = store.projectLandingAccounts(ctx, baseURL, token, command.Inbounds, clients, nativeSubscriptionMutationForCommand(command))
+			result.Clients, err = store.projectLandingAccounts(ctx, baseURL, token, command.Inbounds, clients, nativeSubscriptionMutationForCommand(command), true)
 			if err != nil {
 				return result, err
 			}
 			result.ClientsObserved = true
 		}
 	}
-	if command.Action == "list" || command.Action == "list_inbounds" || command.Action == "update_inbound" {
+	if command.Action == "list_inbounds" || command.Action == "update_inbound" {
 		inbounds, err := observeThreeXUIClientInbounds(ctx, baseURL, token, command.Inbounds)
 		if err != nil {
 			return result, err

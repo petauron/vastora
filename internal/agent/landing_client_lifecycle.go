@@ -200,7 +200,7 @@ func (mutation *nativeSubscriptionMutation) deletes(subscription landingNativeSu
 // Child identities are implementation details, not additional editable/free
 // clients. Present the durable aggregate and original parent plan instead of
 // the native per-identity enforcement limits.
-func (s *Store) projectLandingAccounts(ctx context.Context, baseURL, token string, inbounds []ThreeXUIClientInbound, clients []ThreeXUIClientView, mutation *nativeSubscriptionMutation) ([]ThreeXUIClientView, error) {
+func (s *Store) projectLandingAccounts(ctx context.Context, baseURL, token string, inbounds []ThreeXUIClientInbound, clients []ThreeXUIClientView, mutation *nativeSubscriptionMutation, allowInitialImport bool) ([]ThreeXUIClientView, error) {
 	state, err := s.landingController(ctx)
 	if err != nil {
 		return nil, err
@@ -217,7 +217,7 @@ func (s *Store) projectLandingAccounts(ctx context.Context, baseURL, token strin
 	}
 	// This durable marker, not an empty map, is the one-time migration boundary.
 	// An empty authoritative set is valid and must remain empty after migration.
-	initialImport := !state.AuthorityInitialized
+	initialImport := !state.AuthorityInitialized && allowInitialImport
 	previousAuthorityInitialized := state.AuthorityInitialized
 	previousSubscriptions, _ := json.Marshal(state.Subscriptions)
 	priorIdentityByEmail := make(map[string]string, len(state.Subscriptions))
@@ -334,33 +334,47 @@ func (s *Store) projectLandingAccounts(ctx context.Context, baseURL, token strin
 func sameNativeSubscriptionCredentials(previous, observed []string, allowRouteChange bool) bool {
 	byRoute := make(map[string]string, len(observed))
 	for _, raw := range observed {
-		link, err := url.Parse(raw)
-		if err != nil || link.User == nil {
+		key, credential, err := nativeSubscriptionCredential(raw)
+		if err != nil {
 			return false
 		}
-		key := link.User.Username() + "\x00" + link.Host
-		link.Fragment = ""
 		if _, exists := byRoute[key]; exists {
 			return false
 		}
-		byRoute[key] = link.String()
+		byRoute[key] = credential
 	}
 	if !allowRouteChange && len(previous) != len(observed) {
 		return false
 	}
 	for _, raw := range previous {
-		link, err := url.Parse(raw)
-		if err != nil || link.User == nil {
+		key, credential, err := nativeSubscriptionCredential(raw)
+		if err != nil {
 			return false
 		}
-		key := link.User.Username() + "\x00" + link.Host
-		link.Fragment = ""
 		current, ok := byRoute[key]
-		if ok && current != link.String() || !allowRouteChange && !ok {
+		if ok && current != credential || !allowRouteChange && !ok {
 			return false
 		}
 	}
 	return true
+}
+
+// URI query order, escaping and display fragments are presentation details.
+// Compare the canonical VLESS credential and route instead of url.String(),
+// otherwise an equivalent renderer can quarantine an already issued link.
+func nativeSubscriptionCredential(raw string) (string, string, error) {
+	link, err := url.Parse(raw)
+	if err != nil || link.Scheme != "vless" || link.User == nil || link.User.Username() == "" || link.Hostname() == "" {
+		return "", "", errors.New("invalid native subscription credential")
+	}
+	host := strings.ToLower(link.Hostname())
+	port := link.Port()
+	if port == "" {
+		port = "443"
+	}
+	route := link.User.Username() + "\x00" + host + "\x00" + port
+	credential := route + "\x00" + link.EscapedPath() + "\x00" + link.Query().Encode()
+	return route, credential, nil
 }
 
 func resolveNativeSubscriptionInbounds(ctx context.Context, baseURL, token string, inbounds []ThreeXUIClientInbound) (map[int]threeXUIRealityInbound, error) {
@@ -445,6 +459,15 @@ func nativeSubscriptionInbounds(ctx context.Context, baseURL, token string) ([]T
 }
 
 func (s *Store) refreshNativeSubscriptions(ctx context.Context, baseURL, token string) error {
+	state, err := s.landingController(ctx)
+	if err != nil {
+		return err
+	}
+	// Background observation must never cross the one-time authority boundary.
+	// Only an explicit client command may adopt the current runtime inventory.
+	if state == nil || !state.AuthorityInitialized {
+		return nil
+	}
 	inbounds, err := nativeSubscriptionInbounds(ctx, baseURL, token)
 	if err != nil {
 		return err
@@ -453,6 +476,6 @@ func (s *Store) refreshNativeSubscriptions(ctx context.Context, baseURL, token s
 	if err != nil {
 		return errors.New("agent: native subscription client inventory is unavailable")
 	}
-	_, err = s.projectLandingAccounts(ctx, baseURL, token, inbounds, clients, nil)
+	_, err = s.projectLandingAccounts(ctx, baseURL, token, inbounds, clients, nil, false)
 	return err
 }

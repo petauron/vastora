@@ -155,3 +155,38 @@ func TestExecutionFailureRemainsFencedAndSuccessRequiresResultCommit(t *testing.
 		store.Close()
 	}
 }
+
+func TestReadOnlyClientInventoryFailureReleasesExecutionFence(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "execution-read-only", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
+	session := "execution-read-only-session-for-current-process"
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	task := AgentTask{ID: "client-list", Kind: "application.command", Attempt: 1, ClientCommand: &ThreeXUIClientCommandTask{Action: "list"}}
+	auth, err := store.PersistExecutionAuthorization(ctx, node.ID, session, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartExecution(ctx, node.ID, session, auth.ID, auth.Digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CheckExecutionStep(ctx, node.ID, session, auth.ID, "apply"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StoreExecutionResult(ctx, node.ID, session, auth.ID, json.RawMessage(`{}`), false, false, "inventory unavailable", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinalizeExecution(ctx, node.ID, session, auth.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.executionClaimAllowed(ctx, node.ID, session); err != nil {
+		t.Fatalf("read-only failure kept the Agent fenced: %v", err)
+	}
+	var disposition string
+	if err := store.db.QueryRowContext(ctx, `SELECT disposition FROM task_executions WHERE id=?`, auth.ID).Scan(&disposition); err != nil || disposition != "read-only-failure" {
+		t.Fatalf("read-only failure disposition=%q err=%v", disposition, err)
+	}
+}

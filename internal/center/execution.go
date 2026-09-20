@@ -434,11 +434,11 @@ func (s *Store) StoreExecutionResult(ctx context.Context, agentID, sessionID, id
 type projectionCommit func(*sql.Tx) error
 
 func (s *Store) finalizeExecution(ctx context.Context, tx *sql.Tx, agentID, sessionID, id string) error {
-	var sealed []byte
-	if err := tx.QueryRowContext(ctx, `SELECT sealed_result FROM task_executions WHERE id=? AND agent_id=? AND session_id=? AND state IN ('running','helper_running') AND phase='result_received' AND disposition=''`, id, agentID, sessionID).Scan(&sealed); err != nil {
+	var sealedTask, sealedResult []byte
+	if err := tx.QueryRowContext(ctx, `SELECT sealed_task,sealed_result FROM task_executions WHERE id=? AND agent_id=? AND session_id=? AND state IN ('running','helper_running') AND phase='result_received' AND disposition=''`, id, agentID, sessionID).Scan(&sealedTask, &sealedResult); err != nil {
 		return errExecutionAuthorization
 	}
-	raw, err := secret.Open(s.key, sealed, []byte("execution-result:"+id))
+	raw, err := secret.Open(s.key, sealedResult, []byte("execution-result:"+id))
 	if err != nil {
 		return errors.New("center: execution result evidence is invalid")
 	}
@@ -456,11 +456,22 @@ func (s *Store) finalizeExecution(ctx context.Context, tx *sql.Tx, agentID, sess
 	if evidence.Unknown {
 		state = "unknown"
 	}
+	var task AgentTask
+	if taskRaw, openErr := secret.Open(s.key, sealedTask, []byte("execution-task:"+id)); openErr != nil || json.Unmarshal(taskRaw, &task) != nil {
+		return errors.New("center: execution task evidence is invalid")
+	}
+	disposition, dispositionNote, dispositionActor, disposedAt := "", "", "", ""
+	if state == "failed" && executionFailureCanReleaseFence(task) {
+		disposition = "read-only-failure"
+		dispositionNote = "Read-only operation failed without changing node state"
+		dispositionActor = "system"
+		disposedAt = s.now().UTC().Format(time.RFC3339Nano)
+	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
-	updated, err := tx.ExecContext(ctx, `UPDATE task_executions SET state=?,phase='reported',updated_at=?
+	updated, err := tx.ExecContext(ctx, `UPDATE task_executions SET state=?,phase='reported',disposition=?,disposition_note=?,disposition_actor=?,disposed_at=?,updated_at=?
 		WHERE id=? AND agent_id=? AND session_id=? AND state IN ('running','helper_running') AND phase='result_received' AND disposition='' AND expires_at>?
 		AND (state='helper_running' OR EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?))`, state,
-		now, id, agentID, sessionID, now, agentID, sessionID)
+		disposition, dispositionNote, dispositionActor, disposedAt, now, id, agentID, sessionID, now, agentID, sessionID)
 	if err != nil {
 		return err
 	}
@@ -468,6 +479,13 @@ func (s *Store) finalizeExecution(ctx context.Context, tx *sql.Tx, agentID, sess
 		return errExecutionAuthorization
 	}
 	return nil
+}
+
+func executionFailureCanReleaseFence(task AgentTask) bool {
+	if task.Kind != "application.command" || task.ClientCommand == nil {
+		return false
+	}
+	return task.ClientCommand.Action == "list" || task.ClientCommand.Action == "list_inbounds"
 }
 
 type ExecutionPage struct {
