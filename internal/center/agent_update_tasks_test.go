@@ -184,6 +184,37 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateCanProceedPastTerminalBusinessExecution(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "terminal-business-execution", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.98", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.98", LANAddress: "10.0.0.98", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+	session := "terminal-business-execution-session"
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	oldTask := AgentTask{ID: "old-business-task", Kind: "application.apply", Attempt: 1}
+	authorization, err := store.PersistExecutionAuthorization(ctx, node.ID, session, oldTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StopExecution(ctx, node.ID, session, authorization.ID, true, "previous business operation requires review"); err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89"); err != nil || len(queued) != 1 || queued[0] != node.ID {
+		t.Fatalf("terminal business evidence blocked rollout: %#v %v", queued, err)
+	}
+	task, err := store.claimExecutionTask(ctx, node.ID, node.Credential, session, 0)
+	if err != nil || task == nil || task.Kind != "agent.update" {
+		t.Fatalf("independent Agent update was not claimed: %#v %v", task, err)
+	}
+	var state, disposition string
+	if err := store.db.QueryRow(`SELECT state,disposition FROM task_executions WHERE id=?`, authorization.ID).Scan(&state, &disposition); err != nil || state != "unknown" || disposition != "" {
+		t.Fatalf("business execution evidence changed: state=%q disposition=%q err=%v", state, disposition, err)
+	}
+}
+
 func TestOutdatedAgentWaitsForUpdateBeforeClaimingMigratedWork(t *testing.T) {
 	previousVersion := Version
 	Version = "0.1.0-alpha.159"

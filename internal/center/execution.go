@@ -203,15 +203,28 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 		return err
 	}
 	var explicitRecovery bool
+	var independentAgentUpdate bool
 	if blocked {
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM xray_configuration_recoveries WHERE agent_id=? AND state='pending')`, agentID).Scan(&explicitRecovery); err != nil {
 			return err
+		}
+		if !explicitRecovery {
+			var currentVersion string
+			var pending bool
+			if err := tx.QueryRowContext(ctx, `SELECT version,EXISTS(SELECT 1 FROM agent_updates WHERE agent_id=agents.id AND state='pending') FROM agents WHERE id=?`, agentID).Scan(&currentVersion, &pending); err != nil {
+				return err
+			}
+			executionBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, currentVersion)
+			if err != nil {
+				return err
+			}
+			independentAgentUpdate = pending && !executionBlocked
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if blocked && !explicitRecovery {
+	if blocked && !explicitRecovery && !independentAgentUpdate {
 		return errExecutionBlocked
 	}
 	return nil
@@ -240,9 +253,22 @@ func (s *Store) persistExecutionAuthorization(ctx context.Context, tx *sql.Tx, a
 	} else if paused {
 		return controlplane.ExecutionAuthorization{}, errExecutionBlocked
 	}
+	if task.Kind == "agent.update" {
+		var currentVersion string
+		if err := tx.QueryRowContext(ctx, `SELECT version FROM agents WHERE id=?`, agentID).Scan(&currentVersion); err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		blocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, currentVersion)
+		if err != nil {
+			return controlplane.ExecutionAuthorization{}, err
+		}
+		if blocked {
+			return controlplane.ExecutionAuthorization{}, errExecutionBlocked
+		}
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at)
 		SELECT ?,?,?,?,?,?,?,?,'offered','authorized',?,?,? WHERE EXISTS(SELECT 1 FROM agent_execution_sessions WHERE agent_id=? AND session_id=?)
-		AND (? IN ('xray.configuration.inspect','xray.configuration.apply') OR NOT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded'))`,
+		AND (? IN ('xray.configuration.inspect','xray.configuration.apply','agent.update') OR NOT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded'))`,
 		id, agentID, task.ID, task.Kind, task.Attempt, sessionID, hex.EncodeToString(digest[:]), sealed,
 		now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), agentID, sessionID, task.Kind, agentID)
 	if err != nil {
