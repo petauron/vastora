@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
@@ -386,6 +388,50 @@ func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
 	_, udpExposed := hy2.Config.ExposedPorts[hy2DockerPort]
 	if len(bindings) != 1 || bindings[0].HostIP != netip.IPv4Unspecified() || bindings[0].HostPort != "443" || !udpExposed {
 		t.Fatalf("HY2 UDP publication = %#v", bindings)
+	}
+}
+
+func TestXrayWorkerRecreatedRuntimeStateRequiresManagedIdentity(t *testing.T) {
+	state := testXrayWorkerState()
+	state.ImageReference = "ghcr.io/xtls/xray-core:26.9.9@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	inspected := client.ContainerInspectResult{Container: container.InspectResponse{
+		ID: "replacement",
+		Config: &container.Config{
+			Image: xrayWorkerImageReference,
+			User:  strconv.Itoa(xrayWorkerRuntimeUID()),
+			Labels: map[string]string{
+				xrayWorkerRuntimeLabel:       "xray",
+				applicationInstallationLabel: state.ApplicationID,
+			},
+		},
+		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(dockerruntime.NetworkName)},
+		State:      &container.State{Running: true},
+	}}
+	updated, changed, err := xrayWorkerRecreatedRuntimeState(state, inspected)
+	if err != nil || !changed || updated.ImageReference != xrayWorkerImageReference {
+		t.Fatalf("managed replacement was not adopted: changed=%v state=%#v err=%v", changed, updated, err)
+	}
+	for name, mutate := range map[string]func(*client.ContainerInspectResult){
+		"foreign application": func(value *client.ContainerInspectResult) {
+			value.Container.Config.Labels[applicationInstallationLabel] = "other"
+		},
+		"unreviewed image": func(value *client.ContainerInspectResult) {
+			value.Container.Config.Image = "ghcr.io/xtls/xray-core:26.8.0@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		},
+		"stopped runtime": func(value *client.ContainerInspectResult) { value.Container.State.Running = false },
+		"wrong network":   func(value *client.ContainerInspectResult) { value.Container.HostConfig.NetworkMode = "host" },
+		"wrong user":      func(value *client.ContainerInspectResult) { value.Container.Config.User = "0" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := inspected
+			candidate.Container.Config = &container.Config{Image: inspected.Container.Config.Image, User: inspected.Container.Config.User, Labels: maps.Clone(inspected.Container.Config.Labels)}
+			candidate.Container.HostConfig = &container.HostConfig{NetworkMode: inspected.Container.HostConfig.NetworkMode}
+			candidate.Container.State = &container.State{Running: inspected.Container.State.Running}
+			mutate(&candidate)
+			if _, _, err := xrayWorkerRecreatedRuntimeState(state, candidate); err == nil {
+				t.Fatal("unsafe recreated runtime was accepted")
+			}
+		})
 	}
 }
 
