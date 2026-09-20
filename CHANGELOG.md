@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.176](https://github.com/petauron/vastora/compare/v0.1.0-alpha.175...v0.1.0-alpha.176) (2026-09-20)
+
+
+### Bug Fixes
+
+* **center:** finalize Xray recovery inspection ([#557](https://github.com/petauron/vastora/issues/557)) ([8e185e0](https://github.com/petauron/vastora/commit/8e185e0d5d024d7cd4158aa4af71ff7f8b76ca04))
+
 ## [0.1.0-alpha.175](https://github.com/petauron/vastora/compare/v0.1.0-alpha.174...v0.1.0-alpha.175) (2026-09-20)
 
 
