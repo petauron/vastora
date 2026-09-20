@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/petauron/vastora/internal/catalog"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 )
 
@@ -47,6 +48,8 @@ type Store struct {
 	xrayWorkerListener         net.Listener
 	xrayWorkerCancel           context.CancelFunc
 	xrayWorkerDone             chan struct{}
+	runtimeRecoveryMu          sync.RWMutex
+	runtimeRecoveryApps        map[string]controlplane.RecoveryApplication
 }
 
 type landingPeerStatus struct {

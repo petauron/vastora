@@ -92,6 +92,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		return observeErr, err
 	}
 	heartbeatURL := connection.CenterURL + "/api/v1/agents/" + url.PathEscape(connection.AgentID) + "/heartbeat"
+	runtimeRecovery, runtimeRecoveryApplications := store.runtimeRecovery()
 	payload := map[string]any{
 		"publicKey": publicKey,
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
@@ -109,6 +110,10 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"tailscaleOwnership":           c.TailscaleOwnership,
 		"startup":                      startup,
 		"publicEgress":                 nil,
+	}
+	if runtimeRecovery != "" {
+		payload["runtimeRecovery"] = runtimeRecovery
+		payload["runtimeRecoveryApplications"] = runtimeRecoveryApplications
 	}
 	err = c.post(ctx, heartbeatURL, payload, connection.Credential, connection.CAFingerprint, connection.CACertificatePEM, &response)
 	if err != nil {
