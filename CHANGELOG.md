@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.174](https://github.com/petauron/vastora/compare/v0.1.0-alpha.173...v0.1.0-alpha.174) (2026-09-20)
+
+
+### Bug Fixes
+
+* **center:** authorize work after superseded updates ([#553](https://github.com/petauron/vastora/issues/553)) ([dfd33f9](https://github.com/petauron/vastora/commit/dfd33f98d79875a34f37cdce8908cbb98e2ce03e))
+
 ## [0.1.0-alpha.173](https://github.com/petauron/vastora/compare/v0.1.0-alpha.172...v0.1.0-alpha.173) (2026-09-20)
 
 
