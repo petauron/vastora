@@ -17,6 +17,7 @@ const taskKinds = new Set([
   "application.apply", "application.command", "agent.update", "agent.decommission",
   "landing.proxy.apply", "landing.server.apply", "gateway.routes.apply",
   "gateway.component.apply", "node.listener.apply", "tunnel.state.apply",
+  "xray.configuration.inspect", "xray.configuration.apply",
 ]);
 export function isHelperExecution(kind: string) {
   return kind === "agent.update" || kind === "agent.decommission";
