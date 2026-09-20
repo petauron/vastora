@@ -776,8 +776,8 @@ func (s *Store) adoptRecreatedXrayWorkerRuntime(ctx context.Context, dockerSocke
 	if err != nil || !changed {
 		return updated, err
 	}
-	if !s.xrayWorkerAppliedReceiptMatches(state) {
-		return state, errors.New("agent: recreated Xray worker configuration requires explicit reconciliation")
+	if err := s.reconcileXrayWorkerAppliedReceipt(state); err != nil {
+		return state, err
 	}
 	if err := s.saveXrayWorkerState(ctx, updated); err != nil {
 		return state, err
