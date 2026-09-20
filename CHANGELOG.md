@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.178](https://github.com/petauron/vastora/compare/v0.1.0-alpha.177...v0.1.0-alpha.178) (2026-09-20)
+
+
+### Bug Fixes
+
+* **agent:** persist native subscription hosts ([#561](https://github.com/petauron/vastora/issues/561)) ([2d449d3](https://github.com/petauron/vastora/commit/2d449d39f908e98150370e8313fd8d0e9779bf79))
+
 ## [0.1.0-alpha.177](https://github.com/petauron/vastora/compare/v0.1.0-alpha.176...v0.1.0-alpha.177) (2026-09-20)
 
 
