@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.180](https://github.com/petauron/vastora/compare/v0.1.0-alpha.179...v0.1.0-alpha.180) (2026-09-20)
+
+
+### Bug Fixes
+
+* recover proxy deployment and subscription convergence ([#565](https://github.com/petauron/vastora/issues/565)) ([aede43e](https://github.com/petauron/vastora/commit/aede43e171f6acee7fd7f592cb0ad8d351f8c032))
+
 ## [0.1.0-alpha.179](https://github.com/petauron/vastora/compare/v0.1.0-alpha.178...v0.1.0-alpha.179) (2026-09-20)
 
 
