@@ -723,6 +723,10 @@ func (s *Store) ResumeXrayWorker(ctx context.Context, dockerSocket string) error
 	if socket == "" {
 		socket = "unix:///var/run/docker.sock"
 	}
+	state, err = s.adoptRecreatedXrayWorkerRuntime(ctx, socket, state)
+	if err != nil {
+		return err
+	}
 	if state.AppliedRevision < state.Revision {
 		if s.xrayWorkerAppliedReceiptMatches(state) {
 			observed, observeErr := dockerXrayWorkerObserve(socket)(ctx, state)
@@ -752,6 +756,54 @@ func (s *Store) ResumeXrayWorker(ctx context.Context, dockerSocket string) error
 		return err
 	}
 	return s.startXrayWorkerAPI(state, apply, observe)
+}
+
+// adoptRecreatedXrayWorkerRuntime repairs only the image identity projected in
+// encrypted state. The active configuration receipt, application ownership,
+// audited image, hardened bridge and dedicated runtime user must all still
+// match before startup recovery may advance that identity.
+func (s *Store) adoptRecreatedXrayWorkerRuntime(ctx context.Context, dockerSocket string, state xrayWorkerState) (xrayWorkerState, error) {
+	docker, err := client.New(client.WithHost(dockerSocket))
+	if err != nil {
+		return state, err
+	}
+	defer docker.Close()
+	inspected, _, exists, err := inspectCurrentXrayWorkerRuntime(ctx, docker)
+	if err != nil || !exists {
+		return state, errors.Join(errors.New("agent: Xray worker container is unavailable"), err)
+	}
+	updated, changed, err := xrayWorkerRecreatedRuntimeState(state, inspected)
+	if err != nil || !changed {
+		return updated, err
+	}
+	if !s.xrayWorkerAppliedReceiptMatches(state) {
+		return state, errors.New("agent: recreated Xray worker configuration requires explicit reconciliation")
+	}
+	if err := s.saveXrayWorkerState(ctx, updated); err != nil {
+		return state, err
+	}
+	return updated, nil
+}
+
+func xrayWorkerRecreatedRuntimeState(state xrayWorkerState, inspected client.ContainerInspectResult) (xrayWorkerState, bool, error) {
+	if inspected.Container.Config == nil || inspected.Container.HostConfig == nil || inspected.Container.State == nil {
+		return state, false, errors.New("agent: managed Xray worker runtime is unavailable")
+	}
+	if inspected.Container.Config.Image == state.ImageReference {
+		return state, false, nil
+	}
+	labels := inspected.Container.Config.Labels
+	uidText := strings.SplitN(inspected.Container.Config.User, ":", 2)[0]
+	uid, uidErr := strconv.Atoi(uidText)
+	if labels[xrayWorkerRuntimeLabel] != "xray" || labels[applicationInstallationLabel] != state.ApplicationID || inspected.Container.Config.Image != xrayWorkerImageReference || !inspected.Container.State.Running || string(inspected.Container.HostConfig.NetworkMode) != dockerruntime.NetworkName || uidErr != nil || uid != xrayWorkerRuntimeUID() {
+		return state, false, errors.New("agent: recreated Xray worker runtime identity changed")
+	}
+	updated := state
+	updated.ImageReference = inspected.Container.Config.Image
+	if err := updated.validate(); err != nil {
+		return state, false, err
+	}
+	return updated, true, nil
 }
 
 func dockerXrayWorkerObserve(dockerSocket string) xrayWorkerObserve {
