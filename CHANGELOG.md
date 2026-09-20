@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.179](https://github.com/petauron/vastora/compare/v0.1.0-alpha.178...v0.1.0-alpha.179) (2026-09-20)
+
+
+### Bug Fixes
+
+* **center:** record deployment rejection reasons ([#563](https://github.com/petauron/vastora/issues/563)) ([8faa252](https://github.com/petauron/vastora/commit/8faa2521f389631b4ec3adbbee158b8c2918b4f1))
+
 ## [0.1.0-alpha.178](https://github.com/petauron/vastora/compare/v0.1.0-alpha.177...v0.1.0-alpha.178) (2026-09-20)
 
 
