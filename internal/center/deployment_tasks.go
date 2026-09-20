@@ -125,8 +125,8 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if authorized != 1 {
 		return nil, errors.New("center: invalid Agent credential")
 	}
-	var executionBlocked bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, agentID).Scan(&executionBlocked); err != nil {
+	executionBlocked, err := unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, agentVersion)
+	if err != nil {
 		return nil, err
 	}
 	if executionBlocked {

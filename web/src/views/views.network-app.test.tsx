@@ -673,16 +673,13 @@ describe("network and app views", () => {
     expect(mutate).toHaveBeenCalledWith(expect.any(Function), "公网 API 已开启。", { reportError: false });
   });
 
-	it("shows a failed install with its reason and a retry action", () => {
+	it("keeps terminal failures in Activity instead of presenting them as live app operations", () => {
     const data = dashboard();
     data.deployments = [{ id: "failed-install", agentId: "agent", appKey: "vastora-official/komari-agent", appVersion: "1.2.60", state: "failed", operation: "install", deleteData: false, error: "container could not start", applicationId: "failed", createdAt: "2026-08-18T00:00:00Z", updatedAt: "2026-08-18T00:00:00Z" }];
     const container = render(<AppsView data={data} language="zh-CN" mutate={async () => undefined} />);
-    expect(container.textContent).toContain("最近操作");
-    expect(container.textContent).toContain("操作未完成，请检查填写内容后重试");
-    const technical = [...container.querySelectorAll("details")].find((details) => details.textContent?.includes("container could not start"));
-    expect(technical?.open).toBe(false);
-    expect(container.textContent).toContain("重试");
-		expect(container.textContent).toContain("无需手动刷新");
+		expect(container.textContent).not.toContain("最近操作");
+		expect(container.textContent).not.toContain("container could not start");
+		expect(container.textContent).not.toContain("操作未完成，请检查填写内容后重试");
 	});
 
 	it("requeues a quarantined deployment with the same task", async () => {

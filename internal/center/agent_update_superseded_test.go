@@ -2,11 +2,50 @@ package center
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/petauron/vastora/internal/networking"
 )
+
+func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
+	for _, state := range []string{"unknown", "running"} {
+		t.Run(state, func(t *testing.T) {
+			store := openOrchestrationStore(t)
+			defer store.Close()
+			ctx := context.Background()
+			node := enrollOrchestrationNode(t, store, "update-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
+			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.134", true)
+			now := store.now().UTC().Format(time.RFC3339Nano)
+			if _, err := store.db.Exec(`INSERT INTO agent_updates(id,agent_id,target_version,state,attempt,last_error,created_at,updated_at) VALUES('installed-update',?,'0.1.0-alpha.134','failed',1,'preserved update evidence',?,?)`, node.ID, now, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('installed-update-execution',?,'installed-update','agent.update',1,'old-session','digest',X'00',?,'reported','',?,?)`, node.ID, state, now, now); err != nil {
+				t.Fatal(err)
+			}
+			deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+			if state == "running" {
+				if !errors.Is(err, errExecutionBlocked) || task != nil {
+					t.Fatalf("active update did not retain the execution fence: %+v %v", task, err)
+				}
+				return
+			}
+			if err != nil || task == nil || task.ID != deployment.ID {
+				t.Fatalf("installed update stranded ordinary work: %+v %v", task, err)
+			}
+			var preservedState, disposition string
+			if err := store.db.QueryRow(`SELECT state,disposition FROM task_executions WHERE id='installed-update-execution'`).Scan(&preservedState, &disposition); err != nil || preservedState != "unknown" || disposition != "" {
+				t.Fatalf("old execution evidence was rewritten: %s %s %v", preservedState, disposition, err)
+			}
+		})
+	}
+}
 
 func TestInstalledVersionSupersedesOldFailureWithoutRewritingEvidence(t *testing.T) {
 	for _, failedTarget := range []string{"0.1.0-alpha.129", "0.1.0-alpha.134"} {
