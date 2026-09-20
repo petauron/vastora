@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.168](https://github.com/petauron/vastora/compare/v0.1.0-alpha.167...v0.1.0-alpha.168) (2026-09-20)
+
+
+### Bug Fixes
+
+* **agent:** recover stale Xray apply receipt ([#541](https://github.com/petauron/vastora/issues/541)) ([afdf6f9](https://github.com/petauron/vastora/commit/afdf6f99b09df2a6f16f9cc50b274e17480522e9))
+
 ## [0.1.0-alpha.167](https://github.com/petauron/vastora/compare/v0.1.0-alpha.166...v0.1.0-alpha.167) (2026-09-20)
 
 
