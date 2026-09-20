@@ -58,6 +58,10 @@ func (s *Store) syncLandingAccount(ctx context.Context, baseURL, token string, s
 	if err != nil {
 		return s.blockLandingAccount(ctx, baseURL, token, state, parentID)
 	}
+	// Blocked is a fail-closed recovery state, not an operator preference. Once
+	// every journaled identity and its monotonic counter are verified again, the
+	// authoritative account can safely resume without a database edit.
+	account.Blocked = false
 	for i := range account.Members {
 		member := &account.Members[i]
 		member.Active = member.ID == parentID
@@ -285,7 +289,10 @@ func (s *Store) runLandingAccounts(ctx context.Context, report func(error)) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	for {
-		request, cancel := context.WithTimeout(ctx, 30*time.Second)
+		// A deferred native write may legitimately need the full worker-sync
+		// confirmation window. Cutting the parent context off at 30 seconds made
+		// every 45-second confirmation fail before it could converge.
+		request, cancel := context.WithTimeout(ctx, landingNativeSyncTimeout+15*time.Second)
 		s.landingMutationMu.Lock()
 		state, err := s.landingController(request)
 		if err == nil {

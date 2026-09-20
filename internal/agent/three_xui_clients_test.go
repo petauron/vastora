@@ -350,7 +350,7 @@ func TestNativeSubscriptionAuthorityDoesNotReimportAnEmptyInventory(t *testing.T
 	}
 
 	rogueID := landing.Identity("11111111-2222-4333-8444-555555555555")
-	result, projectErr := store.projectLandingAccounts(context.Background(), server.URL, "local-token", nil, []ThreeXUIClientView{{ID: rogueID, Email: "Rogue", Enabled: true}}, nil)
+	result, projectErr := store.projectLandingAccounts(context.Background(), server.URL, "local-token", nil, []ThreeXUIClientView{{ID: rogueID, Email: "Rogue", Enabled: true}}, nil, false)
 	state, loadErr := store.landingController(context.Background())
 	if result != nil || projectErr == nil || loadErr != nil || state == nil || !state.AuthorityInitialized || len(state.Subscriptions) != 0 {
 		t.Fatalf("empty authority changed after panel drift: result=%#v state=%#v projectErr=%v loadErr=%v", result, state, projectErr, loadErr)

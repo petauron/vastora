@@ -420,6 +420,62 @@ func TestLandingQuotaAcceptsNormalizedExpiryForDisabledClients(t *testing.T) {
 	}
 }
 
+func TestLandingAccountUnblocksAfterCompleteIdentityAndCounterVerification(t *testing.T) {
+	store, state, parent := landingSubscriptionTestState(t)
+	account := state.Accounts[parent]
+	account.Blocked = true
+	limits, _, err := landing.AllocateQuota(account.Total, true, account.Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	account.Limits = slices.Clone(limits)
+	state.Accounts[parent] = account
+	grant := state.Grants["grant-a"]
+	identities := map[string]string{account.Email: "11111111-2222-4333-8444-555555555555", grant.Task.Grant.FixedUser: grant.Task.FixedUUID}
+	limitByEmail := map[string]landing.QuotaLimit{}
+	for _, limit := range limits {
+		email := account.Email
+		if limit.ID == grant.Task.Grant.FixedIdentity {
+			email = grant.Task.Grant.FixedUser
+		}
+		limitByEmail[email] = limit
+	}
+	usedByEmail := map[string]int64{account.Email: 100, grant.Task.Grant.FixedUser: 50}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/clients/list/paged":
+			items := make([]map[string]any, 0, len(identities))
+			for email := range identities {
+				limit := limitByEmail[email]
+				items = append(items, map[string]any{"email": email, "subId": "sub", "enable": limit.Enabled, "totalGB": limit.Total, "expiryTime": account.Expiry, "reset": 0, "limitIp": 0, "inboundIds": []int{9}, "traffic": map[string]any{"enable": limit.Enabled, "total": limit.Total, "expiryTime": account.Expiry, "reset": 0, "up": usedByEmail[email], "down": int64(0)}})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/panel/api/clients/get/"):
+			email := strings.TrimPrefix(r.URL.Path, "/panel/api/clients/get/")
+			uuid, ok := identities[email]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			limit := limitByEmail[email]
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"client": map[string]any{"id": uuid, "totalGB": limit.Total, "enable": limit.Enabled, "expiryTime": account.Expiry, "reset": 0}, "inboundIds": []int{9}}})
+		default:
+			t.Errorf("verified account attempted an unexpected recovery write: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	if err := store.syncLandingAccount(context.Background(), server.URL, "native-token", state, parent); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := store.landingController(context.Background())
+	if err != nil || recovered.Accounts[parent].Blocked || len(recovered.Accounts[parent].PendingLimits) != 0 {
+		t.Fatalf("verified account stayed blocked: account=%#v err=%v", recovered.Accounts[parent], err)
+	}
+}
+
 func TestLandingChildAgentRejectsUnscopedCommandsBeforeNativeAccess(t *testing.T) {
 	for _, action := range []string{"create", "update", "set_enabled", "delete", "reset_traffic", "reveal_link", "reveal_subscription"} {
 		_, err := applyThreeXUIClientCommand(context.Background(), nil, ThreeXUIClientCommandTask{Action: action, Email: landing.FixedUser("child"), NewEmail: landing.FixedUser("child")})
