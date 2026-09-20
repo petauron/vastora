@@ -49,6 +49,7 @@ it("shows affected applications and repair guidance even while the node is conne
   expect(container.textContent).toContain("应用健康检查未通过");
   expect(container.textContent).toContain("本地安装状态不完整");
   expect(container.textContent).toContain("所有权或本地状态无法确认时仍需人工处理");
+  expect(container.textContent).toContain("显式配置恢复");
   const apps = [...container.querySelectorAll("button")].find((button) => button.textContent === "查看应用");
   expect(apps).toBeDefined();
   act(() => apps?.click());

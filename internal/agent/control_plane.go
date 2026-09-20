@@ -16,6 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/realitytarget"
+	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
 var Version = "0.1.0-dev"
@@ -136,6 +137,7 @@ type DeploymentTask struct {
 	Authorization             controlplane.ExecutionAuthorization `json:"-"`
 	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
+	XrayRecovery              *xrayrecovery.Task                  `json:"xrayRecovery,omitempty"`
 	Kind                      string                              `json:"kind"`
 	ID                        string                              `json:"id"`
 	Attempt                   int64                               `json:"attempt"`
@@ -191,6 +193,7 @@ type ApplicationTaskResult struct {
 	NodeDiagnostics     *nodediagnostics.Result          `json:"nodeDiagnostics,omitempty"`
 	PulseEnrollment     *pulse.EnrollmentResult          `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand     *nodeprotocol.Result             `json:"protocolCommand,omitempty"`
+	XrayRecovery        *xrayrecovery.Result             `json:"xrayRecovery,omitempty"`
 	LandingPeer         *landing.PeerIdentity            `json:"landingPeer,omitempty"`
 	Services            []ApplicationServiceResult       `json:"services"`
 	GeneratedSecrets    map[string]string                `json:"generatedSecrets,omitempty"`
