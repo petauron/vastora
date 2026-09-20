@@ -204,16 +204,21 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	}
 	var explicitRecovery bool
 	var independentAgentUpdate bool
+	var ordinaryWorkBlocked bool
 	if blocked {
+		var currentVersion string
+		var pending bool
+		if err := tx.QueryRowContext(ctx, `SELECT version,EXISTS(SELECT 1 FROM agent_updates WHERE agent_id=agents.id AND state='pending') FROM agents WHERE id=?`, agentID).Scan(&currentVersion, &pending); err != nil {
+			return err
+		}
+		ordinaryWorkBlocked, err = unresolvedExecutionBlocksAgentWork(ctx, tx, agentID, currentVersion)
+		if err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM xray_configuration_recoveries WHERE agent_id=? AND state='pending')`, agentID).Scan(&explicitRecovery); err != nil {
 			return err
 		}
-		if !explicitRecovery {
-			var currentVersion string
-			var pending bool
-			if err := tx.QueryRowContext(ctx, `SELECT version,EXISTS(SELECT 1 FROM agent_updates WHERE agent_id=agents.id AND state='pending') FROM agents WHERE id=?`, agentID).Scan(&currentVersion, &pending); err != nil {
-				return err
-			}
+		if ordinaryWorkBlocked && !explicitRecovery {
 			executionBlocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, currentVersion)
 			if err != nil {
 				return err
@@ -224,7 +229,7 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if blocked && !explicitRecovery && !independentAgentUpdate {
+	if ordinaryWorkBlocked && !explicitRecovery && !independentAgentUpdate {
 		return errExecutionBlocked
 	}
 	return nil

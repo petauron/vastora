@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -18,6 +19,10 @@ func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
 			ctx := context.Background()
 			node := enrollOrchestrationNode(t, store, "update-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.134", true)
+			session := "replacement-session"
+			if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
+				t.Fatal(err)
+			}
 			now := store.now().UTC().Format(time.RFC3339Nano)
 			if _, err := store.db.Exec(`INSERT INTO agent_updates(id,agent_id,target_version,state,attempt,last_error,created_at,updated_at) VALUES('installed-update',?,'0.1.0-alpha.134','failed',1,'preserved update evidence',?,?)`, node.ID, now, now); err != nil {
 				t.Fatal(err)
@@ -28,6 +33,14 @@ func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
 			deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 			if err != nil {
 				t.Fatal(err)
+			}
+			claimErr := store.executionClaimAllowed(ctx, node.ID, session)
+			if state == "running" {
+				if !errors.Is(claimErr, errExecutionBlocked) {
+					t.Fatalf("active update did not retain the session claim fence: %v", claimErr)
+				}
+			} else if claimErr != nil {
+				t.Fatalf("installed update stranded the Agent task channel: %v", claimErr)
 			}
 			task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
 			if state == "running" {
