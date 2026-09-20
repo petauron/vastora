@@ -47,6 +47,7 @@ type xrayWorkerState struct {
 	AppliedRevision    uint64                       `json:"appliedRevision"`
 	NextInboundID      int                          `json:"nextInboundId"`
 	Inbounds           []json.RawMessage            `json:"inbounds"`
+	HostGroups         []threeXUIHostGroup          `json:"hostGroups,omitempty"`
 	XraySetting        json.RawMessage              `json:"xraySetting"`
 	RuntimeStats       map[string]int64             `json:"runtimeStats,omitempty"`
 	AccountStats       map[string]xrayWorkerTraffic `json:"accountStats,omitempty"`
@@ -110,6 +111,13 @@ func (state xrayWorkerState) validate() error {
 		}
 		seenID[id], seenTag[tag] = true, true
 	}
+	seenGroup := map[string]bool{}
+	for _, group := range state.HostGroups {
+		if !validXrayWorkerHostGroup(group, seenID) || seenGroup[group.GroupID] {
+			return errors.New("agent: invalid Xray worker subscription host group")
+		}
+		seenGroup[group.GroupID] = true
+	}
 	var settings map[string]any
 	if json.Unmarshal(state.XraySetting, &settings) != nil {
 		return errors.New("agent: invalid Xray worker settings")
@@ -135,6 +143,13 @@ func (state xrayWorkerState) validate() error {
 		}
 	}
 	return nil
+}
+
+func validXrayWorkerHostGroup(group threeXUIHostGroup, inboundIDs map[int]bool) bool {
+	if strings.TrimSpace(group.GroupID) == "" || len(group.InboundIDs) != 1 || !inboundIDs[group.InboundIDs[0]] || len(group.Hosts) != 1 || !validThreeXUIShareHostname(group.Hosts[0]) || group.Port < 1 || group.Port > 65535 || !validThreeXUIShareHostname(group.SNI) {
+		return false
+	}
+	return true
 }
 
 func xrayWorkerHY2Enabled(state xrayWorkerState) bool {
