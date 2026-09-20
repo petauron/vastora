@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.167](https://github.com/petauron/vastora/compare/v0.1.0-alpha.166...v0.1.0-alpha.167) (2026-09-20)
+
+
+### Bug Fixes
+
+* **agent:** reconcile restored Xray runtime state ([#539](https://github.com/petauron/vastora/issues/539)) ([ee32d20](https://github.com/petauron/vastora/commit/ee32d2081564cfd04a6f96ad2eef659909cf37b9))
+
 ## [0.1.0-alpha.166](https://github.com/petauron/vastora/compare/v0.1.0-alpha.165...v0.1.0-alpha.166) (2026-09-20)
 
 
