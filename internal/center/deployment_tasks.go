@@ -22,6 +22,7 @@ import (
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/pulse"
 	"github.com/petauron/vastora/internal/secret"
+	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
 type AgentTask struct {
@@ -30,6 +31,7 @@ type AgentTask struct {
 	Authorization             controlplane.ExecutionAuthorization `json:"-"`
 	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
 	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
+	XrayRecovery              *xrayrecovery.Task                  `json:"xrayRecovery,omitempty"`
 	Kind                      string                              `json:"kind"`
 	ID                        string                              `json:"id"`
 	Attempt                   int64                               `json:"attempt"`
@@ -128,7 +130,17 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		return nil, err
 	}
 	if executionBlocked {
-		return nil, errExecutionBlocked
+		recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
+		if recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		if recovery == nil {
+			return nil, errExecutionBlocked
+		}
+		if err := commitTask(tx, recovery); err != nil {
+			return nil, err
+		}
+		return recovery, nil
 	}
 	// Self-update is subject to the same unresolved-execution fence as all
 	// other work. It has no recovery-mode bypass.
@@ -259,6 +271,16 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 					return nil, decommissionErr
 				}
 				if decommissionTask == nil {
+					recovery, recoveryErr := s.claimXrayConfigurationRecovery(ctx, tx, agentID)
+					if recoveryErr != nil {
+						return nil, recoveryErr
+					}
+					if recovery != nil {
+						if err := commitTask(tx, recovery); err != nil {
+							return nil, err
+						}
+						return recovery, nil
+					}
 					diagnostic, diagnosticErr := s.claimNodeDiagnostic(ctx, tx, agentID)
 					if diagnosticErr != nil {
 						return nil, diagnosticErr
@@ -460,6 +482,9 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 			return errInvalidReconciliationDisposition
 		}
 		return s.completeNodeDiagnostic(ctx, commit, agentID, taskID, expectedAttempt, succeeded, rawResult)
+	}
+	if strings.HasPrefix(taskID, "xray-recovery-") {
+		return s.completeXrayConfigurationRecovery(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult)
 	}
 	if taskID == agentDecommissionTaskID(agentID) {
 		if succeeded || reconciliationRequired {

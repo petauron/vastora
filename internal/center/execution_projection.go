@@ -21,6 +21,8 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 		query = `SELECT state FROM ip_quality_checks WHERE id=? AND agent_id=? AND attempt=?`
 	case "node.network-quality", "node.return-route", "node.international-bandwidth":
 		query = `SELECT state FROM node_diagnostic_checks WHERE id=? AND agent_id=? AND attempt=?`
+	case "xray.configuration.inspect", "xray.configuration.apply":
+		query = `SELECT state FROM xray_configuration_recoveries WHERE id=? AND agent_id=? AND attempt=?`
 	case "application.apply":
 		query = `SELECT state FROM deployments WHERE id=? AND agent_id=? AND attempt=?`
 	case "application.command":
@@ -55,7 +57,7 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 	if err := tx.QueryRowContext(ctx, query, args...).Scan(&state); err != nil {
 		return err
 	}
-	if succeeded && (state == "succeeded" || state == "ready" || state == "stopped") || !succeeded && state == "failed" {
+	if succeeded && (state == "succeeded" || state == "awaiting_decision" || state == "ready" || state == "stopped") || !succeeded && state == "failed" {
 		return nil
 	}
 	return errors.New("center: execution result does not match the business projection")

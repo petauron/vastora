@@ -105,6 +105,8 @@ func executionAbandonStatement(task AgentTask, agentID, now string) (string, []a
 		return `UPDATE ip_quality_checks SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.network-quality", "node.return-route", "node.international-bandwidth":
 		return `UPDATE node_diagnostic_checks SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "xray.configuration.inspect", "xray.configuration.apply":
+		return `UPDATE xray_configuration_recoveries SET state='failed',lease_expires_at='',error='abandoned',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.apply":
 		return `UPDATE deployments SET state='failed',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='Abandoned by operator',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.command":
@@ -136,6 +138,8 @@ func executionRequeueStatement(task AgentTask, agentID, now string) (string, []a
 		return `UPDATE ip_quality_checks SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "node.network-quality", "node.return-route", "node.international-bandwidth":
 		return `UPDATE node_diagnostic_checks SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
+	case "xray.configuration.inspect", "xray.configuration.apply":
+		return `UPDATE xray_configuration_recoveries SET state='pending',lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.apply":
 		return `UPDATE deployments SET state='pending',reconciliation_required=0,reconciliation_requested=0,lease_expires_at='',error='',updated_at=? WHERE id=? AND agent_id=? AND attempt=? AND state IN ('running','failed','pending')`, identity, nil
 	case "application.command":

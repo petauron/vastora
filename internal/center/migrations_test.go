@@ -531,6 +531,7 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE xray_configuration_recoveries`,
 		`DROP TABLE node_diagnostic_checks`,
 		`DROP TABLE ip_quality_checks`,
 		`DROP TABLE agent_removals`,

@@ -320,6 +320,29 @@ export type AgentUpdate = {
   updatedAt: string;
 };
 
+export type XrayConfigurationRecovery = {
+  agentId: string;
+  applicationId: string;
+  id: string;
+  action: "inspect" | "runtime" | "agent_state";
+  state: "pending" | "running" | "awaiting_decision" | "succeeded" | "failed";
+  error?: string;
+  updatedAt: string;
+  result?: {
+    action: "inspect" | "runtime" | "agent_state";
+    applicationId: string;
+    runtimeSha256: string;
+    agentSha256: string;
+    agentRevision: number;
+    runtimeImportable: boolean;
+    matches: boolean;
+    runtimeInbounds: Array<{ tag: string; protocol: string; port: number; clients: number }>;
+    agentInbounds: Array<{ tag: string; protocol: string; port: number; clients: number }>;
+    differences: Array<{ kind: string; inbound?: string; field?: string; runtime?: string; agent?: string }>;
+    appliedSource?: "runtime" | "agent_state";
+  };
+};
+
 export type AgentEnrollment = { token: string; siteId: string; centerUrl?: string; installerUrl: string; caCertificatePem?: string; expiresAt: string };
 
 export type NetworkKind = "lan" | "headscale" | "public";

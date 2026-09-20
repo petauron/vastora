@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 85
+const centerSchemaVersion = 86
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -883,6 +883,9 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	if _, err := tx.ExecContext(ctx, nodeDiagnosticsSchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize node diagnostics schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, xrayConfigurationRecoverySchemaSQL); err != nil {
+		return fmt.Errorf("center: initialize Xray configuration recovery schema: %w", err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {

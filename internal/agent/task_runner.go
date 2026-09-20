@@ -21,6 +21,7 @@ import (
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
 	"github.com/petauron/vastora/internal/pulse"
+	"github.com/petauron/vastora/internal/xrayrecovery"
 )
 
 func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) {
@@ -213,6 +214,26 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		} else {
 			value, checkErr := checker.CheckHostProfile(ctx, *task.NodeDiagnostics)
 			result.NodeDiagnostics, err = &value, checkErr
+		}
+	case xrayrecovery.InspectKind:
+		manager, ok := c.Executor.(interface {
+			InspectXrayConfiguration(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
+		})
+		if !ok || task.XrayRecovery == nil {
+			err = errors.New("agent: Xray configuration recovery is unavailable")
+		} else {
+			value, recoveryErr := manager.InspectXrayConfiguration(ctx, *task.XrayRecovery)
+			result.XrayRecovery, err = &value, recoveryErr
+		}
+	case xrayrecovery.ApplyKind:
+		manager, ok := c.Executor.(interface {
+			ApplyXrayConfigurationRecovery(context.Context, xrayrecovery.Task) (xrayrecovery.Result, error)
+		})
+		if !ok || task.XrayRecovery == nil {
+			err = errors.New("agent: Xray configuration recovery is unavailable")
+		} else {
+			value, recoveryErr := manager.ApplyXrayConfigurationRecovery(ctx, *task.XrayRecovery)
+			result.XrayRecovery, err = &value, recoveryErr
 		}
 	case "application.apply":
 		if task.RequiredRuntimeGeneration < 0 || task.RequiredRuntimeGeneration > platform.ApplicationRuntimeGeneration {
