@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.177](https://github.com/petauron/vastora/compare/v0.1.0-alpha.176...v0.1.0-alpha.177) (2026-09-20)
+
+
+### Bug Fixes
+
+* **web:** allow Xray recovery task disposition ([#559](https://github.com/petauron/vastora/issues/559)) ([3cab708](https://github.com/petauron/vastora/commit/3cab7082ec50f2780b51af5ae30e7297a09f2482))
+
 ## [0.1.0-alpha.176](https://github.com/petauron/vastora/compare/v0.1.0-alpha.175...v0.1.0-alpha.176) (2026-09-20)
 
 
