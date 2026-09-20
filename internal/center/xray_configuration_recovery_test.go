@@ -53,6 +53,10 @@ func TestXrayConfigurationRecoveryRequiresInspectionBeforeAuthoritySelection(t *
 	if err != nil || view.State != "awaiting_decision" || view.Result == nil {
 		t.Fatalf("inspection view=%#v err=%v", view, err)
 	}
+	var event string
+	if err := store.db.QueryRowContext(ctx, `SELECT event FROM task_events WHERE task_id=? ORDER BY created_at DESC LIMIT 1`, inspectionTask.ID).Scan(&event); err != nil || event != "succeeded" {
+		t.Fatalf("inspection completion event=%q err=%v", event, err)
+	}
 	if err := store.StartXrayConfigurationApply(ctx, node.ID, xrayrecovery.AgentSource); err != nil {
 		t.Fatal(err)
 	}
