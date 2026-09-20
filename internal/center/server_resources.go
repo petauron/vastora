@@ -2,6 +2,7 @@ package center
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,6 +27,16 @@ func (s *Server) handleCreateDeployment(writer http.ResponseWriter, request *htt
 	input.SecretOperationKey = request.Header.Get("Idempotency-Key")
 	deployment, err := s.store.CreateDeployment(request.Context(), input)
 	if err != nil {
+		// Deployment creation fails before an execution record exists. Keep the
+		// exact reason in the authenticated operator's Center journal so a safe
+		// public error response does not make recovery indistinguishable from a
+		// malformed form submission. Configuration and secrets are never logged.
+		slog.WarnContext(request.Context(), "Deployment request rejected",
+			"agent_id", input.AgentID,
+			"app_key", input.AppKey,
+			"operation", input.Operation,
+			"error", err,
+		)
 		writeError(writer, http.StatusBadRequest, err)
 		return
 	}

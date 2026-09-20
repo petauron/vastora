@@ -439,6 +439,8 @@ func publicErrorMessage(code string) string {
 		return "The domain service could not complete the operation. Try again later."
 	case "gateway_unavailable":
 		return "No access entry is available. Check the node status."
+	case "deployment_rejected":
+		return "The deployment request was rejected before a task was created. Check the Center journal for the recorded reason."
 	case "invalid_request":
 		return "Check your entries and try again."
 	case "forbidden":
@@ -508,6 +510,8 @@ func errorCode(status int, message string) string {
 		return "cloudflare_error"
 	case strings.Contains(normalized, "gateway") && (strings.Contains(normalized, "unavailable") || strings.Contains(normalized, "required")):
 		return "gateway_unavailable"
+	case strings.HasPrefix(normalized, "center:") && (strings.Contains(normalized, "deployment") || strings.Contains(normalized, "application") || strings.Contains(normalized, "app ") || strings.Contains(normalized, "3x-ui") || strings.Contains(normalized, "proxy")):
+		return "deployment_rejected"
 	}
 	switch status {
 	case http.StatusBadRequest:
