@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.170](https://github.com/petauron/vastora/compare/v0.1.0-alpha.169...v0.1.0-alpha.170) (2026-09-20)
+
+
+### Bug Fixes
+
+* **updates:** isolate agent rollout failures ([#545](https://github.com/petauron/vastora/issues/545)) ([3835090](https://github.com/petauron/vastora/commit/3835090f50e900d21157db0d8a74da41ffa4380f))
+
 ## [0.1.0-alpha.169](https://github.com/petauron/vastora/compare/v0.1.0-alpha.168...v0.1.0-alpha.169) (2026-09-20)
 
 
