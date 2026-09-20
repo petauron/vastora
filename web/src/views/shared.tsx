@@ -78,6 +78,7 @@ export function userError(language: Language, error: unknown) {
   if (code === "gateway_unavailable" || normalized.includes("gateway") || normalized.includes("no eligible node")) {
     return copy(language, "当前没有可用的入口节点，请先检查节点是否在线并完成网络确认。", "No entry node is available. Check that a node is online and its network is confirmed.");
   }
+  if (code === "deployment_rejected") return copy(language, "升级请求在创建任务前被 Center 拒绝，未改动节点。具体原因已记录到 Center 日志。", "Center rejected the upgrade before creating a task, so the node was not changed. The exact reason was recorded in the Center journal.");
   if (code === "forbidden") return copy(language, "当前账号没有执行此操作的权限。", "Your account does not have permission to perform this operation.");
   if (code === "not_found") return copy(language, "目标已不存在，请刷新页面后重试。", "This item no longer exists. Refresh and try again.");
   if (code === "invalid_request") return copy(language, "填写内容不完整或格式不正确，请检查后重试。", "Some entries are missing or invalid. Check them and try again.");

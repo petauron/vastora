@@ -20,6 +20,7 @@ func TestErrorCodeUsesStableUserFacingCategories(t *testing.T) {
 		{http.StatusBadRequest, "center: DNS record center.example.com already exists with a different value", "dns_record_conflict"},
 		{http.StatusBadGateway, "center: Cloudflare authorization failed", "cloudflare_error"},
 		{http.StatusConflict, "center: gateway unavailable", "gateway_unavailable"},
+		{http.StatusBadRequest, "center: stored 3x-ui controller credentials are invalid", "deployment_rejected"},
 		{http.StatusBadRequest, "center: invalid input", "invalid_request"},
 		{http.StatusBadRequest, "center: disable node before deleting", "node_delete_requires_disabled"},
 		{http.StatusBadRequest, "center: node still in use", "node_delete_in_use"},
