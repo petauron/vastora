@@ -1,6 +1,7 @@
 import { HistoryIcon } from "lucide-react";
 import type { Action, AgentView } from "../types";
 import type { Language } from "../translations";
+import { ExecutionSettings } from "./ExecutionSettings";
 import { PageHeading, StateBadge, copy, formatDate, userError } from "./shared";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +16,7 @@ export function ActivityView({ actions, agents, language }: { actions: Action[];
   return (
     <section className="flex flex-col gap-7">
       <PageHeading title={copy(language, "活动", "Activity")} description={copy(language, "每次安装或网络变更只显示为一项操作；展开后可查看执行步骤。", "Each install or network change appears as one operation. Expand it to see execution steps.")} />
+      <ExecutionSettings agents={agents} language={language} />
       {actions.length > visibleEventLimit ? <p className="text-xs text-muted-foreground">{copy(language, `显示最近 ${visibleEventLimit} 条事件，已按操作合并。`, `Showing the latest ${visibleEventLimit} events, grouped by operation.`)}</p> : null}
       {groups.length === 0 ? <Empty className="border"><EmptyHeader><EmptyMedia variant="icon"><HistoryIcon /></EmptyMedia><EmptyTitle>{copy(language, "还没有活动记录", "No activity yet")}</EmptyTitle><EmptyDescription>{copy(language, "创建安装或访问任务后，进度会显示在这里。", "Progress appears here after an install or access operation is created.")}</EmptyDescription></EmptyHeader></Empty> : (
         <div aria-live="polite" className="flex flex-col gap-3">

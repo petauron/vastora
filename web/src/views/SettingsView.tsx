@@ -3,7 +3,7 @@ import { BotIcon, ChevronDownIcon, DatabaseBackupIcon, DatabaseIcon, DownloadIco
 import { api } from "../api";
 import { SignOutButton, type AppData, type Mutate } from "../App";
 import { administratorPasswordMinLength } from "../lib/security";
-import type { AssistantProvider, CatalogSource, CenterUpdateStatus } from "../types";
+import type { AssistantProvider, CatalogSource, CenterUpdateStatus, Screen } from "../types";
 import type { Language } from "../translations";
 import { PageHeading, StateBadge, TechnicalError, copy, formatDate, userError } from "./shared";
 import { Button } from "@/components/ui/button";
@@ -17,9 +17,8 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { CenterUpdateCard } from "./CenterUpdateCard";
 import { SystemDomainSettings } from "./SystemDomainSettings";
-import { ExecutionSettings } from "./ExecutionSettings";
 
-export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onLogout, onRefresh }: { data: AppData; language: Language; mutate: Mutate; onCenterUpdateStatus: (status: CenterUpdateStatus) => void; onLogout: () => Promise<void>; onRefresh: () => Promise<void> }) {
+export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onLogout, onNavigate, onRefresh }: { data: AppData; language: Language; mutate: Mutate; onCenterUpdateStatus: (status: CenterUpdateStatus) => void; onLogout: () => Promise<void>; onNavigate?: (screen: Screen) => void; onRefresh: () => Promise<void> }) {
   const [adding, setAdding] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -35,8 +34,7 @@ export function SettingsView({ data, language, mutate, onCenterUpdateStatus, onL
         <CardFooter className="justify-end"><Button onClick={() => setPasswordOpen(true)} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "修改管理员密码", "Change administrator password")}</Button></CardFooter>
       </Card>
       <SystemDomainSettings domain={data.systemDomain} language={language} />
-      <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} status={data.centerUpdate} />
-      <ExecutionSettings agents={data.agents} language={language} />
+      <CenterUpdateCard language={language} onRefresh={onRefresh} onStatusChange={onCenterUpdateStatus} onViewActivity={onNavigate ? () => onNavigate("activity") : undefined} status={data.centerUpdate} />
       <AssistantProviderSettings language={language} />
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheckIcon />{copy(language, "数据与故障排查", "Data & troubleshooting")}</CardTitle><CardDescription>{copy(language, "备份 Center 配置，或下载不含密钥的诊断信息。", "Back up Center configuration or download diagnostics that contain no secret values.")}</CardDescription></CardHeader>

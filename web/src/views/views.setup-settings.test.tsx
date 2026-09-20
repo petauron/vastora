@@ -819,6 +819,11 @@ describe("network and app views", () => {
     expect(document.body.textContent).toContain("开始更新");
   });
 
+  it("keeps execution history out of the MVP settings page", () => {
+    const container = render(<SettingsView data={dashboard()} language="zh-CN" mutate={async () => undefined} onCenterUpdateStatus={() => undefined} onLogout={async () => undefined} onRefresh={async () => undefined} />);
+    expect(container.textContent).not.toContain("任务执行");
+  });
+
   it("uses the update status as the single displayed Center version", () => {
     const data = dashboard();
     data.status.version = "0.1.0-alpha.50";
@@ -912,9 +917,12 @@ describe("network and app views", () => {
       state: "succeeded" as const,
       agentRollout: { targetVersion: "0.1.0-alpha.159", total: 17, updated: 6, updating: 0, pending: 0, failed: 0, offline: 0, manual: 0, blocked: 11 },
     };
-    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} status={status} />);
+    const onViewActivity = vi.fn();
+    const container = render(<CenterUpdateCard language="zh-CN" onRefresh={async () => undefined} onStatusChange={() => undefined} onViewActivity={onViewActivity} status={status} />);
     expect(container.textContent).toContain("11 个存在待处理任务，已暂停更新");
     expect(container.textContent).not.toContain("旧版本需要手动更新");
+    act(() => [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("查看活动"))?.click());
+    expect(onViewActivity).toHaveBeenCalledOnce();
   });
 
   it("shows the current verified update phase and progress", () => {
