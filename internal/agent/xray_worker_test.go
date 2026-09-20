@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -642,5 +643,27 @@ func TestXrayWorkerAppliedReceiptBindsRevisionAndConfig(t *testing.T) {
 	state.Revision++
 	if store.xrayWorkerAppliedReceiptMatches(state) {
 		t.Fatal("applied receipt matched another desired revision")
+	}
+}
+
+func TestXrayWorkerAppliedReceiptCanOnlyRecoverMatchingActiveConfig(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	state := testXrayWorkerState()
+	configPath, err := store.writeXrayWorkerConfig(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reconcileXrayWorkerAppliedReceipt(state); err != nil || !store.xrayWorkerAppliedReceiptMatches(state) {
+		t.Fatalf("matching active configuration was not recovered: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reconcileXrayWorkerAppliedReceipt(state); err == nil {
+		t.Fatal("foreign active configuration was accepted")
 	}
 }

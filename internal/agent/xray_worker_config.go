@@ -221,6 +221,21 @@ func (s *Store) xrayWorkerAppliedReceiptMatches(state xrayWorkerState) bool {
 	return err == nil && len(active) <= xrayWorkerMaxBody && subtle.ConstantTimeCompare([]byte(receipt.ConfigSHA256), []byte(fmt.Sprintf("%x", sha256.Sum256(active)))) == 1
 }
 
+func (s *Store) reconcileXrayWorkerAppliedReceipt(state xrayWorkerState) error {
+	if s.xrayWorkerAppliedReceiptMatches(state) {
+		return nil
+	}
+	desired, err := renderXrayWorkerConfig(state)
+	if err != nil {
+		return err
+	}
+	active, err := os.ReadFile(filepath.Join(s.dataDir, "xray-worker", "config.json"))
+	if err != nil || len(active) > xrayWorkerMaxBody || subtle.ConstantTimeCompare(desired, active) != 1 {
+		return errors.New("agent: recreated Xray worker configuration requires explicit reconciliation")
+	}
+	return s.recordXrayWorkerApplied(state)
+}
+
 // stageXrayWorkerConfig writes a complete candidate beside the active file.
 // The caller must validate it with Xray before atomically renaming it.
 func (s *Store) stageXrayWorkerConfig(state xrayWorkerState) (string, string, error) {
