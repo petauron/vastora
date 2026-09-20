@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.175](https://github.com/petauron/vastora/compare/v0.1.0-alpha.174...v0.1.0-alpha.175) (2026-09-20)
+
+
+### Bug Fixes
+
+* **agent:** surface blocked Xray recovery ([#555](https://github.com/petauron/vastora/issues/555)) ([0ad2368](https://github.com/petauron/vastora/commit/0ad2368e90fb47d65d25001f39d7617c15562d54))
+
 ## [0.1.0-alpha.174](https://github.com/petauron/vastora/compare/v0.1.0-alpha.173...v0.1.0-alpha.174) (2026-09-20)
 
 
