@@ -232,7 +232,11 @@ func (s *Store) completeXrayConfigurationRecovery(ctx context.Context, commit pr
 			return err
 		}
 	}
-	if err := s.recordTaskEvent(ctx, tx, id, agentID, map[bool]string{true: xrayrecovery.InspectKind, false: xrayrecovery.ApplyKind}[action == "inspect"], 1, target, message); err != nil {
+	event := "failed"
+	if succeeded {
+		event = "succeeded"
+	}
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, map[bool]string{true: xrayrecovery.InspectKind, false: xrayrecovery.ApplyKind}[action == "inspect"], 1, event, message); err != nil {
 		return err
 	}
 	return commit(tx)
