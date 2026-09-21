@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.181](https://github.com/petauron/vastora/compare/v0.1.0-alpha.180...v0.1.0-alpha.181) (2026-09-21)
+
+
+### Bug Fixes
+
+* **updates:** release migration claim pause ([#571](https://github.com/petauron/vastora/issues/571)) ([2cf9a86](https://github.com/petauron/vastora/commit/2cf9a8615768e5c25622fd25ca13ac72a5a06f2d))
+
 ## [0.1.0-alpha.180](https://github.com/petauron/vastora/compare/v0.1.0-alpha.179...v0.1.0-alpha.180) (2026-09-20)
 
 
