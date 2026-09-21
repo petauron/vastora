@@ -74,8 +74,8 @@ export function ExecutionSettings({ language, agents }: { language: Language; ag
     <CardHeader><CardTitle>{copy(language, "任务执行", "Task execution")}</CardTitle><CardDescription>{copy(language, "查看执行记录，核对失败或结果不明的任务。不会自动重试失败任务。", "Review task history and uncertain outcomes. Failed tasks are not automatically retried.")}</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span role="status">{control ? control.paused ? copy(language, "已暂停领取新任务", "New task claims paused") : copy(language, "允许领取新任务", "New task claims enabled") : copy(language, "正在读取", "Loading")}</span>
-        <Button className="min-h-11" disabled={busy || !control} variant="outline" onClick={() => setConfirmControl(true)}>{control?.paused ? copy(language, "恢复领取", "Resume claims") : copy(language, "暂停领取", "Pause claims")}</Button>
+        <span role="status">{control ? control.paused ? copy(language, "紧急维护：已暂停所有新任务", "Emergency maintenance: all new task claims paused") : copy(language, "任务领取正常", "Task claims enabled") : copy(language, "正在读取", "Loading")}</span>
+        <Button className="min-h-11" disabled={busy || !control} variant="outline" onClick={() => setConfirmControl(true)}>{control?.paused ? copy(language, "结束紧急维护", "End emergency maintenance") : copy(language, "进入紧急维护", "Start emergency maintenance")}</Button>
       </div>
       {error ? <FieldError role="alert">{error}</FieldError> : null}
       {notice ? <p role="status" className="text-sm text-muted-foreground">{notice}</p> : null}
@@ -109,7 +109,7 @@ function ClaimControlConfirmation({ paused, language, onClose, onSaved }: { paus
     finally { setBusy(false); }
   };
   return <Sheet open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><SheetContent showCloseButton={!busy}>
-    <SheetHeader><SheetTitle>{paused ? copy(language, "恢复领取新任务", "Resume new task claims") : copy(language, "暂停领取新任务", "Pause new task claims")}</SheetTitle><SheetDescription>{paused ? copy(language, "请先完成升级切换和旧执行核对。恢复不会自动重试失败或结果不明的任务。", "Complete the upgrade cutover and review old executions first. Resuming does not retry failed or uncertain tasks.") : copy(language, "只暂停领取新任务；正在执行的任务不会被取消，节点仍会上报状态。", "Only new claims are paused. Running tasks are not cancelled and nodes continue reporting.")}</SheetDescription></SheetHeader>
+    <SheetHeader><SheetTitle>{paused ? copy(language, "结束紧急维护", "End emergency maintenance") : copy(language, "进入紧急维护", "Start emergency maintenance")}</SheetTitle><SheetDescription>{paused ? copy(language, "恢复所有节点领取新任务。失败或结果不明的任务仍保持原状态，不会自动重试。", "Resume new task claims for all nodes. Failed or uncertain tasks keep their current state and are not retried automatically.") : copy(language, "这是紧急总闸：将暂停包括 Agent 更新在内的所有新任务。正在执行的任务不会被取消，节点仍会上报状态。", "This is an emergency stop: all new tasks, including Agent updates, are paused. Running tasks are not cancelled and nodes continue reporting.")}</SheetDescription></SheetHeader>
     {error ? <FieldError className="px-4" role="alert">{error}</FieldError> : null}
     <SheetFooter><Button className="min-h-11" disabled={busy} variant="outline" onClick={onClose}>{copy(language, "取消", "Cancel")}</Button><Button className="min-h-11" disabled={busy} onClick={() => void submit()}>{busy ? <Spinner data-icon="inline-start" /> : null}{copy(language, "确认", "Confirm")}</Button></SheetFooter>
   </SheetContent></Sheet>;

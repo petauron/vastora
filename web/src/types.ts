@@ -111,6 +111,7 @@ export type CenterUpdateStatus = {
     offline: number;
     manual: number;
     blocked: number;
+    claimsPaused: boolean;
   };
 };
 

@@ -22,7 +22,7 @@ it("loads actual pages and does not offer execution mutations until opened and c
   const dispose = vi.spyOn(api, "disposeExecution");
   await mount();
   expect(document.body.textContent).toContain("Outcome unconfirmed");
-  expect(document.body.textContent).toContain("New task claims paused");
+  expect(document.body.textContent).toContain("Emergency maintenance: all new task claims paused");
   expect(button("Execute again")).toBeUndefined();
   await act(async () => button("Older records").click());
   expect(list.mock.calls[1][0]).toBe(10);
@@ -35,8 +35,8 @@ it("requires a separate explicit confirmation before resuming claims", async () 
   vi.spyOn(api, "executions").mockResolvedValue({ executions: [], nextCursor: 0 });
   const save = vi.spyOn(api, "setExecutionClaimControl").mockResolvedValue({ recorded: true });
   await mount();
-  await act(async () => button("Resume claims").click());
-  expect(document.body.textContent).toContain("Complete the upgrade cutover");
+  await act(async () => button("End emergency maintenance").click());
+  expect(document.body.textContent).toContain("Failed or uncertain tasks keep their current state");
   expect(save).not.toHaveBeenCalled();
   await act(async () => button("Confirm").click());
   expect(save).toHaveBeenCalledExactlyOnceWith(false);
@@ -67,11 +67,11 @@ it("keeps a failed resume visible without automatically sending it again", async
   vi.spyOn(api, "executions").mockResolvedValue({ executions: [], nextCursor: 0 });
   const save = vi.spyOn(api, "setExecutionClaimControl").mockRejectedValue(new Error("connection closed"));
   await mount();
-  await act(async () => button("Resume claims").click());
+  await act(async () => button("End emergency maintenance").click());
   await act(async () => button("Confirm").click());
   expect(save).toHaveBeenCalledTimes(1);
   expect(document.querySelector('[role="alert"]')).not.toBeNull();
-  expect(document.body.textContent).toContain("New task claims paused");
+  expect(document.body.textContent).toContain("Emergency maintenance: all new task claims paused");
   expect(button("Cancel")).toBeDefined();
 });
 

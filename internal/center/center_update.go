@@ -229,6 +229,9 @@ func (s *Server) RunAgentUpdateRollout(ctx context.Context, interval time.Durati
 			return
 		}
 		_, err := s.store.QueueAgentUpdates(ctx, Version)
+		if err == nil {
+			err = s.store.releaseMigrationExecutionPause(ctx)
+		}
 		if err != nil && ctx.Err() == nil && report != nil {
 			report(err)
 		}
