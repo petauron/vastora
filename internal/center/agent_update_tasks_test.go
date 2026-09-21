@@ -184,6 +184,32 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateRolloutEscapesMigrationPause(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "migration-rollout", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.98", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.98", LANAddress: "10.0.0.98", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?)`, executionClaimControlKey, `{"paused":true,"actor":"migration:75","updatedAt":"2026-09-21T00:00:00Z"}`); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.89")
+	if err != nil || len(queued) != 1 || queued[0] != node.ID {
+		t.Fatalf("migration pause stranded rollout: %#v %v", queued, err)
+	}
+	if err := store.releaseMigrationExecutionPause(ctx); err != nil {
+		t.Fatal(err)
+	}
+	control, err := store.ExecutionClaimControl(ctx)
+	if err != nil || control.Paused || control.Actor != "system:agent-rollout" {
+		t.Fatalf("completed rollout did not release migration pause: %+v %v", control, err)
+	}
+	var events int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM execution_claim_control_events WHERE paused=0 AND actor='system:agent-rollout'`).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("migration release audit: %d %v", events, err)
+	}
+}
+
 func TestAgentUpdateCanProceedPastTerminalBusinessExecution(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

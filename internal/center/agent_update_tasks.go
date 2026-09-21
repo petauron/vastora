@@ -29,6 +29,7 @@ type AgentUpdateRolloutStatus struct {
 	Offline       int    `json:"offline"`
 	Manual        int    `json:"manual"`
 	Blocked       int    `json:"blocked"`
+	ClaimsPaused  bool   `json:"claimsPaused"`
 }
 
 // This bounds the busy indicator, not the durable installation or its backup.
@@ -185,7 +186,7 @@ func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	if runtimeRecovery || executionBlocked {
 		return AgentUpdateView{}, errors.New("center: resolve outstanding execution and runtime recovery before updating")
 	}
-	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
+	if paused, err := agentUpdateRolloutPaused(ctx, tx); err != nil {
 		return AgentUpdateView{}, err
 	} else if paused {
 		return AgentUpdateView{}, errExecutionBlocked
@@ -235,7 +236,7 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return nil, errors.New("center: Agent rollout target version is invalid")
 	}
-	if paused, err := executionClaimsPaused(ctx, s.db); err != nil {
+	if paused, err := agentUpdateRolloutPaused(ctx, s.db); err != nil {
 		return nil, err
 	} else if paused {
 		return []string{}, nil
@@ -312,6 +313,11 @@ func (s *Store) AgentUpdateRolloutStatus(ctx context.Context, targetVersion stri
 	status := AgentUpdateRolloutStatus{TargetVersion: targetVersion}
 	if targetVersion == "" || !semver.IsValid("v"+targetVersion) {
 		return status, errors.New("center: Agent rollout target version is invalid")
+	}
+	var err error
+	status.ClaimsPaused, err = executionClaimsPaused(ctx, s.db)
+	if err != nil {
+		return status, err
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT agent.id,agent.version, agent.last_seen_at, agent.remote_update_supported,
 		COALESCE((SELECT update_task.state FROM agent_updates update_task WHERE update_task.agent_id = agent.id ORDER BY update_task.created_at DESC, update_task.rowid DESC LIMIT 1), ''),
