@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.184](https://github.com/petauron/vastora/compare/v0.1.0-alpha.183...v0.1.0-alpha.184) (2026-09-22)
+
+
+### Bug Fixes
+
+* **center:** converge landing task results safely ([#580](https://github.com/petauron/vastora/issues/580)) ([510998a](https://github.com/petauron/vastora/commit/510998adc88d7092d0d1261213de222458a28257))
+* **center:** fence Meridian cutover on unresolved executions ([#582](https://github.com/petauron/vastora/issues/582)) ([64ccf04](https://github.com/petauron/vastora/commit/64ccf04184365789a6f1f7529ac598bc08fd2a6a))
+
 ## [0.1.0-alpha.183](https://github.com/petauron/vastora/compare/v0.1.0-alpha.182...v0.1.0-alpha.183) (2026-09-22)
 
 
