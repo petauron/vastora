@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
@@ -197,5 +198,51 @@ func TestExecutionSessionRecoversRetainedSuccessfulResult(t *testing.T) {
 	}
 	if executionState != "succeeded" || phase != "reported" || disposition != "" || deploymentState != "succeeded" || services == 0 {
 		t.Fatalf("retained result was not recovered: execution=%s phase=%s disposition=%q deployment=%s services=%d", executionState, phase, disposition, deploymentState, services)
+	}
+}
+
+func TestCenterStartupRecoversExpiredRetainedSuccessfulResult(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	clock := store.now().UTC()
+	store.now = func() time.Time { return clock }
+	node := enrollOrchestrationNode(t, store, "startup-result-recovery", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.20", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.20", LANAddress: "10.0.0.20", EnabledKinds: []string{networking.KindLAN}})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const session = "startup-result-recovery-session"
+	if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.claimExecutionTask(ctx, node.ID, node.Credential, session, 0)
+	if err != nil || task == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := store.StartExecution(ctx, node.ID, session, task.Authorization.ID, task.Authorization.Digest); err != nil {
+		t.Fatal(err)
+	}
+	generation := task.RequiredRuntimeGeneration
+	if err := store.StoreExecutionResult(ctx, node.ID, session, task.Authorization.ID, cpaApplicationResult("10.0.0.20"), true, false, "", &generation); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(taskLeaseDuration + time.Second)
+	if err := store.recoverExpiredReceivedExecutionResults(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var executionState, phase, deploymentState string
+	var services int
+	if err := store.db.QueryRow(`SELECT state,phase FROM task_executions WHERE id=?`, task.Authorization.ID).Scan(&executionState, &phase); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT state FROM deployments WHERE id=?`, task.ID).Scan(&deploymentState); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM services WHERE application_id=?`, deployment.ApplicationID).Scan(&services); err != nil {
+		t.Fatal(err)
+	}
+	if executionState != "succeeded" || phase != "reported" || deploymentState != "succeeded" || services == 0 {
+		t.Fatalf("startup recovery did not project retained result: execution=%s phase=%s deployment=%s services=%d", executionState, phase, deploymentState, services)
 	}
 }

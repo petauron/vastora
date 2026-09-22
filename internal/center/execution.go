@@ -180,6 +180,56 @@ func (s *Store) recoverReceivedExecutionResults(ctx context.Context, agentID str
 	}
 }
 
+// recoverExpiredReceivedExecutionResults closes the crash window where Center
+// persisted an authenticated result but the Agent never reached the final
+// acknowledgement. Once the one-use execution lease has expired, no executor
+// can resume it; retain the evidence as unknown and project only results that
+// the existing automatic recovery path can prove successful.
+func (s *Store) recoverExpiredReceivedExecutionResults(ctx context.Context) error {
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM task_executions
+		WHERE disposition='' AND state IN ('running','helper_running') AND phase='result_received'
+		AND expires_at<>'' AND expires_at<=? ORDER BY created_at,id`, now)
+	if err != nil {
+		return err
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE task_executions
+		SET state='unknown',last_error='Execution authorization expired; retained result pending recovery',updated_at=?
+		WHERE disposition='' AND state IN ('running','helper_running') AND phase='result_received'
+		AND expires_at<>'' AND expires_at<=?`, now, now)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed != int64(len(ids)) {
+		return errors.New("center: expired execution set changed during startup recovery")
+	}
+	for _, id := range ids {
+		if err := s.projectRetainedExecutionResult(ctx, id, retainedExecutionResolution{automatic: true}); err != nil {
+			slog.ErrorContext(ctx, "Expired retained execution projection failed", "execution_id", id, "error", err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
