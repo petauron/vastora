@@ -114,9 +114,13 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 			if _, err := store.UpdateHelperObserved(ctx, node.ID, "wrong-session", auth.ID); !errors.Is(err, errExecutionAuthorization) {
 				t.Fatalf("observation accepted wrong authorization: %v", err)
 			}
-			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.124", true)
-			if ready, err := store.UpdateHelperObserved(ctx, node.ID, session, auth.ID); err != nil || !ready {
-				t.Fatalf("target heartbeat not observed: ready=%v err=%v", ready, err)
+			// Only the successful handoff has installed-version evidence. The
+			// expiry/disposition cases must keep the old version until recovery.
+			if mode == "handoff" {
+				heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.124", true)
+				if ready, err := store.UpdateHelperObserved(ctx, node.ID, session, auth.ID); err != nil || !ready {
+					t.Fatalf("target heartbeat not observed: ready=%v err=%v", ready, err)
+				}
 			}
 			result := map[string]any{"attempt": task.Attempt, "executionId": auth.ID, "sessionId": session, "succeeded": true, "result": map[string]any{}}
 			if mode == "abandon" || mode == "confirm-completed" {
