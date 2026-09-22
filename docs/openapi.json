@@ -2107,7 +2107,7 @@
         "tags": [
           "Applications"
         ],
-        "summary": "Recover Meridian Endpoint From Center State",
+        "summary": "Recover Meridian Endpoint",
         "operationId": "recoverMeridianEndpoint_post",
         "x-vastora-audience": "browser-admin",
         "security": [
@@ -2118,12 +2118,20 @@
         ],
         "responses": {
           "202": {
-            "description": "Recovery queued."
+            "description": "Accepted.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/Error"
           },
           "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
             "$ref": "#/components/responses/Error"
           },
           "409": {
@@ -2146,7 +2154,7 @@
         ],
         "requestBody": {
           "required": true,
-          "description": "Explicitly confirms that the previous execution stopped and that current Center state is authoritative.",
+          "description": "A single strict JSON object. Content-Type must be application/json, the decoded size is limited to 1 MiB, and unknown fields are rejected.",
           "content": {
             "application/json": {
               "schema": {
@@ -2154,18 +2162,12 @@
                 "additionalProperties": false,
                 "properties": {
                   "confirmCenterAuthority": {
-                    "type": "boolean",
-                    "const": true
+                    "type": "boolean"
                   },
                   "executionStopped": {
-                    "type": "boolean",
-                    "const": true
+                    "type": "boolean"
                   }
-                },
-                "required": [
-                  "confirmCenterAuthority",
-                  "executionStopped"
-                ]
+                }
               }
             }
           }
