@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.188](https://github.com/petauron/vastora/compare/v0.1.0-alpha.187...v0.1.0-alpha.188) (2026-09-22)
+
+
+### Bug Fixes
+
+* **center:** fence legacy landing during Meridian cutover ([#589](https://github.com/petauron/vastora/issues/589)) ([41045af](https://github.com/petauron/vastora/commit/41045afa34cc3946a3e35082faf404ae97105554))
+
 ## [0.1.0-alpha.187](https://github.com/petauron/vastora/compare/v0.1.0-alpha.186...v0.1.0-alpha.187) (2026-09-22)
 
 
