@@ -14,6 +14,12 @@ import (
 func openLegacyOrchestrationStore(t *testing.T) *Store {
 	t.Helper()
 	store := openOrchestrationStore(t)
+	seedLegacyProxyManifest(t, store)
+	return store
+}
+
+func seedLegacyProxyManifest(t *testing.T, store *Store) {
+	t.Helper()
 	value, _, err := readAcceptedOfficialCatalog(context.Background(), store.db, "stable")
 	if err != nil {
 		t.Fatal(err)
@@ -34,5 +40,4 @@ func openLegacyOrchestrationStore(t *testing.T) *Store {
 	if err := store.SeedOfficialCatalog(context.Background(), encoded); err != nil {
 		t.Fatal(err)
 	}
-	return store
 }

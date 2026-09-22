@@ -175,7 +175,7 @@ func TestListDeploymentsRetainsOldActiveAndReconciliationTasksBeyondRecentLimit(
 }
 
 func TestReplacingApplicationSecretDeletesTheSupersededSecretRow(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "secret-replacement", NodeCapabilities{Docker: true}, []networking.Candidate{{

@@ -371,7 +371,9 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 	insertEndpoint("application-a", "service-a", "endpoint-a", entryA.ID)
 	insertEndpoint("application-b", "service-b", "endpoint-b", entryB.ID)
-	insertEndpoint("application-b", "service-retired", "endpoint-retired", entryB.ID)
+	// A retired endpoint still owns its application identity. Use a separate
+	// installation instead of violating the one-endpoint-per-application key.
+	insertEndpoint("application-retired", "service-retired", "endpoint-retired", egress.ID)
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0 WHERE endpoint_id='endpoint-retired'`); err != nil {
 		t.Fatal(err)
 	}

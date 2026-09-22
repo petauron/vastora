@@ -32,6 +32,7 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 		store.Close()
 		t.Fatal(err)
 	}
+	seedLegacyProxyManifest(t, store)
 	node := enrollOrchestrationNode(t, store, "secret-replay", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 	request := DeploymentRequest{
 		AgentID:              node.ID,
@@ -143,6 +144,7 @@ func TestStoredThreeXUICredentialsRequireAdministratorReauthenticationAndAreAudi
 		t.Fatal(err)
 	}
 	node := enrollOrchestrationNode(t, store, "stored-credential-reveal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
+	seedLegacyProxyManifest(t, store)
 	request := DeploymentRequest{
 		AgentID:              node.ID,
 		AppKey:               threeXUIAppKey,
