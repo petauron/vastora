@@ -187,7 +187,7 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 }
 
 func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *testing.T) {
-	store := openLegacyOrchestrationStore(t)
+	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	controller := enrollOrchestrationNode(t, store, "current-controller", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
@@ -195,13 +195,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 		{Address: "203.0.113.17", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{ServiceAddress: "10.0.0.17", LANAddress: "10.0.0.17", PublicAddress: "203.0.113.17", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	previousController := enrollOrchestrationNode(t, store, "previous-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
-	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: controller.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
-	if err != nil {
-		t.Fatal(err)
-	}
-	installTask := claimTask(t, store, controller)
-	completeThreeXUIDeployment(t, store, controller, installTask, "10.0.0.17", "controller-api-token")
+	deployment := seedLegacyControllerDeployment(t, store, controller, "10.0.0.17", "controller-api-token")
 
 	create := func(name string) (ApplicationCommandView, error) {
 		return createVerifiedRealityCommand(t, store, ctx, RealityCommandInput{
