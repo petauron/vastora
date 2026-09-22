@@ -65,7 +65,7 @@ func TestMeridianAppliedSnapshotHonorsExplicitNativeRemoval(t *testing.T) {
 		{"stopped-service", `UPDATE services SET status='stopped' WHERE id='snapshot-shared-service'`},
 		{"stopped-publication", `UPDATE publications SET status='stopped' WHERE id='snapshot-shared-publication'`},
 		{"removed-publication", `DELETE FROM publications WHERE id='snapshot-shared-publication'`},
-		{"disabled-vless", `UPDATE meridian_endpoints SET vless_enabled=0,hy2_enabled=1,hy2_inbound_tag='snapshot-hy2',hy2_server_name='entry.example.test',hy2_certificate_secret_id=private_key_secret_id,hy2_private_key_secret_id=private_key_secret_id`},
+		{"disabled-vless", `UPDATE meridian_endpoints SET vless_enabled=0,hy2_enabled=1,hy2_inbound_tag='snapshot-hy2',hy2_server_name='entry.example.test',hy2_certificate_secret_id=(private_key_secret_id),hy2_private_key_secret_id=(private_key_secret_id)`},
 	} {
 		t.Run(removal.name, func(t *testing.T) {
 			store := openMeridianSharedEndpointSnapshotFixture(t)
