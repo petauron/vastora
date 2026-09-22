@@ -140,7 +140,7 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 }
 
 func ensureMeridianCutoverIdle(ctx context.Context, tx *sql.Tx, controllerApplicationID string) error {
-	var activeCommands, activeDeployments, activeMigrations int
+	var activeCommands, activeDeployments, activeMigrations, unresolvedExecutions int
 	if err := tx.QueryRowContext(ctx, `WITH cutover_agents(id) AS (
 		SELECT node_id FROM applications WHERE id=?
 		UNION
@@ -154,8 +154,12 @@ func ensureMeridianCutoverIdle(ctx context.Context, tx *sql.Tx, controllerApplic
 	SELECT
 		(SELECT COUNT(*) FROM application_commands WHERE agent_id IN (SELECT id FROM cutover_agents) AND (state IN ('pending','running') OR reconciliation_required=1)),
 		(SELECT COUNT(*) FROM deployments WHERE agent_id IN (SELECT id FROM cutover_agents) AND (state IN ('pending','running') OR reconciliation_required=1)),
-		(SELECT COUNT(*) FROM three_x_ui_migrations WHERE state IN ('backing_up','restoring','switching'))`, controllerApplicationID, controllerApplicationID).Scan(&activeCommands, &activeDeployments, &activeMigrations); err != nil {
+		(SELECT COUNT(*) FROM three_x_ui_migrations WHERE state IN ('backing_up','restoring','switching')),
+		(SELECT COUNT(*) FROM task_executions WHERE agent_id IN (SELECT id FROM cutover_agents) AND disposition='' AND state<>'succeeded')`, controllerApplicationID, controllerApplicationID).Scan(&activeCommands, &activeDeployments, &activeMigrations, &unresolvedExecutions); err != nil {
 		return err
+	}
+	if unresolvedExecutions != 0 {
+		return errors.New("center: explicitly recover unresolved node executions before starting the Meridian cutover")
 	}
 	if activeCommands != 0 || activeDeployments != 0 || activeMigrations != 0 {
 		return errors.New("center: finish or explicitly recover active operations before starting the Meridian cutover")
