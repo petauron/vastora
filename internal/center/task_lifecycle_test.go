@@ -746,19 +746,11 @@ func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 }
 
 func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.T) {
-	store := openLegacyOrchestrationStore(t)
+	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "serialized-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.42", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.42", LANAddress: "10.0.0.42", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	task := claimTask(t, store, node)
-	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.42"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.42"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
+	created := seedLegacyControllerDeployment(t, store, node, "10.0.0.42", "local-api-token")
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
 		VALUES('active-reality-command', ?, ?, ?, ?, '{}', 'running', ?, ?)`, created.ApplicationID, node.ID, node.ID, realityCommandKind, now, now); err != nil {
@@ -774,7 +766,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 		VALUES('failed-client-command', ?, ?, ?, ?, '{}', 'failed', 'previous failure', ?, ?)`, created.ApplicationID, node.ID, node.ID, clientCommandKind, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Operation: "configure", Config: json.RawMessage(`{"enable_fail2ban":false}`)}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Operation: "uninstall"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', error = '' WHERE id = 'failed-client-command'`); err == nil || !strings.Contains(err.Error(), "3x-ui deployment is in progress") {
