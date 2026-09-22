@@ -127,6 +127,27 @@ func TestSubscriptionTransportComparisonUsesValuesNotQueryOrder(t *testing.T) {
 	}
 }
 
+func TestSubscriptionSkipsStaleCombinationWithoutHidingNativeNodes(t *testing.T) {
+	valid := subscriptionFixture()
+	stale := valid
+	stale.Grant.ID = "stale-combination"
+	stale.Grant.FixedUser = FixedUser(stale.Grant.ID)
+	stale.Grant.FixedIdentity = Identity("bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee")
+	stale.BaseLink = strings.Replace(stale.BaseLink, "entry.example.test", "stale.example.test", 1)
+	stale.FixedLink = strings.Replace(stale.FixedLink, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee", 1)
+	stale.FixedLink = strings.Replace(stale.FixedLink, "entry.example.test", "stale.example.test", 1)
+	stale.Grant.HideBase = true
+
+	ordinary, err := RenderLinks([]string{valid.BaseLink}, valid.Grant.ParentID, FixedMode, []SubscriptionGrant{stale, valid}, false)
+	if err != nil || strings.Count(string(ordinary), "vless://") != 2 || strings.Contains(string(ordinary), "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee") {
+		t.Fatalf("stale combination affected ordinary subscription: %v", err)
+	}
+	mihomo, err := RenderMihomo([]string{valid.BaseLink}, valid.Grant.ParentID, FixedMode, []SubscriptionGrant{stale, valid})
+	if err != nil || strings.Count(string(mihomo), "type: vless") != 2 || strings.Contains(string(mihomo), "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee") {
+		t.Fatalf("stale combination affected Mihomo subscription: %v", err)
+	}
+}
+
 func TestMihomoFixedCombinationsNeedNoClientChain(t *testing.T) {
 	item := subscriptionFixture()
 	other := item

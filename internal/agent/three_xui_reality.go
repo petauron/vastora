@@ -621,9 +621,27 @@ func validThreeXUIShareHostname(value string) bool {
 	return true
 }
 
+func normalizedThreeXUIShareHostname(value string, port int) (string, bool) {
+	value = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
+	if validThreeXUIShareHostname(value) {
+		return value, true
+	}
+	host, rawPort, err := net.SplitHostPort(value)
+	if err != nil || rawPort != strconv.Itoa(port) {
+		return "", false
+	}
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	return host, validThreeXUIShareHostname(host)
+}
+
 func threeXUIRealityHostMatches(actual, desired threeXUIHostGroup) bool {
+	if len(actual.Hosts) != 1 || len(desired.Hosts) != 1 {
+		return false
+	}
+	actualHost, actualHostValid := normalizedThreeXUIShareHostname(actual.Hosts[0], actual.Port)
+	desiredHost, desiredHostValid := normalizedThreeXUIShareHostname(desired.Hosts[0], desired.Port)
 	return actual.GroupID == desired.GroupID && len(actual.InboundIDs) == 1 && actual.InboundIDs[0] == desired.InboundIDs[0] &&
-		len(actual.Hosts) == 1 && strings.EqualFold(strings.TrimSuffix(actual.Hosts[0], "."), desired.Hosts[0]) &&
+		actualHostValid && desiredHostValid && actualHost == desiredHost &&
 		actual.Remark == desired.Remark && actual.ServerDescription == desired.ServerDescription && !actual.IsDisabled && !actual.IsHidden &&
 		actual.Port == desired.Port && actual.Security == desired.Security && strings.EqualFold(strings.TrimSuffix(actual.SNI, "."), desired.SNI) &&
 		actual.Fingerprint == desired.Fingerprint && actual.MihomoIPVersion == desired.MihomoIPVersion && len(actual.Tags) == 1 && actual.Tags[0] == "vastora"
