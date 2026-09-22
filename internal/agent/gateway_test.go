@@ -455,7 +455,7 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 		Listeners: []gateway.Listener{{Kind: "public", Address: "203.0.113.10", HTTPPort: 80, HTTPSPort: 443}},
 		Routes:    []gateway.Route{{ID: "center", Hostname: "center.example.test", Protocol: "http", TLSEnabled: true, ListenerKind: "public", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 8080}}}},
 		SharedHTTPS: &gateway.SharedHTTPS{Address: "203.0.113.10", Port: 443, CaddyAddress: "vastora-gateway-caddy", CaddyPort: 443, Routes: []gateway.Layer4Route{
-			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: dockerruntime.XrayAlias, Port: 443}}},
+			{ID: "vless", Hostname: "vless.example.test", ProxyProtocol: gateway.ProxyProtocolV2, Upstreams: []gateway.Upstream{{Address: dockerruntime.MeridianAlias, Port: 443}}},
 			{ID: "raw", Hostname: "raw.example.test", Upstreams: []gateway.Upstream{{Address: "127.0.0.1", Port: 3443}}},
 		}},
 	}
