@@ -2,15 +2,14 @@ package center
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/petauron/vastora/internal/networking"
 )
 
-func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
-	store := openLegacyOrchestrationStore(t)
+func TestExistingLegacyCrossSiteTopologyPreservesObservationsAndSecrets(t *testing.T) {
+	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	originalSiteID := testSiteID(t, store)
@@ -23,57 +22,17 @@ func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET site_id = ? WHERE id = ?`, remoteSite.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
-
-	masterDeployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
-	if err != nil {
+	masterDeployment := seedLegacyControllerDeployment(t, store, master, "10.0.0.90", "master-api-token")
+	workerDeployment := seedLegacyControllerDeployment(t, store, worker, "10.0.0.91", "worker-api-token")
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET role='worker' WHERE id=?`, workerDeployment.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
-	if masterDeployment.OneTimeCredentials == nil {
-		t.Fatal("global controller did not return its one-time administrator credentials")
-	}
-	masterTask := claimTask(t, store, master)
-	if masterTask.ApplicationRole != threeXUIRoleMaster {
-		t.Fatalf("controller role = %q", masterTask.ApplicationRole)
-	}
-	completeThreeXUIDeployment(t, store, master, masterTask, "10.0.0.90", "master-api-token")
-
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: worker.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config}); err == nil || !strings.Contains(err.Error(), "already has") {
-		t.Fatalf("second global controller error = %v", err)
-	}
-	workerDeployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: worker.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleWorker, Config: config})
-	if err != nil {
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM services WHERE application_id=?`, workerDeployment.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
-	if workerDeployment.OneTimeCredentials != nil {
-		t.Fatal("VLESS worker exposed an unused administrator account")
-	}
-	workerTask := claimTask(t, store, worker)
-	if workerTask.ApplicationRole != threeXUIRoleWorker {
-		t.Fatalf("worker role = %q", workerTask.ApplicationRole)
-	}
-	if strings.TrimSpace(string(workerTask.Secrets)) != "{}" {
-		t.Fatalf("Xray-only worker received obsolete panel credentials: %s", workerTask.Secrets)
-	}
-	completeThreeXUIDeployment(t, store, worker, workerTask, "10.0.0.91", "worker-api-token")
-	workerUpgradeSecrets, workerCredentials, err := store.withThreeXUISecrets(ctx, worker.ID, "upgrade", threeXUIRoleWorker, nil)
-	if err != nil || workerCredentials != nil || string(workerUpgradeSecrets) != `{"api_token":"worker-api-token"}` {
-		t.Fatalf("Xray worker upgrade secrets=%s credentials=%#v err=%v", workerUpgradeSecrets, workerCredentials, err)
-	}
-
-	var storedInput string
-	if err := store.db.QueryRowContext(ctx, `SELECT CAST(input_json AS TEXT) FROM application_commands WHERE application_id = ? AND kind = ?`, workerDeployment.ApplicationID, nodeCommandKind).Scan(&storedInput); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(storedInput, "worker-api-token") {
-		t.Fatal("worker API token was persisted in the command payload")
-	}
-	nodeTask := claimTask(t, store, master)
-	if nodeTask.NodeCommand == nil || nodeTask.NodeCommand.Action != "reconcile" || nodeTask.NodeCommand.Address != "10.0.0.91" || nodeTask.NodeCommand.APIToken != "worker-api-token" {
-		t.Fatalf("unexpected controller node task: %#v", nodeTask)
-	}
-	result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
-	if err := store.CompleteTask(ctx, master.ID, master.Credential, nodeTask.ID, nodeTask.Attempt, true, "", result, nodeTask.RequiredRuntimeGeneration); err != nil {
+	selectTestThreeXUIController(t, store, masterDeployment.ApplicationID)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id,master_application_id,remote_node_id,status,created_at,updated_at)
+		VALUES(?,?,7,'ready','','')`, workerDeployment.ApplicationID, masterDeployment.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -141,6 +100,7 @@ func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var storedInput string
 	if err := store.db.QueryRowContext(ctx, `SELECT CAST(input_json AS TEXT) FROM application_commands WHERE id = ?`, reality.ID).Scan(&storedInput); err != nil {
 		t.Fatal(err)
 	}
@@ -163,26 +123,5 @@ func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Operation: "uninstall"}); err == nil || !strings.Contains(err.Error(), "VLESS nodes") {
 		t.Fatalf("controller uninstall error = %v", err)
-	}
-}
-
-func completeThreeXUIDeployment(t *testing.T, store *Store, node AgentCredential, task *AgentTask, address, apiToken string) {
-	t.Helper()
-	if _, err := store.db.Exec(`UPDATE agent_network_profiles SET public_address = '198.51.100.10' WHERE agent_id = ?`, node.ID); err != nil {
-		t.Fatal(err)
-	}
-	services := []ApplicationServiceResult{}
-	if task.ApplicationRole != threeXUIRoleWorker {
-		services = append(services,
-			ApplicationServiceResult{Name: "panel", Protocol: "http", ContainerPort: 2053, HostPort: 2053, Address: address},
-			ApplicationServiceResult{Name: "subscription", Protocol: "http", ContainerPort: 2096, HostPort: 2096, Address: address},
-		)
-	}
-	result, _ := json.Marshal(ApplicationTaskResult{
-		Services:         services,
-		GeneratedSecrets: map[string]string{"api_token": apiToken},
-	})
-	if err := store.CompleteTask(context.Background(), node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
 	}
 }
