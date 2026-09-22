@@ -327,11 +327,11 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 
 	insertEndpoint := func(applicationID, serviceID, endpointID string, nodeID string) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-			VALUES(?,?,?,?,?,'','running','docker','',?,?)`, applicationID, applicationID, nodeID, siteID, meridianAppKey, now, now); err != nil {
+			VALUES(?,?,?,?,?,'','running','docker','',?,?) ON CONFLICT(id) DO NOTHING`, applicationID, applicationID, nodeID, siteID, meridianAppKey, now, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
-			VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-1", applicationID, "100.64.0.31:443", meridianEntryProtocol, now, now); err != nil {
+			VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-"+endpointID, applicationID, "100.64.0.31:443", meridianEntryProtocol, now, now); err != nil {
 			t.Fatal(err)
 		}
 		endpointSecretID, err := store.putSecret(ctx, tx, []byte("private-"+endpointID), meridianEndpointSecretContext(endpointID))
@@ -371,7 +371,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 	insertEndpoint("application-a", "service-a", "endpoint-a", entryA.ID)
 	insertEndpoint("application-b", "service-b", "endpoint-b", entryB.ID)
-	insertEndpoint("application-retired", "service-retired", "endpoint-retired", entryB.ID)
+	insertEndpoint("application-b", "service-retired", "endpoint-retired", entryB.ID)
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0 WHERE endpoint_id='endpoint-retired'`); err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 }
 
-func TestUndeployableMeridianEndpointDoesNotBlockAgentClaims(t *testing.T) {
+func TestInvalidMeridianRuntimeDoesNotBlockAgentClaims(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -466,6 +466,8 @@ func TestUndeployableMeridianEndpointDoesNotBlockAgentClaims(t *testing.T) {
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
+	// An empty credential set is deployable. An installation with no audited
+	// image is not; its failure must release the claim loop for other work.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES('blocked-application','Blocked entry',?,?,?,'','running','docker','',?,?)`, node.ID, siteID, meridianAppKey, now, now); err != nil {
 		t.Fatal(err)
@@ -491,7 +493,7 @@ func TestUndeployableMeridianEndpointDoesNotBlockAgentClaims(t *testing.T) {
 	if err := tx.QueryRowContext(ctx, `SELECT status,last_error FROM meridian_endpoints WHERE id='blocked-endpoint'`).Scan(&status, &lastError); err != nil {
 		t.Fatal(err)
 	}
-	if status != "failed" || !strings.Contains(lastError, "credentials") {
+	if status != "failed" || !strings.Contains(lastError, "runtime task is invalid") {
 		t.Fatalf("undeployable endpoint status=%s error=%q", status, lastError)
 	}
 }

@@ -372,6 +372,7 @@ func TestCreateMeridianEndpointQueuesEmptyRuntimeBeforeFirstAccount(t *testing.T
 	})
 	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{
 		ApplicationID:  applicationID,
+		AdvertiseHost:  "entry.example.test",
 		Name:           "Empty first",
 		RegionCode:     "US",
 		VerificationID: input.VerificationID,
@@ -425,7 +426,7 @@ func TestRecoverMeridianEndpointReleasesOnlyMatchingFenceAndQueuesCenterAuthorit
 		t.Fatal(err)
 	}
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Recover entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Recover entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +489,7 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 		t.Fatal(err)
 	}
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Expired entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Expired entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +542,7 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 		t.Fatal(err)
 	}
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Retiring entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Retiring entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +640,7 @@ func TestCreateMeridianEndpointReusesRetiredIdentityAndUsage(t *testing.T) {
 	}
 	create := func(name string) MeridianEndpointView {
 		input := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-		endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: name, RegionCode: "US", VerificationID: input.VerificationID, TargetIP: input.TargetIP, TargetHost: input.TargetHost, ServerName: input.ServerName})
+		endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: name, RegionCode: "US", VerificationID: input.VerificationID, TargetIP: input.TargetIP, TargetHost: input.TargetHost, ServerName: input.ServerName})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -725,7 +726,7 @@ func TestMeridianRouteLifecycleDoesNotBlockUnrelatedSubscriptionEntries(t *testi
 		t.Fatal(err)
 	}
 	verification := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Route lifecycle", RegionCode: "US", VerificationID: verification.VerificationID, TargetIP: verification.TargetIP, TargetHost: verification.TargetHost, ServerName: verification.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Route lifecycle", RegionCode: "US", VerificationID: verification.VerificationID, TargetIP: verification.TargetIP, TargetHost: verification.TargetHost, ServerName: verification.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
