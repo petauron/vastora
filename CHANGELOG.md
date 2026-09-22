@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.183](https://github.com/petauron/vastora/compare/v0.1.0-alpha.182...v0.1.0-alpha.183) (2026-09-22)
+
+
+### Bug Fixes
+
+* **subscriptions:** isolate stale landing state ([#578](https://github.com/petauron/vastora/issues/578)) ([ea2735c](https://github.com/petauron/vastora/commit/ea2735c2d88e68429b97a7446f56ceff64d7a3fd))
+
 ## [0.1.0-alpha.182](https://github.com/petauron/vastora/compare/v0.1.0-alpha.181...v0.1.0-alpha.182) (2026-09-22)
 
 
