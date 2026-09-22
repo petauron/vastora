@@ -144,31 +144,24 @@ func TestStoredThreeXUICredentialsRequireAdministratorReauthenticationAndAreAudi
 		t.Fatal(err)
 	}
 	node := enrollOrchestrationNode(t, store, "stored-credential-reveal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
-	seedLegacyProxyManifest(t, store)
-	request := DeploymentRequest{
-		AgentID:              node.ID,
-		AppKey:               threeXUIAppKey,
-		Role:                 threeXUIRoleMaster,
-		Config:               json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`),
-		Operation:            "install",
-		SecretOperationOwner: adminID,
-		SecretOperationKey:   "stored-credential-operation-key",
-	}
-	deployment, err := store.CreateDeployment(ctx, request)
-	if err != nil || deployment.OneTimeCredentials == nil {
-		t.Fatalf("create deployment = %#v err=%v", deployment, err)
-	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET state = 'succeeded' WHERE id = ?`, deployment.ID); err != nil {
+	deployment := seedLegacyControllerDeployment(t, store, node, "10.0.0.92", "stored-controller-api-token")
+	const username, password = "legacy-reveal-user", "legacy-reveal-password-fixture"
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AcknowledgeDeploymentCredentials(ctx, deployment.ID, adminID, request.SecretOperationKey); err != nil {
+	defer tx.Rollback()
+	if err := store.storeApplicationSecrets(ctx, tx, deployment.ID, deployment.ApplicationID, map[string]string{"username": username, "password": password, "api_token": "stored-controller-api-token"}, store.now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.RevealApplicationCredentials(ctx, deployment.ApplicationID, adminID, "incorrect-password"); err == nil || !strings.Contains(err.Error(), "current password is incorrect") {
 		t.Fatalf("stored credentials accepted incorrect reauthentication: %v", err)
 	}
 	revealed, err := store.RevealApplicationCredentials(ctx, deployment.ApplicationID, adminID, "correct-horse-battery-staple")
-	if err != nil || revealed.Kind != "three_x_ui" || revealed.Username != deployment.OneTimeCredentials.Username || revealed.Password != deployment.OneTimeCredentials.Password {
+	if err != nil || revealed.Kind != "three_x_ui" || revealed.Username != username || revealed.Password != password {
 		t.Fatalf("stored credentials = %#v err=%v", revealed, err)
 	}
 	actions, err := store.ListActions(ctx, 10)

@@ -14,7 +14,10 @@ import (
 func seedLegacyControllerDeployment(t *testing.T, store *Store, node AgentCredential, address, apiToken string) DeploymentView {
 	t.Helper()
 	ctx := context.Background()
-	siteID := testSiteID(t, store)
+	var siteID string
+	if err := store.db.QueryRowContext(ctx, `SELECT site_id FROM agents WHERE id=?`, node.ID).Scan(&siteID); err != nil {
+		t.Fatal(err)
+	}
 	applicationID := "legacy-controller-" + node.ID
 	deploymentID := "legacy-install-" + node.ID
 	manifest, err := os.ReadFile("testdata/legacy-proxy-alpha181.json")
