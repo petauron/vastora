@@ -78,6 +78,9 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 	}
 	now := s.now().UTC()
 	formattedNow := now.Format(time.RFC3339Nano)
+	if _, err := disposeSupersededLandingExecutionFailures(ctx, tx, "", formattedNow); err != nil {
+		return MeridianCutoverView{}, err
+	}
 	switch state {
 	case "inspect", "failed":
 		var imported int
