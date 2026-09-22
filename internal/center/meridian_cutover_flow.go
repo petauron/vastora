@@ -539,7 +539,7 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 		}
 		resolved.hy2NotAfter = notAfter.Format(time.RFC3339Nano)
 	}
-	if len(resolved.inboundTags()) == 0 {
+	if !resolved.vlessEnabled && !resolved.hy2Enabled {
 		return meridianImportedEndpoint{}, errors.New("center: legacy endpoint has no enabled protocol")
 	}
 	return resolved, nil
@@ -1256,11 +1256,4 @@ func (s *Store) completeMeridianLegacyRetirement(ctx context.Context, commit pro
 		}
 	}
 	return commit(tx)
-}
-
-func boolInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
 }
