@@ -219,20 +219,22 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	if _, err := s.db.Exec(`UPDATE agents SET tailscale_ownership='managed' WHERE id=?`, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
-	m, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
+	// The retired catalog cannot install 3x-ui. Seed the persisted topology
+	// that an existing installation still needs to clean up during migration.
+	const masterApplicationID = "removal-legacy-controller"
+	const workerApplicationID = "removal-legacy-worker"
+	stamp := s.now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at)
+		VALUES(?, 'Legacy controller', ?, ?, ?, 'running', 'docker', 'master', ?, ?),
+		(?, 'Legacy worker', ?, ?, ?, 'running', 'docker', 'worker', ?, ?)`,
+		masterApplicationID, master.ID, testSiteID(t, s), threeXUIAppKey, stamp, stamp,
+		workerApplicationID, worker.ID, testSiteID(t, s), threeXUIAppKey, stamp, stamp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	completeThreeXUIDeployment(t, s, master, claimTask(t, s, master), "10.0.0.90", "master-token")
-	w, err := s.CreateDeployment(ctx, DeploymentRequest{AgentID: worker.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleWorker, Config: config})
-	if err != nil {
-		t.Fatal(err)
-	}
-	completeThreeXUIDeployment(t, s, worker, claimTask(t, s, worker), "100.64.0.91", "worker-token")
-	initial := claimTask(t, s, master)
-	result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "ready"}})
-	if err = s.CompleteTask(ctx, master.ID, master.Credential, initial.ID, initial.Attempt, true, "", result, initial.RequiredRuntimeGeneration); err != nil {
+	selectTestThreeXUIController(t, s, masterApplicationID)
+	if _, err = s.db.Exec(`INSERT INTO three_x_ui_nodes(worker_application_id,master_application_id,remote_node_id,status,created_at,updated_at)
+		VALUES(?,?,7,'ready',?,?)`, workerApplicationID, masterApplicationID, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	expireRemovalNode(t, s, master.ID)
@@ -274,7 +276,7 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	if privateDeletes != 1 {
 		t.Fatal("tagged private identity was not removed before subscription cleanup")
 	}
-	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, w.ApplicationID) != 1 {
+	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, workerApplicationID) != 1 {
 		t.Fatal("worker deleted before remote receipt")
 	}
 	remove := claimTask(t, s, master)
@@ -294,17 +296,17 @@ func TestRemoveOfflineAgentWaitsForSubscriptionControllerReceipt(t *testing.T) {
 	if retry.ID != remove.ID || retry.Attempt <= remove.Attempt {
 		t.Fatal("retry replaced task identity")
 	}
-	result, _ = json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "stopped"}})
+	result, _ := json.Marshal(ApplicationTaskResult{NodeCommand: &ThreeXUINodeCommandResult{RemoteNodeID: 7, Status: "stopped"}})
 	if err = s.CompleteTask(ctx, master.ID, master.Credential, retry.ID, retry.Attempt, true, "", result, retry.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.resumeAgentRemovals(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=? AND status='running'`, m.ApplicationID) != 1 {
+	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=? AND status='running'`, masterApplicationID) != 1 {
 		t.Fatal("controller was removed")
 	}
-	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, w.ApplicationID) != 0 {
+	if removalCount(t, s, `SELECT COUNT(*) FROM applications WHERE id=?`, workerApplicationID) != 0 {
 		t.Fatal("worker record remained")
 	}
 	if removalCount(t, s, `SELECT COUNT(*) FROM application_commands WHERE id=?`, retry.ID) != 0 {
