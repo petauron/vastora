@@ -21,7 +21,7 @@ export function emptyAppData(status: CenterStatus): AppData {
     integrations: [],
     actions: [],
     threeXUIControllerMigrations: [],
-    meridian: { cutover: { state: "not_required", subscriptionAuthority: "meridian", expectedAccounts: 0, importedAccounts: 0, expectedCredentials: 0, importedCredentials: 0, expectedEndpoints: 0, readyEndpoints: 0, retiredEndpoints: 0, pendingDeployments: 0, failedDeployments: 0, updatedAt: "", complete: false }, endpoints: [], accounts: [], grants: [] },
+    meridian: { cutover: { state: "not_required", subscriptionAuthority: "meridian", expectedAccounts: 0, importedAccounts: 0, expectedCredentials: 0, importedCredentials: 0, expectedEndpoints: 0, readyEndpoints: 0, retiredEndpoints: 0, expectedRoutes: 0, readyRoutes: 0, blockedRoutes: 0, pendingDeployments: 0, failedDeployments: 0, updatedAt: "", complete: false }, endpoints: [], accounts: [], grants: [] },
     systemDomain: { namespace: "", centerUrl: status.agentConnectUrl, headscaleUrl: "", cloudflareZone: "", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: false, cloudflareOAuthAvailable: false },
     centerRemoteAccess: null
   };
