@@ -785,7 +785,7 @@ func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, inp
 	if err := tx.QueryRowContext(ctx, `SELECT reset_days,next_reset_at FROM meridian_accounts WHERE id=?`, accountID).Scan(&previousResetDays, &previousNextReset); err != nil {
 		return MeridianAccountView{}, errors.New("center: Meridian account was not found")
 	}
-	if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {
+	if err := s.ensureMeridianSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, accountID); err != nil {
 		return MeridianAccountView{}, err
 	}
 	nextReset := previousNextReset
@@ -854,7 +854,7 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	if accountStatus != "active" || accountEnabled != 1 {
 		return MeridianRouteGrantView{}, errors.New("center: disabled Meridian account cannot receive a route")
 	}
-	if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, input.AccountID); err != nil {
+	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err
 	}
 	var landingReady int
@@ -915,11 +915,7 @@ func (s *Store) RevokeMeridianRouteGrant(ctx context.Context, grantID string) er
 	if status == "revoked" || status == "revoking" {
 		return errors.New("center: Meridian route grant is already being removed")
 	}
-	var accountID string
-	if err := tx.QueryRowContext(ctx, `SELECT account_id FROM meridian_route_grants WHERE id=?`, grantID).Scan(&accountID); err != nil {
-		return errors.New("center: Meridian route grant was not found")
-	}
-	if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {
+	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 		return err
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)

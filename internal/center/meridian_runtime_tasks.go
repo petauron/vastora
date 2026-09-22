@@ -66,7 +66,7 @@ func (s *Store) resetDueMeridianAccounts(ctx context.Context, tx *sql.Tx) error 
 		if account.days < 1 || account.days > meridian.MaxResetDays {
 			return errors.New("center: stored Meridian reset schedule is invalid")
 		}
-		if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, account.id); err != nil {
+		if err := s.ensureMeridianSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, account.id); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET baseline_bytes=observed_bytes,observed_at=?
@@ -108,6 +108,9 @@ func (s *Store) resetDueMeridianAccounts(ctx context.Context, tx *sql.Tx) error 
 		return err
 	}
 	for _, accountID := range expired {
+		if err := s.ensureMeridianSubscriptionSnapshotsForAccountEndpointsInTx(ctx, tx, accountID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET enabled=0,status='expired',desired_revision=desired_revision+1,last_error='',updated_at=? WHERE id=?`, nowText, accountID); err != nil {
 			return err
 		}
@@ -936,19 +939,6 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx, accountIDs []string, nowText string) error {
 	endpointIDs := map[string]bool{}
 	for _, accountID := range accountIDs {
-		// Usage observations can cross a quota boundary before anyone downloads
-		// the subscription. Preserve its applied projection before invalidating
-		// the account and every associated endpoint revision.
-		if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET desired_revision=desired_revision+1,updated_at=? WHERE id=?`, nowText, accountID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,
-			status=CASE WHEN status='revoked' THEN status ELSE 'pending' END,last_error='',updated_at=? WHERE account_id=?`, nowText, accountID); err != nil {
-			return err
-		}
 		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT credential.endpoint_id FROM meridian_credentials credential
 			JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
 			WHERE credential.account_id=? AND endpoint.status<>'retired' ORDER BY credential.endpoint_id`, accountID)
@@ -979,6 +969,23 @@ func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx
 		orderedEndpointIDs = append(orderedEndpointIDs, affectedEndpointID)
 	}
 	slices.Sort(orderedEndpointIDs)
+	// An endpoint revision also affects accounts whose quota did not change.
+	// Capture every applied subscription before any account or endpoint changes,
+	// including subscriptions that have never been downloaded.
+	for _, affectedEndpointID := range orderedEndpointIDs {
+		if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, affectedEndpointID); err != nil {
+			return err
+		}
+	}
+	for _, accountID := range accountIDs {
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET desired_revision=desired_revision+1,updated_at=? WHERE id=?`, nowText, accountID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,
+			status=CASE WHEN status='revoked' THEN status ELSE 'pending' END,last_error='',updated_at=? WHERE account_id=?`, nowText, accountID); err != nil {
+			return err
+		}
+	}
 	for _, affectedEndpointID := range orderedEndpointIDs {
 		resultRow, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=?`, nowText, affectedEndpointID)
 		if err != nil {
@@ -996,18 +1003,18 @@ func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx
 // subscription query independently requires that peer to be live, so an
 // unavailable landing disappears without taking native entries offline.
 func (s *Store) markMeridianLandingPeerChanged(ctx context.Context, tx *sql.Tx, nodeID, nowText string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT account_id FROM meridian_route_grants WHERE egress_node_id=? AND enabled=1 AND status<>'revoked' ORDER BY account_id`, nodeID)
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT endpoint_id FROM meridian_route_grants WHERE egress_node_id=? AND enabled=1 AND status<>'revoked' ORDER BY endpoint_id`, nodeID)
 	if err != nil {
 		return err
 	}
-	accountIDs := []string{}
+	endpointIDs := []string{}
 	for rows.Next() {
-		var accountID string
-		if err := rows.Scan(&accountID); err != nil {
+		var endpointID string
+		if err := rows.Scan(&endpointID); err != nil {
 			rows.Close()
 			return err
 		}
-		accountIDs = append(accountIDs, accountID)
+		endpointIDs = append(endpointIDs, endpointID)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -1016,8 +1023,8 @@ func (s *Store) markMeridianLandingPeerChanged(ctx context.Context, tx *sql.Tx, 
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	for _, accountID := range accountIDs {
-		if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {
+	for _, endpointID := range endpointIDs {
+		if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 			return err
 		}
 	}

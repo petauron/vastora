@@ -218,6 +218,10 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 		VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-1", "Route filter entry", "100.64.0.71:443", meridianEntryProtocol, now, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES('route-filter-publication',?,'public_shared_443','application_node',?,'entry.example.test','www.example.com','manual',0,1,1,'ready',?,?)`, serviceID, entry.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
 	endpointSecretID, err := store.putSecret(ctx, tx, []byte("route-filter-private-key"), meridianEndpointSecretContext(endpointID))
 	if err != nil {
 		t.Fatal(err)
@@ -392,6 +396,48 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A different account shares the same runtime but has never downloaded its
+	// subscription. Exhausting the first account must not withdraw this account.
+	const (
+		otherAccountID    = "independent-account"
+		otherToken        = "independent-token"
+		otherCredentialID = "independent-base-a"
+		otherProtocolID   = "33333333-3333-4333-8333-333333333333"
+	)
+	otherTokenSecretID, err := store.putSecret(ctx, tx, []byte(otherToken), meridianAccountSecretContext(otherAccountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES(?, 'Independent account', 100, 1, ?, ?, 1, 1, 'active', ?, ?)`, otherAccountID, otherTokenSecretID, meridian.SubscriptionTokenFingerprint(otherToken), now, now); err != nil {
+		t.Fatal(err)
+	}
+	otherCredentialSecretID, err := store.putSecret(ctx, tx, []byte(otherProtocolID), meridianCredentialSecretContext(otherCredentialID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
+		VALUES(?,?,'endpoint-a','native','independent-user',?,?,1,?,?)`, otherCredentialID, otherAccountID, meridian.Identity(otherProtocolID), otherCredentialSecretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,observed_bytes,observed_at) VALUES(?,5,?)`, otherCredentialID, now); err != nil {
+		t.Fatal(err)
+	}
+	var initialSnapshots int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_subscription_snapshots WHERE account_id IN (?,?)`, accountID, otherAccountID).Scan(&initialSnapshots); err != nil || initialSnapshots != 0 {
+		t.Fatalf("subscriptions were already snapshotted: count=%d err=%v", initialSnapshots, err)
+	}
+	quotaBefore, err := store.meridianQuotaStatesInTx(ctx, tx, "endpoint-a")
+	if err != nil || !quotaBefore[accountID] || !quotaBefore[otherAccountID] {
+		t.Fatalf("accounts were not initially within quota: states=%v err=%v", quotaBefore, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET observed_bytes=100 WHERE credential_id='base-endpoint-a'`); err != nil {
+		t.Fatal(err)
+	}
+	quotaAfter, err := store.meridianQuotaStatesInTx(ctx, tx, "endpoint-a")
+	if err != nil || quotaAfter[accountID] || !quotaAfter[otherAccountID] {
+		t.Fatalf("quota crossing affected the wrong accounts: states=%v err=%v", quotaAfter, err)
+	}
 	if err := store.markMeridianQuotaBoundaryChanged(ctx, tx, []string{accountID}, now); err != nil {
 		t.Fatal(err)
 	}
@@ -428,6 +474,16 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
+	}
+	server := NewServer(store, t.TempDir(), false)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub/"+otherToken, nil))
+	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
+	if response.Code != http.StatusOK || decodeErr != nil || !strings.Contains(string(decoded), "vless://"+otherProtocolID+"@entry.example.test:443") {
+		t.Fatalf("shared runtime rebuild withdrew unaffected subscription: status=%d body=%q err=%v", response.Code, decoded, decodeErr)
+	}
+	if _, err := store.MeridianSubscription(ctx, "shared-token"); !errors.Is(err, errMeridianSubscriptionNotFound) {
+		t.Fatalf("applied snapshot bypassed exhausted account quota: %v", err)
 	}
 	enabled := true
 	if _, err := store.UpdateMeridianAccount(ctx, accountID, MeridianAccountInput{DisplayName: "Shared account", TotalBytes: 100, Enabled: &enabled}); err != nil {

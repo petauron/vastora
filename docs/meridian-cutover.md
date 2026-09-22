@@ -47,6 +47,11 @@ account or fetch mutable configuration from Meridian or 3x-ui.
   Meridian account and renders only applied healthy credentials whose
   shared-443 public listener and DNS verification are also applied. A later
   pending entry is omitted without taking already-ready entries offline.
+- Before rebuilding a shared entry, preserve the last applied subscription
+  for every account using it, even when no client has downloaded it yet. A
+  partial live response must not replace a complete saved snapshot. Snapshot
+  recovery still honors current account quota, explicit credential removal,
+  retired entries, stopped publications, and disabled protocols.
 - A fixed VLESS entry-to-egress route uses its own stable credential and shares
   the parent account plan. Adding routes never duplicates quota. Hysteria2 is
   native-only until Xray provides a reliable per-user routing boundary.

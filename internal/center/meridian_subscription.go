@@ -112,8 +112,16 @@ func (s *Store) MeridianSubscription(ctx context.Context, token string) (meridia
 	if projectionErr == nil {
 		result.Entries, result.Routes = projection.Entries, projection.Routes
 		if !cutoverSnapshot && accountApplied {
-			if err := s.saveMeridianSubscriptionSnapshotInTx(ctx, tx, result.Account, projection); err != nil {
+			fullyApplied, err := meridianSubscriptionEndpointsAppliedInTx(ctx, tx, result.Account.ID)
+			if err != nil {
 				return meridianSubscription{}, err
+			}
+			// A partial live response keeps already-ready entries available, but
+			// must not erase the last complete applied subscription during a rebuild.
+			if fullyApplied {
+				if err := s.saveMeridianSubscriptionSnapshotInTx(ctx, tx, result.Account, projection); err != nil {
+					return meridianSubscription{}, err
+				}
 			}
 		}
 	} else if !cutoverSnapshot {
