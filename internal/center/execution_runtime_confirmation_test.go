@@ -151,3 +151,42 @@ func TestExecutionRuntimeConfirmationPreservesEvidenceAndRevisionFence(t *testin
 		}
 	}
 }
+
+func TestExecutionProjectionAcceptsAppliedLandingRevisionWithQueuedSuccessor(t *testing.T) {
+	for _, kind := range []string{"landing.server.apply", "landing.proxy.apply"} {
+		t.Run(kind, func(t *testing.T) {
+			store := openOrchestrationStore(t)
+			defer store.Close()
+			ctx := context.Background()
+			node := enrollOrchestrationNode(t, store, "landing-successor", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.21", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.21", LANAddress: "10.0.0.21", EnabledKinds: []string{networking.KindLAN}})
+			stamp := store.now().UTC().Format(time.RFC3339Nano)
+			taskID := landingServerTaskID(node.ID, 8)
+			if kind == "landing.server.apply" {
+				if _, err := store.db.Exec(`INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,attempt,updated_at) VALUES(?,9,8,'{}','pending',7,?)`, node.ID, stamp); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				taskID = landingProxyTaskID(node.ID, 8)
+				if _, err := store.db.Exec(`INSERT INTO landing_proxy_states(node_id,application_id,landing_node_id,server_revision,source_address,desired_revision,applied_revision,desired_json,status,attempt,updated_at) VALUES(?,?,?,1,'100.64.0.21',9,8,'{}','pending',7,?)`, node.ID, deployment.ApplicationID, node.ID, stamp); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const executionID = "landing-successor-execution"
+			if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES(?,?,?,?,7,'landing-successor-session','landing-successor-digest',X'00','unknown','result_received',?,?,?)`, executionID, node.ID, taskID, kind, stamp, stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := store.db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if err := validateExecutionProjection(ctx, tx, executionID, true); err != nil {
+				t.Fatalf("applied revision was rejected after its successor was queued: %v", err)
+			}
+		})
+	}
+}

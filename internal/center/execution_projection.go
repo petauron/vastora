@@ -33,11 +33,29 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 		query = `SELECT state FROM agent_decommissions WHERE agent_id=? AND attempt=?`
 		args = []any{agentID, attempt}
 	case "landing.proxy.apply":
-		query = `SELECT status FROM landing_proxy_states WHERE node_id=? AND attempt=?`
-		args = []any{agentID, attempt}
+		if succeeded {
+			revision, ok := landingProxyTaskRevision(taskID)
+			if !ok {
+				return errors.New("center: invalid landing proxy task revision")
+			}
+			query = `SELECT CASE WHEN applied_revision>=? THEN 'ready' ELSE status END FROM landing_proxy_states WHERE node_id=? AND attempt=?`
+			args = []any{revision, agentID, attempt}
+		} else {
+			query = `SELECT status FROM landing_proxy_states WHERE node_id=? AND attempt=?`
+			args = []any{agentID, attempt}
+		}
 	case "landing.server.apply":
-		query = `SELECT status FROM landing_server_states WHERE node_id=? AND attempt=?`
-		args = []any{agentID, attempt}
+		if succeeded {
+			revision, ok := landingServerTaskRevision(taskID)
+			if !ok {
+				return errors.New("center: invalid landing server task revision")
+			}
+			query = `SELECT CASE WHEN applied_revision>=? THEN 'ready' ELSE status END FROM landing_server_states WHERE node_id=? AND attempt=?`
+			args = []any{revision, agentID, attempt}
+		} else {
+			query = `SELECT status FROM landing_server_states WHERE node_id=? AND attempt=?`
+			args = []any{agentID, attempt}
+		}
 	case "gateway.routes.apply":
 		query = `SELECT status FROM gateway_states WHERE gateway_node_id=? AND attempt=?`
 		args = []any{agentID, attempt}
