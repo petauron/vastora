@@ -560,7 +560,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT event FROM task_events WHERE task_id='superseded-queued-command' ORDER BY created_at DESC LIMIT 1`).Scan(&event); err != nil {
 		t.Fatal(err)
 	}
-	if desiredRevision != 2 || endpointStatus != "pending" || commandState != "succeeded" || event != "superseded" {
+	if desiredRevision != 2 || endpointStatus != "pending" || commandState != "succeeded" || event != "succeeded" {
 		t.Fatalf("superseded queued command changed newest desired state: revision=%d endpoint=%s command=%s event=%s", desiredRevision, endpointStatus, commandState, event)
 	}
 
@@ -592,7 +592,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT event FROM task_events WHERE task_id='superseded-completion-command' ORDER BY created_at DESC LIMIT 1`).Scan(&event); err != nil {
 		t.Fatal(err)
 	}
-	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "succeeded" || event != "superseded" {
+	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "succeeded" || event != "succeeded" {
 		t.Fatalf("superseded completion changed newest desired state: revision=%d endpoint=%s command=%s event=%s", desiredRevision, endpointStatus, commandState, event)
 	}
 }

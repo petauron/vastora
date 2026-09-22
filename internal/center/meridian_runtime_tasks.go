@@ -278,7 +278,7 @@ func (s *Store) discardSupersededMeridianRuntimeCommand(ctx context.Context, tx 
 	if changed, _ := result.RowsAffected(); changed != 1 {
 		return true, errors.New("center: superseded Meridian command is no longer pending")
 	}
-	if err := s.recordTaskEvent(ctx, tx, commandID, agentID, "application.command", commandRevision, "superseded", message); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, commandID, agentID, "application.command", commandRevision, "succeeded", message); err != nil {
 		return true, err
 	}
 	return true, errApplicationCommandDiscarded
@@ -829,7 +829,7 @@ func (s *Store) completeSupersededMeridianRuntimeCommand(ctx context.Context, co
 	if changed, _ := commandUpdate.RowsAffected(); changed != 1 {
 		return true, errors.New("center: superseded Meridian command changed before its receipt was committed")
 	}
-	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", commandRevision, "superseded", message); err != nil {
+	if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", commandRevision, state, message); err != nil {
 		return true, err
 	}
 	return true, commit(tx)

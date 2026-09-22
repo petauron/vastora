@@ -19,11 +19,15 @@ func TestExecutionClaimAuthorizationFailureRollsBackSelection(t *testing.T) {
 				ctx := context.Background()
 				node := enrollOrchestrationNode(t, store, "atomic-claim", NodeCapabilities{Docker: true, Gateway: kind == "gateway.component.apply"}, []networking.Candidate{{Address: "10.0.0.23", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.23", LANAddress: "10.0.0.23", EnabledKinds: []string{networking.KindLAN}})
 				version := Version
+				roles := []string{"worker"}
+				if kind == "gateway.component.apply" {
+					roles = append(roles, "gateway")
+				}
 				if kind == "agent.update" {
 					version = "0.1.0-alpha.123"
 				}
 				if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
-					Version: version, Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true, Gateway: kind == "gateway.component.apply"},
+					Version: version, Roles: roles, Capabilities: NodeCapabilities{Docker: true, Gateway: kind == "gateway.component.apply"},
 					ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, RemoteUpdateSupported: true,
 				}); err != nil {
 					t.Fatal(err)
