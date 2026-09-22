@@ -140,27 +140,29 @@ func ComposeLinks(native []byte, parentID string, mode PublishingMode, grants []
 			identities[link.User.Username()] = true
 		}
 	}
+	applied := make([]SubscriptionGrant, 0, len(grants))
 	for _, item := range grants {
 		if err := validateSubscriptionGrant(item, parentID); err != nil {
-			return nil, err
+			continue
 		}
 		if !item.Grant.Enabled || !mode.Fixed() || !item.Grant.Mode.Fixed() {
 			continue
 		}
 		base, err := parseVLESSLink(item.BaseLink)
 		if err != nil || !identities[base.User.Username()] || !slices.ContainsFunc(lines, func(line string) bool { return sameLinkIdentity(strings.TrimSpace(line), item.BaseLink) }) {
-			return nil, errors.New("landing: combination does not belong to this subscription")
+			continue
 		}
 		fixed, err := parseVLESSLink(item.FixedLink)
 		if err != nil || fixed.Host != base.Host || !sameRealityTransport(fixed, base) || identities[fixed.User.Username()] {
-			return nil, errors.New("landing: invalid combination credentials")
+			continue
 		}
 		fixed.Fragment = combinationName(item)
 		lines = append(lines, fixed.String())
 		identities[fixed.User.Username()] = true
+		applied = append(applied, item)
 	}
 	lines = slices.DeleteFunc(lines, func(line string) bool {
-		return slices.ContainsFunc(grants, func(item SubscriptionGrant) bool {
+		return slices.ContainsFunc(applied, func(item SubscriptionGrant) bool {
 			return item.Grant.Enabled && item.Grant.HideBase && sameLinkIdentity(strings.TrimSpace(line), item.BaseLink)
 		})
 	})
@@ -216,14 +218,14 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 	replacements := map[string][]any{}
 	for _, item := range grants {
 		if err := validateSubscriptionGrant(item, parentID); err != nil {
-			return nil, err
+			continue
 		}
 		if !item.Grant.Enabled {
 			continue
 		}
 		base, err := parseVLESSLink(item.BaseLink)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		var proxy map[string]any
 		for _, value := range baseProxies {
@@ -236,21 +238,26 @@ func ComposeMihomo(native []byte, parentID string, mode PublishingMode, grants [
 			}
 		}
 		if proxy == nil || proxy["dialer-proxy"] != nil || !sameMihomoRealityTransport(proxy, base) {
-			return nil, errors.New("landing: native entry does not match this user")
+			continue
 		}
 		if mode.Fixed() && item.Grant.Mode.Fixed() {
 			fixed, err := parseVLESSLink(item.FixedLink)
 			if err != nil || fixed.Host != base.Host || !sameRealityTransport(fixed, base) || fixed.User.Username() == base.User.Username() {
-				return nil, errors.New("landing: invalid fixed subscription identity")
+				continue
 			}
+			duplicated := false
 			for _, value := range proxies {
 				if value.(map[string]any)["uuid"] == fixed.User.Username() {
-					return nil, errors.New("landing: duplicated fixed subscription identity")
+					duplicated = true
+					break
 				}
+			}
+			if duplicated {
+				continue
 			}
 			name := combinationName(item)
 			if err := reserve(name); err != nil {
-				return nil, err
+				continue
 			}
 			clone := make(map[string]any, len(proxy))
 			for key, value := range proxy {

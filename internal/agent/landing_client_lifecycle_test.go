@@ -25,8 +25,8 @@ func TestNativeSubscriptionCredentialOwnershipIgnoresNamesButRejectsMaterialChan
 }
 
 func TestNativeSubscriptionCredentialOwnershipCanonicalizesEquivalentURIs(t *testing.T) {
-	first := "vless://11111111-2222-4333-8444-555555555555@ENTRY.example.test?security=reality&type=tcp&pbk=key#Old"
-	second := "vless://11111111-2222-4333-8444-555555555555@entry.example.test:443?pbk=key&type=tcp&security=reality#New"
+	first := "vless://11111111-2222-4333-8444-555555555555@ENTRY.example.test?security=reality&type=tcp&pbk=key&spx=%2Ff3ac0a79444fb57#Old"
+	second := "vless://11111111-2222-4333-8444-555555555555@entry.example.test:443?pbk=key&type=tcp&security=reality&headerType=none&spx=%2F#New"
 	if !sameNativeSubscriptionCredentials([]string{first}, []string{second}, false) {
 		t.Fatal("equivalent VLESS URI formatting changed credential ownership")
 	}

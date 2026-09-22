@@ -373,7 +373,14 @@ func nativeSubscriptionCredential(raw string) (string, string, error) {
 		port = "443"
 	}
 	route := link.User.Username() + "\x00" + host + "\x00" + port
-	credential := route + "\x00" + link.EscapedPath() + "\x00" + link.Query().Encode()
+	query := link.Query()
+	if strings.EqualFold(strings.TrimSpace(query.Get("headerType")), "none") {
+		query.Del("headerType")
+	}
+	// REALITY spiderX is a client fallback browsing path, not authentication
+	// material. Renderers may rotate it without changing the owned credential.
+	query.Del("spx")
+	credential := route + "\x00" + link.EscapedPath() + "\x00" + query.Encode()
 	return route, credential, nil
 }
 
@@ -448,10 +455,14 @@ func nativeSubscriptionInbounds(ctx context.Context, baseURL, token string) ([]T
 		}
 		groupID := "vastora-public-" + strconv.Itoa(inbound.ID)
 		for _, group := range groups {
-			if group.GroupID != groupID || group.IsDisabled || group.IsHidden || len(group.Hosts) != 1 || !validThreeXUIShareHostname(group.Hosts[0]) || group.Port != 443 {
+			if group.GroupID != groupID || group.IsDisabled || group.IsHidden || len(group.Hosts) != 1 || group.Port != 443 {
 				continue
 			}
-			result = append(result, ThreeXUIClientInbound{ID: inbound.ID, DisplayName: inbound.Remark, NodeName: inbound.Remark, ConnectHostname: group.Hosts[0], InboundTag: inbound.Tag})
+			hostname, valid := normalizedThreeXUIShareHostname(group.Hosts[0], group.Port)
+			if !valid {
+				continue
+			}
+			result = append(result, ThreeXUIClientInbound{ID: inbound.ID, DisplayName: inbound.Remark, NodeName: inbound.Remark, ConnectHostname: hostname, InboundTag: inbound.Tag})
 			break
 		}
 	}
