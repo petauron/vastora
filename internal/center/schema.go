@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const centerSchemaVersion = 86
+const centerSchemaVersion = 87
 
 func (s *Store) initializeSchema(ctx context.Context, existing bool) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA journal_mode = WAL`); err != nil {
@@ -667,7 +667,7 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 			display_name TEXT NOT NULL DEFAULT '' COLLATE NOCASE,
 			agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
 			gateway_node_id TEXT NOT NULL REFERENCES agents(id) ON DELETE RESTRICT,
-			kind TEXT NOT NULL CHECK(kind IN ('pulse.enrollment.create', '3xui.reality.create', '3xui.reality.verify', '3xui.reality.harden', '3xui.reality.rename', '3xui.reality.remove', '3xui.protocols.configure', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
+			kind TEXT NOT NULL CHECK(kind IN ('meridian.runtime.apply', 'meridian.legacy.export', 'meridian.legacy.retire', 'meridian.subscription.publish', 'pulse.enrollment.create', '3xui.reality.create', '3xui.reality.verify', '3xui.reality.harden', '3xui.reality.rename', '3xui.reality.remove', '3xui.protocols.configure', '3xui.subscription.configure', '3xui.clients.manage', '3xui.node.reconcile', '3xui.controller.manage')),
 			input_json BLOB NOT NULL,
 			result_json BLOB NOT NULL DEFAULT '{}',
 			result_secret_id TEXT REFERENCES secrets(id) ON DELETE SET NULL,
@@ -886,6 +886,9 @@ func (s *Store) initializeCurrentSchema(ctx context.Context) error {
 	}
 	if _, err := tx.ExecContext(ctx, xrayConfigurationRecoverySchemaSQL); err != nil {
 		return fmt.Errorf("center: initialize Xray configuration recovery schema: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, meridianSchema); err != nil {
+		return fmt.Errorf("center: initialize Meridian schema: %w", err)
 	}
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO organizations(id, name, created_at, updated_at) VALUES(?, 'Vastora', ?, ?)`, defaultOrganizationID, now, now); err != nil {

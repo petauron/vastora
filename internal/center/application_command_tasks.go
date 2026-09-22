@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/pulse"
@@ -21,6 +22,12 @@ var (
 )
 
 func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID string) (*AgentTask, error) {
+	if err := s.resetDueMeridianAccounts(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := s.queueNextMeridianRuntime(ctx, tx, agentID); err != nil {
+		return nil, err
+	}
 	if err := s.queueNextLandingClientCommand(ctx, tx, agentID); err != nil {
 		return nil, err
 	}
@@ -45,7 +52,52 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	var controller *ThreeXUIControllerCommandTask
 	var protocols *nodeprotocol.Task
 	var pulseEnrollment *pulse.EnrollmentTask
+	var meridianTask *meridianruntime.Task
+	var meridianLegacyExport *meridianruntime.LegacyExportCommand
+	var meridianLegacyRetire *meridianruntime.LegacyRetireTask
 	switch kind {
+	case meridianruntime.LegacyExportKind:
+		var command meridianruntime.LegacyExportCommand
+		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Meridian legacy export command is invalid"))
+		}
+		var cutoverState, controllerApplicationID string
+		if err := tx.QueryRowContext(ctx, `SELECT state,COALESCE(legacy_controller_application_id,'') FROM meridian_cutover WHERE id=1`).Scan(&cutoverState, &controllerApplicationID); err != nil || cutoverState != "import" || controllerApplicationID != command.ApplicationID {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Meridian legacy export is outside the import phase"))
+		}
+		meridianLegacyExport = &command
+	case meridianruntime.ApplyKind:
+		var command meridianruntime.Command
+		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
+			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Meridian runtime command is invalid"))
+		}
+		if superseded, supersedeErr := s.discardSupersededMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID); superseded || supersedeErr != nil {
+			return nil, supersedeErr
+		}
+		projection, buildErr := s.buildMeridianRuntimeTask(ctx, tx, command.EndpointID, agentID)
+		if buildErr != nil {
+			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, buildErr)
+		}
+		projection.task.ReplacePendingState = command.ReplacePendingState
+		if projection.task.Validate() != nil {
+			return s.failUnclaimableMeridianRuntimeCommand(ctx, tx, id, agentID, command.EndpointID, errors.New("center: stored Meridian recovery command is invalid"))
+		}
+		meridianTask = &projection.task
+	case meridianruntime.LegacyRetireKind:
+		var command meridianruntime.LegacyRetireTask
+		if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: stored Meridian legacy retirement command is invalid"))
+		}
+		var authorized int
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM meridian_cutover cutover JOIN applications application ON application.id=cutover.legacy_controller_application_id
+			WHERE cutover.id=1 AND cutover.state='retire' AND cutover.subscription_authority='meridian'
+			AND application.id=? AND application.node_id=? AND application.app_key=? AND application.status='running'
+			AND NOT EXISTS(SELECT 1 FROM meridian_endpoints endpoint WHERE endpoint.application_id=application.id)
+		)`, command.ApplicationID, agentID, meridianAppKey).Scan(&authorized); err != nil || authorized != 1 {
+			return s.discardUnclaimableApplicationCommand(ctx, tx, id, agentID, 1, nil, nil, errors.New("center: Meridian legacy retirement is outside the authorized controller-only phase"))
+		}
+		meridianLegacyRetire = &command
 	case pulse.EnrollmentKind:
 		var command pulse.EnrollmentTask
 		if json.Unmarshal(inputJSON, &command) != nil || command.ApplicationID == "" || command.DeploymentID == "" {
@@ -189,6 +241,9 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	if client != nil && client.PlanRevision > 0 {
 		taskRevision = client.PlanRevision
 	}
+	if meridianTask != nil {
+		taskRevision = int64(meridianTask.Desired.Revision)
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'running', attempt = attempt + 1, lease_expires_at = ?, error = '', updated_at = ? WHERE id = ? AND state = 'pending' AND attempt = ?`, now.Add(taskLeaseDuration).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano), id, attempt)
 	if err != nil {
 		return nil, fmt.Errorf("center: claim application operation: %w", err)
@@ -204,7 +259,22 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 			return nil, err
 		}
 	}
-	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, Reconcile: reconciliationRequested == 1}, nil
+	if meridianTask != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='applying',last_error='',updated_at=? WHERE command_id=? AND desired_revision=?`, now.Format(time.RFC3339Nano), id, meridianTask.Desired.Revision); err != nil {
+			return nil, err
+		}
+		endpointStatus := "applying"
+		if meridianTask.RetireLegacy {
+			// Retirement changes only the legacy receipt and temporary aliases.
+			// Keep the already verified Meridian entry in subscriptions while the
+			// cleanup command runs.
+			endpointStatus = "ready"
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET status=?,last_error='',updated_at=? WHERE id=(SELECT endpoint_id FROM meridian_deployments WHERE command_id=?)`, endpointStatus, now.Format(time.RFC3339Nano), id); err != nil {
+			return nil, err
+		}
+	}
+	return &AgentTask{Kind: "application.command", ID: id, Attempt: attempt + 1, Revision: taskRevision, ApplicationCommand: reality, SubscriptionCommand: subscription, ClientCommand: client, NodeCommand: node, ControllerCommand: controller, ProtocolCommand: protocols, PulseEnrollment: pulseEnrollment, MeridianRuntime: meridianTask, MeridianLegacyExport: meridianLegacyExport, MeridianLegacyRetire: meridianLegacyRetire, Reconcile: reconciliationRequested == 1}, nil
 }
 
 func (s *Store) failUnclaimableThreeXUIInboundPlanCommand(ctx context.Context, tx *sql.Tx, commandID, agentID string, command ThreeXUIClientCommandTask, cause error) error {
@@ -318,7 +388,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		return err
 	}
 	if currentState == "succeeded" || currentState == "failed" {
-		if reconciliationRequired && (appKey != threeXUIAppKey || currentState != "failed" || currentReconciliationRequired != 1) {
+		if reconciliationRequired && ((appKey != threeXUIAppKey && appKey != meridianAppKey) || currentState != "failed" || currentReconciliationRequired != 1) {
 			return errInvalidReconciliationDisposition
 		}
 		return nil
@@ -327,7 +397,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		return errors.New("center: stale application operation result")
 	}
 	if reconciliationRequired {
-		if succeeded || taskError == "" || appKey != threeXUIAppKey {
+		if succeeded || taskError == "" || appKey != threeXUIAppKey && appKey != meridianAppKey {
 			return errInvalidReconciliationDisposition
 		}
 		now := s.now().UTC().Format(time.RFC3339Nano)
@@ -345,6 +415,15 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required = 0, reconciliation_requested = 0 WHERE id = ?`, taskID); err != nil {
 		return err
+	}
+	if kind == meridianruntime.LegacyExportKind {
+		return s.completeMeridianLegacyExport(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == meridianruntime.ApplyKind {
+		return s.completeMeridianRuntimeCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
+	}
+	if kind == meridianruntime.LegacyRetireKind {
+		return s.completeMeridianLegacyRetirement(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)
 	}
 	if kind == subscriptionCommandKind {
 		return s.completeSubscriptionCommand(ctx, commit, tx, taskID, agentID, inputJSON, succeeded, taskError, rawResult)

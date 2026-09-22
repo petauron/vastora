@@ -78,7 +78,7 @@ export function LandingProvider({ enabled, agents = [], children }: { enabled: b
     mounted.current = true;
     liveLatencies.current = null;
     void refresh();
-    const source = new EventSource("/api/v1/three-x-ui/landing/latencies/events", { withCredentials: true });
+    const source = new EventSource("/api/v1/meridian/landing/latencies/events", { withCredentials: true });
     source.onmessage = (message) => {
       if (!mounted.current) return;
       try {

@@ -108,64 +108,15 @@
     "homepage": null
   },
   {
-    "id": "3x-ui",
-    "hostAccess": true,
+    "id": "meridian",
+    "hostAccess": false,
     "images": [
-      "3x-ui",
       "xray-core"
     ],
     "artifacts": [],
-    "services": [
-      {
-        "name": "panel",
-        "protocol": "http",
-        "containerPort": 2053,
-        "hostPortField": "panel_port",
-        "healthPath": "/",
-        "management": true
-      },
-      {
-        "name": "subscription",
-        "protocol": "http",
-        "containerPort": 2096,
-        "defaultHostPort": 2096,
-        "healthPath": "/sub/"
-      }
-    ],
-    "config": [
-      {
-        "key": "enable_fail2ban",
-        "type": "boolean",
-        "required": false,
-        "secret": false,
-        "default": true
-      },
-      {
-        "key": "panel_port",
-        "type": "integer",
-        "required": true,
-        "secret": false,
-        "default": 2053
-      },
-      {
-        "key": "timezone",
-        "type": "string",
-        "required": true,
-        "secret": false,
-        "default": "UTC"
-      },
-      {
-        "key": "vmess_aead_forced",
-        "type": "boolean",
-        "required": false,
-        "secret": false,
-        "default": false
-      }
-    ],
-    "homepage": {
-      "service": "panel",
-      "path": "/"
-    }
+    "services": [],
+    "config": [],
+    "homepage": null
   },
   {
     "id": "pulse",

@@ -531,6 +531,13 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	}
 	defer tx.Rollback()
 	for _, statement := range []string{
+		`DROP TABLE meridian_deployments`,
+		`DROP TABLE meridian_usage_watermarks`,
+		`DROP TABLE meridian_route_grants`,
+		`DROP TABLE meridian_credentials`,
+		`DROP TABLE meridian_accounts`,
+		`DROP TABLE meridian_endpoints`,
+		`DROP TABLE meridian_cutover`,
 		`DROP TABLE xray_configuration_recoveries`,
 		`DROP TABLE node_diagnostic_checks`,
 		`DROP TABLE ip_quality_checks`,

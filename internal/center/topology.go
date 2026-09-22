@@ -16,6 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -51,6 +52,7 @@ type NodeHeartbeat struct {
 	PublicEgress                 *networking.PublicEgress
 	ApplicationEndpoints         []ApplicationEndpointObservation
 	ApplicationEndpointsObserved bool
+	MeridianRuntime              *meridianruntime.Result
 	GatewayHealthy               bool
 	RuntimeRecovery              string
 	RuntimeRecoveryApplications  []controlplane.RecoveryApplication

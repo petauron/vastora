@@ -194,7 +194,7 @@ func (s *Store) RemoveApplied(ctx context.Context, appKey string) error {
 	defer tx.Rollback()
 	// Called only after successful application removal under landingMutationMu.
 	// Old tokens/ledger ownership must not attach to a new controller install.
-	if appKey == threeXUIKey {
+	if proxyRuntimeApp(appKey) {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM landing_controller_state`); err != nil {
 			return err
 		}

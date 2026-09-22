@@ -21,6 +21,7 @@ export function emptyAppData(status: CenterStatus): AppData {
     integrations: [],
     actions: [],
     threeXUIControllerMigrations: [],
+    meridian: { cutover: { state: "not_required", subscriptionAuthority: "meridian", expectedAccounts: 0, importedAccounts: 0, expectedCredentials: 0, importedCredentials: 0, expectedEndpoints: 0, readyEndpoints: 0, retiredEndpoints: 0, expectedRoutes: 0, readyRoutes: 0, blockedRoutes: 0, pendingDeployments: 0, failedDeployments: 0, updatedAt: "", complete: false }, endpoints: [], accounts: [], grants: [] },
     systemDomain: { namespace: "", centerUrl: status.agentConnectUrl, headscaleUrl: "", cloudflareZone: "", aliases: [], activePublications: 0, pendingCleanup: 0, builtinHeadscale: false, cloudflareOAuthAvailable: false },
     centerRemoteAccess: null
   };
@@ -92,7 +93,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       };
     }
     case "apps": {
-      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations, remoteAccess, catalogSources] = await Promise.all([
+      const [status, apps, registryCredentials, agents, deployments, applications, services, publications, integrations, sites, migrations, meridian, remoteAccess, catalogSources] = await Promise.all([
         statusPromise,
         api.apps(signal),
         api.registryCredentials(signal),
@@ -104,6 +105,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         api.integrations(signal),
         api.sites(signal),
         api.threeXUIControllerMigrations(signal),
+        api.meridian(signal),
         loadCenterRemoteAccess(signal),
         loadCatalogSources(signal)
       ]);
@@ -119,6 +121,7 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
         integrations: integrations.integrations,
         sites: sites.sites,
         threeXUIControllerMigrations: migrations.migrations,
+        meridian,
         ...remoteAccess,
         ...catalogSources
       };

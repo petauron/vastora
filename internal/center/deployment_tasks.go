@@ -17,6 +17,7 @@ import (
 	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
@@ -26,42 +27,45 @@ import (
 )
 
 type AgentTask struct {
-	IPQuality                 *ipquality.Task                     `json:"ipQuality,omitempty"`
-	NodeDiagnostics           *nodediagnostics.Task               `json:"nodeDiagnostics,omitempty"`
-	Authorization             controlplane.ExecutionAuthorization `json:"-"`
-	PulseEnrollment           *pulse.EnrollmentTask               `json:"pulseEnrollment,omitempty"`
-	ProtocolCommand           *nodeprotocol.Task                  `json:"protocolCommand,omitempty"`
-	XrayRecovery              *xrayrecovery.Task                  `json:"xrayRecovery,omitempty"`
-	Kind                      string                              `json:"kind"`
-	ID                        string                              `json:"id"`
-	Attempt                   int64                               `json:"attempt"`
-	AppKey                    string                              `json:"appKey"`
-	Manifest                  catalog.AppManifest                 `json:"manifest"`
-	Config                    json.RawMessage                     `json:"config"`
-	Secrets                   json.RawMessage                     `json:"secrets"`
-	Operation                 string                              `json:"operation"`
-	DeleteData                bool                                `json:"deleteData"`
-	DecommissionCallbackURL   string                              `json:"decommissionCallbackUrl,omitempty"`
-	DecommissionCallbackToken string                              `json:"decommissionCallbackToken,omitempty"`
-	Revision                  int64                               `json:"revision,omitempty"`
-	ApplicationID             string                              `json:"applicationId,omitempty"`
-	ApplicationRole           string                              `json:"applicationRole,omitempty"`
-	ServiceAddress            string                              `json:"serviceAddress,omitempty"`
-	GatewayState              *gateway.DesiredState               `json:"gatewayState,omitempty"`
-	NodeListenerState         *gateway.NodeListenerState          `json:"nodeListenerState,omitempty"`
-	LandingServerState        *landing.ServerState                `json:"landingServerState,omitempty"`
-	LandingProxyState         *landing.DesiredState               `json:"landingProxyState,omitempty"`
-	GatewayCertificates       []gateway.Certificate               `json:"gatewayCertificates,omitempty"`
-	TunnelState               *TunnelTaskState                    `json:"tunnelState,omitempty"`
-	ApplicationCommand        *RealityCommandTask                 `json:"applicationCommand,omitempty"`
-	SubscriptionCommand       *SubscriptionCommandTask            `json:"subscriptionCommand,omitempty"`
-	ClientCommand             *ThreeXUIClientCommandTask          `json:"clientCommand,omitempty"`
-	NodeCommand               *ThreeXUINodeCommandTask            `json:"nodeCommand,omitempty"`
-	ControllerCommand         *ThreeXUIControllerCommandTask      `json:"controllerCommand,omitempty"`
-	RegistryCredential        *AgentRegistryCredential            `json:"registryCredential,omitempty"`
-	Reconcile                 bool                                `json:"reconcile,omitempty"`
-	RequiredRuntimeGeneration int                                 `json:"requiredRuntimeGeneration,omitempty"`
-	TargetVersion             string                              `json:"targetVersion,omitempty"`
+	IPQuality                 *ipquality.Task                      `json:"ipQuality,omitempty"`
+	NodeDiagnostics           *nodediagnostics.Task                `json:"nodeDiagnostics,omitempty"`
+	Authorization             controlplane.ExecutionAuthorization  `json:"-"`
+	PulseEnrollment           *pulse.EnrollmentTask                `json:"pulseEnrollment,omitempty"`
+	ProtocolCommand           *nodeprotocol.Task                   `json:"protocolCommand,omitempty"`
+	XrayRecovery              *xrayrecovery.Task                   `json:"xrayRecovery,omitempty"`
+	Kind                      string                               `json:"kind"`
+	ID                        string                               `json:"id"`
+	Attempt                   int64                                `json:"attempt"`
+	AppKey                    string                               `json:"appKey"`
+	Manifest                  catalog.AppManifest                  `json:"manifest"`
+	Config                    json.RawMessage                      `json:"config"`
+	Secrets                   json.RawMessage                      `json:"secrets"`
+	Operation                 string                               `json:"operation"`
+	DeleteData                bool                                 `json:"deleteData"`
+	DecommissionCallbackURL   string                               `json:"decommissionCallbackUrl,omitempty"`
+	DecommissionCallbackToken string                               `json:"decommissionCallbackToken,omitempty"`
+	Revision                  int64                                `json:"revision,omitempty"`
+	ApplicationID             string                               `json:"applicationId,omitempty"`
+	ApplicationRole           string                               `json:"applicationRole,omitempty"`
+	ServiceAddress            string                               `json:"serviceAddress,omitempty"`
+	GatewayState              *gateway.DesiredState                `json:"gatewayState,omitempty"`
+	NodeListenerState         *gateway.NodeListenerState           `json:"nodeListenerState,omitempty"`
+	LandingServerState        *landing.ServerState                 `json:"landingServerState,omitempty"`
+	LandingProxyState         *landing.DesiredState                `json:"landingProxyState,omitempty"`
+	GatewayCertificates       []gateway.Certificate                `json:"gatewayCertificates,omitempty"`
+	TunnelState               *TunnelTaskState                     `json:"tunnelState,omitempty"`
+	ApplicationCommand        *RealityCommandTask                  `json:"applicationCommand,omitempty"`
+	SubscriptionCommand       *SubscriptionCommandTask             `json:"subscriptionCommand,omitempty"`
+	ClientCommand             *ThreeXUIClientCommandTask           `json:"clientCommand,omitempty"`
+	NodeCommand               *ThreeXUINodeCommandTask             `json:"nodeCommand,omitempty"`
+	ControllerCommand         *ThreeXUIControllerCommandTask       `json:"controllerCommand,omitempty"`
+	MeridianRuntime           *meridianruntime.Task                `json:"meridianRuntime,omitempty"`
+	MeridianLegacyExport      *meridianruntime.LegacyExportCommand `json:"meridianLegacyExport,omitempty"`
+	MeridianLegacyRetire      *meridianruntime.LegacyRetireTask    `json:"meridianLegacyRetire,omitempty"`
+	RegistryCredential        *AgentRegistryCredential             `json:"registryCredential,omitempty"`
+	Reconcile                 bool                                 `json:"reconcile,omitempty"`
+	RequiredRuntimeGeneration int                                  `json:"requiredRuntimeGeneration,omitempty"`
+	TargetVersion             string                               `json:"targetVersion,omitempty"`
 }
 
 type AgentRegistryCredential struct {

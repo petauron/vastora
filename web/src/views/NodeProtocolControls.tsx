@@ -9,7 +9,7 @@ import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldLegen
 import { Spinner } from "@/components/ui/spinner";
 import { copy, userError } from "./shared";
 
-export function NodeProtocolControls({ serviceId, language, onUpdated }: { serviceId: string; language: Language; onUpdated: () => Promise<void> }) {
+export function NodeProtocolControls({ serviceId, language, onUpdated, requireVLESS = false }: { serviceId: string; language: Language; onUpdated: () => Promise<void>; requireVLESS?: boolean }) {
   const [saved, setSaved] = useState<NodeProtocols | null>(null);
   const [draft, setDraft] = useState({ vless: true, hy2: false });
   const [command, setCommand] = useState<ApplicationCommand | null>(null);
@@ -69,11 +69,14 @@ export function NodeProtocolControls({ serviceId, language, onUpdated }: { servi
     <FieldDescription>{copy(language, "默认使用 VLESS。可添加 HY2，订阅地址不变。", "VLESS is enabled by default. Add HY2 without changing your subscription URL.")}</FieldDescription>
     {saved ? <FieldGroup>
       {(["vless", "hy2"] as const).map((protocol) => <Field key={protocol} orientation="horizontal" data-invalid={empty} data-disabled={active}>
-        <Checkbox id={`${serviceId}-${protocol}`} checked={draft[protocol]} disabled={active || command?.reconciliationRequired} aria-invalid={empty} onCheckedChange={(checked) => setDraft((current) => ({ ...current, [protocol]: checked }))} />
+        <Checkbox id={`${serviceId}-${protocol}`} checked={draft[protocol]} disabled={active || command?.reconciliationRequired || requireVLESS && protocol === "vless"} aria-invalid={empty} onCheckedChange={(checked) => setDraft((current) => ({ ...current, [protocol]: checked }))} />
         <FieldLabel htmlFor={`${serviceId}-${protocol}`}>{protocol.toUpperCase()}</FieldLabel>
       </Field>)}
       {draft.hy2 ? <FieldDescription>{copy(language, "HY2 需要放行节点的 UDP 443。TLS 证书由系统自动申请并续期。", "HY2 needs UDP 443 allowed on the node. TLS certificates are requested and renewed automatically.")}</FieldDescription> : null}
-      {draft.hy2 ? <FieldDescription>{copy(language, "HY2 使用客户端套餐；原 VLESS 节点套餐仍只计算 VLESS 流量。", "HY2 uses client quotas. The existing VLESS node plan counts VLESS traffic only.")}</FieldDescription> : null}
+      {requireVLESS ? <FieldDescription>{copy(language, "Meridian 使用 VLESS 作为公网 TCP 443 的基础入口，因此不能关闭。", "Meridian uses VLESS as its public TCP 443 anchor, so it cannot be disabled.")}</FieldDescription> : null}
+      {draft.hy2 ? <FieldDescription>{requireVLESS
+        ? copy(language, "VLESS 与 HY2 会计入同一个 Meridian 账号共享流量。", "VLESS and HY2 count toward the same shared Meridian account quota.")
+        : copy(language, "HY2 使用客户端套餐；原 VLESS 节点套餐仍只计算 VLESS 流量。", "HY2 uses client quotas. The existing VLESS node plan counts VLESS traffic only.")}</FieldDescription> : null}
       {empty ? <FieldError>{copy(language, "至少选择一种协议。", "Select at least one protocol.")}</FieldError> : null}
       <Button className="w-fit" disabled={active || empty || (!changed && saved.state !== "failed" && command?.state !== "failed")} onClick={() => void save()} type="button" variant="outline">
         {active ? <Spinner data-icon="inline-start" /> : null}{active ? copy(language, "正在更新协议…", "Updating protocols…") : copy(language, "保存协议", "Save protocols")}

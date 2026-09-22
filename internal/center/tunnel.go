@@ -194,7 +194,7 @@ func tunnelIngressForNode(ctx context.Context, queryer networkQueryer, agentID s
 		if protocol != "http" && protocol != "https" {
 			return nil, errors.New("center: Tunnel connector received a non-Web service")
 		}
-		endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, agentID, containerPort, endpoint)
+		endpoint = canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, agentID, serviceName, containerPort, endpoint)
 		if _, _, err := net.SplitHostPort(endpoint); err != nil {
 			return nil, errors.New("center: Tunnel connector service endpoint is invalid")
 		}

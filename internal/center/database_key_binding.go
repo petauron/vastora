@@ -73,6 +73,15 @@ func verifyCenterEncryptedState(ctx context.Context, db *sql.DB, key []byte) err
 		{"deployments", []string{"id", "secret_id"}, `SELECT secret_id, 'deployment:' || id FROM deployments WHERE secret_id IS NOT NULL`},
 		{"application_credential_rotations", []string{"id", "secret_id"}, `SELECT secret_id, 'credential-rotation:' || id FROM application_credential_rotations WHERE secret_id IS NOT NULL`},
 		{"application_commands", []string{"id", "result_secret_id"}, `SELECT result_secret_id, 'application-command:' || id FROM application_commands WHERE result_secret_id IS NOT NULL`},
+		{"three_x_ui_node_protocols", []string{"service_id", "certificate_secret_id"}, `SELECT certificate_secret_id, 'node-protocol-certificate:' || service_id FROM three_x_ui_node_protocols WHERE certificate_secret_id IS NOT NULL`},
+		{"meridian_cutover", []string{"import_secret_id"}, `SELECT import_secret_id, 'meridian-cutover-import:v1' FROM meridian_cutover WHERE import_secret_id IS NOT NULL`},
+		{"meridian_accounts", []string{"id", "subscription_token_secret_id"}, `SELECT subscription_token_secret_id, 'meridian-account:' || id FROM meridian_accounts`},
+		{"meridian_credentials", []string{"id", "protocol_secret_id"}, `SELECT protocol_secret_id, 'meridian-credential:' || id FROM meridian_credentials`},
+		{"meridian_credentials", []string{"id", "hy2_auth_secret_id"}, `SELECT hy2_auth_secret_id, 'meridian-credential-hy2:' || id FROM meridian_credentials WHERE hy2_auth_secret_id IS NOT NULL`},
+		{"meridian_endpoints", []string{"id", "private_key_secret_id"}, `SELECT private_key_secret_id, 'meridian-endpoint:' || id FROM meridian_endpoints`},
+		{"meridian_endpoints", []string{"id", "hy2_certificate_secret_id"}, `SELECT hy2_certificate_secret_id, 'meridian-hy2-certificate:' || id FROM meridian_endpoints WHERE hy2_certificate_secret_id IS NOT NULL`},
+		{"meridian_endpoints", []string{"id", "hy2_private_key_secret_id"}, `SELECT hy2_private_key_secret_id, 'meridian-hy2-private-key:' || id FROM meridian_endpoints WHERE hy2_private_key_secret_id IS NOT NULL`},
+		{"meridian_subscription_snapshots", []string{"account_id", "secret_id"}, `SELECT secret_id, 'meridian-subscription-snapshot:' || account_id FROM meridian_subscription_snapshots`},
 		{"settings", []string{"key", "value"}, `SELECT value, CASE key WHEN 'official_catalog_signing_key' THEN 'official-catalog-signing-key' WHEN 'system_center_certificate_secret_id' THEN 'system-certificate:center' END FROM settings WHERE key IN ('official_catalog_signing_key', 'system_center_certificate_secret_id')`},
 	}
 	for _, specification := range queries {

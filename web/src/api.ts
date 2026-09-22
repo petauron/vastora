@@ -4,6 +4,7 @@ import type { LandingView } from "./landing-types";
 import type { IPQualityCheck } from "./ip-quality-types";
 import type { NodeDiagnosticCheck } from "./node-diagnostics-types";
 import type { NodeProtocols } from "./types";
+import type { MeridianAccountCreated, MeridianAccountInput, MeridianAccount, MeridianEndpoint, MeridianInventory, MeridianRouteGrant } from "./meridian-types";
 import { isHelperExecution, type ExecutionClaimControl, type ExecutionDisposition, type ExecutionPage, type LegacyReceiptView } from "./execution-types";
 
 export class APIError extends Error {
@@ -83,8 +84,8 @@ export const api = {
       : input.action === "confirm-completed" ? "confirm-completed" : "abandon";
     return request(`/api/v1/executions/${encodeURIComponent(id)}/${endpoint}`, { method: "POST", body: JSON.stringify(input) });
   },
-  landing: (signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", { signal }),
-  selectLanding: (nodeIds: string[], revision: number, landingRegionCodes: Record<string, string>, signal?: AbortSignal) => request<LandingView>("/api/v1/three-x-ui/landing", {
+  landing: (signal?: AbortSignal) => request<LandingView>("/api/v1/meridian/landing", { signal }),
+  selectLanding: (nodeIds: string[], revision: number, landingRegionCodes: Record<string, string>, signal?: AbortSignal) => request<LandingView>("/api/v1/meridian/landing", {
     method: "PUT", body: JSON.stringify({ nodeIds, revision, landingRegionCodes }), signal
   }),
   setupStatus: () => request<SetupStatus>("/api/v1/setup/status"),
@@ -142,6 +143,15 @@ export const api = {
 	removeOfflineAgent: (agentId: string, confirmation: string) => request<{ removing: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}/remove`, { method: "POST", body: JSON.stringify({ confirmation }) }),
 	deleteAgent: (agentId: string) => request<{ deleted: boolean }>(`/api/v1/agents/${encodeURIComponent(agentId)}`, { method: "DELETE", body: "{}" }),
 	applications: (signal?: AbortSignal) => request<{ applications: Application[] }>("/api/v1/applications", { signal }),
+	meridian: (signal?: AbortSignal) => request<MeridianInventory>("/api/v1/meridian", { signal }),
+	startMeridianCutover: () => request<MeridianInventory["cutover"]>("/api/v1/meridian/cutover", { method: "POST", body: "{}" }),
+	createMeridianEndpoint: (input: { applicationId: string; verificationId: string; targetIp: string; advertiseHost?: string; targetHost: string; serverName: string; fingerprint?: string; regionCode: string; name: string }) => request<MeridianEndpoint>("/api/v1/meridian/endpoints", { method: "POST", body: JSON.stringify(input) }),
+	updateMeridianEndpointName: (id: string, input: { regionCode: string; name: string }) => request<MeridianEndpoint>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
+	recoverMeridianEndpoint: (id: string) => request<{ queued: boolean }>(`/api/v1/meridian/endpoints/${encodeURIComponent(id)}/recover`, { method: "POST", body: JSON.stringify({ confirmCenterAuthority: true, executionStopped: true }) }),
+	createMeridianAccount: (input: MeridianAccountInput) => request<MeridianAccountCreated>("/api/v1/meridian/accounts", { method: "POST", body: JSON.stringify(input) }),
+	updateMeridianAccount: (id: string, input: Required<MeridianAccountInput>) => request<MeridianAccount>(`/api/v1/meridian/accounts/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(input) }),
+	createMeridianRoute: (input: { accountId: string; endpointId: string; egressNodeId: string; hideNative: boolean }) => request<MeridianRouteGrant>("/api/v1/meridian/routes", { method: "POST", body: JSON.stringify(input) }),
+	revokeMeridianRoute: (id: string) => request<{ accepted: boolean }>(`/api/v1/meridian/routes/${encodeURIComponent(id)}`, { method: "DELETE", body: "{}" }),
 	revealApplicationCredentials: (applicationId: string, currentPassword: string) => request<ApplicationCredentials>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/reveal`, { method: "POST", body: JSON.stringify({ currentPassword }) }),
 	rotateApplicationCredentials: (applicationId: string, target: "management" | "client", currentPassword: string, operationKey: string) => request<ApplicationCredentialRotation>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/rotate`, { method: "POST", headers: { "Idempotency-Key": operationKey }, body: JSON.stringify({ target, currentPassword, confirm: true }) }),
 	applicationCredentialRotation: (applicationId: string, rotationId: string, signal?: AbortSignal) => request<ApplicationCredentialRotation>(`/api/v1/applications/${encodeURIComponent(applicationId)}/credentials/rotations/${encodeURIComponent(rotationId)}`, { signal }),

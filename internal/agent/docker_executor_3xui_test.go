@@ -95,6 +95,7 @@ type fakeThreeXUIContainer struct {
 	name    string
 	running bool
 	labels  map[string]string
+	image   string
 }
 
 const threeXUITestApplicationID = "application-1"
@@ -152,7 +153,7 @@ func newFakeThreeXUIContainerEngine(t *testing.T, withCurrent bool) *fakeThreeXU
 }
 
 func (engine *fakeThreeXUIContainerEngine) add(id, name string, running bool) {
-	engine.containers[id] = &fakeThreeXUIContainer{id: id, name: name, running: running, labels: threeXUITestLabels("deployment-1")}
+	engine.containers[id] = &fakeThreeXUIContainer{id: id, name: name, running: running, labels: threeXUITestLabels("deployment-1"), image: "3x-ui:test"}
 	engine.names[name] = id
 }
 
@@ -177,6 +178,7 @@ func (engine *fakeThreeXUIContainerEngine) ContainerCreate(_ context.Context, op
 	engine.add(id, options.Name, false)
 	if options.Config != nil {
 		engine.containers[id].labels = maps.Clone(options.Config.Labels)
+		engine.containers[id].image = options.Config.Image
 	}
 	engine.volumeExists = true
 	return client.ContainerCreateResult{ID: id}, nil
@@ -255,7 +257,7 @@ func (engine *fakeThreeXUIContainerEngine) ContainerInspect(_ context.Context, v
 	if err != nil {
 		return client.ContainerInspectResult{}, err
 	}
-	return client.ContainerInspectResult{Container: container.InspectResponse{ID: entry.id, Name: "/" + entry.name, State: &container.State{Running: entry.running}, Config: &container.Config{Labels: maps.Clone(entry.labels)}, HostConfig: &container.HostConfig{}}}, nil
+	return client.ContainerInspectResult{Container: container.InspectResponse{ID: entry.id, Name: "/" + entry.name, State: &container.State{Running: entry.running}, Config: &container.Config{Image: entry.image, Labels: maps.Clone(entry.labels)}, HostConfig: &container.HostConfig{}}}, nil
 }
 
 func (engine *fakeThreeXUIContainerEngine) CopyFromContainer(_ context.Context, value string, options client.CopyFromContainerOptions) (client.CopyFromContainerResult, error) {

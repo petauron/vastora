@@ -19,7 +19,7 @@ import { catalogInstallBlocked, copy, StateBadge } from "./shared";
 import { AppIdentityBadge } from "./AppIdentity";
 import { RegionFlag } from "./RegionFlag";
 import { IPQualityButton, IPQualityProvider } from "./IPQuality";
-import { canCreateRealityNode, publicationNeedsAttention, serviceNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
+import { canCreateRealityNode, meridianAppKey, publicationNeedsAttention, serviceNeedsAttention, showInstalledNode, threeXUIAppKey, type InstalledAppGroup, type InstalledAppInstance } from "./installed-apps-model";
 
 type InstalledAppsProps = {
   agents: AgentView[];
@@ -36,7 +36,7 @@ export function InstalledApps({ groups, agents, ...props }: InstalledAppsProps) 
   const [selectedID, setSelectedID] = useState(groups[0]?.id ?? "");
   const selected = groups.find((group) => group.id === selectedID) ?? groups[0];
   const showSite = new Set(groups.flatMap((group) => group.instances.map((instance) => instance.application.siteId))).size > 1;
-  return <IPQualityProvider enabled={selected?.appKey === threeXUIAppKey} agents={agents}><LandingProvider enabled={groups.some((group) => group.appKey === threeXUIAppKey)} agents={agents}>
+  return <IPQualityProvider enabled={selected?.appKey === threeXUIAppKey || selected?.appKey === meridianAppKey} agents={agents}><LandingProvider enabled={groups.some((group) => group.appKey === threeXUIAppKey || group.appKey === meridianAppKey)} agents={agents}>
     <Tabs value={selected?.id ?? ""} onValueChange={(value) => { if (typeof value === "string") setSelectedID(value); }} className="apps-chooser gap-4">
       <div className="max-w-full overflow-x-auto pb-1">
         <TabsList variant="line" aria-label={copy(props.language, "已安装的应用", "Installed applications")}>
@@ -57,7 +57,8 @@ export function InstalledApps({ groups, agents, ...props }: InstalledAppsProps) 
 function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrade, onClients, onReality, showSite }: Omit<InstalledAppsProps, "groups" | "agents"> & { group: InstalledAppGroup; showSite: boolean }) {
   const headingID = useId();
   const [query, setQuery] = useState("");
-  const threeXUI = group.appKey === threeXUIAppKey;
+  const legacyThreeXUI = group.appKey === threeXUIAppKey;
+  const threeXUI = legacyThreeXUI || group.appKey === meridianAppKey;
   const nodeCount = group.instances.filter(showInstalledNode).length;
   const attentionCount = group.instances.reduce((count, instance) => count + instance.publications.filter(publicationNeedsAttention).length, 0);
   const attentionInstance = group.instances.find((instance) => instance.publications.some(publicationNeedsAttention));
@@ -83,7 +84,7 @@ function InstalledApplicationGroup({ group, language, mutate, onManage, onUpgrad
       </Button> : null}
     </Header>
     <Content className={cn("flex min-w-0 flex-col", threeXUI ? "gap-3" : "gap-4")}>
-      {threeXUI && group.legacyControllers.length > 0 ? <ControllerConvergence group={group} language={language} onManage={onManage} /> : null}
+      {legacyThreeXUI && group.legacyControllers.length > 0 ? <ControllerConvergence group={group} language={language} onManage={onManage} /> : null}
       {threeXUI ? <LandingNotice language={language} /> : null}
       <div className={cn("flex flex-wrap items-center gap-3", threeXUI ? "apps-three-xui-toolbar py-2" : "justify-between")}>
         <InputGroup className={threeXUI ? "w-full sm:w-48" : "max-w-xs"}>
@@ -151,7 +152,7 @@ function ControllerBand({ instance, language, onClients, onManage, onUpgrade, ch
     </div>
     <div className="flex flex-wrap items-center gap-2">
       <ApplicationUpdate instance={instance} language={language} onUpgrade={onUpgrade} />
-      <Button disabled={locked} onClick={() => onClients(application)} size="sm" variant="secondary">{copy(language, "客户端与订阅", "Clients & subscriptions")}</Button>
+      <Button disabled={locked} onClick={() => onClients(application)} size="sm" variant="secondary">{application.appKey === meridianAppKey ? copy(language, "账号与订阅", "Accounts & subscriptions") : copy(language, "客户端与订阅", "Clients & subscriptions")}</Button>
       {children}
       {panelPublication?.accessUrl ? <a className={buttonVariants({ size: "sm", variant: "ghost" })} href={panelPublication.accessUrl} rel="noreferrer" target="_blank">
         {copy(language, "打开面板", "Open panel")}<ExternalLinkIcon aria-hidden="true" data-icon="inline-end" />
@@ -271,9 +272,9 @@ function InstalledInstanceRow({ instance, language, mutate, onManage, onUpgrade,
         {pendingPublication && !hy2Only ? <Button aria-label={copy(language, `检查 ${name} 的入口`, `Check ${name} access`)} className="max-md:min-h-11" disabled={locked || checking} onClick={() => void check()} size="sm" variant="outline">
           {checking ? <Spinner aria-hidden="true" data-icon="inline-start" /> : null}{copy(language, "检查", "Check")}
         </Button> : null}
-        {needsVLESS ? <Button className="max-md:min-h-11" disabled={!canCreateRealityNode(instance)} onClick={() => onReality(application)} size="sm" variant="outline">
-          <RadioTowerIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}
-        </Button> : null}
+        {needsVLESS ? application.appKey === meridianAppKey
+          ? <Button className="max-md:min-h-11" disabled={locked} onClick={() => onManage(application)} size="sm" variant="outline"><RadioTowerIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "配置入口", "Configure entry")}</Button>
+          : <Button className="max-md:min-h-11" disabled={!canCreateRealityNode(instance)} onClick={() => onReality(application)} size="sm" variant="outline"><RadioTowerIcon aria-hidden="true" data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button> : null}
         <Button aria-label={copy(language, `管理 ${name} 应用`, `Manage ${name} application`)} className="max-lg:min-h-11 max-lg:min-w-11" onClick={() => onManage(application)} size="icon-sm" variant="ghost">
           <EllipsisIcon aria-hidden="true" />
         </Button>

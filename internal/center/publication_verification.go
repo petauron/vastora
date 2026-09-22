@@ -319,6 +319,7 @@ func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRev
 		return PublicationView{}, err
 	}
 	defer tx.Rollback()
+	readyAt := s.now().UTC()
 	query := `UPDATE publications SET applied_revision = desired_revision, status = 'ready', last_error = '', updated_at = ?
 		WHERE id = ? AND status <> 'stopped' AND EXISTS (
 			SELECT 1 FROM services s JOIN applications a ON a.id = s.application_id
@@ -326,7 +327,7 @@ func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRev
 			AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.application_id = a.id AND (d.state IN ('pending', 'running') OR d.reconciliation_required = 1))
 			AND NOT EXISTS (SELECT 1 FROM application_commands c WHERE c.application_id = a.id AND (c.state IN ('pending', 'running') OR c.reconciliation_required = 1))
 		)`
-	arguments := []any{s.now().UTC().Format(time.RFC3339Nano), id}
+	arguments := []any{readyAt.Format(time.RFC3339Nano), id}
 	if expectedRevision > 0 {
 		query += ` AND desired_revision = ?`
 		arguments = append(arguments, expectedRevision)
@@ -336,10 +337,13 @@ func (s *Store) markPublicationReady(ctx context.Context, id string, expectedRev
 		return PublicationView{}, err
 	}
 	if changed, _ := result.RowsAffected(); changed == 1 {
-		if err := s.completeNodeListenerMigrationPublication(ctx, tx, id, s.now().UTC()); err != nil {
+		if err := s.completeNodeListenerMigrationPublication(ctx, tx, id, readyAt); err != nil {
 			return PublicationView{}, err
 		}
-		if err := s.retireMigratedTunnelConnector(ctx, tx, id, s.now().UTC()); err != nil {
+		if err := s.retireMigratedTunnelConnector(ctx, tx, id, readyAt); err != nil {
+			return PublicationView{}, err
+		}
+		if err := s.reconcileMeridianCutoverInTx(ctx, tx, readyAt.Format(time.RFC3339Nano)); err != nil {
 			return PublicationView{}, err
 		}
 	}

@@ -19,7 +19,7 @@ func TestMultipleLandingMigrationPreservesSelectionAndBacksUp(t *testing.T) {
 		t.Run("selected_"+nodeID, func(t *testing.T) {
 			directory := t.TempDir()
 			legacy := legacyMigrationStore(t, directory, 66)
-			if _, err := legacy.db.Exec(`INSERT INTO settings(key,value) VALUES(?,json_object('nodeId',?,'revision',9))`, landingSelectionKey, nodeID); err != nil {
+			if _, err := legacy.db.Exec(`INSERT INTO settings(key,value) VALUES(?,json_object('nodeId',?,'revision',9))`, "three_x_ui_landing_selection", nodeID); err != nil {
 				t.Fatal(err)
 			}
 			if err := legacy.Close(); err != nil {
@@ -53,7 +53,7 @@ func TestMultipleLandingMigrationPreservesSelectionAndBacksUp(t *testing.T) {
 			}
 			defer backup.Close()
 			var old string
-			if err := backup.QueryRow(`SELECT json_extract(value,'$.nodeId') FROM settings WHERE key=?`, landingSelectionKey).Scan(&old); err != nil || old != nodeID {
+			if err := backup.QueryRow(`SELECT json_extract(value,'$.nodeId') FROM settings WHERE key=?`, "three_x_ui_landing_selection").Scan(&old); err != nil || old != nodeID {
 				t.Fatalf("original selection missing from backup: %v", err)
 			}
 		})
@@ -63,7 +63,7 @@ func TestMultipleLandingMigrationPreservesSelectionAndBacksUp(t *testing.T) {
 func TestMultipleLandingMigrationRejectsInvalidSelection(t *testing.T) {
 	directory := t.TempDir()
 	legacy := legacyMigrationStore(t, directory, 66)
-	if _, err := legacy.db.Exec(`INSERT INTO settings(key,value) VALUES(?,'{"revision":9}')`, landingSelectionKey); err != nil {
+	if _, err := legacy.db.Exec(`INSERT INTO settings(key,value) VALUES(?,'{"revision":9}')`, "three_x_ui_landing_selection"); err != nil {
 		t.Fatal(err)
 	}
 	if err := legacy.Close(); err != nil {

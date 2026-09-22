@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Application, Publication, Service } from "../types";
-import { canCreateRealityNode, installedAppGroups, publicationNeedsAttention, showInstalledNode, threeXUIAppKey } from "./installed-apps-model";
+import { canCreateRealityNode, installedAppGroups, meridianAppKey, publicationNeedsAttention, showInstalledNode, threeXUIAppKey } from "./installed-apps-model";
 
 const application = (id: string, overrides: Partial<Application> = {}): Application => ({
   id, name: "3x-ui", nodeId: id, siteId: "site-a", appKey: threeXUIAppKey,
@@ -36,6 +36,23 @@ describe("installed application grouping", () => {
     expect(canCreateRealityNode(group.controller!)).toBe(true);
     input.services.push(service("new-local", "controller"));
     expect(installedAppGroups(input)[0].instances.filter(showInstalledNode)).toHaveLength(2);
+  });
+
+  it("separates the Meridian subscription host from native entry nodes", () => {
+    const input = data();
+    input.applications = [
+      application("meridian-controller", { appKey: meridianAppKey, name: "Meridian", role: undefined }),
+      application("meridian-entry", { appKey: meridianAppKey, name: "Meridian", role: undefined }),
+    ];
+    input.services = [
+      service("meridian-subscription", "meridian-controller", { protocol: "http", appProtocol: "meridian/subscription", name: "subscription" }),
+      service("meridian-inbound", "meridian-entry", { appProtocol: "meridian/entry", name: "inbound-1" }),
+    ];
+
+    const group = installedAppGroups(input)[0];
+    expect(group.controller?.application.id).toBe("meridian-controller");
+    expect(group.instances.filter(showInstalledNode).map((instance) => instance.application.id)).toEqual(["meridian-entry"]);
+    expect(group.instances.find((instance) => instance.application.id === "meridian-entry")?.realityServices.map((value) => value.id)).toEqual(["meridian-inbound"]);
   });
   it("puts the actual controller first and counts its local node only once", () => {
     const input = data();

@@ -150,8 +150,8 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		return PublicationView{}, errors.New("center: service must be running before it can be published")
 	}
 	cpaClientAPI := isCPAClientAPIService(appKey, serviceName)
-	if appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster && serviceName == "subscription" && !managedSubscription {
-		return PublicationView{}, errors.New("center: use the public subscription workflow for the 3x-ui subscription service")
+	if (appKey == threeXUIAppKey && applicationRole == threeXUIRoleMaster || appKey == meridianAppKey) && serviceName == meridianSubscriptionServiceName && !managedSubscription {
+		return PublicationView{}, errors.New("center: use the dedicated public subscription workflow for this service")
 	}
 	if cpaClientAPI && (input.Kind != publicationCloudflare || input.DNSProvider != "cloudflare" || input.Ingress.Owner != ingressTunnelConnector) {
 		return PublicationView{}, errors.New("center: CPA client API is published only through Cloudflare Tunnel")
@@ -160,6 +160,13 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 		var guardStatus string
 		if err := tx.QueryRowContext(ctx, `SELECT status FROM three_x_ui_reality_guards WHERE service_id = ?`, input.ServiceID).Scan(&guardStatus); err != nil || guardStatus != "ready" {
 			return PublicationView{}, errors.New("center: REALITY service must have a ready fallback guard before publication")
+		}
+	} else if appProtocol == meridianEntryProtocol {
+		var endpointStatus string
+		var desiredRevision, appliedRevision int64
+		var runtimeHealthy int
+		if err := tx.QueryRowContext(ctx, `SELECT status,desired_revision,applied_revision,runtime_healthy FROM meridian_endpoints WHERE service_id=? AND status<>'retired'`, input.ServiceID).Scan(&endpointStatus, &desiredRevision, &appliedRevision, &runtimeHealthy); err != nil || endpointStatus != "ready" || runtimeHealthy != 1 || desiredRevision != appliedRevision {
+			return PublicationView{}, errors.New("center: Meridian endpoint must be fully applied before publication")
 		}
 	}
 	if err := s.ensureServicePublicationChangeAllowed(ctx, tx, input.ServiceID); err != nil {
@@ -273,8 +280,9 @@ func (s *Store) createPublication(ctx context.Context, input PublicationInput, m
 			return PublicationView{}, err
 		}
 		_, port, _ := net.SplitHostPort(endpoint)
-		internalThreeXUIReality := appNodeID == gatewayID && appKey == threeXUIAppKey && appProtocol == "vless/tcp/reality"
-		if appNodeID == gatewayID && port == "443" && !internalThreeXUIReality {
+		internalManagedReality := appNodeID == gatewayID && (appKey == threeXUIAppKey && appProtocol == "vless/tcp/reality" ||
+			appKey == meridianAppKey && appProtocol == meridianEntryProtocol)
+		if appNodeID == gatewayID && port == "443" && !internalManagedReality {
 			return PublicationView{}, errors.New("center: move the application inbound away from port 443 before enabling the node-direct shared listener")
 		}
 		occupied, err := gatewayHasDirectRaw443(ctx, tx, gatewayID)
@@ -492,7 +500,11 @@ func (s *Store) StopPublication(ctx context.Context, id string) error {
 	}
 	defer tx.Rollback()
 	var protected int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications pub WHERE pub.id=? AND pub.kind='public_shared_443' AND (EXISTS(SELECT 1 FROM three_x_ui_node_protocols p WHERE p.service_id=pub.service_id AND p.hy2_enabled=1) OR EXISTS(SELECT 1 FROM application_commands c WHERE json_extract(c.input_json,'$.serviceId')=pub.service_id AND c.kind='3xui.protocols.configure' AND (c.state IN ('pending','running') OR c.reconciliation_required=1)))`, id).Scan(&protected); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications pub WHERE pub.id=? AND pub.kind='public_shared_443' AND (
+		EXISTS(SELECT 1 FROM three_x_ui_node_protocols p WHERE p.service_id=pub.service_id AND p.hy2_enabled=1)
+		OR EXISTS(SELECT 1 FROM meridian_endpoints endpoint WHERE endpoint.service_id=pub.service_id AND endpoint.hy2_enabled=1 AND endpoint.status<>'retired')
+		OR EXISTS(SELECT 1 FROM application_commands c WHERE json_extract(c.input_json,'$.serviceId')=pub.service_id AND c.kind='3xui.protocols.configure' AND (c.state IN ('pending','running') OR c.reconciliation_required=1))
+	)`, id).Scan(&protected); err != nil {
 		return err
 	}
 	if protected > 0 {
@@ -624,7 +636,7 @@ func (s *Store) publicationAccessURL(ctx context.Context, publication Publicatio
 			break
 		}
 	}
-	if appKey == threeXUIAppKey && serviceName == "subscription" {
+	if (appKey == threeXUIAppKey || appKey == meridianAppKey) && serviceName == meridianSubscriptionServiceName {
 		path = "/sub/"
 	} else if isCPAClientAPIService(appKey, serviceName) {
 		path = cpaClientAPIPath
@@ -678,7 +690,8 @@ func (s *Store) listPublications(ctx context.Context, apps []AppView) ([]Publica
 			homepagePaths[app.Key+"\x00"+app.App.Homepage.Service] = app.App.Homepage.Path
 		}
 	}
-	homepagePaths[threeXUIAppKey+"\x00subscription"] = "/sub/"
+	homepagePaths[threeXUIAppKey+"\x00"+meridianSubscriptionServiceName] = "/sub/"
+	homepagePaths[meridianAppKey+"\x00"+meridianSubscriptionServiceName] = "/sub/"
 	homepagePaths[cpaAppKey+"\x00"+cpaClientAPIServiceName] = cpaClientAPIPath
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		p.id, p.service_id, p.kind, p.ingress_owner, COALESCE(p.entry_node_id, ''), p.hostname, p.sni_hostname, p.dns_provider, p.dns_record_id,

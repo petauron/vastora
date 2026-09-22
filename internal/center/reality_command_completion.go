@@ -52,7 +52,7 @@ func (s *Store) completeRealityCreateCommand(ctx context.Context, commit project
 			}
 			serviceEndpoint := net.JoinHostPort(result.Listen, fmt.Sprint(result.Port))
 			if applicationRole == threeXUIRoleWorker {
-				serviceEndpoint = net.JoinHostPort(dockerruntime.XrayAlias, fmt.Sprint(result.Port))
+				serviceEndpoint = net.JoinHostPort(dockerruntime.LegacyXrayAlias, fmt.Sprint(result.Port))
 			}
 			if err == nil && serviceID == "" {
 				serviceID, err = randomToken(18)

@@ -28,7 +28,7 @@ func PurgeManagedRuntime(ctx context.Context, deleteApplicationData bool, author
 		}
 	}
 	var steps []runtimeCleanupStep
-	for _, appKey := range []string{keeperKey, cpaKey, threeXUIKey} {
+	for _, appKey := range []string{keeperKey, cpaKey, meridianKey, threeXUIKey} {
 		steps = append(steps, runtimeCleanupStep{appKey, func(ctx context.Context) error {
 			return uninstallDockerApp(ctx, docker, appKey, "", deleteApplicationData)
 		}})
