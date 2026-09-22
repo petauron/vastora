@@ -3,12 +3,14 @@ package center
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/petauron/vastora/internal/dockerruntime"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -90,6 +92,82 @@ func TestMeridianCutoverFencesNewLegacyMutations(t *testing.T) {
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='backup',subscription_authority='legacy',legacy_controller_application_id=?,backup_revision=1,updated_at=? WHERE id=1`, applicationID, stamp); err != nil {
 		t.Fatal(err)
+	}
+	serverState := landing.ServerState{NodeID: node.ID, Revision: 1, Plan: &landing.ServerPlan{Revision: 1, Address: "100.64.0.53"}}
+	proxyState := landing.DesiredState{NodeID: node.ID, Revision: 1}
+	serverJSON, err := json.Marshal(serverState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyJSON, err := json.Marshal(proxyState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,desired_json,status,updated_at) VALUES(?,1,?,'pending',?)`, node.ID, serverJSON, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_proxy_states(node_id,application_id,landing_node_id,server_revision,source_address,desired_revision,desired_json,status,updated_at) VALUES(?,?,?,1,'100.64.0.54',1,?,'pending',?)`, node.ID, applicationID, node.ID, proxyJSON, stamp); err != nil {
+		t.Fatal(err)
+	}
+	landingTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.reconcileGlobalLandingPool(ctx, landingTx, true); err != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing reconciliation did not yield to Meridian: %v", err)
+	}
+	if err := store.queueLandingServer(ctx, landingTx, node.ID, serverState.Plan); err != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing server queue did not yield to Meridian: %v", err)
+	}
+	if err := store.queueLandingClientCommand(ctx, landingTx, landingGrantRecord{}, "prepare"); err != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing client queue did not yield to Meridian: %v", err)
+	}
+	if err := store.queueNextLandingClientCommand(ctx, landingTx, node.ID); err != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing client refill did not yield to Meridian: %v", err)
+	}
+	if err := store.queueClientLandingRoutes(ctx, landingTx, applicationID); err != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing route queue did not yield to Meridian: %v", err)
+	}
+	if err := store.refreshClientLandingSources(ctx, landingTx, node.ID); err != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing source refresh did not yield to Meridian: %v", err)
+	}
+	serverTask, err := store.claimLandingServerTask(ctx, landingTx, node.ID)
+	if err != nil || serverTask != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing server task crossed cutover fence: task=%#v err=%v", serverTask, err)
+	}
+	proxyTask, err := store.claimLandingProxyTask(ctx, landingTx, node.ID)
+	if err != nil || proxyTask != nil {
+		_ = landingTx.Rollback()
+		t.Fatalf("legacy landing proxy task crossed cutover fence: task=%#v err=%v", proxyTask, err)
+	}
+	if err := landingTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var serverAttempt, proxyAttempt int
+	if err := store.db.QueryRowContext(ctx, `SELECT attempt FROM landing_server_states WHERE node_id=?`, node.ID).Scan(&serverAttempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT attempt FROM landing_proxy_states WHERE node_id=?`, node.ID).Scan(&proxyAttempt); err != nil {
+		t.Fatal(err)
+	}
+	if serverAttempt != 0 || proxyAttempt != 0 {
+		t.Fatalf("legacy landing attempts changed during cutover: server=%d proxy=%d", serverAttempt, proxyAttempt)
+	}
+	if err := store.SelectLanding(ctx, LandingSelection{}); !errors.Is(err, errMeridianOwnsLegacyLanding) {
+		t.Fatalf("landing selection crossed cutover fence: %v", err)
+	}
+	if err := store.ConfigureLandingProxy(ctx, applicationID, LandingProxyInput{Revision: 1}); !errors.Is(err, errMeridianOwnsLegacyLanding) {
+		t.Fatalf("landing proxy mutation crossed cutover fence: %v", err)
+	}
+	if _, err := store.ConfigureClientLanding(ctx, LandingClientGrantInput{ParentID: "parent", ServiceID: "service", LandingNodeID: node.ID, Mode: landing.FixedMode, Enabled: true, ConfirmSessionReset: true}); !errors.Is(err, errMeridianOwnsLegacyLanding) {
+		t.Fatalf("landing client mutation crossed cutover fence: %v", err)
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {

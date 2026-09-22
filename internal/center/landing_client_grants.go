@@ -117,6 +117,11 @@ func (s *Store) ConfigureClientLanding(ctx context.Context, input LandingClientG
 }
 
 func (s *Store) configureClientLanding(ctx context.Context, tx *sql.Tx, input LandingClientGrantInput, checkBusy bool) (LandingClientGrantView, error) {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return LandingClientGrantView{}, err
+	} else if owns {
+		return LandingClientGrantView{}, errMeridianOwnsLegacyLanding
+	}
 	var controllerID, email string
 	var metadata []byte
 	if err := tx.QueryRowContext(ctx, `SELECT controller_id,email,metadata_json FROM three_x_ui_client_accounts WHERE id=?`, input.ParentID).Scan(&controllerID, &email, &metadata); err != nil {

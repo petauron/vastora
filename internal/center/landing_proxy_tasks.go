@@ -46,6 +46,11 @@ func landingProxyTaskRevision(id string) (int64, bool) {
 }
 
 func (s *Store) claimLandingProxyTask(ctx context.Context, tx *sql.Tx, nodeID string) (*AgentTask, error) {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return nil, err
+	} else if owns {
+		return nil, nil
+	}
 	var revision, attempt int64
 	var encoded []byte
 	err := tx.QueryRowContext(ctx, `SELECT p.desired_revision,p.attempt,p.desired_json FROM landing_proxy_states p
