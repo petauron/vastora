@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.187](https://github.com/petauron/vastora/compare/v0.1.0-alpha.186...v0.1.0-alpha.187) (2026-09-22)
+
+
+### Bug Fixes
+
+* **center:** accept applied landing revisions ([#587](https://github.com/petauron/vastora/issues/587)) ([634a9d6](https://github.com/petauron/vastora/commit/634a9d659e7c3523a632f3ee6b40a7f3a7d59136))
+
 ## [0.1.0-alpha.186](https://github.com/petauron/vastora/compare/v0.1.0-alpha.185...v0.1.0-alpha.186) (2026-09-22)
 
 
