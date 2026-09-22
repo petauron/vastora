@@ -726,6 +726,10 @@ func TestMeridianRouteLifecycleDoesNotBlockUnrelatedSubscriptionEntries(t *testi
 	egressProfile := networking.Profile{ServiceAddress: "100.64.0.45", HeadscaleAddress: "100.64.0.45", EnabledKinds: []string{networking.KindHeadscale}}
 	egress := enrollOrchestrationNode(t, store, "route-egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: egressProfile.ServiceAddress, Interface: "tailscale0", Kind: networking.KindHeadscale}}, egressProfile)
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	// A private address alone does not make this a managed landing runtime.
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, stamp, egress.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,updated_at) VALUES(?,1,1,'{}','ready',?)`, egress.ID, stamp); err != nil {
 		t.Fatal(err)
 	}
