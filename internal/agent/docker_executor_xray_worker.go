@@ -901,7 +901,7 @@ func (s *Store) resumeLegacyXrayWorker(ctx context.Context, dockerSocket string)
 	if err != nil {
 		return err
 	}
-	if installation.ApplicationRole != threeXUIRoleWorker {
+	if installation.ApplicationRole != "worker" {
 		return nil
 	}
 	if installation.ApplicationID != state.ApplicationID {
