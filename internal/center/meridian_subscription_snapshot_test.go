@@ -4,25 +4,31 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/petauron/meridian"
 )
 
 func TestMeridianRecoveryWithoutAvailableSubscriptionDoesNotInventSnapshot(t *testing.T) {
 	store := openOrchestrationStore(t)
 	t.Cleanup(func() { _ = store.Close() })
 	ctx := context.Background()
-	created, err := store.CreateMeridianAccount(ctx, MeridianAccountInput{DisplayName: "Waiting for first entry"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	accountID := created.Account.ID
-	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_accounts SET applied_revision=desired_revision WHERE id=?`, accountID); err != nil {
-		t.Fatal(err)
-	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
+	// Reconstruct an applied account whose entries are no longer available.
+	const accountID = "snapshot-recovery-account"
+	secretID, err := store.putSecret(ctx, tx, []byte("snapshot-recovery-token"), meridianAccountSecretContext(accountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES(?, 'Waiting for restored entry', 1, ?, ?, 1, 1, 'active', ?, ?)`, accountID, secretID, meridian.SubscriptionTokenFingerprint("snapshot-recovery-token"), stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {
 		t.Fatalf("unavailable first entry blocked recovery: %v", err)
 	}
