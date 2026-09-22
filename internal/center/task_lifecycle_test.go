@@ -195,7 +195,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 		{Address: "203.0.113.17", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{ServiceAddress: "10.0.0.17", LANAddress: "10.0.0.17", PublicAddress: "203.0.113.17", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	previousController := enrollOrchestrationNode(t, store, "previous-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
-	deployment := seedLegacyControllerDeployment(t, store, controller, "10.0.0.17", "controller-api-token")
+	deployment := seedLegacyDeployment(t, store, controller, "10.0.0.17", "controller-api-token", threeXUIRoleMaster)
 
 	create := func(name string) (ApplicationCommandView, error) {
 		return createVerifiedRealityCommand(t, store, ctx, RealityCommandInput{
@@ -750,7 +750,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "serialized-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.42", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.42", LANAddress: "10.0.0.42", EnabledKinds: []string{networking.KindLAN}})
-	created := seedLegacyControllerDeployment(t, store, node, "10.0.0.42", "local-api-token")
+	created := seedLegacyDeployment(t, store, node, "10.0.0.42", "local-api-token", threeXUIRoleMaster)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
 		VALUES('active-reality-command', ?, ?, ?, ?, '{}', 'running', ?, ?)`, created.ApplicationID, node.ID, node.ID, realityCommandKind, now, now); err != nil {

@@ -22,15 +22,8 @@ func TestExistingLegacyCrossSiteTopologyPreservesObservationsAndSecrets(t *testi
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET site_id = ? WHERE id = ?`, remoteSite.ID, worker.ID); err != nil {
 		t.Fatal(err)
 	}
-	masterDeployment := seedLegacyControllerDeployment(t, store, master, "10.0.0.90", "master-api-token")
-	workerDeployment := seedLegacyControllerDeployment(t, store, worker, "10.0.0.91", "worker-api-token")
-	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET role='worker' WHERE id=?`, workerDeployment.ApplicationID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM services WHERE application_id=?`, workerDeployment.ApplicationID); err != nil {
-		t.Fatal(err)
-	}
-	selectTestThreeXUIController(t, store, masterDeployment.ApplicationID)
+	masterDeployment := seedLegacyDeployment(t, store, master, "10.0.0.90", "master-api-token", threeXUIRoleMaster)
+	workerDeployment := seedLegacyDeployment(t, store, worker, "10.0.0.91", "worker-api-token", threeXUIRoleWorker)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id,master_application_id,remote_node_id,status,created_at,updated_at)
 		VALUES(?,?,7,'ready','','')`, workerDeployment.ApplicationID, masterDeployment.ApplicationID); err != nil {
 		t.Fatal(err)

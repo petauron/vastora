@@ -343,7 +343,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-			VALUES(?,?,?,?,443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'public','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "inbound-"+endpointID, endpointSecretID, now, now); err != nil {
+			VALUES(?,?,?,?,443,?,443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'public','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "inbound-"+endpointID, endpointID+".example.test", endpointSecretID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		baseID, routeID := "base-"+endpointID, "route-"+endpointID
@@ -377,9 +377,14 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 	insertEndpoint("application-a", "service-a", "endpoint-a", entryA.ID)
 	insertEndpoint("application-b", "service-b", "endpoint-b", entryB.ID)
-	for serviceID, nodeID := range map[string]string{"service-a": entryA.ID, "service-b": entryB.ID} {
+	// Distinct physical entries must not describe the same public transport.
+	// Reusing the UUID across entries is valid; duplicating host/SNI/REALITY is not.
+	for _, publication := range []struct{ serviceID, endpointID, nodeID string }{
+		{"service-a", "endpoint-a", entryA.ID},
+		{"service-b", "endpoint-b", entryB.ID},
+	} {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
-			VALUES(?,?,'public_shared_443','application_node',?,'entry.example.test','www.example.com','manual',0,1,1,'ready',?,?)`, "publication-"+serviceID, serviceID, nodeID, now, now); err != nil {
+			VALUES(?,?,'public_shared_443','application_node',?,?,'www.example.com','manual',0,1,1,'ready',?,?)`, "publication-"+publication.serviceID, publication.serviceID, publication.nodeID, publication.endpointID+".example.test", now, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -479,7 +484,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub/"+otherToken, nil))
 	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
-	if response.Code != http.StatusOK || decodeErr != nil || !strings.Contains(string(decoded), "vless://"+otherProtocolID+"@entry.example.test:443") {
+	if response.Code != http.StatusOK || decodeErr != nil || !strings.Contains(string(decoded), "vless://"+otherProtocolID+"@endpoint-a.example.test:443") {
 		t.Fatalf("shared runtime rebuild withdrew unaffected subscription: status=%d body=%q err=%v", response.Code, decoded, decodeErr)
 	}
 	if _, err := store.MeridianSubscription(ctx, "shared-token"); !errors.Is(err, errMeridianSubscriptionNotFound) {

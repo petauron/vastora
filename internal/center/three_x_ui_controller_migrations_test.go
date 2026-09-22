@@ -15,7 +15,7 @@ func TestLegacyControllerMigrationRejectsRemovedExecutorBeforeChangingState(t *t
 			t.Cleanup(func() { _ = store.Close() })
 			ctx := context.Background()
 			node := enrollOrchestrationNode(t, store, "existing-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.10", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.10", LANAddress: "10.0.0.10", EnabledKinds: []string{networking.KindLAN}})
-			deployment := seedLegacyControllerDeployment(t, store, node, "10.0.0.10", "migration-api-token")
+			deployment := seedLegacyDeployment(t, store, node, "10.0.0.10", "migration-api-token", threeXUIRoleMaster)
 			if archivedCatalog {
 				seedLegacyProxyManifest(t, store)
 			}

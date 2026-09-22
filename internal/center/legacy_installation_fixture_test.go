@@ -11,8 +11,11 @@ import (
 
 // Reconstruct a persisted installation from before Meridian. This does not
 // authorize an obsolete package or execute a new legacy installation.
-func seedLegacyControllerDeployment(t *testing.T, store *Store, node AgentCredential, address, apiToken string) DeploymentView {
+func seedLegacyDeployment(t *testing.T, store *Store, node AgentCredential, address, apiToken, role string) DeploymentView {
 	t.Helper()
+	if role != threeXUIRoleMaster && role != threeXUIRoleWorker {
+		t.Fatalf("invalid historical installation role %q", role)
+	}
 	ctx := context.Background()
 	var siteID string
 	if err := store.db.QueryRowContext(ctx, `SELECT site_id FROM agents WHERE id=?`, node.ID).Scan(&siteID); err != nil {
@@ -31,7 +34,7 @@ func seedLegacyControllerDeployment(t *testing.T, store *Store, node AgentCreden
 	defer tx.Rollback()
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,'Existing subscription controller',?,?,?,'','running','docker','master',?,?)`, applicationID, node.ID, siteID, threeXUIAppKey, stamp, stamp); err != nil {
+		VALUES(?,'Existing proxy installation',?,?,?,'','running','docker',?,?,?)`, applicationID, node.ID, siteID, threeXUIAppKey, role, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,state,created_at,updated_at,application_id)
@@ -50,6 +53,9 @@ func seedLegacyControllerDeployment(t *testing.T, store *Store, node AgentCreden
 		t.Fatal(err)
 	}
 	for name, port := range map[string]int{"panel": 2053, "subscription": 2096} {
+		if role == threeXUIRoleWorker {
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,status,created_at,updated_at)
 			VALUES(?,?,?,?,'http',?,?,?,'catalog','ready',?,?)`, applicationID+"-"+name, applicationID, siteID, name, port, port, fmt.Sprintf("http://%s:%d", address, port), stamp, stamp); err != nil {
 			t.Fatal(err)
@@ -58,6 +64,8 @@ func seedLegacyControllerDeployment(t *testing.T, store *Store, node AgentCreden
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	selectTestThreeXUIController(t, store, applicationID)
+	if role == threeXUIRoleMaster {
+		selectTestThreeXUIController(t, store, applicationID)
+	}
 	return DeploymentView{ID: deploymentID, ApplicationID: applicationID, AgentID: node.ID, AppKey: threeXUIAppKey, State: "succeeded"}
 }

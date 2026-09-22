@@ -182,7 +182,7 @@ func TestReplacingApplicationSecretDeletesTheSupersededSecretRow(t *testing.T) {
 		Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN,
 	}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
 
-	created := seedLegacyControllerDeployment(t, store, node, "10.0.0.93", "first-api-token")
+	created := seedLegacyDeployment(t, store, node, "10.0.0.93", "first-api-token", threeXUIRoleMaster)
 	var previousSecretID string
 	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM application_secrets WHERE application_id = ?`, created.ApplicationID).Scan(&previousSecretID); err != nil {
 		t.Fatal(err)

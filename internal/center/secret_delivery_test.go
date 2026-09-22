@@ -142,14 +142,24 @@ func TestStoredThreeXUICredentialsRequireAdministratorReauthenticationAndAreAudi
 		t.Fatal(err)
 	}
 	node := enrollOrchestrationNode(t, store, "stored-credential-reveal", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
-	deployment := seedLegacyControllerDeployment(t, store, node, "10.0.0.92", "stored-controller-api-token")
+	deployment := seedLegacyDeployment(t, store, node, "10.0.0.92", "stored-controller-api-token", threeXUIRoleMaster)
 	const username, password = "legacy-reveal-user", "legacy-reveal-password-fixture"
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
-	if err := store.storeApplicationSecrets(ctx, tx, deployment.ID, deployment.ApplicationID, map[string]string{"username": username, "password": password, "api_token": "stored-controller-api-token"}, store.now()); err != nil {
+	// Credential reveal reads the completed deployment's encrypted login
+	// material, not the separate application API credential store.
+	encodedCredentials, err := json.Marshal(map[string]string{"username": username, "password": password})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretID, err := store.putSecret(ctx, tx, encodedCredentials, "deployment:"+deployment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET secret_id=? WHERE id=?`, secretID, deployment.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
