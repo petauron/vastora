@@ -714,24 +714,24 @@ func TestTaskIDsAreScopedByAgentAndRevision(t *testing.T) {
 	}
 }
 
-func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
-	store := openLegacyOrchestrationStore(t)
+func TestPulseCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
+	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.40", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.40", LANAddress: "10.0.0.40", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/3x-ui", Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: pulseAppKey, Config: json.RawMessage(`{"public_url":"https://pulse.example.test"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.OneTimeCredentials == nil || created.OneTimeCredentials.Username == "" || len(created.OneTimeCredentials.Password) < 20 {
-		t.Fatalf("3x-ui did not return strong one-time credentials: %#v", created.OneTimeCredentials)
+	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 {
+		t.Fatal("Pulse did not return a strong one-time setup token")
 	}
 	task := claimTask(t, store, node)
 	var secrets map[string]string
-	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets["username"] != created.OneTimeCredentials.Username || secrets["password"] != created.OneTimeCredentials.Password {
-		t.Fatalf("Agent task did not receive matching encrypted credentials: %#v", secrets)
+	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets["setup_token"] != created.OneTimeCredentials.SetupToken {
+		t.Fatal("Agent task did not receive the matching encrypted setup token")
 	}
-	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.40"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.40"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
+	result := json.RawMessage(`{"services":[{"name":"dashboard","protocol":"http","containerPort":8080,"hostPort":18080,"address":"10.0.0.40"}]}`)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -740,7 +740,7 @@ func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(listed)
-	if bytes.Contains(encoded, []byte(created.OneTimeCredentials.Password)) || bytes.Contains(encoded, []byte("local-api-token")) || listed[0].OneTimeCredentials != nil {
+	if len(listed) != 1 || bytes.Contains(encoded, []byte(created.OneTimeCredentials.SetupToken)) || listed[0].OneTimeCredentials != nil {
 		t.Fatalf("deployment list leaked one-time credentials: %s", encoded)
 	}
 }

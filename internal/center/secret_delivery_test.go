@@ -32,13 +32,11 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 		store.Close()
 		t.Fatal(err)
 	}
-	seedLegacyProxyManifest(t, store)
 	node := enrollOrchestrationNode(t, store, "secret-replay", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 	request := DeploymentRequest{
 		AgentID:              node.ID,
-		AppKey:               threeXUIAppKey,
-		Role:                 threeXUIRoleMaster,
-		Config:               json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`),
+		AppKey:               pulseAppKey,
+		Config:               json.RawMessage(`{"public_url":"https://pulse.example.test"}`),
 		Operation:            "install",
 		SecretOperationOwner: "test-admin-session",
 		SecretOperationKey:   "deployment-operation-key-0001",
@@ -70,14 +68,14 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 	}
 	credentials := *results[0].OneTimeCredentials
 	changed := request
-	changed.Config = json.RawMessage(`{"timezone":"UTC","panel_port":2054,"enable_fail2ban":true,"vmess_aead_forced":false}`)
+	changed.Config = json.RawMessage(`{"public_url":"https://changed-pulse.example.test"}`)
 	if _, err := store.CreateDeployment(ctx, changed); err == nil || !strings.Contains(err.Error(), "different operation") {
 		store.Close()
 		t.Fatalf("same key accepted a changed deployment: %v", err)
 	}
 	differentKey := request
 	differentKey.SecretOperationKey = "deployment-operation-key-0002"
-	if _, err := store.CreateDeployment(ctx, differentKey); err == nil || !strings.Contains(err.Error(), "already has a 3x-ui subscription controller") {
+	if _, err := store.CreateDeployment(ctx, differentKey); err == nil {
 		store.Close()
 		t.Fatalf("different key bypassed the deployment conflict: %v", err)
 	}
@@ -87,7 +85,7 @@ func TestDeploymentCredentialsReplayAcrossConcurrencyAndRestartUntilAcknowledged
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(listed)
-	if len(listed) != 1 || !listed[0].OneTimeCredentialsAvailable || listed[0].OneTimeCredentials != nil || bytes.Contains(encoded, []byte(credentials.Username)) || bytes.Contains(encoded, []byte(credentials.Password)) {
+	if len(credentials.SetupToken) < 32 || len(listed) != 1 || !listed[0].OneTimeCredentialsAvailable || listed[0].OneTimeCredentials != nil || bytes.Contains(encoded, []byte(credentials.SetupToken)) {
 		store.Close()
 		t.Fatalf("deployment list exposed credentials or hid recoverability: %s", encoded)
 	}
