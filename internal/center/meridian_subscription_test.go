@@ -255,8 +255,12 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 		VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, meridian.RouteUser(grantID), meridian.Identity(routeSecret), routeSecretID, egress.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,peer_json,status,last_error,updated_at)
-		VALUES(?,1,0,'{}','{}','failed','landing unavailable',?)`, egress.ID, now); err != nil {
+	serverJSON, _ := meridianAppliedLandingFixtureJSON(t, egress.ID, "100.64.0.72", "100.64.0.71")
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET source_peer_json=? WHERE id=?`, []byte(`{"id":"tailnet-filter-entry","publicKey":"nodekey:test-filter-entry","address":"100.64.0.71"}`), endpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,peer_json,status,last_error,updated_at)
+		VALUES(?,1,0,?,'{}','{}','failed','landing unavailable',?)`, egress.ID, serverJSON, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,hide_native,desired_revision,applied_revision,runtime_healthy,status,last_error,created_at,updated_at)

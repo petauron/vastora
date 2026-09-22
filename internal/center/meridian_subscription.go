@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 var errMeridianSubscriptionNotFound = errors.New("center: Meridian subscription is unavailable")
@@ -342,7 +343,8 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 	snapshot := boolInt(cutoverSnapshot)
 	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.endpoint_id,grant_row.egress_node_id,grant_row.base_credential_id,grant_row.route_credential_id,
 		grant_row.mode,grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,grant_row.status,
-		endpoint.applied_revision
+		endpoint.applied_revision,endpoint.source_peer_json,landing.applied_json,landing.desired_json,landing.peer_json,
+		landing.applied_revision,landing.desired_revision,landing.status
 		FROM meridian_route_grants grant_row JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
 		JOIN services service ON service.id=endpoint.service_id
 		JOIN publications publication ON publication.service_id=endpoint.service_id AND publication.kind='public_shared_443'
@@ -350,7 +352,7 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 			AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
 		JOIN landing_server_states landing ON landing.node_id=grant_row.egress_node_id
-			AND landing.status='ready' AND landing.desired_revision=landing.applied_revision
+			AND landing.status IN ('ready','pending','applying')
 		JOIN agents egress_agent ON egress_agent.id=grant_row.egress_node_id
 			AND egress_agent.status='active' AND egress_agent.credential_revoked_at=''
 			AND egress_agent.tailscale_ownership='managed' AND egress_agent.last_seen_at>?
@@ -369,11 +371,27 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 	routes := []meridian.PublishedRoute{}
 	for rows.Next() {
 		var grant meridian.RouteGrant
-		var endpointID, baseID, routeID, status string
+		var endpointID, baseID, routeID, status, landingStatus string
 		var hideNative, enabled, runtimeHealthy int
-		var endpointAppliedRevision uint64
-		if err := rows.Scan(&grant.ID, &endpointID, &grant.EgressID, &baseID, &routeID, &grant.Mode, &hideNative, &enabled, &grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status, &endpointAppliedRevision); err != nil {
+		var endpointAppliedRevision, landingAppliedRevision, landingDesiredRevision uint64
+		var sourceJSON, landingAppliedJSON, landingDesiredJSON, landingPeerJSON []byte
+		if err := rows.Scan(&grant.ID, &endpointID, &grant.EgressID, &baseID, &routeID, &grant.Mode, &hideNative, &enabled, &grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status,
+			&endpointAppliedRevision, &sourceJSON, &landingAppliedJSON, &landingDesiredJSON, &landingPeerJSON, &landingAppliedRevision, &landingDesiredRevision, &landingStatus); err != nil {
 			return nil, err
+		}
+		legacySnapshot := cutoverSnapshot && endpointAppliedRevision == 0
+		if legacySnapshot {
+			// This historical snapshot retains the pre-switch read boundary; it
+			// cannot authorize a newly added source from an unapplied plan.
+			if landingStatus != "ready" || landingDesiredRevision != landingAppliedRevision {
+				continue
+			}
+		} else {
+			var source, peer landing.PeerIdentity
+			if json.Unmarshal(sourceJSON, &source) != nil || json.Unmarshal(landingPeerJSON, &peer) != nil ||
+				!meridianLandingSourceAuthorized(landingAppliedJSON, landingDesiredJSON, grant.EgressID, landingAppliedRevision, source, peer) {
+				continue
+			}
 		}
 		base, baseOK := credentials[baseID]
 		route, routeOK := credentials[routeID]
@@ -382,7 +400,6 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 		}
 		grant.AccountID, grant.EntryID, grant.InboundTag = accountID, base.Material.Credential.EntryID, base.RealityEndpoint.InboundTag
 		grant.Base, grant.Route = base.Material.Credential, route.Material.Credential
-		legacySnapshot := cutoverSnapshot && endpointAppliedRevision == 0
 		grant.HideNative, grant.Enabled, grant.RuntimeGood = hideNative == 1, enabled == 1, legacySnapshot || runtimeHealthy == 1 && status == "ready"
 		if legacySnapshot {
 			// This is the imported, still-running legacy publication, not a

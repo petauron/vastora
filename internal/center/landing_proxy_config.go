@@ -205,30 +205,7 @@ func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicati
 // Called only after the proxy confirms restoration. Use the stored source
 // snapshot, not the node's possibly changed network profile.
 func (s *Store) removeLandingSource(ctx context.Context, tx *sql.Tx, owner, source string) error {
-	var grants int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM landing_client_grants WHERE landing_node_id=? AND json_extract(source_peer_json,'$.address')=? AND status<>'revoked'`, owner, source).Scan(&grants); err != nil {
-		return err
-	}
-	if grants > 0 {
-		return s.refreshClientLandingSources(ctx, tx, owner)
-	}
-	var encoded []byte
-	if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, owner).Scan(&encoded); errors.Is(err, sql.ErrNoRows) {
-		return nil // Cleanup must not require a removed landing service.
-	} else if err != nil {
-		return err
-	}
-	var server landing.ServerState
-	if json.Unmarshal(encoded, &server) != nil || server.Validate() != nil {
-		return errors.New("center: invalid landing source configuration")
-	}
-	if server.Plan == nil {
-		return nil
-	}
-	count := len(server.Plan.Sources)
-	server.Plan.Sources = slices.DeleteFunc(server.Plan.Sources, func(node landing.AuthorizedNode) bool { return node.Address == source })
-	if len(server.Plan.Sources) == count {
-		return nil
-	}
-	return s.queueLandingServer(ctx, tx, owner, server.Plan)
+	// source identifies the retired use, not exclusive ownership of its address.
+	// Recompute all purposes so another proxy or Meridian grant keeps access.
+	return s.refreshClientLandingSources(ctx, tx, owner)
 }

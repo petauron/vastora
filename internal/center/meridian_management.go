@@ -891,6 +891,9 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 		VALUES(?,?,?,?,?,?,'fixed',?,1,'pending',?,?)`, grantID, input.AccountID, input.EndpointID, input.EgressNodeID, baseCredentialID, routeCredentialID, boolInt(input.HideNative), now, now); err != nil {
 		return MeridianRouteGrantView{}, fmt.Errorf("center: create Meridian route grant: %w", err)
 	}
+	if err := s.refreshClientLandingSources(ctx, tx, input.EgressNodeID); err != nil {
+		return MeridianRouteGrantView{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE id=?`, now, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ const landingServerSchema = `CREATE TABLE landing_server_states (
  desired_revision INTEGER NOT NULL CHECK(desired_revision > 0),
  applied_revision INTEGER NOT NULL DEFAULT 0,
  desired_json BLOB NOT NULL CHECK(json_valid(desired_json)),
+ applied_json BLOB NOT NULL DEFAULT '{}' CHECK(json_valid(applied_json)),
  peer_json BLOB NOT NULL DEFAULT '{}',
  status TEXT NOT NULL CHECK(status IN ('pending','applying','ready','failed','stopped')),
  attempt INTEGER NOT NULL DEFAULT 0,
@@ -28,9 +30,9 @@ const landingServerSchema = `CREATE TABLE landing_server_states (
 // Called inside the topology transaction after resolving managed private
 // identities. Never accept a caller-supplied arbitrary host or source address.
 func (s *Store) queueLandingServer(ctx context.Context, tx *sql.Tx, nodeID string, plan *landing.ServerPlan) error {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if frozen, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
 		return err
-	} else if owns {
+	} else if frozen {
 		return nil
 	}
 	var revision int64
@@ -79,15 +81,18 @@ func landingServerTaskRevision(taskID string) (int64, bool) {
 }
 
 func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID string) (*AgentTask, error) {
-	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+	if frozen, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
 		return nil, err
-	} else if owns {
+	} else if frozen {
 		return nil, nil
 	}
 	var encoded []byte
 	var revision, attempt int64
-	err := tx.QueryRowContext(ctx, `SELECT desired_revision,desired_json,attempt FROM landing_server_states
+	readPending := func() error {
+		return tx.QueryRowContext(ctx, `SELECT desired_revision,desired_json,attempt FROM landing_server_states
  WHERE node_id=? AND desired_revision>applied_revision AND status = 'pending'`, nodeID).Scan(&revision, &encoded, &attempt)
+	}
+	err := readPending()
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -97,6 +102,39 @@ func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID s
 	var state landing.ServerState
 	if json.Unmarshal(encoded, &state) != nil || state.Validate() != nil || state.NodeID != nodeID || state.Revision != uint64(revision) {
 		return nil, errors.New("center: invalid landing service configuration")
+	}
+	var completed bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='complete')`).Scan(&completed); err != nil {
+		return nil, err
+	}
+	if completed {
+		// A pending legacy intent can predate the ownership handoff. Rebuild
+		// its source set from current grants before offering it; merely lifting
+		// the cutover fence must not authorize an obsolete source again.
+		var appliedJSON []byte
+		var stillReferenced bool
+		if err := tx.QueryRowContext(ctx, `SELECT applied_json,EXISTS(SELECT 1 FROM meridian_route_grants
+			WHERE egress_node_id=? AND ((enabled=1 AND status<>'revoked') OR status='revoking'))
+			FROM landing_server_states WHERE node_id=?`, nodeID, nodeID).Scan(&appliedJSON, &stillReferenced); err != nil {
+			return nil, err
+		}
+		if stillReferenced {
+			var applied landing.ServerState
+			if state.Plan == nil || json.Unmarshal(appliedJSON, &applied) != nil || applied.Validate() != nil ||
+				applied.NodeID != nodeID || applied.Plan == nil || state.Plan.Address != applied.Plan.Address {
+				return nil, errors.New("center: pending landing intent would stop or replace a referenced Meridian service; explicit recovery is required")
+			}
+		}
+		if err := s.refreshClientLandingSources(ctx, tx, nodeID); err != nil {
+			return nil, err
+		}
+		if err := readPending(); err != nil {
+			return nil, err
+		}
+		state = landing.ServerState{}
+		if json.Unmarshal(encoded, &state) != nil || state.Validate() != nil || state.NodeID != nodeID || state.Revision != uint64(revision) {
+			return nil, errors.New("center: invalid recomposed landing service configuration")
+		}
 	}
 	now := s.now().UTC()
 	result, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET status='applying',attempt=attempt+1,lease_expires_at=?,updated_at=?
@@ -126,8 +164,8 @@ func (s *Store) completeLandingServer(ctx context.Context, commit projectionComm
 func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit projectionCommit, nodeID string, revision, attempt int64, succeeded bool, peer *landing.PeerIdentity) error {
 	var desired, applied, currentAttempt int64
 	var status string
-	var encoded, previousPeerJSON []byte
-	if err := tx.QueryRowContext(ctx, `SELECT desired_revision,applied_revision,attempt,status,desired_json,peer_json FROM landing_server_states WHERE node_id=?`, nodeID).Scan(&desired, &applied, &currentAttempt, &status, &encoded, &previousPeerJSON); err != nil {
+	var encoded, previousPeerJSON, appliedJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT desired_revision,applied_revision,attempt,status,desired_json,peer_json,applied_json FROM landing_server_states WHERE node_id=?`, nodeID).Scan(&desired, &applied, &currentAttempt, &status, &encoded, &previousPeerJSON, &appliedJSON); err != nil {
 		return err
 	}
 	if revision < desired || revision <= applied || revision == desired && attempt < currentAttempt {
@@ -151,14 +189,17 @@ func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit pro
 		}
 		peerJSON, _ = json.Marshal(peer)
 	}
+	authorizationChanged := succeeded && !sameLandingServerAuthorization(appliedJSON, state)
+	previousAppliedJSON := appliedJSON
 	if succeeded {
 		applied = desired
+		appliedJSON = encoded
 		status, message, event = "ready", "", "succeeded"
 		if state.Plan == nil {
 			status = "stopped"
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET applied_revision=?,peer_json=?,status=?,lease_expires_at='',last_error=?,updated_at=? WHERE node_id=?`, applied, peerJSON, status, message, s.now().UTC().Format(time.RFC3339Nano), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET applied_revision=?,applied_json=?,peer_json=?,status=?,lease_expires_at='',last_error=?,updated_at=? WHERE node_id=?`, applied, appliedJSON, peerJSON, status, message, s.now().UTC().Format(time.RFC3339Nano), nodeID); err != nil {
 		return err
 	}
 	if err := s.recordTaskEvent(ctx, tx, landingServerTaskID(nodeID, revision), nodeID, "landing.server.apply", revision, event, message); err != nil {
@@ -168,9 +209,29 @@ func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit pro
 		if err := s.markMeridianLandingPeerChanged(ctx, tx, nodeID, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
+	} else if authorizationChanged {
+		if err := s.markMeridianLandingAuthorizationChanged(ctx, tx, nodeID, previousAppliedJSON, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
 	}
 	if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
 		return err
 	}
 	return commit(tx)
+}
+
+func sameLandingServerAuthorization(previousJSON []byte, current landing.ServerState) bool {
+	var previous landing.ServerState
+	if json.Unmarshal(previousJSON, &previous) != nil || previous.Validate() != nil || previous.NodeID != current.NodeID {
+		return false
+	}
+	if previous.Plan == nil || current.Plan == nil {
+		return previous.Plan == nil && current.Plan == nil
+	}
+	if previous.Plan.Address != current.Plan.Address {
+		return false
+	}
+	before, beforeErr := landing.MergeSources(previous.Plan.Sources)
+	after, afterErr := landing.MergeSources(current.Plan.Sources)
+	return beforeErr == nil && afterErr == nil && slices.Equal(before, after)
 }

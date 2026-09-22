@@ -7089,6 +7089,94 @@
                           "stats": {},
                           "legacyRetired": {
                             "type": "boolean"
+                          },
+                          "peers": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "egressId": {
+                                  "type": "string"
+                                },
+                                "identity": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "publicKey": {
+                                      "type": "string"
+                                    },
+                                    "address": {
+                                      "type": "string"
+                                    }
+                                  }
+                                },
+                                "status": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "revision": {
+                                      "type": "integer"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "linkState": {
+                                      "type": "string"
+                                    },
+                                    "reason": {
+                                      "type": "string"
+                                    },
+                                    "tcp": {
+                                      "type": "boolean"
+                                    },
+                                    "udp": {
+                                      "type": "boolean"
+                                    },
+                                    "exitIpv4": {
+                                      "type": "string"
+                                    },
+                                    "checkedAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "lastHealthyAt": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    },
+                                    "allowedUntil": {
+                                      "type": "string",
+                                      "format": "date-time"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "source": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "publicKey": {
+                                    "type": "string"
+                                  },
+                                  "address": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         }
                       },

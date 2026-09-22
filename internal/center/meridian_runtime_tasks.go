@@ -522,11 +522,13 @@ type meridianRuntimeRoutes struct {
 func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointID, inboundTag string, credentials map[string]meridian.CredentialMaterial) (meridianRuntimeRoutes, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.account_id,grant_row.egress_node_id,grant_row.base_credential_id,grant_row.route_credential_id,
 		grant_row.mode,grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,grant_row.status,
-		CASE WHEN agent.id IS NULL THEN NULL ELSE server.peer_json END
+		CASE WHEN agent.id IS NULL THEN NULL ELSE server.peer_json END,
+		server.applied_json,server.desired_json,COALESCE(server.applied_revision,0),endpoint.source_peer_json
 		FROM meridian_route_grants grant_row
+		JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
 		LEFT JOIN landing_server_states server ON server.node_id=grant_row.egress_node_id
-		 AND server.status='ready' AND server.desired_revision=server.applied_revision
-		LEFT JOIN agents agent ON agent.id=grant_row.egress_node_id AND agent.status='active' AND agent.credential_revoked_at=''
+		 AND server.status IN ('ready','pending','applying') AND server.applied_revision>0
+		LEFT JOIN agents agent ON agent.id=grant_row.egress_node_id AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed'
 		WHERE grant_row.endpoint_id=? AND grant_row.status<>'revoked' ORDER BY grant_row.id`, endpointID)
 	if err != nil {
 		return meridianRuntimeRoutes{}, err
@@ -538,9 +540,10 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		var grant meridian.RouteGrant
 		var baseID, routeID, mode, status string
 		var hideNative, enabled, runtimeHealthy int
-		var peerJSON []byte
+		var peerJSON, appliedJSON, desiredJSON, sourceJSON []byte
+		var serverRevision uint64
 		if err := rows.Scan(&grant.ID, &grant.AccountID, &grant.EgressID, &baseID, &routeID, &mode, &hideNative, &enabled,
-			&grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status, &peerJSON); err != nil {
+			&grant.DesiredRev, &grant.AppliedRev, &runtimeHealthy, &status, &peerJSON, &appliedJSON, &desiredJSON, &serverRevision, &sourceJSON); err != nil {
 			rows.Close()
 			return meridianRuntimeRoutes{}, err
 		}
@@ -576,6 +579,12 @@ func (s *Store) meridianRuntimeGrants(ctx context.Context, tx *sql.Tx, endpointI
 		if json.Unmarshal(peerJSON, &peer) != nil || (meridianruntime.Peer{EgressID: grant.EgressID, Identity: peer}).Validate() != nil {
 			rows.Close()
 			return meridianRuntimeRoutes{}, errors.New("center: stored Meridian route peer is invalid")
+		}
+		var source landing.PeerIdentity
+		if json.Unmarshal(sourceJSON, &source) != nil || !meridianLandingSourceAuthorized(appliedJSON, desiredJSON, grant.EgressID, serverRevision, source, peer) {
+			result.blockedGrants[grant.ID] = meridianRouteSourceUnauthorized
+			result.disabledCredentialIDs[grant.Route.ID] = true
+			continue
 		}
 		// The landing inventory is keyed by Vastora Agent ID. The reported peer
 		// identity belongs to Tailscale and must retain its separate ID domain.
@@ -798,6 +807,12 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		return err
 	}
 	if succeeded {
+		// Revoked rows remain durable cleanup markers if the landing Agent has
+		// an unresolved execution. Its source is removed only after the entry's
+		// new configuration has acknowledged that the credential is disabled.
+		if err := s.reconcileClientLandingSourcesForNode(ctx, tx, agentID); err != nil {
+			return err
+		}
 		// The just-applied artifact was built before these counters arrived. A
 		// quota crossing in its completion receipt needs a new desired revision
 		// now; otherwise the next heartbeat would only see a digest mismatch and

@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"strconv"
 	"time"
@@ -55,11 +56,20 @@ func (s *Store) reconcileLandingSubscriptionOrigin(ctx context.Context, tx *sql.
 }
 
 func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
+	if frozen, err := meridianCutoverBlocksLandingChanges(ctx, tx); err != nil {
+		return err
+	} else if frozen {
+		return nil
+	}
 	// Revoked grants remain as durable cleanup markers while their target has
 	// an execution fence. Include them when discovering which landing source
 	// sets need to converge; refreshClientLandingSources excludes them from the
 	// resulting authorization plan.
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT g.landing_node_id FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE a.node_id=? OR g.landing_node_id=?`, nodeID, nodeID)
+	rows, err := tx.QueryContext(ctx, `SELECT g.landing_node_id FROM landing_client_grants g
+		JOIN applications a ON a.id=g.application_id WHERE a.node_id=? OR g.landing_node_id=?
+		UNION SELECT g.egress_node_id FROM meridian_route_grants g
+		JOIN meridian_endpoints endpoint ON endpoint.id=g.endpoint_id
+		JOIN applications a ON a.id=endpoint.application_id WHERE a.node_id=? OR g.egress_node_id=?`, nodeID, nodeID, nodeID, nodeID)
 	if err != nil {
 		return err
 	}
@@ -89,10 +99,34 @@ func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sq
 		if blocked {
 			continue
 		}
-		if err := s.refreshClientLandingSources(ctx, tx, id); err != nil {
+		// A successful source receipt or heartbeat must not roll back because
+		// another node's derived authorization needs operator repair. Keep the
+		// plan and cleanup markers atomic within this target's savepoint.
+		if _, err := tx.ExecContext(ctx, `SAVEPOINT landing_source_reconciliation`); err != nil {
 			return err
 		}
-		if err := s.deleteRevokedLandingGrantTombstones(ctx, tx, id); err != nil {
+		reconcileErr := s.refreshClientLandingSources(ctx, tx, id)
+		if reconcileErr == nil {
+			reconcileErr = s.deleteRevokedLandingGrantTombstones(ctx, tx, id)
+		}
+		if reconcileErr != nil {
+			if _, err := tx.ExecContext(ctx, `ROLLBACK TO landing_source_reconciliation`); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `RELEASE landing_source_reconciliation`); err != nil {
+			return err
+		}
+		if reconcileErr != nil {
+			if !errors.Is(reconcileErr, errLandingSourceReconciliation) && !errors.Is(reconcileErr, errExecutionBlocked) {
+				return reconcileErr
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET last_error=? WHERE node_id=?`, landingSourceReconciliationMessage, id); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET last_error='' WHERE node_id=? AND last_error=?`, id, landingSourceReconciliationMessage); err != nil {
 			return err
 		}
 	}

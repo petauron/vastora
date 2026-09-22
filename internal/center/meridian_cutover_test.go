@@ -730,7 +730,11 @@ func TestMeridianRouteLifecycleDoesNotBlockUnrelatedSubscriptionEntries(t *testi
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, stamp, egress.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,updated_at) VALUES(?,1,1,'{}','ready',?)`, egress.ID, stamp); err != nil {
+	serverJSON, err := json.Marshal(landing.ServerState{NodeID: egress.ID, Revision: 1, Plan: &landing.ServerPlan{Revision: 1, Address: "100.64.0.45", Sources: []landing.AuthorizedNode{{Address: "100.64.0.44", TCPOnly: true}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,status,updated_at) VALUES(?,1,1,?,?,'ready',?)`, egress.ID, serverJSON, serverJSON, stamp); err != nil {
 		t.Fatal(err)
 	}
 	const applicationID = "route-lifecycle-meridian-application"

@@ -99,8 +99,8 @@ func openMeridianRuntimeIdentityFixture(t *testing.T) (*Store, string, string, l
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,peer_json,status,updated_at)
-		VALUES(?,1,1,?,?,'ready',?)`, egress.ID, serverJSON, peerJSON, stamp); err != nil {
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,peer_json,status,updated_at)
+		VALUES(?,1,1,?,?,?,'ready',?)`, egress.ID, serverJSON, serverJSON, peerJSON, stamp); err != nil {
 		t.Fatal(err)
 	}
 	grant, err := store.CreateMeridianRouteGrant(ctx, MeridianRouteGrantInput{AccountID: sharedSnapshotAccountA, EndpointID: sharedSnapshotEndpointID, EgressNodeID: egress.ID})

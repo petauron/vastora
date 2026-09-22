@@ -116,8 +116,9 @@ func TestMeridianAppliedSnapshotRemovesRouteWhenNativeAuthorityIsRevoked(t *test
 	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, stamp, egress.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,peer_json,status,updated_at)
-		VALUES(?,1,1,'{}','{}','ready',?)`, egress.ID, stamp); err != nil {
+	serverJSON, peerJSON := meridianAppliedLandingFixtureJSON(t, egress.ID, "100.64.0.63", "100.64.0.61")
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,peer_json,status,updated_at)
+		VALUES(?,1,1,?,?,?,'ready',?)`, egress.ID, serverJSON, serverJSON, peerJSON, stamp); err != nil {
 		t.Fatal(err)
 	}
 	grant, err := store.CreateMeridianRouteGrant(ctx, MeridianRouteGrantInput{AccountID: sharedSnapshotAccountB, EndpointID: sharedSnapshotEndpointID, EgressNodeID: egress.ID})

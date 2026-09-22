@@ -2,6 +2,7 @@ package center
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,31 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 )
+
+func TestMeridianCutoverRequiresUnclaimedLandingIntentToConverge(t *testing.T) {
+	store, egressID, _, _ := openMeridianRuntimeIdentityFixture(t)
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `UPDATE landing_server_states SET desired_revision=applied_revision+1,status='pending' WHERE node_id=?`, egressID); err != nil {
+		t.Fatal(err)
+	}
+	check := func() error {
+		tx, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		return ensureMeridianCutoverIdle(ctx, tx, "snapshot-shared-app")
+	}
+	if err := check(); err == nil || !strings.Contains(err.Error(), "finish or explicitly recover active operations") {
+		t.Fatalf("unclaimed landing intent did not fence cutover: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE landing_server_states SET desired_revision=applied_revision,status='ready' WHERE node_id=?`, egressID); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(); err != nil {
+		t.Fatalf("confirmed landing still fenced cutover: %v", err)
+	}
+}
 
 func TestMeridianCutoverVerificationRequiresUnexpiredLandingEvidence(t *testing.T) {
 	for _, test := range []struct {

@@ -97,6 +97,36 @@ the route set to make the migration pass.
 
 ## Forward-only cutover
 
+### Landing source authorization
+
+Meridian uses the existing native landing service and its single
+`landing.server.apply` queue. A route's pinned entry identity determines its
+source authorization. Current capability observations never replace that pin;
+an explicitly different authenticated identity removes the old source rather
+than authorizing the replacement. Missing observations and temporary network
+outages alone do not remove the configured grant.
+
+The landing service keeps confirmed `applied_json` separately from queued
+`desired_json`. Only an applied source permission enables a new fixed route.
+An additive pending update preserves previously authorized sources in runtime
+projection and subscriptions; desired state may tighten permission but cannot
+grant it early. A successful same-peer source update wakes only affected
+entries. Shared-account quota changes do not remove transport authorization.
+
+Revocation first disables the entry credential, then releases the source after
+the entry's successful apply. Other accounts and retained legacy uses keep
+their shared source permission. Derived cleanup failures retain their durable
+markers and report a landing reconciliation error without rolling back an
+already-confirmed entry receipt. Database failures still abort the transaction.
+
+Unclaimed landing intents must converge before cutover starts. The shared
+landing writer stays frozen during handover, and any retained pending intent
+is recomposed from current authority before claiming it after completion.
+Existing native landing updates restart Dante; this workflow does not promise
+that established TCP sessions survive a source-list update.
+
+### Migration phases
+
 The cutover is one migration with explicit durable phases. Each phase is
 idempotent and the next phase starts only after the previous result is
 confirmed.

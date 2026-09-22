@@ -44,6 +44,7 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 		`ALTER TABLE services_v87_fixture RENAME TO services`, `DROP TABLE goose_db_version`,
 		`ALTER TABLE meridian_route_grants DROP COLUMN health_expires_unix_ms`,
 		`ALTER TABLE meridian_endpoints DROP COLUMN source_peer_json`,
+		`ALTER TABLE landing_server_states DROP COLUMN applied_json`,
 		`PRAGMA user_version=87`, `COMMIT`, `PRAGMA legacy_alter_table=OFF`, `PRAGMA foreign_keys=ON`,
 	} {
 		if _, err := db.Exec(statement); err != nil {

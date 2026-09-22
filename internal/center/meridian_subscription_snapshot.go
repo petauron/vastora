@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 type meridianAppliedSubscriptionSnapshot struct {
@@ -164,9 +165,12 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 			AND cutover.state IN ('publish','project','verify','retire'))
 		  OR (grant_row.status='ready' AND grant_row.runtime_healthy=1
 			AND grant_row.desired_revision=grant_row.applied_revision AND grant_row.health_expires_unix_ms>?))
-		 AND landing.status='ready' AND landing.desired_revision=landing.applied_revision
+		 AND landing.status IN ('ready','pending','applying')
 		 AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed' AND agent.last_seen_at>?
-		 THEN 1 ELSE 0 END
+		 THEN 1 ELSE 0 END,
+		endpoint.applied_revision=0 AND length(cutover.import_sha256)=64 AND cutover.state IN ('publish','project','verify','retire'),
+		endpoint.source_peer_json,landing.applied_json,landing.desired_json,landing.peer_json,
+		COALESCE(landing.applied_revision,0),COALESCE(landing.desired_revision,0),COALESCE(landing.status,'')
 		FROM meridian_route_grants grant_row
 		JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
 		JOIN meridian_cutover cutover ON cutover.id=1
@@ -183,11 +187,24 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 	states := map[string]routeState{}
 	hiddenVLESSCredentials := map[string]bool{}
 	for rows.Next() {
-		var grantID, egressID, baseID, status string
+		var grantID, egressID, baseID, status, landingStatus string
 		var hideNative, enabled, live int
-		if err := rows.Scan(&grantID, &egressID, &baseID, &hideNative, &enabled, &status, &live); err != nil {
+		var legacySnapshot bool
+		var landingAppliedRevision, landingDesiredRevision uint64
+		var sourceJSON, landingAppliedJSON, landingDesiredJSON, landingPeerJSON []byte
+		if err := rows.Scan(&grantID, &egressID, &baseID, &hideNative, &enabled, &status, &live, &legacySnapshot,
+			&sourceJSON, &landingAppliedJSON, &landingDesiredJSON, &landingPeerJSON, &landingAppliedRevision, &landingDesiredRevision, &landingStatus); err != nil {
 			rows.Close()
 			return meridianAppliedSubscriptionSnapshot{}, err
+		}
+		if live == 1 {
+			if legacySnapshot {
+				live = boolInt(landingStatus == "ready" && landingDesiredRevision == landingAppliedRevision)
+			} else {
+				var source, peer landing.PeerIdentity
+				live = boolInt(json.Unmarshal(sourceJSON, &source) == nil && json.Unmarshal(landingPeerJSON, &peer) == nil &&
+					meridianLandingSourceAuthorized(landingAppliedJSON, landingDesiredJSON, egressID, landingAppliedRevision, source, peer))
+			}
 		}
 		mustHide := enabled == 1 && hideNative == 1 && status != "revoking" && status != "revoked" && live != 1
 		states[grantID] = routeState{egressID: egressID, live: live == 1}
