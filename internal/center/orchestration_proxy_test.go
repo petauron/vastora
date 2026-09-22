@@ -229,7 +229,10 @@ func TestMeridianSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
 		{Address: "203.0.113.72", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{ServiceAddress: "10.0.0.72", LANAddress: "10.0.0.72", PublicAddress: "203.0.113.72", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	completeNextTask(t, store, first, "gateway.component.apply", nil)
-	completeNextTask(t, store, second, "gateway.component.apply", nil)
+	// Only the selected site gateway receives a component installation.
+	if task, err := store.ClaimNextTask(ctx, second.ID, second.Credential); err != nil || task != nil {
+		t.Fatalf("unselected gateway received work: task=%#v err=%v", task, err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	siteID := testSiteID(t, store)
 	for _, application := range []struct {

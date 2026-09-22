@@ -17,7 +17,7 @@ import (
 )
 
 func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "expired-catalog", NodeCapabilities{Docker: true}, []networking.Candidate{
@@ -45,7 +45,7 @@ func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
 }
 
 func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "reconciliation-deployment", NodeCapabilities{Docker: true}, []networking.Candidate{
@@ -100,7 +100,7 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 }
 
 func TestTaskEncryptionFailureReleasesTheCommittedLease(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "encryption-race", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
@@ -793,7 +793,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 }
 
 func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.41", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.41", LANAddress: "10.0.0.41", EnabledKinds: []string{networking.KindLAN}})

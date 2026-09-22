@@ -28,7 +28,7 @@ func TestThreeXUIResetBoundaryUsesMonthlySiteLocalMidnight(t *testing.T) {
 }
 
 func TestDueThreeXUIInboundPlanResetAdvancesWithRevisionCAS(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	clock := store.now().UTC()

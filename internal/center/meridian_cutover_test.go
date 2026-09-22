@@ -493,8 +493,17 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	var commandID string
-	if err := store.db.QueryRowContext(ctx, `SELECT id FROM application_commands WHERE agent_id=? AND kind=? AND json_extract(input_json,'$.endpointId')=? AND state='pending'`, node.ID, meridianruntime.ApplyKind, endpoint.ID).Scan(&commandID); err != nil {
+	// Endpoint creation records desired state; dispatch queues the projection.
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commandID, err := store.queueMeridianRuntime(ctx, tx, endpoint.ID, false)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, commandID)
