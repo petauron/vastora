@@ -80,7 +80,13 @@ confirmed.
      shared account quota and Xray has no equivalent built-in per-client IP
      policy, so silently discarding either restriction is forbidden.
 2. **Back up**
-   - Create the normal Center pre-migration backup.
+   - Before starting cutover, create and retain a fresh encrypted full Center
+     backup through `POST /api/v1/backups` or `vastora center backup`, using a
+     password of at least twelve characters. Keep the password separately
+     from the downloaded backup and do not put it in shell arguments.
+   - A schema upgrade creates its own pre-migration SQLite backup. Starting
+     cutover does not create a fresh Center backup, so an earlier schema
+     backup is not a substitute for the explicit pre-cutover backup above.
    - Ask the controller Agent for one final encrypted 3x-ui database snapshot
      and record its digest. Do not use the snapshot as a runtime fallback.
 3. **Import**
