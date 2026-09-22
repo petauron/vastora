@@ -182,13 +182,15 @@ func (s *Store) recoverReceivedExecutionResults(ctx context.Context, agentID str
 
 // recoverExpiredReceivedExecutionResults closes the crash window where Center
 // persisted an authenticated result but the Agent never reached the final
-// acknowledgement. Once the one-use execution lease has expired, no executor
-// can resume it; retain the evidence as unknown and project only results that
-// the existing automatic recovery path can prove successful.
+// acknowledgement. A previous Center process may already have marked the
+// execution unknown before this recovery ran. Once the one-use execution lease
+// has expired, no executor can resume it; retain the evidence as unknown and
+// project only results that the existing automatic recovery path can prove
+// successful.
 func (s *Store) recoverExpiredReceivedExecutionResults(ctx context.Context) error {
 	now := s.now().UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.QueryContext(ctx, `SELECT id FROM task_executions
-		WHERE disposition='' AND state IN ('running','helper_running') AND phase='result_received'
+		WHERE disposition='' AND state IN ('running','helper_running','unknown') AND phase='result_received'
 		AND expires_at<>'' AND expires_at<=? ORDER BY created_at,id`, now)
 	if err != nil {
 		return err
@@ -214,7 +216,7 @@ func (s *Store) recoverExpiredReceivedExecutionResults(ctx context.Context) erro
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE task_executions
 		SET state='unknown',last_error='Execution authorization expired; retained result pending recovery',updated_at=?
-		WHERE disposition='' AND state IN ('running','helper_running') AND phase='result_received'
+		WHERE disposition='' AND state IN ('running','helper_running','unknown') AND phase='result_received'
 		AND expires_at<>'' AND expires_at<=?`, now, now)
 	if err != nil {
 		return err

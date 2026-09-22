@@ -202,6 +202,15 @@ func TestExecutionSessionRecoversRetainedSuccessfulResult(t *testing.T) {
 }
 
 func TestCenterStartupRecoversExpiredRetainedSuccessfulResult(t *testing.T) {
+	testCenterStartupRecoversExpiredRetainedSuccessfulResult(t, false)
+}
+
+func TestCenterStartupRecoversPreviouslyExpiredRetainedSuccessfulResult(t *testing.T) {
+	testCenterStartupRecoversExpiredRetainedSuccessfulResult(t, true)
+}
+
+func testCenterStartupRecoversExpiredRetainedSuccessfulResult(t *testing.T, previouslyUnknown bool) {
+	t.Helper()
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -228,6 +237,13 @@ func TestCenterStartupRecoversExpiredRetainedSuccessfulResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock = clock.Add(taskLeaseDuration + time.Second)
+	if previouslyUnknown {
+		if _, err := store.db.Exec(`UPDATE task_executions
+			SET state='unknown',last_error='Execution authorization expired; retained result pending recovery'
+			WHERE id=?`, task.Authorization.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := store.recoverExpiredReceivedExecutionResults(ctx); err != nil {
 		t.Fatal(err)
 	}
