@@ -83,7 +83,7 @@ func (e ApplicationExecutor) ConfigureHY2Port(ctx context.Context, store *Store,
 			delete(config.ExposedPorts, hy2DockerPort)
 			delete(host.PortBindings, hy2DockerPort)
 		}
-		options := client.ContainerCreateOptions{Name: xrayWorkerCandidateContainer, Config: config, HostConfig: host, NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.XrayAlias)}
+		options := client.ContainerCreateOptions{Name: xrayWorkerCandidateContainer, Config: config, HostConfig: host, NetworkingConfig: dockerruntime.NetworkingConfig(dockerruntime.LegacyXrayAlias)}
 		_, replaceErr := replaceXrayWorkerContainer(ctx, docker, options, func() error {
 			return store.stopXrayWorkerAPI(ctx, false)
 		}, func(containerID string) (string, error) {

@@ -2,35 +2,28 @@ package agent
 
 import (
 	"context"
-
 	"encoding/json"
-
 	"errors"
-
 	"fmt"
-
 	"io"
-
 	"net"
-
 	"net/http"
-
 	"net/url"
-
+	"os"
+	"path/filepath"
 	"strconv"
-
 	"strings"
-
 	"time"
 
+	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/controlplane"
-
 	"github.com/petauron/vastora/internal/landing"
-
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
-
 	"github.com/petauron/vastora/internal/platform"
 )
+
+var errMeridianRuntimeNotConfigured = errors.New("agent: Meridian runtime is not configured on this node")
 
 func (c Client) Heartbeat(ctx context.Context, store *Store) error {
 	_, err := c.heartbeat(ctx, store)
@@ -73,12 +66,31 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 	if err != nil {
 		return nil, fmt.Errorf("agent: discover network addresses: %w", err)
 	}
-	endpoints, observeErr := observeThreeXUI(ctx, store)
+	endpoints, observeErr := observeProxyRuntime(ctx, store)
 	endpointsObserved := observeErr == nil || errors.Is(observeErr, errApplicationNotInstalled)
-	if errors.Is(observeErr, errApplicationNotInstalled) {
+	if errors.Is(observeErr, errApplicationNotInstalled) || errors.Is(observeErr, errMeridianRuntimeNotConfigured) {
 		observeErr = nil
 	} else if observeErr != nil {
-		observeErr = fmt.Errorf("agent: observe 3x-ui: %w", observeErr)
+		observeErr = fmt.Errorf("agent: observe Meridian runtime: %w", observeErr)
+	}
+	var meridianRuntime *meridianruntime.Result
+	if _, installErr := store.AppliedInstallation(ctx, meridianKey); installErr == nil {
+		if _, stateErr := store.loadMeridianRuntimeState(ctx); stateErr == nil {
+			observer, ok := c.Executor.(interface {
+				ObserveMeridianRuntime(context.Context) (meridianruntime.Result, error)
+			})
+			if !ok {
+				observeErr = errors.Join(observeErr, errors.New("agent: Meridian runtime observer is unavailable"))
+			} else if observed, runtimeErr := observer.ObserveMeridianRuntime(ctx); runtimeErr != nil {
+				observeErr = errors.Join(observeErr, fmt.Errorf("agent: observe Meridian usage: %w", runtimeErr))
+			} else {
+				meridianRuntime = &observed
+			}
+		} else if !errors.Is(stateErr, errApplicationNotInstalled) {
+			observeErr = errors.Join(observeErr, fmt.Errorf("agent: inspect Meridian runtime state: %w", stateErr))
+		}
+	} else if !errors.Is(installErr, errApplicationNotInstalled) {
+		observeErr = errors.Join(observeErr, installErr)
 	}
 	var response struct {
 		LandingLatencyTargets    []landing.LatencyTarget         `json:"landingLatencyTargets"`
@@ -97,6 +109,7 @@ func (c Client) heartbeatWithStartup(ctx context.Context, store *Store, startup 
 		"publicKey": publicKey,
 		"version":   Version, "appliedInstallations": len(states), "roles": c.Roles,
 		"capabilities": c.Capabilities, "networkCandidates": candidates, "applicationEndpoints": endpoints, "applicationEndpointsObserved": endpointsObserved, "gatewayHealthy": gatewayHealthy,
+		"meridianRuntime":              meridianRuntime,
 		"gatewayRevision":              gatewayRevision,
 		"gatewayConfigHash":            gatewayConfigHash,
 		"nodeListenerHealthy":          nodeListenerHealthy,
@@ -194,29 +207,57 @@ func (c Client) applyDesiredCenterURL(ctx context.Context, store *Store, connect
 	return nil
 }
 
-func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointObservation, error) {
-	installation, err := store.AppliedInstallation(ctx, threeXUIKey)
+func observeProxyRuntime(ctx context.Context, store *Store) ([]ApplicationEndpointObservation, error) {
+	installation, err := store.AppliedInstallation(ctx, meridianKey)
+	appKey := meridianKey
+	if errors.Is(err, errApplicationNotInstalled) {
+		installation, err = store.AppliedInstallation(ctx, threeXUIKey)
+		appKey = threeXUIKey
+	}
 	if err != nil {
 		return nil, err
 	}
-	config, err := decodeThreeXUIConfig(installation.Config)
-	if err != nil {
-		return nil, err
+	address, panelPort, apiToken := installation.ServiceAddress, 0, ""
+	if appKey == meridianKey {
+		state, stateErr := store.loadMeridianRuntimeState(ctx)
+		if errors.Is(stateErr, errApplicationNotInstalled) {
+			return nil, errMeridianRuntimeNotConfigured
+		}
+		if stateErr != nil || state.ApplicationID != installation.ApplicationID {
+			return nil, errors.New("agent: Meridian runtime state is unavailable")
+		}
+		if state.Applied == nil {
+			return nil, errors.New("agent: Meridian runtime has no applied revision")
+		}
+		active, readErr := os.ReadFile(filepath.Join(store.dataDir, meridianRuntimeDirectory, "config.json"))
+		if readErr != nil || !artifactMatchesBytes(*state.Applied, active) {
+			return nil, errors.New("agent: Meridian applied receipt does not match the active Xray configuration")
+		}
+		return observeMeridianState(*state.Applied)
+	} else {
+		config, configErr := decodeThreeXUIConfig(installation.Config)
+		if configErr != nil {
+			return nil, configErr
+		}
+		panelPort = config.PanelPort
+		var secretValues map[string]string
+		if json.Unmarshal(installation.Secrets, &secretValues) != nil {
+			return nil, errors.New("agent: legacy proxy API token is unavailable")
+		}
+		apiToken = strings.TrimSpace(secretValues["api_token"])
 	}
-	var secretValues map[string]string
-	if json.Unmarshal(installation.Secrets, &secretValues) != nil || strings.TrimSpace(secretValues["api_token"]) == "" {
-		return nil, errors.New("agent: 3x-ui API token is unavailable")
+	if apiToken == "" {
+		return nil, errors.New("agent: proxy runtime API token is unavailable")
 	}
-	address := installation.ServiceAddress
 	if ip := net.ParseIP(address); ip == nil || ip.To4() == nil {
 		address = "127.0.0.1"
 	}
-	endpoint := "http://" + net.JoinHostPort(address, strconv.Itoa(config.PanelPort)) + "/panel/api/inbounds/list"
+	endpoint := "http://" + net.JoinHostPort(address, strconv.Itoa(panelPort)) + "/panel/api/inbounds/list"
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+secretValues["api_token"])
+	request.Header.Set("Authorization", "Bearer "+apiToken)
 	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
 	if err != nil {
 		return nil, err
@@ -238,7 +279,7 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 		} `json:"obj"`
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || json.NewDecoder(io.LimitReader(response.Body, 2<<20)).Decode(&payload) != nil || !payload.Success {
-		return nil, errors.New("agent: 3x-ui inbound API request failed")
+		return nil, errors.New("agent: proxy runtime inbound API request failed")
 	}
 	result := make([]ApplicationEndpointObservation, 0, len(payload.Object))
 	for _, inbound := range payload.Object {
@@ -267,12 +308,79 @@ func observeThreeXUI(ctx context.Context, store *Store) ([]ApplicationEndpointOb
 			remoteNodeID = *inbound.NodeID
 		}
 		result = append(result, ApplicationEndpointObservation{
-			AppKey: threeXUIKey, Name: name, Protocol: "tcp", AppProtocol: appProtocol,
+			AppKey: appKey, Name: name, Protocol: "tcp", AppProtocol: appProtocol,
 			Listen: strings.TrimSpace(inbound.Listen), Port: inbound.Port, Enabled: inbound.Enable,
 			RemoteNodeID: remoteNodeID, InboundTag: strings.TrimSpace(inbound.Tag), InboundTotalBytes: inbound.TotalBytes,
 		})
 	}
 	return result, nil
+}
+
+func observeMeridianState(artifact meridian.DesiredArtifact) ([]ApplicationEndpointObservation, error) {
+	if artifact.Validate() != nil {
+		return nil, errors.New("agent: Meridian runtime artifact is invalid")
+	}
+	var config struct {
+		Inbounds []json.RawMessage `json:"inbounds"`
+	}
+	if json.Unmarshal(artifact.Config, &config) != nil {
+		return nil, errors.New("agent: Meridian Xray configuration is invalid")
+	}
+	var realityTag, hysteriaTag, listen string
+	var port int
+	for _, raw := range config.Inbounds {
+		var inbound struct {
+			Protocol string `json:"protocol"`
+			Port     int    `json:"port"`
+			Listen   string `json:"listen"`
+			Tag      string `json:"tag"`
+			Total    int64  `json:"total"`
+			Stream   struct {
+				Method   string `json:"method"`
+				Security string `json:"security"`
+			} `json:"streamSettings"`
+		}
+		if json.Unmarshal(raw, &inbound) != nil {
+			return nil, errors.New("agent: Meridian runtime contains an invalid endpoint")
+		}
+		if inbound.Tag == "api" {
+			continue
+		}
+		if inbound.Port < 1 || inbound.Port > 65535 || strings.TrimSpace(inbound.Tag) == "" {
+			return nil, errors.New("agent: Meridian runtime contains an invalid endpoint")
+		}
+		method := strings.ToLower(strings.TrimSpace(inbound.Stream.Method))
+		security := strings.ToLower(strings.TrimSpace(inbound.Stream.Security))
+		switch {
+		case inbound.Protocol == "vless" && method == "raw" && security == "reality":
+			if realityTag != "" {
+				return nil, errors.New("agent: Meridian runtime contains multiple REALITY endpoints")
+			}
+			realityTag, listen, port = strings.TrimSpace(inbound.Tag), strings.TrimSpace(inbound.Listen), inbound.Port
+		case inbound.Protocol == "hysteria" && method == "hysteria" && security == "tls":
+			if hysteriaTag != "" {
+				return nil, errors.New("agent: Meridian runtime contains multiple Hysteria endpoints")
+			}
+			hysteriaTag = strings.TrimSpace(inbound.Tag)
+			if realityTag == "" {
+				listen, port = strings.TrimSpace(inbound.Listen), inbound.Port
+			}
+		default:
+			return nil, errors.New("agent: Meridian runtime contains an unsupported endpoint")
+		}
+	}
+	selectedTag := realityTag
+	if selectedTag == "" {
+		selectedTag = hysteriaTag
+	}
+	if selectedTag == "" || port < 1 {
+		return nil, errors.New("agent: Meridian runtime has no managed endpoint")
+	}
+	return []ApplicationEndpointObservation{{
+		AppKey: meridianKey, Name: "inbound-1", Protocol: "tcp",
+		AppProtocol: "meridian/entry", Listen: listen, Port: port,
+		Enabled: true, InboundTag: selectedTag,
+	}}, nil
 }
 
 func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.Duration, report func(error)) {

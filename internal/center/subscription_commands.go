@@ -29,29 +29,54 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	if !validPublicationDNS(input.Kind, input.DNSProvider) {
 		return ApplicationCommandView{}, errors.New("center: DNS provider is not valid for this subscription")
 	}
-	var agentID, appKey, status, role, serviceID string
-	err := s.db.QueryRowContext(ctx, `SELECT a.node_id, a.app_key, a.status, a.role, s.id
-		FROM applications a JOIN services s ON s.application_id = a.id AND s.name = 'subscription'
-		WHERE a.id = ? AND s.status <> 'stopped'`, input.ApplicationID).Scan(&agentID, &appKey, &status, &role, &serviceID)
+	var agentID, appKey, status, role string
+	err := s.db.QueryRowContext(ctx, `SELECT node_id,app_key,status,role FROM applications WHERE id=?`, input.ApplicationID).Scan(&agentID, &appKey, &status, &role)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ApplicationCommandView{}, errors.New("center: running 3x-ui subscription service not found")
+		return ApplicationCommandView{}, errors.New("center: subscription application not found")
 	}
 	if err != nil {
 		return ApplicationCommandView{}, err
 	}
-	if appKey != threeXUIAppKey || status != "running" || role != threeXUIRoleMaster {
-		return ApplicationCommandView{}, errors.New("center: public subscription is available only on the running global 3x-ui controller")
+	if status != "running" {
+		return ApplicationCommandView{}, errors.New("center: subscription application is not running")
 	}
-	controllerApplicationID, controllerAgentID, err := runningGlobalThreeXUIController(ctx, s.db)
-	if err != nil || controllerApplicationID != input.ApplicationID || controllerAgentID != agentID {
-		return ApplicationCommandView{}, errors.New("center: public subscription is available only on the running global 3x-ui controller")
+	if appKey == meridianAppKey {
+		if input.GatewayNodeID != agentID {
+			return ApplicationCommandView{}, errors.New("center: Meridian subscription must use the Center's co-located entry node")
+		}
+		if _, err := s.ensureMeridianSubscriptionService(ctx, input.ApplicationID); err != nil {
+			return ApplicationCommandView{}, err
+		}
+		var state, authority string
+		if err := s.db.QueryRowContext(ctx, `SELECT state,subscription_authority FROM meridian_cutover WHERE id=1`).Scan(&state, &authority); err != nil {
+			return ApplicationCommandView{}, err
+		}
+		if authority != "meridian" || state != "not_required" && state != "complete" {
+			return ApplicationCommandView{}, errors.New("center: Meridian subscription publication is locked until cutover completes")
+		}
+	} else {
+		if appKey != threeXUIAppKey || role != threeXUIRoleMaster {
+			return ApplicationCommandView{}, errors.New("center: public subscription is available only on Meridian or the running global 3x-ui controller")
+		}
+		controllerApplicationID, controllerAgentID, err := runningGlobalThreeXUIController(ctx, s.db)
+		if err != nil || controllerApplicationID != input.ApplicationID || controllerAgentID != agentID {
+			return ApplicationCommandView{}, errors.New("center: public subscription is available only on the running global 3x-ui controller")
+		}
+		var active int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+			return ApplicationCommandView{}, err
+		}
+		if active != 0 {
+			return ApplicationCommandView{}, errors.New("center: this 3x-ui application already has an operation in progress")
+		}
 	}
-	var active int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE agent_id = ? AND kind <> ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)`, agentID, controllerCommandKind).Scan(&active); err != nil {
+	var serviceID string
+	err = s.db.QueryRowContext(ctx, `SELECT id FROM services WHERE application_id=? AND name=? AND status<>'stopped'`, input.ApplicationID, meridianSubscriptionServiceName).Scan(&serviceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ApplicationCommandView{}, errors.New("center: Center-owned subscription service is unavailable on this application")
+	}
+	if err != nil {
 		return ApplicationCommandView{}, err
-	}
-	if active != 0 {
-		return ApplicationCommandView{}, errors.New("center: this 3x-ui application already has an operation in progress")
 	}
 	publication, found, err := s.activeSubscriptionPublication(ctx, serviceID)
 	if err != nil {
@@ -74,6 +99,9 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 	baseURI := (&url.URL{Scheme: "https", Host: publication.Hostname, Path: "/sub/"}).String()
 	task := SubscriptionCommandTask{Domain: publication.Hostname, BaseURI: baseURI, PublicationID: publication.ID}
 	encoded, _ := json.Marshal(task)
+	if appKey == meridianAppKey {
+		return s.completeMeridianSubscriptionPublication(ctx, input, agentID, task, encoded)
+	}
 	token, err := randomToken(18)
 	if err != nil {
 		return ApplicationCommandView{}, err
@@ -89,6 +117,36 @@ func (s *Store) CreateSubscriptionCommand(ctx context.Context, input Subscriptio
 		return ApplicationCommandView{}, fmt.Errorf("center: create subscription operation: %w", err)
 	}
 	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "queued", "3x-ui public subscription configuration queued"); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	return s.ApplicationCommand(ctx, id)
+}
+
+func (s *Store) completeMeridianSubscriptionPublication(ctx context.Context, input SubscriptionCommandInput, agentID string, task SubscriptionCommandTask, encoded []byte) (ApplicationCommandView, error) {
+	token, err := randomToken(18)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	id := "application-command-" + token
+	resultJSON, err := json.Marshal(SubscriptionCommandResult{Domain: task.Domain, BaseURI: task.BaseURI})
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	defer tx.Rollback()
+	now := s.now().UTC()
+	stamp := now.Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,result_json,state,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,'succeeded',?,?)`, id, input.ApplicationID, agentID, input.GatewayNodeID, meridianSubscriptionCommandKind, encoded, resultJSON, stamp, stamp); err != nil {
+		return ApplicationCommandView{}, fmt.Errorf("center: record Meridian subscription publication: %w", err)
+	}
+	if err := s.recordTaskEvent(ctx, tx, id, agentID, "application.command", 1, "succeeded", "Meridian public subscription published by Center"); err != nil {
 		return ApplicationCommandView{}, err
 	}
 	if err := tx.Commit(); err != nil {

@@ -21,6 +21,7 @@ var errLandingProxyInstanceChanged = errors.New("agent: selected proxy instance 
 type landingDocker struct {
 	engine                     *client.Client
 	applicationID, containerID string
+	appKey                     string
 	component                  string
 }
 
@@ -50,7 +51,11 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 	if expectedContainerID != "" && value.ID != expectedContainerID {
 		return nil, "", "", errLandingProxyInstanceChanged
 	}
-	if err := validateApplicationResourceLabels(value.Config.Labels, threeXUIKey, component, applicationID, anyApplicationDeployment); err != nil {
+	appKey := value.Config.Labels[applicationIdentityLabel]
+	if !proxyRuntimeApp(appKey) {
+		return nil, "", "", errors.New("agent: selected proxy instance has an unsupported owner")
+	}
+	if err := validateApplicationResourceLabels(value.Config.Labels, appKey, component, applicationID, anyApplicationDeployment); err != nil {
 		return nil, "", "", err
 	}
 	policy := string(value.HostConfig.RestartPolicy.Name)
@@ -93,7 +98,7 @@ func openLandingDocker(ctx context.Context, applicationID, expectedContainerID s
 		bridge = "br-" + bridgeNetwork.ID[:12]
 	}
 	failed = false
-	return &landingDocker{engine: docker, applicationID: applicationID, containerID: value.ID, component: component}, bridge, policy, nil
+	return &landingDocker{engine: docker, applicationID: applicationID, containerID: value.ID, appKey: appKey, component: component}, bridge, policy, nil
 }
 
 func (d *landingDocker) inspect(ctx context.Context) (client.ContainerInspectResult, error) {
@@ -101,7 +106,7 @@ func (d *landingDocker) inspect(ctx context.Context) (client.ContainerInspectRes
 	if err != nil || value.Container.ID != d.containerID || value.Container.Config == nil || value.Container.HostConfig == nil || value.Container.State == nil {
 		return value, errors.New("agent: proxy instance identity is unavailable")
 	}
-	if err := validateApplicationResourceLabels(value.Container.Config.Labels, threeXUIKey, d.component, d.applicationID, anyApplicationDeployment); err != nil {
+	if err := validateApplicationResourceLabels(value.Container.Config.Labels, d.appKey, d.component, d.applicationID, anyApplicationDeployment); err != nil {
 		return value, err
 	}
 	return value, nil

@@ -40,16 +40,26 @@ func (s *Store) upsertPublicationRoute(ctx context.Context, tx *sql.Tx, publicat
 }
 
 func (s *Store) gatewayServiceEndpoint(ctx context.Context, tx *sql.Tx, serviceID, gatewayID, endpoint string) (string, error) {
-	var appKey, runtime, role, applicationNodeID string
+	var appKey, runtime, role, applicationNodeID, serviceName string
 	var containerPort int
-	if err := tx.QueryRowContext(ctx, `SELECT a.app_key, a.runtime, a.role, a.node_id, s.container_port
-		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, serviceID).Scan(&appKey, &runtime, &role, &applicationNodeID, &containerPort); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT a.app_key, a.runtime, a.role, a.node_id, s.name, s.container_port
+		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, serviceID).Scan(&appKey, &runtime, &role, &applicationNodeID, &serviceName, &containerPort); err != nil {
 		return "", fmt.Errorf("center: read publication service runtime: %w", err)
 	}
-	return canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, gatewayID, containerPort, endpoint), nil
+	return canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, gatewayID, serviceName, containerPort, endpoint), nil
 }
 
-func canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, gatewayID string, containerPort int, endpoint string) string {
+func canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, gatewayID, serviceName string, containerPort int, endpoint string) string {
+	if serviceName == meridianSubscriptionServiceName && endpoint == net.JoinHostPort(dockerruntime.CenterAlias, "8080") {
+		// The subscription service keeps one durable identity while authority
+		// moves from the legacy controller to Center. Recognize the explicit
+		// Center origin independently of the application key so the gateway route
+		// can switch before the 3x-ui application itself is replaced.
+		return endpoint
+	}
+	if appKey == meridianAppKey && runtime == "docker" && applicationNodeID == gatewayID && containerPort > 0 && containerPort <= 65535 {
+		return net.JoinHostPort(dockerruntime.MeridianAlias, strconv.Itoa(containerPort))
+	}
 	if appKey == threeXUIAppKey && runtime == "docker" && containerPort == 2096 {
 		// Only a controller with an applied landing subscription journal is
 		// switched. Existing ordinary subscriptions keep their native origin.
@@ -59,7 +69,7 @@ func canonicalGatewayServiceEndpoint(appKey, runtime, role, applicationNodeID, g
 	}
 	if appKey == threeXUIAppKey && runtime == "docker" && applicationNodeID == gatewayID && containerPort > 0 && containerPort <= 65535 {
 		if role == threeXUIRoleWorker {
-			return net.JoinHostPort(dockerruntime.XrayAlias, strconv.Itoa(containerPort))
+			return net.JoinHostPort(dockerruntime.LegacyXrayAlias, strconv.Itoa(containerPort))
 		}
 		return net.JoinHostPort(dockerruntime.ThreeXUIAlias, strconv.Itoa(containerPort))
 	}
@@ -142,12 +152,12 @@ func (s *Store) reconcileDockerGatewayEndpoints(ctx context.Context) error {
 	}
 	defer tx.Rollback()
 	type routeEndpoint struct {
-		routeID, publicationID, gatewayID, appKey, runtime, role, applicationNodeID, endpoint string
-		containerPort                                                                         int
-		upstreams                                                                             []byte
+		routeID, publicationID, gatewayID, appKey, runtime, role, applicationNodeID, serviceName, endpoint string
+		containerPort                                                                                      int
+		upstreams                                                                                          []byte
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT r.id, r.publication_id, r.gateway_node_id, r.upstreams_json,
-		a.app_key, a.runtime, a.role, a.node_id, s.container_port, s.endpoint
+		a.app_key, a.runtime, a.role, a.node_id, s.name, s.container_port, s.endpoint
 		FROM routes r
 		JOIN publications p ON p.id = r.publication_id
 		JOIN services s ON s.id = r.service_id
@@ -159,7 +169,7 @@ func (s *Store) reconcileDockerGatewayEndpoints(ctx context.Context) error {
 	values := []routeEndpoint{}
 	for rows.Next() {
 		var value routeEndpoint
-		if err := rows.Scan(&value.routeID, &value.publicationID, &value.gatewayID, &value.upstreams, &value.appKey, &value.runtime, &value.role, &value.applicationNodeID, &value.containerPort, &value.endpoint); err != nil {
+		if err := rows.Scan(&value.routeID, &value.publicationID, &value.gatewayID, &value.upstreams, &value.appKey, &value.runtime, &value.role, &value.applicationNodeID, &value.serviceName, &value.containerPort, &value.endpoint); err != nil {
 			rows.Close()
 			return err
 		}
@@ -175,7 +185,7 @@ func (s *Store) reconcileDockerGatewayEndpoints(ctx context.Context) error {
 	now := s.now().UTC()
 	gateways := map[string]bool{}
 	for _, value := range values {
-		canonical := canonicalGatewayServiceEndpoint(value.appKey, value.runtime, value.role, value.applicationNodeID, value.gatewayID, value.containerPort, value.endpoint)
+		canonical := canonicalGatewayServiceEndpoint(value.appKey, value.runtime, value.role, value.applicationNodeID, value.gatewayID, value.serviceName, value.containerPort, value.endpoint)
 		var current []string
 		if json.Unmarshal(value.upstreams, &current) == nil && len(current) == 1 && current[0] == canonical {
 			continue

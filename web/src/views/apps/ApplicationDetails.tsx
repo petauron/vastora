@@ -20,19 +20,26 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 
-export function InstalledAppDetails({ instance, data, language, onClients, onConfigure, onCredentials, onMigrate, onPublish, onReality, onRenameReality, onRemoveReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { instance: InstalledAppInstance; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onRemoveReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
+export function InstalledAppDetails({ instance, data, language, onClients, onConfigure, onCredentials, onMigrate, onMeridian, onPublish, onReality, onRenameReality, onRemoveReality, onSubscription, onTraffic, onUninstall, onUpgrade, mutate }: { instance: InstalledAppInstance; data: AppData; language: Language; onClients: () => void; onConfigure: () => void; onCredentials: () => void; onMigrate: () => void; onMeridian: () => void; onPublish: (service: Service) => void; onReality: () => void; onRenameReality: (service: Service) => void; onRemoveReality: (service: Service) => void; onSubscription: () => void; onTraffic: (service: Service) => void; onUninstall: () => void; onUpgrade: () => void; mutate: Mutate }) {
   const [syncingNode, setSyncingNode] = useState(false);
   const { application, app, agent, services, deployment, activeChange, locked: serviceAccessLocked } = instance;
   const subscriptionService = services.find((service) => service.name === "subscription");
   const subscriptionPublication = subscriptionService ? data.publications.find((value) => value.serviceId === subscriptionService.id && value.status !== "stopped" && (value.kind === "cloudflare_tunnel" || value.kind === "public_direct")) : undefined;
   const isThreeXUI = application.appKey === "vastora-official/3x-ui";
+	const isMeridian = application.appKey === "vastora-official/meridian";
 	const isCPA = application.appKey === "vastora-official/cpa";
   const isController = isThreeXUI && application.role === "master" && application.id === application.controllerApplicationId;
+  const ownsMeridianCutover = isController && data.meridian.cutover.legacyControllerApplicationId === application.id && data.meridian.cutover.state !== "complete";
+  const canStartMeridianCutover = ownsMeridianCutover && data.meridian.cutover.subscriptionAuthority === "legacy";
   const isLegacyController = isThreeXUI && application.role === "master" && Boolean(application.controllerApplicationId) && application.id !== application.controllerApplicationId;
   const isWorker = isThreeXUI && application.role === "worker";
   const nodeSyncing = application.nodeSyncStatus === "pending" || application.nodeSyncStatus === "applying";
   const nodeReady = application.nodeSyncStatus === "ready";
-  const visibleServices = isWorker || isLegacyController ? services.filter((service) => service.protocol !== "http" && service.protocol !== "https") : services;
+  const visibleServices = isWorker || isLegacyController
+    ? services.filter((service) => service.protocol !== "http" && service.protocol !== "https")
+    : isMeridian
+      ? services.filter((service) => service.name !== "subscription")
+      : services;
   const activeWorkers = isController ? data.applications.filter((value) => value.id !== application.id && value.role === "worker" && value.controllerApplicationId === application.id && (value.status !== "stopped" || value.nodeSyncStatus === "pending" || value.nodeSyncStatus === "applying")) : [];
   const managedApplicationIDs = new Set([application.id, ...activeWorkers.map((worker) => worker.id)]);
   const managedVLESSNodeCount = isController ? data.services.filter((service) => managedApplicationIDs.has(service.applicationId) && service.appProtocol === "vless/tcp/reality" && service.status !== "stopped").length : 0;
@@ -68,6 +75,7 @@ export function InstalledAppDetails({ instance, data, language, onClients, onCon
 	        {!hasVLESSNode ? <Button disabled={!canCreateRealityNode(instance) || syncingNode} onClick={onReality} size="sm" variant={isController ? "outline" : "default"}><RadioTowerIcon data-icon="inline-start" />{copy(language, "创建 VLESS", "Create VLESS")}</Button> : null}
         {isController && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}
       </div> : null}
+			{isMeridian || ownsMeridianCutover ? <div className="grid gap-2 sm:grid-cols-2"><Button disabled={Boolean(activeChange)} onClick={onMeridian} size="sm"><UsersIcon data-icon="inline-start" />{canStartMeridianCutover ? copy(language, "迁移到 Meridian", "Migrate to Meridian") : ownsMeridianCutover ? copy(language, "查看 Meridian 迁移", "View Meridian migration") : copy(language, "管理账号与节点", "Manage accounts & nodes")}</Button>{isMeridian && subscriptionService ? <Button disabled={serviceAccessLocked} onClick={onSubscription} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{subscriptionPublication ? copy(language, "公网订阅", "Public subscription") : copy(language, "开启订阅", "Enable subscription")}</Button> : null}</div> : null}
 			{isCPA ? <Button disabled={Boolean(activeChange)} onClick={onCredentials} size="sm" variant="outline"><KeyRoundIcon data-icon="inline-start" />{copy(language, "凭据", "Credentials")}</Button> : null}
       {!isWorker && !isLegacyController && deployment?.accessUrl ? <Button nativeButton={false} render={<a href={deployment.accessUrl} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><ExternalLinkIcon data-icon="inline-start" />{application.appKey === "vastora-official/pulse" ? copy(language, "打开监控", "Open monitoring") : copy(language, "打开主页", "Open homepage")}</Button> : !isWorker && !isLegacyController && app?.app.homepage ? <p className="text-xs text-muted-foreground">{copy(language, "添加并完成一个访问入口后，这里会出现“打开主页”。", "After an access point is ready, an Open homepage button appears here.")}</p> : null}
       {!isWorker && !isLegacyController && visibleServices.length === 0 ? <p className="text-sm text-muted-foreground">{copy(language, "此应用没有可发布的 Web 服务。", "This app has no publishable Web service.")}</p> : null}
@@ -227,13 +235,15 @@ export function ServiceRow({ data, language, service, locked, onPublish, onRenam
 	const publications = data.publications.filter((value) => value.serviceId === service.id && (value.status !== "stopped" || value.actionRequired));
 	const activePublication = publications.find((value) => value.status !== "stopped");
 	const cloudflareReady = data.integrations.some((value) => value.kind === "cloudflare" && value.status === "configured");
-	const isReality = service.appProtocol === "vless/tcp/reality";
+	const isLegacyReality = service.appProtocol === "vless/tcp/reality";
+	const isMeridianEntry = service.appProtocol === "meridian/entry";
+	const isManagedEntry = isLegacyReality || isMeridianEntry;
 	const application = data.applications.find((value) => value.id === service.applicationId);
 	const managedSubscription = application?.appKey === "vastora-official/3x-ui" && application.role === "master" && service.name === "subscription";
 	const cpaClientAPI = application?.appKey === "vastora-official/cpa" && service.name === "client-api";
 	const trafficControllerAvailable = Boolean(application?.controllerApplicationId && data.applications.some((value) => value.id === application.controllerApplicationId && value.role === "master" && value.status === "running"));
 	const trafficHintID = `traffic-controller-${service.id}`;
-	const summary = isReality
+	const summary = isManagedEntry
 		? (service.protocols ?? ["vless"]).map((protocol) => protocol.toUpperCase()).join(" / ")
 		: cpaClientAPI
 			? copy(language, "对外 API · 仅开放 /v1 · 客户端密钥鉴权", "Public API · /v1 only · client-key authentication")
@@ -246,16 +256,16 @@ export function ServiceRow({ data, language, service, locked, onPublish, onRenam
 				<div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">{cpaClientAPI ? copy(language, "公网 API", "Public API") : service.displayName || service.name}</p>{service.management ? <Badge variant="destructive">{copy(language, "管理页", "Admin")}</Badge> : null}</div>
 				<p className="mt-1 text-xs text-muted-foreground">{summary}</p>
 			</div>
-			{isReality ? <><Button aria-describedby={!trafficControllerAvailable ? trafficHintID : undefined} disabled={locked || !trafficControllerAvailable} onClick={onTraffic} size="sm" variant="outline">{service.protocols?.includes("hy2") ? copy(language, "VLESS 套餐", "VLESS plan") : copy(language, "节点套餐", "Node plan")}</Button><Button disabled={locked} onClick={onRename} size="icon-sm" title={copy(language, "编辑节点", "Edit node")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑节点", "Edit node")}</span></Button></> : null}
+			{isLegacyReality ? <Button aria-describedby={!trafficControllerAvailable ? trafficHintID : undefined} disabled={locked || !trafficControllerAvailable} onClick={onTraffic} size="sm" variant="outline">{service.protocols?.includes("hy2") ? copy(language, "VLESS 套餐", "VLESS plan") : copy(language, "节点套餐", "Node plan")}</Button> : null}{isManagedEntry ? <Button disabled={locked} onClick={onRename} size="icon-sm" title={copy(language, "编辑节点", "Edit node")} variant="ghost"><PencilIcon /><span className="sr-only">{copy(language, "编辑节点", "Edit node")}</span></Button> : null}
 			{onRemove ? <Button disabled={locked} onClick={onRemove} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "移除本机节点", "Remove local node")}</Button> : null}
 			{!managedSubscription ? <Button disabled={locked || Boolean(cpaClientAPI && activePublication)} onClick={onPublish} size="sm" variant="outline"><Globe2Icon data-icon="inline-start" />{cpaClientAPI ? activePublication ? copy(language, "API 已开启", "API enabled") : copy(language, "开启公网 API", "Enable public API") : copy(language, "添加入口", "Add access")}</Button> : null}
 		</div>
-		{isReality && !trafficControllerAvailable ? <p className="mt-2 text-xs text-destructive" id={trafficHintID}>{copy(language, "订阅主机当前不可用，暂时不能修改节点套餐。", "The subscription controller is unavailable, so this node plan cannot be changed yet.")}</p> : null}
+		{isLegacyReality && !trafficControllerAvailable ? <p className="mt-2 text-xs text-destructive" id={trafficHintID}>{copy(language, "订阅主机当前不可用，暂时不能修改节点套餐。", "The subscription controller is unavailable, so this node plan cannot be changed yet.")}</p> : null}
 		{service.lastError || service.actionRequiredReason ? <div className="mt-2"><TechnicalError error={service.lastError || service.actionRequiredReason} language={language} /></div> : null}
-		{publications.length ? <div className="mt-3 flex flex-col gap-2">{publications.map((publication) => <PublicationRow hy2Only={Boolean(isReality && service.protocols?.includes("hy2") && !service.protocols?.includes("vless"))} cloudflareReady={cloudflareReady} copyAccessURL={cpaClientAPI} key={publication.id} language={language} locked={locked} mutate={mutate} publication={publication} />)}</div> : <p className="mt-3 text-xs text-muted-foreground">{managedSubscription ? copy(language, "请使用上方“开启订阅”配置唯一的公网订阅地址。", "Use Enable subscription above to configure the single public subscription URL.") : cpaClientAPI ? copy(language, "开启后会生成 HTTPS API 地址；管理页面不会通过这个域名暴露。", "Enabling this creates an HTTPS API URL; the management page is not exposed on that hostname.") : copy(language, "仅在节点内部运行，添加入口后才能访问。", "Runs privately on the node until you add an access point.")}</p>}
+		{publications.length ? <div className="mt-3 flex flex-col gap-2">{publications.map((publication) => <PublicationRow hy2Only={Boolean(isManagedEntry && service.protocols?.includes("hy2") && !service.protocols?.includes("vless"))} cloudflareReady={cloudflareReady} copyAccessURL={cpaClientAPI} key={publication.id} language={language} locked={locked} mutate={mutate} publication={publication} />)}</div> : <p className="mt-3 text-xs text-muted-foreground">{managedSubscription ? copy(language, "请使用上方“开启订阅”配置唯一的公网订阅地址。", "Use Enable subscription above to configure the single public subscription URL.") : cpaClientAPI ? copy(language, "开启后会生成 HTTPS API 地址；管理页面不会通过这个域名暴露。", "Enabling this creates an HTTPS API URL; the management page is not exposed on that hostname.") : copy(language, "仅在节点内部运行，添加入口后才能访问。", "Runs privately on the node until you add an access point.")}</p>}
 		<details className="mt-3 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
 			<summary className="cursor-pointer font-medium text-foreground">{copy(language, "技术信息", "Technical details")}</summary>
-			<dl className="mt-2 grid gap-1.5"><div className="flex gap-2"><dt>{copy(language, "源站", "Origin")}</dt><dd className="min-w-0 break-all font-mono">{service.protocol} · {service.endpoint}</dd></div>{isReality && service.displayName ? <div className="flex gap-2"><dt>{copy(language, "内部名称", "Internal name")}</dt><dd className="min-w-0 break-all font-mono">{service.name}</dd></div> : null}</dl>
+			<dl className="mt-2 grid gap-1.5"><div className="flex gap-2"><dt>{copy(language, "源站", "Origin")}</dt><dd className="min-w-0 break-all font-mono">{service.protocol} · {service.endpoint}</dd></div>{isManagedEntry && service.displayName ? <div className="flex gap-2"><dt>{copy(language, "内部名称", "Internal name")}</dt><dd className="min-w-0 break-all font-mono">{service.name}</dd></div> : null}</dl>
 		</details>
 	</div>;
 }

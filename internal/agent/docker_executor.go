@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/dockerruntime"
@@ -17,8 +18,10 @@ import (
 
 const (
 	threeXUIKey                  = "vastora-official/3x-ui"
+	meridianKey                  = "vastora-official/meridian"
 	threeXUIContainer            = "vastora-3x-ui"
 	xrayWorkerContainer          = "vastora-xray"
+	meridianXrayContainer        = "meridian-xray"
 	threeXUIDatabaseVolume       = "vastora-3x-ui-db"
 	cpaKey                       = "vastora-official/cpa"
 	cpaContainer                 = "vastora-cpa"
@@ -99,8 +102,15 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 			}
 		}
 		err := uninstallDockerApp(ctx, docker, task.AppKey, task.ApplicationID, task.DeleteData)
-		if err == nil && task.AppKey == threeXUIKey && e.Store != nil && task.DeleteData {
-			err = e.Store.stopXrayWorkerAPI(ctx, true)
+		if err == nil && e.Store != nil {
+			switch task.AppKey {
+			case threeXUIKey:
+				if task.DeleteData {
+					err = e.Store.stopXrayWorkerAPI(ctx, true)
+				}
+			case meridianKey:
+				err = e.Store.removeMeridianRuntimeState(ctx)
+			}
 		}
 		return ApplicationTaskResult{}, err
 	}
@@ -140,6 +150,12 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 		if apiToken != "" {
 			generatedSecrets["api_token"] = apiToken
 		}
+	case meridianKey:
+		var apiToken string
+		apiToken, deployErr = deployMeridian(ctx, docker, socket, e.Store, task, bindAddress)
+		if apiToken != "" {
+			generatedSecrets["api_token"] = apiToken
+		}
 	case cpaKey:
 		deployErr = deployCPA(ctx, docker, task, bindAddress)
 	case keeperKey:
@@ -152,7 +168,7 @@ func (e ApplicationExecutor) Deploy(ctx context.Context, task DeploymentTask) (A
 	}
 	result, err := reportedServices(ctx, task, bindAddress)
 	if err != nil {
-		if task.AppKey == threeXUIKey {
+		if proxyRuntimeApp(task.AppKey) {
 			return ApplicationTaskResult{GeneratedSecrets: generatedSecrets}, uncertainTaskOutcome(err)
 		}
 		return ApplicationTaskResult{}, err
@@ -168,7 +184,7 @@ func validateApplicationTask(task DeploymentTask) error {
 	if task.Operation != "install" && task.Operation != "upgrade" && task.Operation != "configure" && task.Operation != "uninstall" {
 		return errors.New("agent: unsupported application operation")
 	}
-	supported := task.AppKey == threeXUIKey || task.AppKey == cpaKey || task.AppKey == keeperKey || task.AppKey == komariKey || task.AppKey == pulse.ServiceKey || task.AppKey == pulse.AgentKey
+	supported := task.AppKey == meridianKey || task.AppKey == threeXUIKey || task.AppKey == cpaKey || task.AppKey == keeperKey || task.AppKey == komariKey || task.AppKey == pulse.ServiceKey || task.AppKey == pulse.AgentKey
 	if !supported {
 		return errors.New("agent: unsupported official app package")
 	}
@@ -188,7 +204,7 @@ func validateApplicationTask(task DeploymentTask) error {
 		return err
 	}
 	if task.AppKey != threeXUIKey && task.ApplicationRole != "" {
-		return errors.New("agent: application topology role is only valid for 3x-ui")
+		return errors.New("agent: application topology role is not supported")
 	}
 	if task.AppKey == threeXUIKey && task.ApplicationRole != "master" && task.ApplicationRole != "worker" {
 		return errors.New("agent: proxy application requires an explicit controller or worker role")
@@ -255,6 +271,13 @@ func validateApplicationTask(task DeploymentTask) error {
 		} else if _, _, err := threeXUIPorts(bindAddress, config.PanelPort, task.ApplicationRole); err != nil {
 			return err
 		}
+	case meridianKey:
+		if len(task.Config) != 0 && string(task.Config) != "{}" || len(task.Secrets) != 0 && string(task.Secrets) != "{}" {
+			return errors.New("agent: Meridian installation has no operator-supplied configuration or credentials")
+		}
+		if !networking.IsPrivateServiceAddress(bindAddress) {
+			return errors.New("agent: Meridian requires a private service address")
+		}
 	case cpaKey:
 		if _, _, err := decodeCPAConfig(task.Config, task.Secrets); err != nil {
 			return err
@@ -289,6 +312,32 @@ type appUninstallEngine interface {
 
 func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, applicationID string, deleteData bool) error {
 	containers := map[string]string{threeXUIKey: threeXUIContainer, cpaKey: cpaContainer, keeperKey: keeperContainer, pulse.ServiceKey: pulseContainer}
+	if appKey == meridianKey {
+		transactionalDocker, ok := docker.(threeXUIContainerEngine)
+		if !ok {
+			return errors.New("agent: Docker engine cannot verify Meridian ownership before uninstall")
+		}
+		names := []string{meridianXrayCandidateContainer, meridianXrayBackupContainer, meridianXrayCleanupContainer, meridianXrayContainer}
+		for _, name := range names {
+			inspected, exists, err := inspectOwnedProxyRuntimeContainer(ctx, transactionalDocker, name)
+			if err != nil {
+				return fmt.Errorf("agent: inspect Meridian container before uninstall: %w", err)
+			}
+			if !exists {
+				continue
+			}
+			if inspected.Container.Config == nil || inspected.Container.Config.Labels[applicationInstallationLabel] != applicationID {
+				return errors.New("agent: refusing to remove Meridian container owned by another application")
+			}
+			if (name == meridianXrayCandidateContainer || name == meridianXrayContainer) && inspected.Container.Config.Labels[applicationIdentityLabel] != meridianKey {
+				return errors.New("agent: refusing to remove a non-Meridian active container")
+			}
+			if _, err := docker.ContainerRemove(ctx, inspected.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+				return fmt.Errorf("agent: remove Meridian container: %w", err)
+			}
+		}
+		return nil
+	}
 	name, ok := containers[appKey]
 	if !ok {
 		return errors.New("agent: unsupported app package")
@@ -320,12 +369,14 @@ func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, 
 		}
 		if !deleteData {
 			// Stop volume writers without restoring snapshots or starting services.
-			prepare := prepareThreeXUIKeepDataUninstall
+			var prepareErr error
 			if xrayWorker {
-				prepare = prepareXrayWorkerKeepDataUninstall
+				prepareErr = prepareXrayWorkerKeepDataUninstall(ctx, transactionalDocker, threeXUIKey, applicationID, containerNames)
+			} else {
+				prepareErr = prepareThreeXUIKeepDataUninstall(ctx, transactionalDocker)
 			}
-			if err := prepare(ctx, transactionalDocker); err != nil {
-				return fmt.Errorf("agent: preserve 3x-ui data before uninstall: %w", err)
+			if prepareErr != nil {
+				return fmt.Errorf("agent: preserve 3x-ui data before uninstall: %w", prepareErr)
 			}
 		}
 		// Delete-data uninstall is intentionally independent of rollback state:
@@ -352,4 +403,8 @@ func uninstallDockerApp(ctx context.Context, docker appUninstallEngine, appKey, 
 		}
 	}
 	return nil
+}
+
+func proxyRuntimeApp(appKey string) bool {
+	return appKey == meridianKey || appKey == threeXUIKey
 }

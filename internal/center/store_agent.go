@@ -744,6 +744,11 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 			return err
 		}
 	}
+	if !executionBlocked && heartbeat.MeridianRuntime != nil {
+		if err := s.recordMeridianRuntimeObservation(ctx, tx, id, *heartbeat.MeridianRuntime, now); err != nil {
+			return err
+		}
+	}
 	if !executionBlocked && heartbeat.ApplicationRuntimeGeneration > previousRuntimeGeneration {
 		if err := s.queueApplicationRuntimeMigration(ctx, tx, id, heartbeat.ApplicationRuntimeGeneration, now); err != nil {
 			return err

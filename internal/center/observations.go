@@ -15,6 +15,18 @@ import (
 var observedEndpointNamePattern = regexp.MustCompile(`^inbound-[1-9][0-9]*$`)
 
 func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
+	if len(observations) > 0 && strings.TrimSpace(observations[0].AppKey) == meridianAppKey {
+		return s.reconcileMeridianEndpoints(ctx, tx, agentID, observations, now, cleanups)
+	}
+	if len(observations) == 0 {
+		var meridianInstalled bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM applications WHERE node_id=? AND app_key=? AND status='running')`, agentID, meridianAppKey).Scan(&meridianInstalled); err != nil {
+			return err
+		}
+		if meridianInstalled {
+			return s.reconcileMeridianEndpoints(ctx, tx, agentID, observations, now, cleanups)
+		}
+	}
 	seen := map[string]bool{}
 	for index := range observations {
 		value := &observations[index]
@@ -104,6 +116,127 @@ func (s *Store) reconcileApplicationEndpoints(ctx context.Context, tx *sql.Tx, a
 		}
 	}
 	return nil
+}
+
+func (s *Store) reconcileMeridianEndpoints(ctx context.Context, tx *sql.Tx, agentID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
+	seenNames, seenTags := map[string]bool{}, map[string]bool{}
+	for index := range observations {
+		value := &observations[index]
+		value.AppKey = strings.TrimSpace(value.AppKey)
+		value.Name = strings.TrimSpace(value.Name)
+		value.Protocol = strings.TrimSpace(value.Protocol)
+		value.AppProtocol = strings.TrimSpace(value.AppProtocol)
+		value.Listen = strings.TrimSpace(value.Listen)
+		value.InboundTag = strings.TrimSpace(value.InboundTag)
+		if value.AppKey != meridianAppKey || !observedEndpointNamePattern.MatchString(value.Name) || value.Protocol != "tcp" || value.AppProtocol != meridianEntryProtocol || value.Port < 1 || value.Port > 65535 || value.RemoteNodeID != 0 || value.InboundTotalBytes < 0 || !validThreeXUIInboundTag(value.InboundTag) {
+			return errors.New("center: Agent reported an invalid Meridian endpoint")
+		}
+		if value.Listen != "" && net.ParseIP(value.Listen) == nil {
+			return errors.New("center: Agent reported an invalid Meridian listen address")
+		}
+		if seenNames[value.Name] || seenTags[value.InboundTag] {
+			return errors.New("center: Agent reported a duplicate Meridian endpoint")
+		}
+		seenNames[value.Name], seenTags[value.InboundTag] = true, true
+	}
+	var applicationID, role string
+	err := tx.QueryRowContext(ctx, `SELECT id,role FROM applications WHERE node_id=? AND app_key=? AND status='running'`, agentID, meridianAppKey).Scan(&applicationID, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if role != "" {
+		return errors.New("center: Meridian application must not have a topology role")
+	}
+	return s.reconcileObservedMeridianApplication(ctx, tx, applicationID, observations, now, cleanups)
+}
+
+func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sql.Tx, applicationID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {
+	var siteID, serviceAddress string
+	if err := tx.QueryRowContext(ctx, `SELECT a.site_id,COALESCE(p.service_address,'') FROM applications a LEFT JOIN agent_network_profiles p ON p.agent_id=a.node_id WHERE a.id=?`, applicationID).Scan(&siteID, &serviceAddress); err != nil {
+		return err
+	}
+	if serviceAddress == "" {
+		_, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status=CASE WHEN status='retired' THEN status ELSE 'failed' END,last_error='Node network is recovering',updated_at=? WHERE application_id=?`, now.Format(time.RFC3339Nano), applicationID)
+		return err
+	}
+	if net.ParseIP(serviceAddress) == nil {
+		return errors.New("center: Meridian application node has an invalid service address")
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,name FROM services WHERE application_id=? AND source='observed'`, applicationID)
+	if err != nil {
+		return err
+	}
+	existing := map[string]string{}
+	for rows.Next() {
+		var id, name string
+		if err := rows.Scan(&id, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		existing[name] = id
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	stamp := now.Format(time.RFC3339Nano)
+	for _, value := range observations {
+		serviceID := existing[value.Name]
+		status := "stopped"
+		if value.Enabled {
+			status = "ready"
+		}
+		endpoint := net.JoinHostPort(serviceAddress, strconv.Itoa(value.Port))
+		if serviceID == "" {
+			serviceID, err = randomToken(18)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?, 'observed',?,0,?,?,?,?)`, serviceID, applicationID, siteID, value.Name, value.Protocol, value.Port, value.Port, endpoint, value.AppProtocol, value.Listen, status, stamp, stamp); err != nil {
+				return fmt.Errorf("center: create observed Meridian endpoint: %w", err)
+			}
+		} else if _, err := tx.ExecContext(ctx, `UPDATE services SET protocol=?,container_port=?,host_port=?,endpoint=?,app_protocol=?,observed_listen=?,status=?,last_error='',updated_at=? WHERE id=?`, value.Protocol, value.Port, value.Port, endpoint, value.AppProtocol, value.Listen, status, stamp, serviceID); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET
+			runtime_healthy=CASE WHEN applied_revision=desired_revision THEN ? ELSE runtime_healthy END,
+			status=CASE WHEN status='retired' THEN status WHEN applied_revision<>desired_revision THEN status WHEN ?=1 THEN 'ready' ELSE 'failed' END,
+			last_error=CASE WHEN applied_revision<>desired_revision THEN last_error WHEN ?=1 THEN '' ELSE 'Runtime endpoint is disabled' END,
+			updated_at=? WHERE application_id=? AND service_id=? AND (inbound_tag=? OR hy2_inbound_tag=?)`, boolInt(value.Enabled), boolInt(value.Enabled), boolInt(value.Enabled), stamp, applicationID, serviceID, value.InboundTag, value.InboundTag)
+		if err != nil {
+			return err
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return errors.New("center: observed Meridian endpoint does not match desired state")
+		}
+		delete(existing, value.Name)
+		if !value.Enabled {
+			if err := s.stopServicePublications(ctx, tx, serviceID, now, cleanups); err != nil {
+				return err
+			}
+		}
+	}
+	for _, serviceID := range existing {
+		if _, err := tx.ExecContext(ctx, `UPDATE services SET status='stopped',updated_at=? WHERE id=?`, stamp, serviceID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status=CASE WHEN status='retired' THEN status ELSE 'failed' END,last_error='Runtime endpoint is missing',updated_at=? WHERE service_id=?`, stamp, serviceID); err != nil {
+			return err
+		}
+		if err := s.stopServicePublications(ctx, tx, serviceID, now, cleanups); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (s *Store) reconcileObservedApplication(ctx context.Context, tx *sql.Tx, applicationID string, observations []ApplicationEndpointObservation, now time.Time, cleanups *[]publicationCleanup) error {

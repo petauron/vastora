@@ -184,6 +184,56 @@ func TestRealitySecurityCheckMarksSameHostScope(t *testing.T) {
 	}
 }
 
+func TestRealitySecurityCheckSupportsMeridianEndpoint(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	seedRealitySecurityCheckPublication(t, store)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	secretID, err := store.putSecret(ctx, tx, []byte("meridian-test-private-key"), meridianEndpointSecretContext("verification-endpoint"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET app_key=?,role='' WHERE id='verification-app'`, meridianAppKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET app_protocol=? WHERE id='verification-service'`, meridianEntryProtocol); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
+		VALUES('verification-endpoint','verification-app','verification-service','meridian-verification',443,'reality.example.test',443,'www.intel.com:443','192.0.2.80','["www.intel.com"]',?,'test-public-key','["abcd"]','chrome',1,3,3,1,'ready',?,?)`, secretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	store.dialRealitySecurityProbe = func(_ context.Context, _, serverName string) error {
+		if serverName == "www.intel.com" {
+			return nil
+		}
+		return errors.New("rejected")
+	}
+	result, err := store.RunRealitySecurityCheck(ctx, "verification-publication", "security-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != realitySecurityCheckSafe {
+		t.Fatalf("unexpected Meridian security result: %#v", result)
+	}
+	publication, err := store.Publication(ctx, "verification-publication")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publication.SecurityCheck == nil || publication.SecurityCheck.Status != realitySecurityCheckSafe {
+		t.Fatalf("Meridian publication did not expose the security result: %#v", publication.SecurityCheck)
+	}
+}
+
 func TestRealitySecurityCheckEndpointRequiresAdminAndReturnsNoStoreResult(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

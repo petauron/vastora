@@ -44,6 +44,7 @@ export type AppData = {
   integrations: Integration[];
   actions: Action[];
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
+  meridian: import("./meridian-types").MeridianInventory;
   systemDomain: SystemDomain;
   tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
   centerRemoteAccess: CenterRemoteAccess | null;
@@ -424,7 +425,7 @@ export type CloudflareOAuthStart = { sessionId: string; authorizationUrl: string
 export type CloudflareOAuthPoll = { status: "pending" | "authorized"; zones?: CloudflareZone[] };
 export type HeadscaleJoin = { agentId: string; command: string; expiresAt: string };
 export type Action = { id: string; taskId: string; agentId: string; kind: string; revision: number; event: "queued" | "claimed" | "lease_expired" | "succeeded" | "failed"; currentState?: string; message?: string; createdAt: string };
-export type ApplicationCommandKind = "3xui.protocols.configure" | "3xui.reality.create" | "3xui.reality.verify" | "3xui.reality.harden" | "3xui.reality.rename" | "3xui.reality.remove" | "3xui.subscription.configure" | "3xui.clients.manage" | "3xui.node.reconcile" | "3xui.controller.manage";
+export type ApplicationCommandKind = "meridian.runtime.apply" | "meridian.legacy.export" | "meridian.legacy.retire" | "meridian.subscription.publish" | "3xui.protocols.configure" | "3xui.reality.create" | "3xui.reality.verify" | "3xui.reality.harden" | "3xui.reality.rename" | "3xui.reality.remove" | "3xui.subscription.configure" | "3xui.clients.manage" | "3xui.node.reconcile" | "3xui.controller.manage";
 export type ThreeXUIClientInbound = { id: number; hy2InboundId?: number; vlessDisabled?: boolean; serviceId?: string; name: string; displayName?: string; applicationId?: string; nodeId?: string; nodeName?: string; connectHostname?: string; sniHostname?: string; enabled?: boolean; totalBytes?: number; usedBytes?: number; resetDay?: number; nextResetAt?: string; planStatus?: "active" | "resetting" | "failed"; planError?: string };
 export type ThreeXUIClient = { id?: string; hasLanding?: boolean; email: string; enabled: boolean; totalBytes: number; usedBytes: number; expiryTime: number; resetDays?: number; limitIp: number; inboundIds: number[]; hasSubscription: boolean };
 export type ThreeXUIClientAction = "list" | "list_inbounds" | "create" | "update" | "update_inbound" | "set_enabled" | "delete" | "reset_traffic" | "reveal_link" | "reveal_subscription";

@@ -50,6 +50,22 @@ type realitySecurityCheckTarget struct {
 	scope               string
 }
 
+type managedRealitySecurityState struct {
+	appKey        string
+	appProtocol   string
+	appNodeID     string
+	serviceStatus string
+	targetHost    string
+	targetIP      string
+	serverName    string
+	revision      int64
+	status        string
+}
+
+type realitySecurityQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 type realitySecurityProbe struct {
 	kind       string
 	serverName string
@@ -131,29 +147,18 @@ func (s *Store) realitySecurityCheckTarget(ctx context.Context, publicationID st
 		return realitySecurityCheckTarget{}, errors.New("center: security check requires a ready REALITY publication")
 	}
 
-	var appKey, appProtocol, appNodeID, serviceStatus string
-	var targetHost, targetIP, serverName, guardStatus string
-	var guardRevision int64
-	if err := s.db.QueryRowContext(ctx, `SELECT application.app_key, service.app_protocol, application.node_id, service.status,
-		guard.target_host, guard.target_ip, guard.server_name, guard.revision, guard.status
-		FROM publications publication
-		JOIN services service ON service.id = publication.service_id
-		JOIN applications application ON application.id = service.application_id
-		JOIN three_x_ui_reality_guards guard ON guard.service_id = service.id
-		WHERE publication.id = ?`, publicationID).Scan(
-		&appKey, &appProtocol, &appNodeID, &serviceStatus,
-		&targetHost, &targetIP, &serverName, &guardRevision, &guardStatus,
-	); errors.Is(err, sql.ErrNoRows) {
+	state, err := loadManagedRealitySecurityState(ctx, s.db, publicationID, publication.ServiceID)
+	if errors.Is(err, sql.ErrNoRows) {
 		return realitySecurityCheckTarget{}, errors.New("center: managed REALITY guard was not found")
 	} else if err != nil {
 		return realitySecurityCheckTarget{}, err
 	}
-	if appKey != threeXUIAppKey || appProtocol != "vless/tcp/reality" || serviceStatus != "ready" || appNodeID != publication.EntryNodeID {
-		return realitySecurityCheckTarget{}, errors.New("center: security check requires a ready managed 3x-ui REALITY service on its owning node")
+	if state.serviceStatus != "ready" || state.appNodeID != publication.EntryNodeID || state.status != "ready" || state.revision < 1 {
+		return realitySecurityCheckTarget{}, errors.New("center: security check requires a ready managed REALITY service on its owning node")
 	}
-	targetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(targetHost), "."))
-	serverName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(serverName), "."))
-	if guardStatus != "ready" || guardRevision < 1 || !validRealityTargetHostname(targetHost) || !validRealityTargetHostname(serverName) || serverName != publication.SNIHostname || !isPublicPublicationVerificationIP(net.ParseIP(targetIP)) {
+	state.targetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(state.targetHost), "."))
+	state.serverName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(state.serverName), "."))
+	if !validRealityTargetHostname(state.targetHost) || !validRealityTargetHostname(state.serverName) || state.serverName != publication.SNIHostname || !isPublicPublicationVerificationIP(net.ParseIP(state.targetIP)) {
 		return realitySecurityCheckTarget{}, errors.New("center: managed REALITY fallback guard is not ready for a security check")
 	}
 	profile, err := networkProfile(ctx, s.db, publication.EntryNodeID)
@@ -182,15 +187,49 @@ func (s *Store) realitySecurityCheckTarget(ctx context.Context, publicationID st
 	return realitySecurityCheckTarget{
 		publicationID:       publication.ID,
 		publicationRevision: publication.DesiredRevision,
-		guardRevision:       guardRevision,
+		guardRevision:       state.revision,
 		serviceID:           publication.ServiceID,
 		entryNodeID:         publication.EntryNodeID,
 		publicAddress:       publicIP.String(),
-		expectedSNI:         serverName,
-		targetHost:          targetHost,
-		targetIP:            strings.TrimSpace(targetIP),
+		expectedSNI:         state.serverName,
+		targetHost:          state.targetHost,
+		targetIP:            strings.TrimSpace(state.targetIP),
 		scope:               scope,
 	}, nil
+}
+
+func loadManagedRealitySecurityState(ctx context.Context, source realitySecurityQueryer, publicationID, serviceID string) (managedRealitySecurityState, error) {
+	var state managedRealitySecurityState
+	if err := source.QueryRowContext(ctx, `SELECT application.app_key,service.app_protocol,application.node_id,service.status
+		FROM publications publication JOIN services service ON service.id=publication.service_id
+		JOIN applications application ON application.id=service.application_id
+		WHERE publication.id=? AND service.id=?`, publicationID, serviceID).Scan(&state.appKey, &state.appProtocol, &state.appNodeID, &state.serviceStatus); err != nil {
+		return managedRealitySecurityState{}, err
+	}
+	switch {
+	case state.appKey == threeXUIAppKey && state.appProtocol == "vless/tcp/reality":
+		if err := source.QueryRowContext(ctx, `SELECT target_host,target_ip,server_name,revision,status FROM three_x_ui_reality_guards WHERE service_id=?`, serviceID).Scan(&state.targetHost, &state.targetIP, &state.serverName, &state.revision, &state.status); err != nil {
+			return managedRealitySecurityState{}, err
+		}
+	case state.appKey == meridianAppKey && state.appProtocol == meridianEntryProtocol:
+		var target string
+		var namesJSON []byte
+		var desiredRevision, appliedRevision int64
+		var runtimeHealthy, vlessEnabled int
+		if err := source.QueryRowContext(ctx, `SELECT target,target_ip,server_names_json,desired_revision,applied_revision,runtime_healthy,vless_enabled,status
+			FROM meridian_endpoints WHERE service_id=? AND status<>'retired'`, serviceID).Scan(&target, &state.targetIP, &namesJSON, &desiredRevision, &appliedRevision, &runtimeHealthy, &vlessEnabled, &state.status); err != nil {
+			return managedRealitySecurityState{}, err
+		}
+		host, port, err := net.SplitHostPort(target)
+		var names []string
+		if err != nil || port != "443" || json.Unmarshal(namesJSON, &names) != nil || len(names) != 1 || desiredRevision != appliedRevision || runtimeHealthy != 1 || vlessEnabled != 1 {
+			return managedRealitySecurityState{}, errors.New("center: stored Meridian REALITY guard is invalid")
+		}
+		state.targetHost, state.serverName, state.revision = host, names[0], desiredRevision
+	default:
+		return managedRealitySecurityState{}, sql.ErrNoRows
+	}
+	return state, nil
 }
 
 func networkKindEnabled(values []string, expected string) bool {
@@ -268,23 +307,26 @@ func (s *Store) storeRealitySecurityCheck(ctx context.Context, target realitySec
 		return err
 	}
 	defer tx.Rollback()
-	var publicationRevision, guardRevision int64
-	var publicationStatus, publicationKind, ingressOwner, entryNodeID, publicAddress, serviceStatus, guardStatus, serverName, targetHost, targetIP string
+	var publicationRevision int64
+	var publicationStatus, publicationKind, ingressOwner, entryNodeID, publicAddress string
 	var actionRequired int
 	if err := tx.QueryRowContext(ctx, `SELECT publication.desired_revision, publication.status, publication.kind, publication.ingress_owner,
-		publication.entry_node_id, publication.action_required, COALESCE(profile.public_address, ''), service.status,
-		guard.revision, guard.status, guard.server_name, guard.target_host, guard.target_ip
+		publication.entry_node_id, publication.action_required, COALESCE(profile.public_address, '')
 		FROM publications publication
-		JOIN services service ON service.id = publication.service_id
-		JOIN three_x_ui_reality_guards guard ON guard.service_id = service.id
 		LEFT JOIN agent_network_profiles profile ON profile.agent_id = publication.entry_node_id
 		WHERE publication.id = ? AND publication.service_id = ?`, target.publicationID, target.serviceID).Scan(
 		&publicationRevision, &publicationStatus, &publicationKind, &ingressOwner,
-		&entryNodeID, &actionRequired, &publicAddress, &serviceStatus, &guardRevision, &guardStatus, &serverName, &targetHost, &targetIP,
+		&entryNodeID, &actionRequired, &publicAddress,
 	); err != nil {
 		return err
 	}
-	if publicationRevision != target.publicationRevision || guardRevision != target.guardRevision || publicationStatus != "ready" || actionRequired != 0 || publicationKind != publicationShared443 || ingressOwner != ingressApplicationNode || entryNodeID != target.entryNodeID || publicAddress != target.publicAddress || serviceStatus != "ready" || guardStatus != "ready" || serverName != target.expectedSNI || targetHost != target.targetHost || targetIP != target.targetIP {
+	state, err := loadManagedRealitySecurityState(ctx, tx, target.publicationID, target.serviceID)
+	if err != nil {
+		return err
+	}
+	state.targetHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(state.targetHost), "."))
+	state.serverName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(state.serverName), "."))
+	if publicationRevision != target.publicationRevision || state.revision != target.guardRevision || publicationStatus != "ready" || actionRequired != 0 || publicationKind != publicationShared443 || ingressOwner != ingressApplicationNode || entryNodeID != target.entryNodeID || publicAddress != target.publicAddress || state.serviceStatus != "ready" || state.status != "ready" || state.serverName != target.expectedSNI || state.targetHost != target.targetHost || strings.TrimSpace(state.targetIP) != target.targetIP {
 		return errors.New("center: REALITY publication changed during the security check; run it again")
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO reality_security_checks(
@@ -318,12 +360,15 @@ func (s *Store) realitySecurityCheck(ctx context.Context, publicationID string) 
 	err := s.db.QueryRowContext(ctx, `SELECT security.status, security.scope, security.checks_json, security.checked_at
 		FROM reality_security_checks security
 		JOIN publications publication ON publication.id = security.publication_id
-		JOIN three_x_ui_reality_guards guard ON guard.service_id = publication.service_id
+		JOIN services service ON service.id=publication.service_id
+		JOIN applications application ON application.id=service.application_id
+		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = publication.service_id
+		LEFT JOIN meridian_endpoints endpoint ON endpoint.service_id=publication.service_id AND endpoint.status<>'retired'
 		WHERE security.publication_id = ?
 		AND security.publication_revision = publication.desired_revision
-		AND security.guard_revision = guard.revision
 		AND publication.status = 'ready' AND publication.action_required = 0
-		AND guard.status = 'ready'`, publicationID).Scan(&status, &scope, &checksJSON, &checkedAt)
+		AND ((application.app_key=? AND service.app_protocol='vless/tcp/reality' AND security.guard_revision=guard.revision AND guard.status='ready')
+		 OR (application.app_key=? AND service.app_protocol=? AND security.guard_revision=endpoint.desired_revision AND endpoint.desired_revision=endpoint.applied_revision AND endpoint.runtime_healthy=1 AND endpoint.vless_enabled=1 AND endpoint.status='ready'))`, publicationID, threeXUIAppKey, meridianAppKey, meridianEntryProtocol).Scan(&status, &scope, &checksJSON, &checkedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -337,11 +382,14 @@ func (s *Store) realitySecurityChecks(ctx context.Context) (map[string]*RealityS
 	rows, err := s.db.QueryContext(ctx, `SELECT security.publication_id, security.status, security.scope, security.checks_json, security.checked_at
 		FROM reality_security_checks security
 		JOIN publications publication ON publication.id = security.publication_id
-		JOIN three_x_ui_reality_guards guard ON guard.service_id = publication.service_id
+		JOIN services service ON service.id=publication.service_id
+		JOIN applications application ON application.id=service.application_id
+		LEFT JOIN three_x_ui_reality_guards guard ON guard.service_id = publication.service_id
+		LEFT JOIN meridian_endpoints endpoint ON endpoint.service_id=publication.service_id AND endpoint.status<>'retired'
 		WHERE security.publication_revision = publication.desired_revision
-		AND security.guard_revision = guard.revision
 		AND publication.status = 'ready' AND publication.action_required = 0
-		AND guard.status = 'ready'`)
+		AND ((application.app_key=? AND service.app_protocol='vless/tcp/reality' AND security.guard_revision=guard.revision AND guard.status='ready')
+		 OR (application.app_key=? AND service.app_protocol=? AND security.guard_revision=endpoint.desired_revision AND endpoint.desired_revision=endpoint.applied_revision AND endpoint.runtime_healthy=1 AND endpoint.vless_enabled=1 AND endpoint.status='ready'))`, threeXUIAppKey, meridianAppKey, meridianEntryProtocol)
 	if err != nil {
 		return nil, err
 	}

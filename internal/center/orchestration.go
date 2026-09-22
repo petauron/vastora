@@ -14,6 +14,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/dockerruntime"
 	"github.com/petauron/vastora/internal/gateway"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"golang.org/x/mod/semver"
 )
 
@@ -26,13 +27,16 @@ type ApplicationServiceResult struct {
 }
 
 type ApplicationTaskResult struct {
-	Services            []ApplicationServiceResult       `json:"services"`
-	GeneratedSecrets    map[string]string                `json:"generatedSecrets,omitempty"`
-	ApplicationCommand  *RealityCommandResult            `json:"applicationCommand,omitempty"`
-	SubscriptionCommand *SubscriptionCommandResult       `json:"subscriptionCommand,omitempty"`
-	ClientCommand       *ThreeXUIClientCommandResult     `json:"clientCommand,omitempty"`
-	NodeCommand         *ThreeXUINodeCommandResult       `json:"nodeCommand,omitempty"`
-	ControllerCommand   *ThreeXUIControllerCommandResult `json:"controllerCommand,omitempty"`
+	Services             []ApplicationServiceResult          `json:"services"`
+	GeneratedSecrets     map[string]string                   `json:"generatedSecrets,omitempty"`
+	ApplicationCommand   *RealityCommandResult               `json:"applicationCommand,omitempty"`
+	SubscriptionCommand  *SubscriptionCommandResult          `json:"subscriptionCommand,omitempty"`
+	ClientCommand        *ThreeXUIClientCommandResult        `json:"clientCommand,omitempty"`
+	NodeCommand          *ThreeXUINodeCommandResult          `json:"nodeCommand,omitempty"`
+	ControllerCommand    *ThreeXUIControllerCommandResult    `json:"controllerCommand,omitempty"`
+	MeridianRuntime      *meridianruntime.Result             `json:"meridianRuntime,omitempty"`
+	MeridianLegacyExport *meridianruntime.LegacyExportResult `json:"meridianLegacyExport,omitempty"`
+	MeridianLegacyRetire *meridianruntime.LegacyRetireResult `json:"meridianLegacyRetire,omitempty"`
 }
 
 func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request DeploymentRequest, manifest catalog.AppManifest, now time.Time) (string, error) {
@@ -98,9 +102,27 @@ func (s *Store) prepareApplication(ctx context.Context, tx *sql.Tx, request Depl
 
 func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentID, applicationID, operation string, executedRuntimeGeneration int, result ApplicationTaskResult, now time.Time, cleanups *[]publicationCleanup) error {
 	if operation == "uninstall" {
+		var uninstallAppKey string
+		if err := tx.QueryRowContext(ctx, `SELECT app_key FROM applications WHERE id=?`, applicationID).Scan(&uninstallAppKey); err != nil {
+			return err
+		}
 		values, err := s.applicationPublicationCleanups(ctx, tx, applicationID)
 		if err != nil {
 			return err
+		}
+		if uninstallAppKey == meridianAppKey {
+			if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET enabled=0,runtime_healthy=0,status='revoked',last_error='',updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?) AND status<>'revoked'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0,updated_at=? WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM meridian_deployments WHERE endpoint_id IN (SELECT id FROM meridian_endpoints WHERE application_id=?)`, applicationID); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=0,status='retired',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'stopped', updated_at = ? WHERE id = ?`, now.Format(time.RFC3339Nano), applicationID); err != nil {
 			return err
@@ -128,17 +150,21 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 	if err := tx.QueryRowContext(ctx, `SELECT manifest_json FROM deployments WHERE id = ?`, deploymentID).Scan(&manifestJSON); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'running', runtime_generation = ?, runtime = CASE WHEN app_key IN (?, ?) THEN 'host' ELSE runtime END, updated_at = ? WHERE id = ?`, executedRuntimeGeneration, komariAppKey, pulseAgentAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
-		return err
-	}
-	if appKey == threeXUIAppKey && role == threeXUIRoleWorker {
-		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint = ? || ':' || container_port, updated_at = ? WHERE application_id = ? AND status <> 'stopped'`, dockerruntime.XrayAlias, now.Format(time.RFC3339Nano), applicationID); err != nil {
-			return fmt.Errorf("center: switch worker services to Vastora Xray: %w", err)
-		}
-	}
 	var manifest catalog.AppManifest
 	if json.Unmarshal(manifestJSON, &manifest) != nil {
 		return errors.New("center: stored deployment manifest is invalid")
+	}
+	installedImage := ""
+	if len(manifest.Images) != 0 {
+		installedImage = manifest.Images[0].Reference
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status='running',image=?,runtime_generation=?,runtime=CASE WHEN app_key IN (?, ?) THEN 'host' ELSE runtime END,updated_at=? WHERE id=?`, installedImage, executedRuntimeGeneration, komariAppKey, pulseAgentAppKey, now.Format(time.RFC3339Nano), applicationID); err != nil {
+		return err
+	}
+	if appKey == threeXUIAppKey && role == threeXUIRoleWorker {
+		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint = ? || ':' || container_port, updated_at = ? WHERE application_id = ? AND status <> 'stopped'`, dockerruntime.LegacyXrayAlias, now.Format(time.RFC3339Nano), applicationID); err != nil {
+			return fmt.Errorf("center: switch worker services to Vastora Xray: %w", err)
+		}
 	}
 	managementServices := map[string]bool{}
 	for _, service := range manifest.Services {
@@ -210,7 +236,44 @@ func (s *Store) completeApplication(ctx context.Context, tx *sql.Tx, deploymentI
 		}
 		*cleanups = append(*cleanups, values...)
 	}
-	return s.reconcileApplicationPublications(ctx, tx, applicationID, now)
+	if appKey == meridianAppKey {
+		if _, err := s.ensureMeridianSubscriptionServiceInTx(ctx, tx, applicationID, now); err != nil {
+			return err
+		}
+		if operation == "upgrade" {
+			var endpointID string
+			if err := tx.QueryRowContext(ctx, `SELECT id FROM meridian_endpoints WHERE application_id=? AND status<>'retired'`, applicationID).Scan(&endpointID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			} else if err == nil {
+				if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
+					return err
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=? WHERE application_id=? AND status<>'retired'`, now.Format(time.RFC3339Nano), applicationID); err != nil {
+				return err
+			}
+		}
+	}
+	reconcilePublications := true
+	if appKey == meridianAppKey {
+		var cutoverProjection bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM meridian_endpoints endpoint JOIN meridian_cutover cutover ON cutover.id=1
+			WHERE endpoint.application_id=? AND cutover.state IN ('project','verify')
+		)`, applicationID).Scan(&cutoverProjection); err != nil {
+			return err
+		}
+		reconcilePublications = !cutoverProjection
+	}
+	if reconcilePublications {
+		if err := s.reconcileApplicationPublications(ctx, tx, applicationID, now); err != nil {
+			return err
+		}
+	}
+	if appKey == meridianAppKey {
+		return s.reconcileMeridianCutoverInTx(ctx, tx, now.Format(time.RFC3339Nano))
+	}
+	return nil
 }
 
 func (s *Store) queueAffectedGateways(ctx context.Context, tx *sql.Tx, applicationID string, now time.Time) error {

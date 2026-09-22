@@ -67,8 +67,13 @@ const cpaAppKey = "vastora-official/cpa"
 const cpaClientAPIServiceName = "client-api"
 const cpaClientAPIPath = "/v1"
 const cpaClientAPIHealthPath = "/v1/models"
+const meridianSubscriptionServiceName = "subscription"
+const meridianEntryProtocol = "meridian/entry"
 const cpaClientAPITunnelPath = "^/v1(/.*)?$"
-const threeXUIAppKey = "vastora-official/3x-ui"
+const (
+	threeXUIAppKey = "vastora-official/3x-ui"
+	meridianAppKey = "vastora-official/meridian"
+)
 const komariAppKey = "vastora-official/komari-agent"
 
 func isCPAClientAPIService(appKey, serviceName string) bool {
@@ -76,7 +81,8 @@ func isCPAClientAPIService(appKey, serviceName string) bool {
 }
 
 func cloudflareAccessRequiredForService(appKey, serviceName string) bool {
-	return !(appKey == threeXUIAppKey && serviceName == "subscription") && !isCPAClientAPIService(appKey, serviceName)
+	proxySubscription := serviceName == meridianSubscriptionServiceName && (appKey == threeXUIAppKey || appKey == meridianAppKey)
+	return !proxySubscription && !isCPAClientAPIService(appKey, serviceName)
 }
 
 type registryCredentialQuerier interface {
@@ -247,6 +253,11 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 	}
 	if request.AppKey == threeXUIAppKey && request.Operation == "uninstall" {
 		if err := s.validateThreeXUIUninstall(ctx, request.AgentID); err != nil {
+			return DeploymentView{}, err
+		}
+	}
+	if request.AppKey == meridianAppKey && request.Operation == "uninstall" {
+		if err := s.validateMeridianUninstall(ctx, request.AgentID); err != nil {
 			return DeploymentView{}, err
 		}
 	}
@@ -491,6 +502,28 @@ func (s *Store) CreateDeployment(ctx context.Context, request DeploymentRequest)
 		return DeploymentView{}, fmt.Errorf("center: create deployment: %w", err)
 	}
 	return deployment, nil
+}
+
+func (s *Store) validateMeridianUninstall(ctx context.Context, agentID string) error {
+	var cutoverState string
+	if err := s.db.QueryRowContext(ctx, `SELECT state FROM meridian_cutover WHERE id=1`).Scan(&cutoverState); err != nil {
+		return err
+	}
+	if cutoverState == "publish" || cutoverState == "project" || cutoverState == "verify" || cutoverState == "retire" {
+		return errors.New("center: Meridian cannot be uninstalled while the authority cutover is converging")
+	}
+	var activeSubscriptionEntries int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM applications application
+		JOIN services service ON service.application_id=application.id AND service.name=? AND service.status<>'stopped'
+		JOIN publications publication ON publication.service_id=service.id AND publication.status<>'stopped'
+		JOIN meridian_cutover cutover ON cutover.id=1 AND cutover.subscription_authority='meridian'
+		WHERE application.node_id=? AND application.app_key=?`, meridianSubscriptionServiceName, agentID, meridianAppKey).Scan(&activeSubscriptionEntries); err != nil {
+		return err
+	}
+	if activeSubscriptionEntries != 0 {
+		return errors.New("center: move or remove the active Meridian subscription entry before uninstalling its host")
+	}
+	return nil
 }
 
 func canonicalAppVersion(value string) string {

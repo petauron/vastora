@@ -173,6 +173,112 @@ func TestSubscriptionCommandPublishesOnlyTheSubscriptionService(t *testing.T) {
 	}
 }
 
+func TestMeridianSubscriptionIsServedByCenterWithoutAgentCommand(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "center-edge", NodeCapabilities{Docker: true, Gateway: true, Tunnel: true}, []networking.Candidate{
+		{Address: "10.0.0.64", Interface: "eth0", Kind: networking.KindLAN},
+		{Address: "203.0.113.64", Interface: "eth0", Kind: networking.KindPublic},
+	}, networking.Profile{ServiceAddress: "10.0.0.64", LANAddress: "10.0.0.64", PublicAddress: "203.0.113.64", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	completeNextTask(t, store, node, "gateway.component.apply", nil)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.64","bindAddress":"10.0.0.64"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES('meridian-center','Meridian',?,?,?,'','running','docker','',?,?)`, node.ID, testSiteID(t, store), meridianAppKey, now, now); err != nil {
+		t.Fatal(err)
+	}
+	serviceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center")
+	if err != nil || serviceID == "" {
+		t.Fatalf("Meridian subscription service = %q, err=%v", serviceID, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET domain_suffix='example.test' WHERE id=?`, testSiteID(t, store)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePublication(ctx, PublicationInput{ServiceID: serviceID, Kind: publicationPublic, Ingress: PublicationIngress{Owner: ingressSiteGateway, EntryNodeID: node.ID}, Hostname: "wrong.example.test", DNSProvider: "manual"}); err == nil || !strings.Contains(err.Error(), "dedicated public subscription workflow") {
+		t.Fatalf("generic Meridian publication error = %v", err)
+	}
+	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "meridian-center", GatewayNodeID: node.ID, Kind: publicationPublic, DNSProvider: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Kind != meridianSubscriptionCommandKind || command.State != "succeeded" || command.PublicationID == "" {
+		t.Fatalf("Meridian subscription command = %#v", command)
+	}
+	var pending int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE id=? AND state IN ('pending','running')`, command.ID).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatal("Meridian subscription publication queued an Agent command")
+	}
+}
+
+func TestMeridianSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	first := enrollOrchestrationNode(t, store, "center-edge-a", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
+		{Address: "10.0.0.71", Interface: "eth0", Kind: networking.KindLAN},
+		{Address: "203.0.113.71", Interface: "eth0", Kind: networking.KindPublic},
+	}, networking.Profile{ServiceAddress: "10.0.0.71", LANAddress: "10.0.0.71", PublicAddress: "203.0.113.71", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	second := enrollOrchestrationNode(t, store, "center-edge-b", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
+		{Address: "10.0.0.72", Interface: "eth0", Kind: networking.KindLAN},
+		{Address: "203.0.113.72", Interface: "eth0", Kind: networking.KindPublic},
+	}, networking.Profile{ServiceAddress: "10.0.0.72", LANAddress: "10.0.0.72", PublicAddress: "203.0.113.72", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
+	completeNextTask(t, store, first, "gateway.component.apply", nil)
+	completeNextTask(t, store, second, "gateway.component.apply", nil)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	siteID := testSiteID(t, store)
+	for _, application := range []struct {
+		id, nodeID string
+	}{{"meridian-center-a", first.ID}, {"meridian-center-b", second.ID}} {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+			VALUES(?,'Meridian',?,?,?,'','running','docker','',?,?)`, application.id, application.nodeID, siteID, meridianAppKey, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?)`, setupGatewayBindingSetting, `{"publicAddress":"203.0.113.71","bindAddress":"10.0.0.71"}`); err != nil {
+		t.Fatal(err)
+	}
+	firstServiceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-a")
+	if err != nil || firstServiceID == "" {
+		t.Fatalf("first Meridian subscription service = %q, err=%v", firstServiceID, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE sites SET domain_suffix='example.test' WHERE id=?`, siteID); err != nil {
+		t.Fatal(err)
+	}
+	command, err := store.CreateSubscriptionCommand(ctx, SubscriptionCommandInput{ApplicationID: "meridian-center-a", GatewayNodeID: first.ID, Kind: publicationPublic, DNSProvider: "manual"})
+	if err != nil || command.PublicationID == "" {
+		t.Fatalf("create first Meridian subscription publication: %#v err=%v", command, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE settings SET value=? WHERE key=?`, `{"publicAddress":"203.0.113.72","bindAddress":"10.0.0.72"}`, setupGatewayBindingSetting); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-b"); err == nil || !strings.Contains(err.Error(), "remove the active Meridian subscription entry") {
+		t.Fatalf("unsafe Meridian subscription host move error = %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE publications SET status='stopped' WHERE id=?`, command.PublicationID); err != nil {
+		t.Fatal(err)
+	}
+	secondServiceID, err := store.ensureMeridianSubscriptionService(ctx, "meridian-center-b")
+	if err != nil || secondServiceID == "" || secondServiceID == firstServiceID {
+		t.Fatalf("moved Meridian subscription service = %q, err=%v", secondServiceID, err)
+	}
+	var firstStatus, secondStatus string
+	if err := store.db.QueryRowContext(ctx, `SELECT status FROM services WHERE id=?`, firstServiceID).Scan(&firstStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT status FROM services WHERE id=?`, secondServiceID).Scan(&secondStatus); err != nil {
+		t.Fatal(err)
+	}
+	if firstStatus != "stopped" || secondStatus != "ready" {
+		t.Fatalf("subscription service statuses = old %q, new %q", firstStatus, secondStatus)
+	}
+}
+
 func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()

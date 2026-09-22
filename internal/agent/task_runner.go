@@ -17,6 +17,7 @@ import (
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/ipquality"
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodediagnostics"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/platform"
@@ -278,8 +279,49 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		if task.ControllerCommand != nil {
 			commands++
 		}
+		if task.MeridianRuntime != nil {
+			commands++
+		}
+		if task.MeridianLegacyExport != nil {
+			commands++
+		}
+		if task.MeridianLegacyRetire != nil {
+			commands++
+		}
 		if !c.Capabilities.Docker || commands != 1 {
 			err = errors.New("agent: application command received without Docker capability")
+		} else if task.MeridianLegacyExport != nil {
+			var exportResult meridianruntime.LegacyExportResult
+			exportResult, err = exportLegacyMeridianState(ctx, store, *task.MeridianLegacyExport)
+			if err == nil {
+				result.MeridianLegacyExport = &exportResult
+			}
+		} else if task.MeridianRuntime != nil {
+			executor, ok := c.Executor.(interface {
+				ApplyMeridianRuntime(context.Context, meridianruntime.Task) (meridianruntime.Result, error)
+			})
+			if !ok {
+				err = errors.New("agent: Meridian runtime capability is not configured")
+			} else {
+				var runtimeResult meridianruntime.Result
+				runtimeResult, err = executor.ApplyMeridianRuntime(ctx, *task.MeridianRuntime)
+				if err == nil {
+					result.MeridianRuntime = &runtimeResult
+				}
+			}
+		} else if task.MeridianLegacyRetire != nil {
+			executor, ok := c.Executor.(interface {
+				RetireLegacyMeridianInstallation(context.Context, meridianruntime.LegacyRetireTask) (meridianruntime.LegacyRetireResult, error)
+			})
+			if !ok {
+				err = errors.New("agent: Meridian legacy retirement capability is not configured")
+			} else {
+				var retireResult meridianruntime.LegacyRetireResult
+				retireResult, err = executor.RetireLegacyMeridianInstallation(ctx, *task.MeridianLegacyRetire)
+				if err == nil {
+					result.MeridianLegacyRetire = &retireResult
+				}
+			}
 		} else if task.PulseEnrollment != nil {
 			executor, ok := c.Executor.(interface {
 				EnrollPulse(context.Context, pulse.EnrollmentTask) (pulse.EnrollmentResult, error)
@@ -452,8 +494,8 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			task.Secrets = merged
 		}
 	}
-	committedThreeXUI := task.Kind == "application.apply" && task.Operation != "uninstall" && task.AppKey == threeXUIKey && strings.TrimSpace(result.GeneratedSecrets["api_token"]) != ""
-	if err != nil && committedThreeXUI {
+	committedProxyRuntime := task.Kind == "application.apply" && task.Operation != "uninstall" && proxyRuntimeApp(task.AppKey) && strings.TrimSpace(result.GeneratedSecrets["api_token"]) != ""
+	if err != nil && committedProxyRuntime {
 		err = uncertainTaskOutcome(err)
 	}
 	if err == nil && task.Kind == "application.apply" && task.Operation != "uninstall" {
@@ -461,7 +503,7 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 		if err == nil {
 			_, err = store.RecordApplied(ctx, AppliedInstallation{InstanceID: task.ID, ApplicationID: task.ApplicationID, AppKey: task.AppKey, Version: task.Manifest.Version, Config: task.Config, Secrets: task.Secrets, ServiceAddress: task.ServiceAddress, Manifest: task.Manifest, ApplicationRole: task.ApplicationRole})
 		}
-		if err != nil && committedThreeXUI {
+		if err != nil && committedProxyRuntime {
 			err = uncertainTaskOutcome(err)
 		}
 	}

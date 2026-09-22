@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 	"github.com/petauron/vastora/internal/secret"
@@ -41,11 +42,23 @@ func (s *Server) handleConfigureNodeProtocols(w http.ResponseWriter, request *ht
 
 func (s *Store) NodeProtocols(ctx context.Context, serviceID string) (nodeprotocol.View, error) {
 	value := nodeprotocol.View{Selection: nodeprotocol.Selection{VLESS: true}, State: "succeeded"}
-	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM services s JOIN applications a ON a.id=s.application_id WHERE s.id=? AND a.app_key=? AND s.app_protocol='vless/tcp/reality' AND s.status<>'stopped'`, serviceID, threeXUIAppKey).Scan(&exists); err != nil {
+	var appKey string
+	if err := s.db.QueryRowContext(ctx, `SELECT a.app_key FROM services s JOIN applications a ON a.id=s.application_id WHERE s.id=? AND s.status<>'stopped'`, serviceID).Scan(&appKey); err != nil {
 		return value, err
 	}
-	if exists != 1 {
+	if appKey == meridianAppKey {
+		var status string
+		if err := s.db.QueryRowContext(ctx, `SELECT endpoint.vless_enabled,endpoint.hy2_enabled,endpoint.status FROM meridian_endpoints endpoint WHERE endpoint.service_id=? AND endpoint.status<>'retired'`, serviceID).Scan(&value.VLESS, &value.HY2, &status); err != nil {
+			return value, errors.New("center: subscription node is unavailable")
+		}
+		if status == "pending" || status == "applying" {
+			value.State = "running"
+		} else if status == "failed" {
+			value.State = "failed"
+		}
+		return value, nil
+	}
+	if appKey != threeXUIAppKey {
 		return value, errors.New("center: subscription node is unavailable")
 	}
 	err := s.db.QueryRowContext(ctx, `SELECT p.vless_enabled,p.hy2_enabled,p.command_id,COALESCE(c.state,'succeeded') FROM three_x_ui_node_protocols p LEFT JOIN application_commands c ON c.id=p.command_id WHERE p.service_id=?`, serviceID).Scan(&value.VLESS, &value.HY2, &value.CommandID, &value.State)
@@ -76,6 +89,16 @@ func (s *Store) NodeProtocols(ctx context.Context, serviceID string) (nodeprotoc
 func (s *Store) ConfigureNodeProtocols(ctx context.Context, serviceID string, selection nodeprotocol.Selection) (ApplicationCommandView, error) {
 	if err := selection.Validate(); err != nil {
 		return ApplicationCommandView{}, err
+	}
+	var appKey string
+	if err := s.db.QueryRowContext(ctx, `SELECT application.app_key FROM services service JOIN applications application ON application.id=service.application_id WHERE service.id=? AND service.status<>'stopped'`, serviceID).Scan(&appKey); err != nil {
+		return ApplicationCommandView{}, errors.New("center: subscription node is unavailable")
+	}
+	if appKey == meridianAppKey {
+		return s.configureMeridianNodeProtocols(ctx, serviceID, selection)
+	}
+	if appKey != threeXUIAppKey {
+		return ApplicationCommandView{}, errors.New("center: subscription node is unavailable")
 	}
 	if err := s.ensureServicePublicationChangeAllowed(ctx, s.db, serviceID); err != nil {
 		return ApplicationCommandView{}, err
@@ -180,6 +203,157 @@ func (s *Store) ConfigureNodeProtocols(ctx context.Context, serviceID string, se
 		return ApplicationCommandView{}, err
 	}
 	return s.ApplicationCommand(ctx, id)
+}
+
+func (s *Store) configureMeridianNodeProtocols(ctx context.Context, serviceID string, selection nodeprotocol.Selection) (ApplicationCommandView, error) {
+	if !selection.VLESS {
+		return ApplicationCommandView{}, errors.New("center: Meridian requires VLESS as the public TCP 443 anchor")
+	}
+	if err := s.ensureServicePublicationChangeAllowed(ctx, s.db, serviceID); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	var hostname string
+	if err := s.db.QueryRowContext(ctx, `SELECT publication.hostname FROM publications publication
+		JOIN meridian_endpoints endpoint ON endpoint.service_id=publication.service_id
+		WHERE endpoint.service_id=? AND publication.kind='public_shared_443' AND publication.status='ready'
+		ORDER BY publication.updated_at DESC LIMIT 1`, serviceID).Scan(&hostname); err != nil {
+		return ApplicationCommandView{}, errors.New("center: configure the node public domain before changing protocols")
+	}
+	var certificate managedCertificate
+	var err error
+	if selection.HY2 {
+		var endpointID, certificateHostname, notAfter string
+		var certificateSecretID, privateKeySecretID sql.NullString
+		if err := s.db.QueryRowContext(ctx, `SELECT id,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after
+			FROM meridian_endpoints WHERE service_id=? AND status<>'retired'`, serviceID).Scan(&endpointID, &certificateHostname, &certificateSecretID, &privateKeySecretID, &notAfter); err != nil {
+			return ApplicationCommandView{}, errors.New("center: Meridian subscription node is unavailable")
+		}
+		expiresAt, _ := time.Parse(time.RFC3339Nano, notAfter)
+		if certificateHostname == hostname && certificateSecretID.Valid && privateKeySecretID.Valid && expiresAt.After(s.now().Add(privateCertificateRenewBefore)) {
+			certificatePEM, secretErr := s.getSecret(ctx, certificateSecretID.String, meridianHY2CertificateSecretContext(endpointID))
+			if secretErr != nil {
+				return ApplicationCommandView{}, errors.New("center: stored Meridian Hysteria certificate is unavailable")
+			}
+			privateKeyPEM, secretErr := s.getSecret(ctx, privateKeySecretID.String, meridianHY2PrivateKeySecretContext(endpointID))
+			if secretErr != nil {
+				return ApplicationCommandView{}, errors.New("center: stored Meridian Hysteria key is unavailable")
+			}
+			certificate = managedCertificate{CertificatePEM: string(certificatePEM), PrivateKeyPEM: string(privateKeyPEM), NotAfter: expiresAt}
+		} else {
+			certificate, err = s.obtainPrivateCertificate(ctx, hostname)
+			if err != nil {
+				return ApplicationCommandView{}, err
+			}
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	defer tx.Rollback()
+	if err := ensureMeridianManagementWritable(ctx, tx); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	var endpointID, applicationID, hy2Tag string
+	var oldCertificateID, oldPrivateKeyID sql.NullString
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT endpoint.id,endpoint.application_id,endpoint.hy2_inbound_tag,
+		endpoint.hy2_certificate_secret_id,endpoint.hy2_private_key_secret_id,endpoint.status
+		FROM meridian_endpoints endpoint JOIN applications application ON application.id=endpoint.application_id
+		WHERE endpoint.service_id=? AND endpoint.status<>'retired' AND application.app_key=? AND application.status='running'`, serviceID, meridianAppKey).Scan(
+		&endpointID, &applicationID, &hy2Tag, &oldCertificateID, &oldPrivateKeyID, &status,
+	); err != nil {
+		return ApplicationCommandView{}, errors.New("center: Meridian subscription node is unavailable")
+	}
+	if status == "pending" || status == "applying" {
+		return ApplicationCommandView{}, errors.New("center: Meridian node already has an active runtime change")
+	}
+	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	var certificateID, privateKeyID any
+	var newCertificateID, newPrivateKeyID string
+	if selection.HY2 {
+		if hy2Tag == "" {
+			token, tokenErr := randomToken(12)
+			if tokenErr != nil {
+				return ApplicationCommandView{}, tokenErr
+			}
+			hy2Tag = "meridian-hy2-" + token
+		}
+		newCertificateID, err = s.putSecret(ctx, tx, []byte(certificate.CertificatePEM), meridianHY2CertificateSecretContext(endpointID))
+		if err != nil {
+			return ApplicationCommandView{}, err
+		}
+		newPrivateKeyID, err = s.putSecret(ctx, tx, []byte(certificate.PrivateKeyPEM), meridianHY2PrivateKeySecretContext(endpointID))
+		if err != nil {
+			return ApplicationCommandView{}, err
+		}
+		certificateID, privateKeyID = newCertificateID, newPrivateKeyID
+		rows, queryErr := tx.QueryContext(ctx, `SELECT id FROM meridian_credentials WHERE endpoint_id=? AND kind='native' AND hy2_auth_secret_id IS NULL ORDER BY id`, endpointID)
+		if queryErr != nil {
+			return ApplicationCommandView{}, queryErr
+		}
+		credentialIDs := []string{}
+		for rows.Next() {
+			var credentialID string
+			if scanErr := rows.Scan(&credentialID); scanErr != nil {
+				rows.Close()
+				return ApplicationCommandView{}, scanErr
+			}
+			credentialIDs = append(credentialIDs, credentialID)
+		}
+		if rowsErr := rows.Err(); rowsErr != nil {
+			rows.Close()
+			return ApplicationCommandView{}, rowsErr
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			return ApplicationCommandView{}, closeErr
+		}
+		for _, credentialID := range credentialIDs {
+			auth, tokenErr := randomToken(32)
+			if tokenErr != nil {
+				return ApplicationCommandView{}, tokenErr
+			}
+			secretID, secretErr := s.putSecret(ctx, tx, []byte(auth), meridianCredentialHY2SecretContext(credentialID))
+			if secretErr != nil {
+				return ApplicationCommandView{}, secretErr
+			}
+			if _, updateErr := tx.ExecContext(ctx, `UPDATE meridian_credentials SET hy2_auth_secret_id=?,hy2_identity_sha256=?,updated_at=? WHERE id=? AND hy2_auth_secret_id IS NULL`, secretID, meridian.Identity(auth), s.now().UTC().Format(time.RFC3339Nano), credentialID); updateErr != nil {
+				return ApplicationCommandView{}, updateErr
+			}
+		}
+	} else {
+		certificateID, privateKeyID = oldCertificateID, oldPrivateKeyID
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET vless_enabled=?,hy2_enabled=?,hy2_inbound_tag=?,hy2_server_name=CASE WHEN ? THEN ? ELSE hy2_server_name END,
+		hy2_certificate_secret_id=?,hy2_private_key_secret_id=?,hy2_certificate_not_after=CASE WHEN ? THEN ? ELSE hy2_certificate_not_after END,
+		desired_revision=desired_revision+1,runtime_healthy=0,status='pending',last_error='',updated_at=?
+		WHERE id=?`, boolInt(selection.VLESS), boolInt(selection.HY2), hy2Tag, selection.HY2, hostname, certificateID, privateKeyID, selection.HY2, certificate.NotAfter.UTC().Format(time.RFC3339Nano), now, endpointID)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if changed, _ := result.RowsAffected(); changed != 1 {
+		return ApplicationCommandView{}, errors.New("center: Meridian subscription node changed during protocol update")
+	}
+	commandID, err := s.queueMeridianRuntime(ctx, tx, endpointID, false)
+	if err != nil {
+		return ApplicationCommandView{}, err
+	}
+	if selection.HY2 {
+		for _, previous := range []sql.NullString{oldCertificateID, oldPrivateKeyID} {
+			if previous.Valid && previous.String != newCertificateID && previous.String != newPrivateKeyID {
+				if _, deleteErr := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id=?`, previous.String); deleteErr != nil {
+					return ApplicationCommandView{}, deleteErr
+				}
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return ApplicationCommandView{}, err
+	}
+	return s.ApplicationCommand(ctx, commandID)
 }
 
 func (s *Store) hydrateNodeProtocolTask(ctx context.Context, tx *sql.Tx, task *nodeprotocol.Task) error {
@@ -340,6 +514,31 @@ func (s *Store) renewNodeProtocolCertificates(ctx context.Context) error {
 	for _, value := range pending {
 		if _, err := s.ConfigureNodeProtocols(ctx, value.id, nodeprotocol.Selection{VLESS: value.vless, HY2: true}); err != nil {
 			failures = append(failures, fmt.Errorf("renew node certificate: %w", err))
+		}
+	}
+	meridianRows, err := s.db.QueryContext(ctx, `SELECT service_id,vless_enabled FROM meridian_endpoints WHERE hy2_enabled=1 AND status='ready' AND hy2_certificate_not_after<? ORDER BY service_id`, s.now().Add(privateCertificateRenewBefore).UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return errors.Join(append(failures, err)...)
+	}
+	pending = pending[:0]
+	for meridianRows.Next() {
+		var value renewal
+		if err := meridianRows.Scan(&value.id, &value.vless); err != nil {
+			meridianRows.Close()
+			return errors.Join(append(failures, err)...)
+		}
+		pending = append(pending, value)
+	}
+	if err := meridianRows.Err(); err != nil {
+		meridianRows.Close()
+		return errors.Join(append(failures, err)...)
+	}
+	if err := meridianRows.Close(); err != nil {
+		return errors.Join(append(failures, err)...)
+	}
+	for _, value := range pending {
+		if _, err := s.ConfigureNodeProtocols(ctx, value.id, nodeprotocol.Selection{VLESS: value.vless, HY2: true}); err != nil {
+			failures = append(failures, fmt.Errorf("renew Meridian node certificate: %w", err))
 		}
 	}
 	return errors.Join(failures...)

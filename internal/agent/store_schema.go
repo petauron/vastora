@@ -597,6 +597,40 @@ func Open(dataDir string) (*Store, error) {
 			}
 			version = 20
 		}
+		if version == 20 {
+			// Preserve the legacy worker journal as one-time cutover input and add
+			// a separate complete-artifact journal for Meridian. Translating or
+			// renaming the old row during Agent startup would let the still-running
+			// legacy writer decode a different state shape before Center has
+			// explicitly fenced it.
+			backupDir, migrateErr := os.MkdirTemp(dataDir, "schema-20-backup-")
+			if migrateErr == nil {
+				_, migrateErr = db.Exec(`VACUUM INTO ?`, filepath.Join(backupDir, "agent.db"))
+			}
+			var tx *sql.Tx
+			if migrateErr == nil {
+				tx, migrateErr = db.Begin()
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`CREATE TABLE meridian_runtime_state (
+					id INTEGER PRIMARY KEY CHECK(id = 1),
+					sealed_state BLOB NOT NULL
+				)`)
+			}
+			if migrateErr == nil {
+				_, migrateErr = tx.Exec(`PRAGMA user_version=21`)
+			}
+			if migrateErr == nil {
+				migrateErr = tx.Commit()
+			} else if tx != nil {
+				_ = tx.Rollback()
+			}
+			if migrateErr != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("agent: migrate database schema from 20 to 21: %w", migrateErr)
+			}
+			version = 21
+		}
 		if version != agentSchemaVersion {
 			_ = db.Close()
 			return nil, fmt.Errorf("agent: database schema version %d cannot be upgraded by this release", version)
@@ -715,11 +749,15 @@ func Open(dataDir string) (*Store, error) {
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
+		CREATE TABLE meridian_runtime_state (
+			id INTEGER PRIMARY KEY CHECK(id = 1),
+			sealed_state BLOB NOT NULL
+		);
 		CREATE TABLE xray_worker_state (
 			id INTEGER PRIMARY KEY CHECK(id = 1),
 			sealed_state BLOB NOT NULL
 		);
-		` + taskReceiptIndexesSQL + `PRAGMA user_version = 20;`); err != nil {
+		` + taskReceiptIndexesSQL + `PRAGMA user_version = 21;`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("agent: initialize schema: %w", err)
 	}

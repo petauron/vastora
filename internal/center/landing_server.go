@@ -1,6 +1,7 @@
 package center
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -115,8 +116,8 @@ func (s *Store) completeLandingServer(ctx context.Context, commit projectionComm
 func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit projectionCommit, nodeID string, revision, attempt int64, succeeded bool, peer *landing.PeerIdentity) error {
 	var desired, applied, currentAttempt int64
 	var status string
-	var encoded []byte
-	if err := tx.QueryRowContext(ctx, `SELECT desired_revision,applied_revision,attempt,status,desired_json FROM landing_server_states WHERE node_id=?`, nodeID).Scan(&desired, &applied, &currentAttempt, &status, &encoded); err != nil {
+	var encoded, previousPeerJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT desired_revision,applied_revision,attempt,status,desired_json,peer_json FROM landing_server_states WHERE node_id=?`, nodeID).Scan(&desired, &applied, &currentAttempt, &status, &encoded, &previousPeerJSON); err != nil {
 		return err
 	}
 	if revision < desired || revision <= applied || revision == desired && attempt < currentAttempt {
@@ -147,14 +148,14 @@ func (s *Store) projectLandingServer(ctx context.Context, tx *sql.Tx, commit pro
 			status = "stopped"
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET applied_revision=?,status=?,lease_expires_at='',last_error=?,updated_at=? WHERE node_id=?`, applied, status, message, s.now().UTC().Format(time.RFC3339Nano), nodeID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET applied_revision=?,peer_json=?,status=?,lease_expires_at='',last_error=?,updated_at=? WHERE node_id=?`, applied, peerJSON, status, message, s.now().UTC().Format(time.RFC3339Nano), nodeID); err != nil {
 		return err
 	}
 	if err := s.recordTaskEvent(ctx, tx, landingServerTaskID(nodeID, revision), nodeID, "landing.server.apply", revision, event, message); err != nil {
 		return err
 	}
-	if succeeded {
-		if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET peer_json=? WHERE node_id=?`, peerJSON, nodeID); err != nil {
+	if !bytes.Equal(previousPeerJSON, peerJSON) {
+		if err := s.markMeridianLandingPeerChanged(ctx, tx, nodeID, s.now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
 		}
 	}

@@ -64,6 +64,7 @@ func (s *Store) queueScheduledThreeXUIBackup(ctx context.Context, tx *sql.Tx, ag
 	err := tx.QueryRowContext(ctx, `SELECT a.id FROM applications a
 		LEFT JOIN three_x_ui_backups b ON b.application_id = a.id
 		WHERE a.node_id = ? AND a.app_key = ? AND a.role = 'master' AND a.status = 'running'
+		AND NOT EXISTS (SELECT 1 FROM meridian_cutover WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire','complete'))
 		AND (b.application_id IS NULL OR b.state = 'failed' OR b.updated_at < ?)
 		AND NOT EXISTS (SELECT 1 FROM application_commands c WHERE c.application_id = a.id AND (c.state IN ('pending', 'running') OR c.reconciliation_required = 1))
 		AND NOT EXISTS (SELECT 1 FROM three_x_ui_migrations m WHERE m.state IN ('backing_up', 'restoring', 'switching'))
@@ -122,6 +123,13 @@ func (s *Store) resumeThreeXUIControllerConvergence(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
+	var meridianOwnsConvergence bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire','complete'))`).Scan(&meridianOwnsConvergence); err != nil {
+		return err
+	}
+	if meridianOwnsConvergence {
+		return tx.Commit()
+	}
 	// A stopped or uncertain execution is not permission to start an unrelated
 	// controller conversion. Preserve its resources until explicit disposition.
 	var unresolvedExecutions bool
@@ -717,6 +725,7 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, commit pr
 	if !succeeded {
 		if input.Action == "backup" {
 			_, _ = tx.ExecContext(ctx, `UPDATE three_x_ui_backups SET state = 'failed', last_error = ?, updated_at = ? WHERE application_id = ? AND revision = ?`, taskError, now.Format(time.RFC3339Nano), input.ApplicationID, input.BackupRevision)
+			_, _ = tx.ExecContext(ctx, `UPDATE meridian_cutover SET state='failed',last_error=?,updated_at=? WHERE id=1 AND state='backup' AND legacy_controller_application_id=? AND backup_revision=?`, taskError, now.Format(time.RFC3339Nano), input.ApplicationID, input.BackupRevision)
 		}
 		if input.MigrationID != "" {
 			if input.Action == "demote" {
@@ -752,6 +761,20 @@ func (s *Store) completeThreeXUIControllerCommand(ctx context.Context, commit pr
 					}
 				} else if err := s.queueThreeXUIPromote(ctx, tx, input.MigrationID, source, target, input.BackupRevision, now); err != nil {
 					return err
+				}
+			} else {
+				var cutoverState string
+				var cutoverRevision int64
+				if err := tx.QueryRowContext(ctx, `SELECT state,backup_revision FROM meridian_cutover WHERE id=1 AND legacy_controller_application_id=?`, input.ApplicationID).Scan(&cutoverState, &cutoverRevision); err != nil {
+					return err
+				}
+				if cutoverState == "backup" && cutoverRevision == input.BackupRevision {
+					if err := s.queueMeridianLegacyExport(ctx, tx, input.ApplicationID, agentID, now); err != nil {
+						return err
+					}
+					if _, err := tx.ExecContext(ctx, `UPDATE meridian_cutover SET state='import',last_error='',updated_at=? WHERE id=1 AND state='backup'`, now.Format(time.RFC3339Nano)); err != nil {
+						return err
+					}
 				}
 			}
 		case "promote":

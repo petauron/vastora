@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 const (
@@ -269,6 +271,34 @@ func (s *Store) recoverExpiredTasks(ctx context.Context, agentID string) error {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET state = 'failed', reconciliation_required = 1, lease_expires_at = '', error = 'Execution interrupted; manual verification required', updated_at = ? WHERE agent_id = ? AND state = 'running' AND lease_expires_at <> '' AND lease_expires_at <= ?`, now.Format(time.RFC3339Nano), agentID, now.Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	// Generic command recovery is not enough for Meridian: its endpoint is the
+	// user-visible desired/applied projection. Mirror the expired command into
+	// that projection so the UI exposes the explicit Center-authority recovery
+	// action instead of leaving the entry permanently "applying". A retirement
+	// command is the exception because the live Meridian revision was already
+	// verified before legacy cleanup started.
+	interrupted := "Execution interrupted; manual verification required"
+	stamp := now.Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='failed',last_error=?,updated_at=?
+		WHERE command_id IN (SELECT id FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET
+		status=CASE WHEN runtime_healthy=1 AND desired_revision=applied_revision AND EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='retire' AND subscription_authority='meridian') THEN status ELSE 'failed' END,
+		runtime_healthy=CASE WHEN runtime_healthy=1 AND desired_revision=applied_revision AND EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state='retire' AND subscription_authority='meridian') THEN runtime_healthy ELSE 0 END,
+		last_error=?,updated_at=?
+		WHERE id IN (SELECT json_extract(input_json,'$.endpointId') FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=0,status=CASE WHEN status='revoked' THEN status ELSE 'failed' END,last_error=?,updated_at=?
+		WHERE endpoint_id IN (SELECT json_extract(input_json,'$.endpointId') FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)
+		AND NOT EXISTS(SELECT 1 FROM meridian_endpoints endpoint,meridian_cutover cutover WHERE endpoint.id=meridian_route_grants.endpoint_id AND endpoint.runtime_healthy=1 AND endpoint.desired_revision=endpoint.applied_revision AND cutover.id=1 AND cutover.state='retire' AND cutover.subscription_authority='meridian')`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_cutover SET last_error=?,updated_at=? WHERE id=1 AND state IN ('project','verify','retire')
+		AND EXISTS(SELECT 1 FROM application_commands WHERE agent_id=? AND kind=? AND state='failed' AND reconciliation_required=1 AND error=?)`, interrupted, stamp, agentID, meridianruntime.ApplyKind, interrupted); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE applications SET status = 'failed', updated_at = ? WHERE id IN (

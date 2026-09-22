@@ -42,7 +42,7 @@ func (s *Store) setLandingPeerStatus(peer landing.PeerIdentity, status landing.M
 }
 
 func (s *Store) checkLandingApplicationMutation(ctx context.Context, appKey string) error {
-	if appKey != threeXUIKey {
+	if !proxyRuntimeApp(appKey) {
 		return nil
 	}
 	state, err := s.landingRuntime(ctx)

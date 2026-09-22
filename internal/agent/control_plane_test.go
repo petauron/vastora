@@ -131,7 +131,7 @@ func TestMigrateEnrollmentReplacesOnlyCenterConnection(t *testing.T) {
 	}
 }
 
-func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testing.T) {
+func TestObserveProxyRuntimeSynchronizesLegacyEnabledInboundsWithoutChangingThem(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		requestCount++
@@ -160,7 +160,7 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 		t.Fatal(err)
 	}
 
-	observed, err := observeThreeXUI(context.Background(), store)
+	observed, err := observeProxyRuntime(context.Background(), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +172,48 @@ func TestObserveThreeXUISynchronizesEnabledInboundsWithoutChangingThem(t *testin
 	}
 	if observed[1].Name != "inbound-8" || observed[1].AppProtocol != "vmess/ws" || observed[1].Enabled {
 		t.Fatalf("disabled inbound state was not preserved: %#v", observed[1])
+	}
+}
+
+func TestHeartbeatAllowsMeridianSubscriptionHostWithoutLocalXrayRuntime(t *testing.T) {
+	heartbeats := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/agents/agent-1/heartbeat" {
+			t.Fatalf("unexpected request path: %s", request.URL.Path)
+		}
+		var payload struct {
+			ApplicationEndpoints         []ApplicationEndpointObservation `json:"applicationEndpoints"`
+			ApplicationEndpointsObserved bool                             `json:"applicationEndpointsObserved"`
+			MeridianRuntime              json.RawMessage                  `json:"meridianRuntime"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.ApplicationEndpointsObserved || len(payload.ApplicationEndpoints) != 0 || string(payload.MeridianRuntime) != "null" {
+			t.Fatalf("controller-only Meridian package reported a proxy runtime: %#v", payload)
+		}
+		heartbeats++
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.SaveConnection(context.Background(), testConnection(t, "agent-1", "test", server.URL, "credential")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordApplied(context.Background(), AppliedInstallation{
+		InstanceID: "meridian-controller", ApplicationID: "controller", AppKey: meridianKey,
+		Version: "1.0.0", Config: json.RawMessage(`{}`), Secrets: json.RawMessage(`{}`), ServiceAddress: "127.0.0.1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	observationErr, heartbeatErr := (Client{}).heartbeat(context.Background(), store)
+	if heartbeatErr != nil || observationErr != nil || heartbeats != 1 {
+		t.Fatalf("controller-only heartbeat failed: observation=%v heartbeat=%v count=%d", observationErr, heartbeatErr, heartbeats)
 	}
 }
 

@@ -43,7 +43,7 @@
 
 Center 复用现有消息通知机制，通过 SSE 首次发送快照，之后只推送变更及过期的组合。页面保留其它仍新鲜的结果，断线时也按各自检测时间在 45 秒后过期；重连收到完整快照。SSE 定期重新建立以重新检查管理员会话，不增加公网探测入口。
 
-接口：Agent 使用 `POST /api/v1/agents/{id}/landing-latencies` 上报单条观测；管理员页面使用 `GET /api/v1/three-x-ui/landing/latencies/events` 接收实时结果。移除原心跳中的批量 `landingLatencies` 字段，心跳仅下发允许检测的目标。
+接口：Agent 使用 `POST /api/v1/agents/{id}/landing-latencies` 上报单条观测；管理员页面使用 `GET /api/v1/meridian/landing/latencies/events` 接收实时结果。移除原心跳中的批量 `landingLatencies` 字段，心跳仅下发允许检测的目标。
 
 Center、Agent 和前端须一起升级到本功能版本，不保留旧单落地 API。旧 Agent 的心跳字段不再被新 Center 接受，混用版本可能显示节点离线；不能依赖混合版本期间的自动更新完成全部节点升级，应安排同一维护窗口更新所有 Agent。本次代码发布不操作线上实例。
 

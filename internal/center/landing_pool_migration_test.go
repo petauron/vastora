@@ -15,7 +15,7 @@ func TestGlobalLandingPoolMigrationRemovesPerEntryPolicy(t *testing.T) {
 	if _, err := old.db.Exec(`INSERT INTO settings(key,value) VALUES
 		(?, '{"nodeIds":["landing"],"revision":4}'),
 		('node-exits:entry', '{"applicationId":"entry","ownExit":true,"landingNodeIds":["landing"],"landingRegionCodes":{"landing":"US"},"revision":2}'),
-		('node-exits-error:entry', 'failed')`, landingSelectionKey); err != nil {
+		('node-exits-error:entry', 'failed')`, "three_x_ui_landing_selection"); err != nil {
 		t.Fatal(err)
 	}
 	if err := old.Close(); err != nil {

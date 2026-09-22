@@ -436,6 +436,85 @@ func TestFailedMigrationRollsBackSchemaAndLeavesBackup(t *testing.T) {
 	}
 }
 
+func TestVersion87MigrationCreatesMeridianAuthorityWithoutLosingCommandGuards(t *testing.T) {
+	directory := t.TempDir()
+	createLegacyVersion3Database(t, directory)
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(directory, "center.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := &Store{db: db}
+	if err := legacy.initializeMigrationHistory(ctx, schemaBaselineVersion); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 86); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `UPDATE applications SET app_key=?,role='master' WHERE id='application-v3'`, threeXUIAppKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO three_x_ui_control_plane(id,controller_application_id,selection_reason,selected_at) VALUES(1,'application-v3','test',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,result_json,state,created_at,updated_at)
+		VALUES('v86-command','application-v3','agent-v3','agent-v3','3xui.reality.verify','{}','{}','succeeded',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var state, authority, controllerID string
+	if err := migrated.db.QueryRowContext(ctx, `SELECT state,subscription_authority,legacy_controller_application_id FROM meridian_cutover WHERE id=1`).Scan(&state, &authority, &controllerID); err != nil {
+		t.Fatal(err)
+	}
+	if state != "inspect" || authority != "legacy" || controllerID != "application-v3" {
+		t.Fatalf("cutover authority = state %q authority %q controller %q", state, authority, controllerID)
+	}
+	var snapshotTable int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='meridian_subscription_snapshots'`).Scan(&snapshotTable); err != nil || snapshotTable != 1 {
+		t.Fatalf("Meridian subscription snapshot table count=%d err=%v", snapshotTable, err)
+	}
+	var preserved int
+	if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE id='v86-command' AND kind='3xui.reality.verify' AND state='succeeded'`).Scan(&preserved); err != nil || preserved != 1 {
+		t.Fatalf("preserved command count=%d err=%v", preserved, err)
+	}
+	for _, name := range []string{
+		"application_commands_one_active_idx",
+		"pulse_enrollment_deployment_idx",
+		"application_commands_one_active_controller_idx",
+		"application_commands_one_active_reality_name_idx",
+		"secret_deliveries_delete_with_application_command",
+		"application_commands_block_during_three_x_ui_migration",
+		"application_command_updates_block_during_three_x_ui_migration",
+		"deployments_block_during_three_x_ui_data_plane",
+		"application_commands_block_during_three_x_ui_deployment",
+		"application_command_updates_block_during_three_x_ui_deployment",
+		"meridian_subscription_snapshots_delete_secret",
+	} {
+		var exists int
+		if err := migrated.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name=? AND type IN ('index','trigger')`, name).Scan(&exists); err != nil || exists != 1 {
+			t.Fatalf("schema guard %q count=%d err=%v", name, exists, err)
+		}
+	}
+	if _, err := migrated.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at)
+		VALUES('v87-retire','application-v3','agent-v3','agent-v3','meridian.legacy.retire','{"applicationId":"application-v3"}','failed',?,?)`, now, now); err != nil {
+		t.Fatalf("Meridian task kind was not accepted: %v", err)
+	}
+}
+
 // Construct historical versions by applying the released forward migrations.
 // Individual migration tests must not relabel the current schema as an old
 // version: that leaves future columns/tables in place and does not test an

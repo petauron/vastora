@@ -35,6 +35,13 @@ func (s *Store) RunRealityGuardRecovery(ctx context.Context, report func(error))
 }
 
 func (s *Store) startRealityGuardHardening(ctx context.Context) error {
+	var meridianOwnsConvergence bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire','complete'))`).Scan(&meridianOwnsConvergence); err != nil {
+		return err
+	}
+	if meridianOwnsConvergence {
+		return nil
+	}
 	if err := s.queueRealityGuardListenerIsolation(ctx); err != nil {
 		return err
 	}

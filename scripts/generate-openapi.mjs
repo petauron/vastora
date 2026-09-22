@@ -63,6 +63,7 @@ function tagFor(routePath) {
     catalog: "Catalog",
     deployments: "Deployments",
     integrations: "Integrations",
+    meridian: "Applications",
     network: "Network",
     organizations: "Sites",
     publications: "Publications",
@@ -482,6 +483,10 @@ for (const route of routes) {
     operation.requestBody.content["application/json"].schema.required = [
       "applicationId", "regionCode", "name",
       "dnsProvider", "targetHost", "serverName", "verificationId", "targetIp",
+    ];
+  } else if (route.handler === "handleCreateMeridianEndpoint") {
+    operation.requestBody.content["application/json"].schema.required = [
+      "applicationId", "verificationId", "targetIp", "targetHost", "serverName", "regionCode", "name",
     ];
   } else if (route.handler === "handleRemoveRealityCommand") {
     operation.description = "Remove only the global subscription controller's local managed VLESS inbound. Retains the controller, global clients, subscription URL and remote nodes. Restores any landing route before deletion. Repeated requests resume an active operation for the same service.";

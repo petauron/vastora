@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"maps"
 	"net"
@@ -20,6 +22,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	dockernetwork "github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/dockerruntime"
 )
 
@@ -392,7 +395,7 @@ func TestXrayWorkerLocalReconcilerAppliesExpiryOnce(t *testing.T) {
 }
 
 func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
-	options := xrayWorkerContainerOptions(DeploymentTask{ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", false)
+	options := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", false, false)
 	host := options.HostConfig
 	if host == nil || host.NetworkMode != container.NetworkMode(dockerruntime.NetworkName) || !host.ReadonlyRootfs || len(host.PortBindings) != 0 || options.NetworkingConfig == nil {
 		t.Fatalf("unexpected Xray network/runtime options: %#v", host)
@@ -410,11 +413,26 @@ func TestXrayWorkerUsesHardenedBridgeRuntime(t *testing.T) {
 	if host.PidsLimit == nil || *host.PidsLimit != 512 || host.LogConfig.Type != "json-file" || host.LogConfig.Config["max-size"] != "10m" || host.LogConfig.Config["max-file"] != "3" {
 		t.Fatalf("unexpected Xray resource/log boundary: %#v", host)
 	}
-	hy2 := xrayWorkerContainerOptions(DeploymentTask{ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", true)
+	hy2 := xrayWorkerContainerOptions(DeploymentTask{AppKey: meridianKey, ApplicationID: "application", ID: "deployment"}, "xray:test", "/var/lib/vastora/xray-worker/config.json", true, false)
 	bindings := hy2.HostConfig.PortBindings[hy2DockerPort]
 	_, udpExposed := hy2.Config.ExposedPorts[hy2DockerPort]
 	if len(bindings) != 1 || bindings[0].HostIP != netip.IPv4Unspecified() || bindings[0].HostPort != "443" || !udpExposed {
 		t.Fatalf("HY2 UDP publication = %#v", bindings)
+	}
+}
+
+func TestObserveMeridianStateAcceptsCurrentHysteriaStreamMethod(t *testing.T) {
+	config := []byte(`{
+		"inbounds":[
+			{"listen":"127.0.0.1","port":10085,"protocol":"dokodemo-door","tag":"api","streamSettings":{}},
+			{"listen":"0.0.0.0","port":443,"protocol":"vless","tag":"meridian-entry","streamSettings":{"method":"raw","security":"reality"}},
+			{"listen":"0.0.0.0","port":443,"protocol":"hysteria","tag":"meridian-hy2","streamSettings":{"method":"hysteria","security":"tls"}}
+		]
+	}`)
+	digest := sha256.Sum256(config)
+	observed, err := observeMeridianState(meridian.DesiredArtifact{Revision: 1, Config: config, ConfigSHA256: hex.EncodeToString(digest[:])})
+	if err != nil || len(observed) != 1 || observed[0].InboundTag != "meridian-entry" || observed[0].Port != 443 {
+		t.Fatalf("current Hysteria stream method was not observed: %#v err=%v", observed, err)
 	}
 }
 
@@ -691,5 +709,24 @@ func TestXrayWorkerAppliedReceiptCanOnlyRecoverMatchingActiveConfig(t *testing.T
 	}
 	if err := store.reconcileXrayWorkerAppliedReceipt(state); err == nil {
 		t.Fatal("foreign active configuration was accepted")
+	}
+}
+
+func TestMeridianArtifactHY2DetectionControlsUDP443Publication(t *testing.T) {
+	artifact := func(config string) meridian.DesiredArtifact {
+		encoded := []byte(config)
+		digest := sha256.Sum256(encoded)
+		return meridian.DesiredArtifact{Revision: 1, Config: encoded, ConfigSHA256: hex.EncodeToString(digest[:])}
+	}
+	hasHY2, err := meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":443}]}`))
+	if err != nil || !hasHY2 {
+		t.Fatalf("HY2 artifact = %v, err=%v", hasHY2, err)
+	}
+	hasHY2, err = meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"vless","port":443}]}`))
+	if err != nil || hasHY2 {
+		t.Fatalf("VLESS-only artifact = %v, err=%v", hasHY2, err)
+	}
+	if _, err := meridianArtifactHY2Enabled(artifact(`{"inbounds":[{"protocol":"hysteria","port":10443}]}`)); err == nil {
+		t.Fatal("Meridian accepted Hysteria away from UDP 443")
 	}
 }

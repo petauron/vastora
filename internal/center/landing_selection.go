@@ -13,7 +13,7 @@ import (
 	"github.com/petauron/vastora/internal/landing"
 )
 
-const landingSelectionKey = "three_x_ui_landing_selection"
+const landingSelectionKey = "meridian_landing_selection"
 
 type LandingSelection struct {
 	NodeIDs            []string          `json:"nodeIds"`
@@ -133,6 +133,15 @@ func validateLandingSelection(value LandingSelection) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) LandingSelection(ctx context.Context) (LandingSelection, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return LandingSelection{}, err
+	}
+	defer tx.Rollback()
+	return readLandingSelection(ctx, tx)
 }
 
 func (s *Store) Landing(ctx context.Context) (LandingView, error) {

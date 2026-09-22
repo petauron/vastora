@@ -12,6 +12,7 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -213,6 +214,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		PublicEgress                 *networking.PublicEgress           `json:"publicEgress"`
 		ApplicationEndpoints         []ApplicationEndpointObservation   `json:"applicationEndpoints"`
 		ApplicationEndpointsObserved bool                               `json:"applicationEndpointsObserved"`
+		MeridianRuntime              *meridianruntime.Result            `json:"meridianRuntime"`
 		GatewayHealthy               bool                               `json:"gatewayHealthy"`
 		RuntimeRecovery              string                             `json:"runtimeRecovery"`
 		RuntimeRecoveryApplications  []controlplane.RecoveryApplication `json:"runtimeRecoveryApplications"`
@@ -238,7 +240,7 @@ func (s *Server) handleAgentHeartbeat(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusUnauthorized, errors.New("center: agent authentication required"))
 		return
 	}
-	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
+	if err := s.store.RecordAgentHeartbeat(request.Context(), request.PathValue("id"), credential, NodeHeartbeat{LandingClientRuntime: input.LandingClientRuntime, LandingHealth: input.LandingHealth, PublicKey: input.PublicKey, Version: input.Version, AppliedInstallations: input.AppliedInstallations, Roles: input.Roles, Capabilities: input.Capabilities, NetworkCandidates: input.NetworkCandidates, PublicEgress: input.PublicEgress, ApplicationEndpoints: input.ApplicationEndpoints, ApplicationEndpointsObserved: input.ApplicationEndpointsObserved, MeridianRuntime: input.MeridianRuntime, GatewayHealthy: input.GatewayHealthy, RuntimeRecovery: input.RuntimeRecovery, RuntimeRecoveryApplications: input.RuntimeRecoveryApplications, GatewayRevision: input.GatewayRevision, GatewayConfigHash: input.GatewayConfigHash, NodeListenerHealthy: input.NodeListenerHealthy, NodeListenerRevision: input.NodeListenerRevision, NodeListenerConfigHash: input.NodeListenerConfigHash, ApplicationRuntimeGeneration: input.ApplicationRuntimeGeneration, RemoteUpdateSupported: input.RemoteUpdateSupported, TailscaleOwnership: input.TailscaleOwnership, Startup: input.Startup}); err != nil {
 		writeError(writer, http.StatusUnauthorized, err)
 		return
 	}
