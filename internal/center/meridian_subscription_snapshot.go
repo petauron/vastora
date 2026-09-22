@@ -203,6 +203,14 @@ func (s *Store) ensureMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *
 		if snapshotRevision.Valid && uint64(snapshotRevision.Int64) == account.AppliedRevision {
 			return nil
 		}
+		if errors.Is(err, errMeridianSubscriptionNotFound) && !snapshotRevision.Valid {
+			// There is no available subscription to preserve. Blocking management
+			// here would prevent restoring a retired or not-yet-ready first entry.
+			// Do not fabricate a snapshot: public rendering remains unavailable
+			// until an actual runtime and publication are ready. Other projection
+			// errors and existing stale snapshots still fail closed.
+			return nil
+		}
 		return fmt.Errorf("center: capture applied Meridian subscription: %w", err)
 	}
 	return s.saveMeridianSubscriptionSnapshotInTx(ctx, tx, account, projection)

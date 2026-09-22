@@ -506,7 +506,7 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, commandID)
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
 	if err != nil || task == nil || task.ID != commandID || task.MeridianRuntime == nil {
 		t.Fatalf("claimed Meridian task=%#v err=%v", task, err)
 	}
@@ -617,8 +617,8 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 		}
 	}
 	assertReady("queued retirement")
-	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, commandID)
-	if err != nil || task == nil || task.MeridianRuntime == nil || !task.MeridianRuntime.RetireLegacy {
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || task == nil || task.ID != commandID || task.MeridianRuntime == nil || !task.MeridianRuntime.RetireLegacy {
 		t.Fatalf("claimed retirement task=%#v err=%v", task, err)
 	}
 	assertReady("claimed retirement")
