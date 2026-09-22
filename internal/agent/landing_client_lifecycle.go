@@ -300,19 +300,17 @@ func (s *Store) projectLandingAccounts(ctx context.Context, baseURL, token strin
 			client.ExpiryTime, client.ResetDays = authoritative.Expiry, authoritative.ResetDays
 			client.HasSubscription = authoritative.Token != ""
 		}
-		if state != nil {
-			if account, ok := state.Accounts[client.ID]; ok {
-				if account.Deleted {
-					continue
-				}
-				_, used, err := landing.AllocateQuota(account.Total, account.Enabled, account.Members)
-				if err != nil {
-					return nil, err
-				}
-				client.HasLanding = true
-				client.TotalBytes, client.UsedBytes, client.ExpiryTime, client.ResetDays = account.Total, used, account.Expiry, account.ResetDays
-				client.Enabled = account.Enabled && !account.Blocked && account.PendingOperation == "" && (account.Expiry == 0 || account.Expiry > s.now().UnixMilli()) && (account.Total == 0 || used < account.Total)
+		if account, ok := state.Accounts[client.ID]; ok {
+			if account.Deleted {
+				continue
 			}
+			_, used, err := landing.AllocateQuota(account.Total, account.Enabled, account.Members)
+			if err != nil {
+				return nil, err
+			}
+			client.HasLanding = true
+			client.TotalBytes, client.UsedBytes, client.ExpiryTime, client.ResetDays = account.Total, used, account.Expiry, account.ResetDays
+			client.Enabled = account.Enabled && !account.Blocked && account.PendingOperation == "" && (account.Expiry == 0 || account.Expiry > s.now().UnixMilli()) && (account.Total == 0 || used < account.Total)
 		}
 		result = append(result, client)
 	}

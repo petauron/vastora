@@ -256,7 +256,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 	}
 	var existing int
 	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM meridian_endpoints)+(SELECT COUNT(*) FROM meridian_accounts)+(SELECT COUNT(*) FROM meridian_credentials)`).Scan(&existing); err != nil || existing != 0 {
-		return errors.New("Meridian import target is not empty")
+		return errors.New("center: Meridian import target is not empty")
 	}
 	endpointByInbound := map[int]meridianImportedEndpoint{}
 	endpointByEntry := map[string]meridianImportedEndpoint{}

@@ -227,7 +227,3 @@ func prepareThreeXUIKeepDataUninstall(ctx context.Context, docker threeXUIContai
 func inspectThreeXUIContainer(ctx context.Context, docker threeXUIContainerEngine, name string) (client.ContainerInspectResult, bool, error) {
 	return inspectOwnedApplicationContainer(ctx, docker, name, threeXUIKey, "3x-ui", "", anyApplicationDeployment)
 }
-
-func removeThreeXUIContainerIfExists(ctx context.Context, docker threeXUIContainerEngine, name string) error {
-	return removeOwnedApplicationContainer(ctx, docker, name, threeXUIKey, "3x-ui", "", anyApplicationDeployment)
-}

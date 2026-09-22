@@ -42,7 +42,7 @@ func (s *Store) xrayWorkerHandler(apply xrayWorkerApply, observe xrayWorkerObser
 			}
 		}
 		if observationErr == nil && state.AppliedRevision != state.Revision {
-			observationErr = errors.New("Xray worker revision requires explicit recovery")
+			observationErr = errors.New("agent: Xray worker revision requires explicit recovery")
 		}
 		object, mutation, err := xrayWorkerRequest(state, request)
 		if observationErr != nil {
@@ -146,7 +146,7 @@ func xrayWorkerRequest(state xrayWorkerState, request *http.Request) (any, *xray
 	path := strings.TrimSuffix(request.URL.Path, "/")
 	if request.Method == http.MethodGet && path == "/panel/api/server/status" {
 		if state.AppliedRevision != state.Revision {
-			return nil, nil, errors.New("Xray worker revision is not applied")
+			return nil, nil, errors.New("agent: Xray worker revision is not applied")
 		}
 		return map[string]any{
 			"xray":            map[string]any{"state": "running", "version": xrayWorkerImageVersion(state.ImageReference), "errorMsg": ""},

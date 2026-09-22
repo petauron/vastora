@@ -243,7 +243,7 @@ func (s *Store) openLandingDockerForRuntime(ctx context.Context, state *landingR
 	if state.Route == nil || state.Phase != "applied" || state.Applied == nil || state.Retiring != nil || state.Applied.Revision != state.Desired.Revision || state.Route.Revision != state.Desired.Revision || state.ApplicationID != state.Desired.ApplicationID() {
 		return nil, "", "", errors.New("agent: recreated landing runtime requires explicit reconciliation")
 	}
-	docker, bridge, policy, err = openLandingDocker(ctx, state.ApplicationID, "")
+	docker, bridge, _, err = openLandingDocker(ctx, state.ApplicationID, "")
 	if err != nil {
 		return nil, "", "", err
 	}

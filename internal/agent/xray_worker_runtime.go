@@ -124,7 +124,7 @@ func (s *Store) reconcileXrayWorkerRuntime(ctx context.Context, apply xrayWorker
 		return err
 	}
 	if previous.AppliedRevision != previous.Revision {
-		return errors.New("Xray worker revision requires explicit recovery")
+		return errors.New("agent: Xray worker revision requires explicit recovery")
 	}
 	candidate := previous
 	if observe != nil {
