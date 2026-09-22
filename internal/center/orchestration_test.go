@@ -230,7 +230,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 	}
 }
 
-func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testing.T) {
+func TestLegacyProxyRuntimeMigrationDefersToMeridianCutover(t *testing.T) {
 	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -299,27 +299,21 @@ func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testin
 		t.Fatal(err)
 	}
 
-	var deploymentID, version, secretID string
-	var manifestJSON []byte
-	if err := store.db.QueryRowContext(ctx, `SELECT id,app_version,manifest_json,secret_id FROM deployments WHERE application_id = ? AND state = 'pending'`, applicationID).Scan(&deploymentID, &version, &manifestJSON, &secretID); err != nil {
+	var pending int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployments WHERE application_id=? AND state='pending'`, applicationID).Scan(&pending); err != nil || pending != 0 {
+		t.Fatalf("ordinary runtime upgrade redeployed legacy proxy: pending=%d err=%v", pending, err)
+	}
+	var status, appKey string
+	var generation int
+	if err := store.db.QueryRowContext(ctx, `SELECT status,app_key,runtime_generation FROM applications WHERE id=?`, applicationID).Scan(&status, &appKey, &generation); err != nil {
 		t.Fatal(err)
 	}
-	var queued catalog.AppManifest
-	if err := json.Unmarshal(manifestJSON, &queued); err != nil {
-		t.Fatal(err)
+	if status != "running" || appKey != threeXUIAppKey || generation != 1 {
+		t.Fatalf("runtime upgrade changed legacy cutover input: status=%q app=%q generation=%d", status, appKey, generation)
 	}
-	if version != current.Version || queued.Version != current.Version {
-		t.Fatalf("queued manifest version = %q/%q, want %q", version, queued.Version, current.Version)
-	}
-	if !slices.ContainsFunc(queued.Images, func(image catalog.Image) bool { return image.Name == "xray-core" }) {
-		t.Fatal("queued Xray worker migration did not use the accepted xray-core image")
-	}
-	secrets, err := store.getSecret(ctx, secretID, "deployment:"+deploymentID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(secrets) != `{"api_token":"current-worker-token"}` {
-		t.Fatalf("queued Xray worker secrets = %s", secrets)
+	var retainedSecretID string
+	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM application_secrets WHERE application_id=?`, applicationID).Scan(&retainedSecretID); err != nil || retainedSecretID != applicationSecretID {
+		t.Fatalf("runtime upgrade changed legacy secrets: err=%v", err)
 	}
 }
 
