@@ -192,13 +192,13 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 	entry := enrollOrchestrationNode(t, store, "route-filter-entry", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.71", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.71", HeadscaleAddress: "100.64.0.71", EnabledKinds: []string{networking.KindHeadscale}})
 	egress := enrollOrchestrationNode(t, store, "route-filter-egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.72", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.72", HeadscaleAddress: "100.64.0.72", EnabledKinds: []string{networking.KindHeadscale}})
 	ctx := context.Background()
+	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
-	siteID := testSiteID(t, store)
 	const (
 		applicationID = "route-filter-application"
 		serviceID     = "route-filter-service"
@@ -308,13 +308,13 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	egress := enrollOrchestrationNode(t, store, "egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.33", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.33", HeadscaleAddress: "100.64.0.33", EnabledKinds: []string{networking.KindHeadscale}})
 
 	ctx := context.Background()
+	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
-	siteID := testSiteID(t, store)
 	accountID := "shared-account"
 	tokenSecretID, err := store.putSecret(ctx, tx, []byte("shared-token"), meridianAccountSecretContext(accountID))
 	if err != nil {
@@ -459,13 +459,13 @@ func TestUndeployableMeridianEndpointDoesNotBlockAgentClaims(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	node := enrollOrchestrationNode(t, store, "entry-blocked", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.41", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.41", HeadscaleAddress: "100.64.0.41", EnabledKinds: []string{networking.KindHeadscale}})
 	ctx := context.Background()
+	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
-	siteID := testSiteID(t, store)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES('blocked-application','Blocked entry',?,?,?,'','running','docker','',?,?)`, node.ID, siteID, meridianAppKey, now, now); err != nil {
 		t.Fatal(err)

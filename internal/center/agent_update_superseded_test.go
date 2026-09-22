@@ -19,7 +19,7 @@ func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
 			ctx := context.Background()
 			node := enrollOrchestrationNode(t, store, "update-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.134", true)
-			session := "replacement-session"
+			session := "replacement-session-for-update-test"
 			if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
 				t.Fatal(err)
 			}

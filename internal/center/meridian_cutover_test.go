@@ -309,6 +309,7 @@ func TestMeridianRuntimeProjectionAllowsEndpointWithoutAccounts(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	node := enrollOrchestrationNode(t, store, "empty-meridian-entry", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.41", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.41", HeadscaleAddress: "100.64.0.41", EnabledKinds: []string{networking.KindHeadscale}})
+	siteID := testSiteID(t, store)
 	ctx := context.Background()
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -322,11 +323,11 @@ func TestMeridianRuntimeProjectionAllowsEndpointWithoutAccounts(t *testing.T) {
 		endpointID    = "empty-meridian-endpoint"
 	)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty Meridian entry", node.ID, siteID, meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,region_code,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
-		VALUES(?,?,?,?,?,'US','tcp',443,443,'100.64.0.41:443','observed',?,0,'0.0.0','pending',?,?)`, serviceID, applicationID, testSiteID(t, store), "inbound-1", "🇺🇸 United States｜Empty", meridianEntryProtocol, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'US','tcp',443,443,'100.64.0.41:443','observed',?,0,'0.0.0','pending',?,?)`, serviceID, applicationID, siteID, "inbound-1", "🇺🇸 United States｜Empty", meridianEntryProtocol, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	privateKeySecretID, err := store.putSecret(ctx, tx, []byte("test-private-key"), meridianEndpointSecretContext(endpointID))

@@ -472,7 +472,7 @@ func TestShared443KeepsCaddyOnItsPrivateContainerSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	haproxy := string(configuration)
-	for _, wanted := range []string{"bind 0.0.0.0:443", "nameserver docker 127.0.0.11:53", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check resolvers vastora-docker", "server upstream-0 vastora-xray:443 check send-proxy-v2 resolvers vastora-docker", "server upstream-0 127.0.0.1:3443 check"} {
+	for _, wanted := range []string{"bind 0.0.0.0:443", "nameserver docker 127.0.0.11:53", "req.ssl_sni -i vless.example.test", "server caddy vastora-gateway-caddy:443 check resolvers vastora-docker", "server upstream-0 meridian-xray:443 check send-proxy-v2 resolvers vastora-docker", "server upstream-0 127.0.0.1:3443 check"} {
 		if !strings.Contains(haproxy, wanted) {
 			t.Fatalf("HAProxy configuration missing %q: %s", wanted, haproxy)
 		}
