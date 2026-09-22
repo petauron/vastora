@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -394,6 +395,7 @@ func (s *Server) handleCompleteTask(writer http.ResponseWriter, request *http.Re
 		return nil
 	}
 	if err := s.store.completeTaskWithDisposition(request.Context(), commit, request.PathValue("id"), credential, request.PathValue("taskID"), input.Attempt, input.Succeeded, input.Error, input.Result, input.ReconciliationRequired, executedRuntimeGenerations...); err != nil {
+		slog.ErrorContext(request.Context(), "Task result projection failed", "execution_id", input.ExecutionID, "task_id", request.PathValue("taskID"), "error", err)
 		if errors.Is(err, errInvalidReconciliationDisposition) {
 			writeError(writer, http.StatusBadRequest, err)
 			return

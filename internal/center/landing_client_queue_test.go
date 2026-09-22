@@ -16,6 +16,7 @@ func TestLandingClientBacklogPreservesOneNativeWriter(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
+	landingNode := enrollOrchestrationNode(t, store, "landing", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.81", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.81", LANAddress: "10.0.0.81", EnabledKinds: []string{networking.KindLAN}})
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	site := testSiteID(t, store)
 	if _, err := store.db.Exec(`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('queue-controller','3x-ui',?,?,'vastora-official/3x-ui','running','docker','master',?,?)`, node.ID, site, now, now); err != nil {
@@ -44,12 +45,27 @@ func TestLandingClientBacklogPreservesOneNativeWriter(t *testing.T) {
 		}
 		data, _ := json.Marshal(grant)
 		source, _ := json.Marshal(landing.PeerIdentity{ID: "entry", PublicKey: "entry-key", Address: "100.64.0.8"})
-		if _, err := tx.Exec(`INSERT INTO landing_client_grants(id,parent_id,application_id,service_id,landing_node_id,source_peer_json,grant_json,credential_secret_id,status,updated_at) VALUES(?,?,'queue-controller','queue-inbound',?,?,?,?,'preparing',?)`, id, parent, node.ID, source, data, secretID, now); err != nil {
+		if _, err := tx.Exec(`INSERT INTO landing_client_grants(id,parent_id,application_id,service_id,landing_node_id,source_peer_json,grant_json,credential_secret_id,status,updated_at) VALUES(?,?,'queue-controller','queue-inbound',?,?,?,?,'preparing',?)`, id, parent, landingNode.ID, source, data, secretID, now); err != nil {
 			t.Fatal(err)
 		}
 		record, err := readLandingGrant(ctx, tx, id)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if i == 0 {
+			if _, err := tx.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('landing-fence',?,'landing-fence-task','landing.server.apply',1,'landing-fence-session','landing-fence-digest',X'00','unknown','apply',?,?,?)`, landingNode.ID, now, now, now); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.queueLandingClientCommand(ctx, tx, record, "prepare"); err != nil {
+				t.Fatal(err)
+			}
+			var queued int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM application_commands`).Scan(&queued); err != nil || queued != 0 {
+				t.Fatalf("controller work bypassed the landing execution fence: queued=%d err=%v", queued, err)
+			}
+			if _, err := tx.Exec(`DELETE FROM task_executions WHERE id='landing-fence'`); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err := store.queueLandingClientCommand(ctx, tx, record, "prepare"); err != nil {
 			t.Fatal("multiple grants must form a durable backlog, not violate the native writer constraint", err)

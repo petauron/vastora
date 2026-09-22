@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -173,6 +174,7 @@ func (s *Store) recoverReceivedExecutionResults(ctx context.Context, agentID str
 			// Recovery is opportunistic. Any invalid evidence, newer business
 			// state, or storage failure leaves the original fence intact for
 			// operator inspection, but must not reject the replacement process.
+			slog.ErrorContext(ctx, "Retained execution projection failed", "execution_id", id, "error", err)
 			continue
 		}
 	}
