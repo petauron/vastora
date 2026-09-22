@@ -44,15 +44,15 @@ func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
 	}
 }
 
-func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
-	store := openLegacyOrchestrationStore(t)
+func TestDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
+	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "reconciliation-deployment", NodeCapabilities{Docker: true}, []networking.Candidate{
 		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
 		{Address: "10.0.0.24", Interface: "eth1", Kind: networking.KindLAN},
 	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,16 +65,16 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 	if err != nil || len(deployments) != 1 || deployments[0].ID != task.ID || deployments[0].State != "failed" || !deployments[0].ReconciliationRequired {
 		t.Fatalf("quarantined deployment is not visible: %#v err=%v", deployments, err)
 	}
-	secretTx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
+	var secretID string
+	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM application_secrets WHERE application_id=?`, created.ApplicationID).Scan(&secretID); err != nil {
 		t.Fatal(err)
 	}
-	apiToken, secretErr := store.threeXUIAPISecret(ctx, secretTx, created.ApplicationID)
-	secretTx.Rollback()
-	if secretErr != nil || apiToken != "recovered-local-api-token" {
-		t.Fatalf("generated API token was not retained: token=%q err=%v", apiToken, secretErr)
+	encodedSecrets, secretErr := store.getSecret(ctx, secretID, "application:"+created.ApplicationID)
+	var recoveredSecrets map[string]string
+	if secretErr != nil || json.Unmarshal(encodedSecrets, &recoveredSecrets) != nil || recoveredSecrets["api_token"] != "recovered-local-api-token" {
+		t.Fatalf("generated API token was not retained: err=%v", secretErr)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
 		t.Fatalf("quarantined deployment did not keep the task lock: %v", err)
 	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "10.0.0.24", LANAddress: "10.0.0.24", EnabledKinds: []string{networking.KindLAN}}); err == nil || !strings.Contains(err.Error(), "recover deployment tasks") {
