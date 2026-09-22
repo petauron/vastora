@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppData } from "../types";
 import { ThemeProvider } from "../components/theme";
 import { AppsView } from "./AppsView";
+import { emptyAppData } from "../app-data";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,6 +21,7 @@ afterEach(() => {
 function fixture(): AppData {
   const appKey = "vastora-official/pulse-agent";
   return {
+    meridian: emptyAppData({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.test" }).meridian,
     status: {}, centerUpdate: {}, systemDomain: {}, centerRemoteAccess: null,
     registryCredentials: [], sources: [], organizations: [], sites: [], routes: [],
     actions: [], integrations: [], threeXUIControllerMigrations: [],

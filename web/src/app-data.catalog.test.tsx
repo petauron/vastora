@@ -68,6 +68,7 @@ function mockCenter() {
       case "/api/v1/integrations": body = { integrations: [] }; break;
       case "/api/v1/sites": body = { sites: [] }; break;
       case "/api/v1/three-x-ui-migrations": body = { migrations: [] }; break;
+      case "/api/v1/meridian": body = emptyAppData(status).meridian; break;
       case "/api/v1/network/center-remote-access": body = { available: true, enabled: false, status: "disabled" }; break;
       default: throw new Error(`Unexpected endpoint: ${path}`);
     }
