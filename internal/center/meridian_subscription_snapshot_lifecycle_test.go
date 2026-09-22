@@ -127,7 +127,7 @@ func TestMeridianAppliedSnapshotRemovesRouteWhenNativeAuthorityIsRevoked(t *test
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=desired_revision,runtime_healthy=1,status='ready' WHERE id=?`, sharedSnapshotEndpointID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,runtime_healthy=1,status='ready' WHERE id=?`, grant.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,runtime_healthy=1,status='ready',health_expires_unix_ms=? WHERE id=?`, store.now().Add(10*time.Second).UnixMilli(), grant.ID); err != nil {
 		t.Fatal(err)
 	}
 	initial, err := store.MeridianSubscription(ctx, sharedSnapshotTokenB)

@@ -397,7 +397,7 @@ func (s *Store) listMeridianAccounts(ctx context.Context) ([]MeridianAccountView
 func (s *Store) listMeridianRouteGrants(ctx context.Context) ([]MeridianRouteGrantView, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT grant_row.id,grant_row.account_id,grant_row.endpoint_id,grant_row.egress_node_id,agent.name,
 		grant_row.hide_native,grant_row.enabled,grant_row.desired_revision,grant_row.applied_revision,grant_row.runtime_healthy,
-		grant_row.status,grant_row.last_error,grant_row.updated_at
+		grant_row.status,grant_row.last_error,grant_row.updated_at,grant_row.health_expires_unix_ms
 		FROM meridian_route_grants grant_row JOIN agents agent ON agent.id=grant_row.egress_node_id
 		WHERE grant_row.status<>'revoked' ORDER BY grant_row.account_id,agent.name,grant_row.id`)
 	if err != nil {
@@ -408,12 +408,23 @@ func (s *Store) listMeridianRouteGrants(ctx context.Context) ([]MeridianRouteGra
 	for rows.Next() {
 		var value MeridianRouteGrantView
 		var hideNative, enabled, healthy int
+		var healthExpires int64
 		if err := rows.Scan(&value.ID, &value.AccountID, &value.EndpointID, &value.EgressNodeID, &value.EgressNodeName,
 			&hideNative, &enabled, &value.DesiredRevision, &value.AppliedRevision, &healthy,
-			&value.Status, &value.LastError, &value.UpdatedAt); err != nil {
+			&value.Status, &value.LastError, &value.UpdatedAt, &healthExpires); err != nil {
 			return nil, err
 		}
-		value.HideNative, value.Enabled, value.RuntimeHealthy = hideNative == 1, enabled == 1, healthy == 1
+		value.HideNative, value.Enabled = hideNative == 1, enabled == 1
+		value.RuntimeHealthy = value.Enabled && healthy == 1 && value.Status == "ready" &&
+			value.DesiredRevision == value.AppliedRevision && healthExpires > s.now().UnixMilli()
+		if value.Status == "ready" && !value.RuntimeHealthy {
+			// Read-time expiry prevents a disconnected Agent's last successful
+			// receipt from presenting a permanently healthy route in management.
+			value.Status = "blocked"
+			if value.LastError == "" {
+				value.LastError = "route health evidence is unavailable or expired"
+			}
+		}
 		values = append(values, value)
 	}
 	return values, rows.Err()
@@ -810,7 +821,7 @@ func (s *Store) UpdateMeridianAccount(ctx context.Context, accountID string, inp
 		WHERE status<>'retired' AND id IN (SELECT endpoint_id FROM meridian_credentials WHERE account_id=?)`, now, accountID); err != nil {
 		return MeridianAccountView{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,status=CASE WHEN status='revoked' THEN status ELSE 'pending' END,last_error='',updated_at=? WHERE account_id=?`, now, accountID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET desired_revision=desired_revision+1,runtime_healthy=0,status=CASE WHEN status IN ('revoking','revoked') THEN status ELSE 'pending' END,last_error='',updated_at=? WHERE account_id=?`, now, accountID); err != nil {
 		return MeridianAccountView{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -853,6 +864,9 @@ func (s *Store) CreateMeridianRouteGrant(ctx context.Context, input MeridianRout
 	}
 	if accountStatus != "active" || accountEnabled != 1 {
 		return MeridianRouteGrantView{}, errors.New("center: disabled Meridian account cannot receive a route")
+	}
+	if err := s.authorizeMeridianEntrySource(ctx, tx, input.EndpointID); err != nil {
+		return MeridianRouteGrantView{}, err
 	}
 	if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, input.EndpointID); err != nil {
 		return MeridianRouteGrantView{}, err

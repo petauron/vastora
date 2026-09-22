@@ -734,6 +734,13 @@ func TestMeridianRouteLifecycleDoesNotBlockUnrelatedSubscriptionEntries(t *testi
 		t.Fatal(err)
 	}
 	const applicationID = "route-lifecycle-meridian-application"
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed' WHERE id=?`, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at)
+		VALUES(?,?,?,?)`, entry.ID, landing.ClientRuntimeGeneration, []byte(`{"id":"tailnet-lifecycle-entry","publicKey":"nodekey:test-lifecycle","address":"100.64.0.44"}`), stamp); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Route lifecycle Meridian entry", entry.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)

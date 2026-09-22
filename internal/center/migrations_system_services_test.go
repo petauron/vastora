@@ -2,6 +2,7 @@ package center
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +42,8 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 		`UPDATE services SET source='catalog' WHERE source='system'`, schema,
 		`INSERT INTO services_v87_fixture SELECT * FROM services`, `DROP TABLE services`,
 		`ALTER TABLE services_v87_fixture RENAME TO services`, `DROP TABLE goose_db_version`,
+		`ALTER TABLE meridian_route_grants DROP COLUMN health_expires_unix_ms`,
+		`ALTER TABLE meridian_endpoints DROP COLUMN source_peer_json`,
 		`PRAGMA user_version=87`, `COMMIT`, `PRAGMA legacy_alter_table=OFF`, `PRAGMA foreign_keys=ON`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -81,7 +84,7 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 	if foreignKeys != 1 || violations != 0 || version != centerSchemaVersion {
 		t.Fatalf("migration invariants: foreign_keys=%d violations=%d version=%d", foreignKeys, violations, version)
 	}
-	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", "center-v87-before-v88-*.db"))
+	backups, err := filepath.Glob(filepath.Join(directory, "migration-backups", fmt.Sprintf("center-v87-before-v%d-*.db", centerSchemaVersion)))
 	if err != nil || len(backups) != 1 {
 		t.Fatalf("expected one pre-migration backup: %v %v", backups, err)
 	}

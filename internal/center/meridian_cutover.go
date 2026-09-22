@@ -63,6 +63,7 @@ func (s *Store) MeridianCutover(ctx context.Context) (MeridianCutoverView, error
 		view.LegacyControllerApplicationID = legacyID.String
 		_ = s.db.QueryRowContext(ctx, `SELECT name FROM applications WHERE id=?`, legacyID.String).Scan(&view.LegacyControllerName)
 	}
+	nowMillis := s.now().UTC().UnixMilli()
 	if err := s.db.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM meridian_accounts),
 		(SELECT COUNT(*) FROM meridian_credentials),
@@ -76,10 +77,10 @@ func (s *Store) MeridianCutover(ctx context.Context) (MeridianCutoverView, error
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
 		 ))),
 		(SELECT COUNT(*) FROM meridian_endpoints WHERE status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND legacy_retired=1),
-		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision),
-		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status='blocked'),
+		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND health_expires_unix_ms>?),
+		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND (status='blocked' OR (status='ready' AND health_expires_unix_ms<=?))),
 		(SELECT COUNT(*) FROM meridian_deployments WHERE status IN ('pending','applying')) + (SELECT COUNT(*) FROM deployments WHERE app_key='vastora-official/meridian' AND state IN ('pending','running')),
-		(SELECT COUNT(*) FROM meridian_deployments WHERE status='failed') + (SELECT COUNT(*) FROM applications WHERE app_key='vastora-official/meridian' AND status='failed' AND id IN (SELECT application_id FROM meridian_endpoints))`).Scan(
+		(SELECT COUNT(*) FROM meridian_deployments WHERE status='failed') + (SELECT COUNT(*) FROM applications WHERE app_key='vastora-official/meridian' AND status='failed' AND id IN (SELECT application_id FROM meridian_endpoints))`, nowMillis, nowMillis).Scan(
 		&view.ImportedAccounts, &view.ImportedCredentials, &view.ReadyEndpoints,
 		&view.RetiredEndpoints, &view.ReadyRoutes, &view.BlockedRoutes, &view.PendingDeployments, &view.FailedDeployments,
 	); err != nil {

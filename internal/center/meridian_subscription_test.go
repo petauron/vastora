@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/meridianruntime"
@@ -370,8 +371,8 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,1,1,1,'ready',?,?)`, "grant-"+endpointID, accountID, endpointID, egress.ID, baseID, routeID, now, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,desired_revision,applied_revision,runtime_healthy,status,health_expires_unix_ms,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,1,1,1,'ready',?,?,?)`, "grant-"+endpointID, accountID, endpointID, egress.ID, baseID, routeID, store.now().Add(10*time.Second).UnixMilli(), now, now); err != nil {
 			t.Fatal(err)
 		}
 	}

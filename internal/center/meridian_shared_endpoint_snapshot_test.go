@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )
 
@@ -121,6 +122,13 @@ func openMeridianSharedEndpointSnapshotFixture(t *testing.T) *Store {
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, now, node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at)
+		VALUES(?,?,?,?)`, node.ID, landing.ClientRuntimeGeneration, []byte(`{"id":"tailnet-source-entry","publicKey":"nodekey:test-source","address":"100.64.0.61"}`), now); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES('snapshot-shared-app','Shared entry',?,?,?,'','running','docker','',?,?)`, node.ID, siteID, meridianAppKey, now, now); err != nil {
 		t.Fatal(err)

@@ -147,7 +147,7 @@ func leaseDeadlineForTransport(gate *BridgeGate, before LinkResult, business Bus
 		return time.Time{}, false
 	}
 	address, err := netip.ParseAddr(business.ExitIPv4)
-	if err != nil || !publicIPv4(address) {
+	if err != nil || !PublicIPv4(address) {
 		return time.Time{}, false
 	}
 	deadline := before.StartedAt.Add(AllowLifetime)

@@ -16,6 +16,9 @@ type xrayWorkerApply func(context.Context, xrayWorkerState, xrayWorkerState) err
 type xrayWorkerObserve func(context.Context, xrayWorkerState) (xrayWorkerState, error)
 
 func (s *Store) startXrayWorkerAPI(state xrayWorkerState, apply xrayWorkerApply, observe xrayWorkerObserve) error {
+	if err := s.requireLegacyLandingAuthority(context.Background()); err != nil {
+		return err
+	}
 	s.xrayWorkerMu.Lock()
 	defer s.xrayWorkerMu.Unlock()
 	target := net.JoinHostPort(state.Address, strconv.Itoa(state.PanelPort))
@@ -119,6 +122,9 @@ func (s *Store) runXrayWorkerReconciler(ctx context.Context, apply xrayWorkerApp
 func (s *Store) reconcileXrayWorkerRuntime(ctx context.Context, apply xrayWorkerApply, observe xrayWorkerObserve) error {
 	s.xrayWorkerStateMu.Lock()
 	defer s.xrayWorkerStateMu.Unlock()
+	if err := s.requireLegacyLandingAuthority(ctx); err != nil {
+		return err
+	}
 	previous, err := s.loadXrayWorkerState(ctx)
 	if err != nil {
 		return err

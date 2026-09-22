@@ -22,6 +22,10 @@ func (s *Store) xrayWorkerHandler(apply xrayWorkerApply, observe xrayWorkerObser
 		}
 		s.xrayWorkerStateMu.Lock()
 		defer s.xrayWorkerStateMu.Unlock()
+		if err := s.requireLegacyLandingAuthority(request.Context()); err != nil {
+			http.Error(response, "legacy runtime retired", http.StatusConflict)
+			return
+		}
 		state, err := s.loadXrayWorkerState(request.Context())
 		expectedAuthorization := "Bearer " + state.APIToken
 		if err != nil || subtle.ConstantTimeCompare([]byte(request.Header.Get("Authorization")), []byte(expectedAuthorization)) != 1 {

@@ -12,7 +12,8 @@ var blockedIPv4 = []string{
 	"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
 }
 
-func publicIPv4(address netip.Addr) bool {
+// PublicIPv4 accepts only an IPv4 address that can be a public landing exit.
+func PublicIPv4(address netip.Addr) bool {
 	if !address.Is4() || !address.IsGlobalUnicast() {
 		return false
 	}

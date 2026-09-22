@@ -824,6 +824,8 @@ func (s *Store) ResumeXrayWorker(ctx context.Context, dockerSocket string) error
 }
 
 func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) (result error) {
+	s.landingMutationMu.Lock()
+	defer s.landingMutationMu.Unlock()
 	applicationID := ""
 	defer func() {
 		if applicationID == "" {
@@ -859,6 +861,12 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 		socket = "unix:///var/run/docker.sock"
 	}
 	executor := ApplicationExecutor{DockerSocket: socket, Store: s}
+	if err := s.stopLandingMonitor(ctx); err != nil {
+		return err
+	}
+	if err := closeMeridianGates(ctx, state.knownLandingGates(), newMeridianTrafficGate); err != nil {
+		return err
+	}
 	if state.Pending != nil {
 		state, err = executor.recoverMeridianPendingState(ctx, state, xrayWorkerImageReference)
 		if err != nil {
@@ -868,8 +876,15 @@ func (s *Store) resumeMeridianRuntime(ctx context.Context, dockerSocket string) 
 	if state.Applied == nil {
 		return errors.New("agent: Meridian runtime has no applied revision")
 	}
-	_, err = executor.observeAppliedMeridianRuntime(ctx, state)
-	return err
+	docker, err := client.New(client.WithHost(socket))
+	if err != nil {
+		return err
+	}
+	defer docker.Close()
+	if err := executor.prepareMeridianRuntimeStart(ctx, docker, state, *state.Applied, state.AppliedPeers); err != nil {
+		return err
+	}
+	return executor.finishMeridianLandingHandover(ctx, &state)
 }
 
 func (s *Store) resumeLegacyXrayWorker(ctx context.Context, dockerSocket string) (result error) {
