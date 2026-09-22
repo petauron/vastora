@@ -10,7 +10,7 @@ import (
 )
 
 func TestThreeXUIGlobalControllerAndCrossSiteVLESSNodeLifecycle(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	originalSiteID := testSiteID(t, store)

@@ -187,7 +187,7 @@ func TestApplicationCommandQuarantineLocksAndAuthenticatedRetryReplaysSameTask(t
 }
 
 func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	controller := enrollOrchestrationNode(t, store, "current-controller", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{
@@ -721,7 +721,7 @@ func TestTaskIDsAreScopedByAgentAndRevision(t *testing.T) {
 }
 
 func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.40", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.40", LANAddress: "10.0.0.40", EnabledKinds: []string{networking.KindLAN}})
@@ -752,7 +752,7 @@ func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 }
 
 func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "serialized-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.42", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.42", LANAddress: "10.0.0.42", EnabledKinds: []string{networking.KindLAN}})

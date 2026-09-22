@@ -1,0 +1,107 @@
+{
+  "id": "3x-ui",
+  "version": "3.7.2",
+  "name": {
+    "en": "Vastora Proxy",
+    "zh-CN": "Vastora 代理"
+  },
+  "description": {
+    "en": "Vastora-managed subscriptions and Xray data nodes. The single controller retains the migration adapter; workers run Xray only.",
+    "zh-CN": "由 Vastora 管理订阅与 Xray 数据节点。仅全局控制端保留迁移适配器，工作节点只运行 Xray。"
+  },
+  "license": "GPL-3.0",
+  "hostAccess": true,
+  "images": [
+    {
+      "name": "3x-ui",
+      "reference": "ghcr.io/mhsanaei/3x-ui:v3.7.0@sha256:3b3131f1876e6bf35063a9ec4dd1c594e4525180bfc2e1c477dcc8a3c9550ca1"
+    },
+    {
+      "name": "xray-core",
+      "reference": "ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558"
+    }
+  ],
+  "services": [
+    {
+      "name": "panel",
+      "protocol": "http",
+      "containerPort": 2053,
+      "hostPortField": "panel_port",
+      "healthPath": "/",
+      "management": true
+    },
+    {
+      "name": "subscription",
+      "protocol": "http",
+      "containerPort": 2096,
+      "defaultHostPort": 2096,
+      "healthPath": "/sub/"
+    }
+  ],
+  "homepage": {
+    "service": "panel",
+    "path": "/"
+  },
+  "config": [
+    {
+      "key": "timezone",
+      "type": "string",
+      "label": {
+        "en": "Timezone",
+        "zh-CN": "时区"
+      },
+      "description": {
+        "en": "IANA timezone used by the panel and logs.",
+        "zh-CN": "面板和日志使用的 IANA 时区。"
+      },
+      "required": true,
+      "secret": false,
+      "default": "UTC"
+    },
+    {
+      "key": "panel_port",
+      "type": "integer",
+      "label": {
+        "en": "Panel port",
+        "zh-CN": "面板端口"
+      },
+      "description": {
+        "en": "Host port bound to the node's selected private management address.",
+        "zh-CN": "绑定到节点所选私有管理地址的主机端口。"
+      },
+      "required": true,
+      "secret": false,
+      "default": 2053
+    },
+    {
+      "key": "enable_fail2ban",
+      "type": "boolean",
+      "label": {
+        "en": "Enable Fail2ban enforcement",
+        "zh-CN": "启用 Fail2ban 限制"
+      },
+      "description": {
+        "en": "Enforces client IP limits. This requires the NET_ADMIN and NET_RAW capabilities granted by this package.",
+        "zh-CN": "强制执行客户端 IP 限制；需要本应用包授予的 NET_ADMIN 和 NET_RAW 能力。"
+      },
+      "required": false,
+      "secret": false,
+      "default": true
+    },
+    {
+      "key": "vmess_aead_forced",
+      "type": "boolean",
+      "label": {
+        "en": "Force VMess AEAD",
+        "zh-CN": "强制 VMess AEAD"
+      },
+      "description": {
+        "en": "Sets XRAY_VMESS_AEAD_FORCED for compatibility with older VMess clients.",
+        "zh-CN": "设置 XRAY_VMESS_AEAD_FORCED，以兼容较旧的 VMess 客户端。"
+      },
+      "required": false,
+      "secret": false,
+      "default": false
+    }
+  ]
+}

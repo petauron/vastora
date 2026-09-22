@@ -126,7 +126,7 @@ func TestCoLocatedGatewayDesiredStateOwnsBundledSystemRoutes(t *testing.T) {
 }
 
 func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.61", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.61", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.61", LANAddress: "10.0.0.61", PublicAddress: "203.0.113.61", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
@@ -179,7 +179,7 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 }
 
 func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "random-host-edge", NodeCapabilities{Docker: true}, []networking.Candidate{

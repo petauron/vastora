@@ -14,7 +14,7 @@ import (
 )
 
 func TestThreeXUIControllerMigrationBacksUpRestoresAndSwitchesRoles(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	master := enrollOrchestrationNode(t, store, "old-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.10", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.10", HeadscaleAddress: "100.64.0.10", EnabledKinds: []string{networking.KindHeadscale}})

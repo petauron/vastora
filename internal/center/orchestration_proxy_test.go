@@ -328,7 +328,7 @@ func TestGatewayCertificatePrivateKeyIsAbsentFromDesiredStateAndActions(t *testi
 }
 
 func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.71", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.71", LANAddress: "10.0.0.71", EnabledKinds: []string{networking.KindLAN}})

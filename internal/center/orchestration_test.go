@@ -231,7 +231,7 @@ func TestAgentRuntimeGenerationQueuesOneApplicationReconcile(t *testing.T) {
 }
 
 func TestXrayWorkerRuntimeMigrationUsesCurrentAcceptedOfficialManifest(t *testing.T) {
-	store := openOrchestrationStore(t)
+	store := openLegacyOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "xray-runtime-migration", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.86", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.86", LANAddress: "10.0.0.86", EnabledKinds: []string{networking.KindLAN}})
