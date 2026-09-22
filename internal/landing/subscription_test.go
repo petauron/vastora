@@ -70,11 +70,14 @@ func TestFixedSubscriptionPreservesNativeAndDistinctCredentials(t *testing.T) {
 			t.Fatal("lost original or independent child identity")
 		}
 	}
-	if _, err := ComposeLinks([]byte(native), Identity("another-user"), FixedMode, []SubscriptionGrant{item}, false); err == nil {
-		t.Fatal("another parent obtained the fixed credential")
-	}
-	if _, err := ComposeLinks([]byte("vless://other@entry.example.test:443?security=reality"), item.Grant.ParentID, FixedMode, []SubscriptionGrant{item}, false); err == nil {
-		t.Fatal("mismatched native user obtained a fixed credential")
+	for _, tc := range []struct{ native, parent string }{
+		{native, Identity("another-user")},
+		{"vless://other@entry.example.test:443?security=reality", item.Grant.ParentID},
+	} {
+		out, err := ComposeLinks([]byte(tc.native), tc.parent, FixedMode, []SubscriptionGrant{item}, false)
+		if err != nil || strings.Contains(string(out), "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee") || strings.TrimSpace(string(out)) != strings.TrimSpace(tc.native) {
+			t.Fatal("invalid grant exposed its fixed credential or interrupted native subscription")
+		}
 	}
 	_, err := ComposeLinks([]byte(native), item.Grant.ParentID, PublishingMode("advanced"), []SubscriptionGrant{item}, false)
 	if err == nil {
@@ -208,8 +211,13 @@ func TestSubscriptionMihomoRejectsChangedRealityMaterial(t *testing.T) {
 			}
 			change(native["proxies"].([]any)[0].(map[string]any))
 			data, _ := yaml.Marshal(native)
-			if _, err := ComposeMihomo(data, item.Grant.ParentID, FixedMode, []SubscriptionGrant{item}); err == nil {
-				t.Fatal("changed native transport accepted")
+			out, err := ComposeMihomo(data, item.Grant.ParentID, FixedMode, []SubscriptionGrant{item})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rendered map[string]any
+			if yaml.Unmarshal(out, &rendered) != nil || len(rendered["proxies"].([]any)) != 1 || strings.Contains(string(out), "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee") {
+				t.Fatal("changed native transport obtained a fixed credential")
 			}
 		})
 	}
