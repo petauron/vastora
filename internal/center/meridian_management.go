@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -377,7 +378,7 @@ func (s *Store) listMeridianAccounts(ctx context.Context) ([]MeridianAccountView
 	}
 	for index := range values {
 		value := &values[index]
-		usage, err := s.meridianAccountUsage(ctx, value.ID)
+		usage, err := s.meridianAccountUsage(ctx, s.db, value.ID)
 		if err != nil {
 			return nil, err
 		}
