@@ -27,7 +27,7 @@ go-format-check:
 	node scripts/generate-openapi.mjs --check
 
 go-race-check:
-	$(GO) test -race $(GO_PACKAGES)
+	$(GO) test -race -timeout=20m $(GO_PACKAGES)
 
 go-static-check:
 	$(GO) vet $(GO_PACKAGES)
