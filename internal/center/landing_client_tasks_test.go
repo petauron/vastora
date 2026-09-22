@@ -90,7 +90,7 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if grant.Status != "preparing" || grant.AppliedRevision != 0 {
 		t.Fatalf("grant queued: %+v %v", grant, err)
 	}
-	completeController := func(phase string) landing.ControllerTask {
+	completeController := func(phase string, beforeComplete ...func()) landing.ControllerTask {
 		t.Helper()
 		task := claimTask(t, store, entry)
 		if task.ClientCommand == nil || task.ClientCommand.Landing == nil || task.ClientCommand.Landing.Phase != phase || !strings.HasPrefix(task.ID, "application-command-") {
@@ -103,6 +103,9 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 			result.BaseLink, result.FixedLink, result.SubscriptionToken = "vless://"+parentUUID+query, "vless://"+plan.FixedUUID+query, "parent-secret-token"
 		}
 		raw, _ := json.Marshal(ApplicationTaskResult{ClientCommand: &ThreeXUIClientCommandResult{Landing: &result}})
+		for _, prepare := range beforeComplete {
+			prepare()
+		}
 		if err := store.CompleteTask(ctx, entry.ID, entry.Credential, task.ID, task.Attempt, true, "", raw, task.RequiredRuntimeGeneration); err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +115,17 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		}
 		return plan
 	}
-	prepared := completeController("prepare")
+	prepared := completeController("prepare", func() {
+		// An unrelated malformed inventory row makes the follow-up global-pool
+		// convergence fail. The authenticated scoped result must still commit so
+		// the execution cannot remain fenced in result_received.
+		exec(`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,observed_at) VALUES('broken-parent','client-controller','Broken','{"email":"Broken","inboundIds":"bad"}',?)`, now)
+	})
+	var prepareCommandState string
+	if err := store.db.QueryRow(`SELECT state FROM application_commands WHERE json_extract(input_json,'$.grantId')=? AND json_extract(input_json,'$.grantPhase')='prepare'`, grant.ID).Scan(&prepareCommandState); err != nil || prepareCommandState != "succeeded" {
+		t.Fatalf("scoped landing result was rolled back by unrelated pool convergence: state=%q err=%v", prepareCommandState, err)
+	}
+	exec(`DELETE FROM three_x_ui_client_accounts WHERE id='broken-parent'`)
 	if prepared.FixedUUID == parentUUID || landing.Identity(prepared.FixedUUID) != prepared.Grant.FixedIdentity {
 		t.Fatal("child did not receive an independent identity")
 	}
@@ -218,7 +231,41 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 		if enabled {
 			completeController("activate")
 		} else {
+			var credentialSecretID, materialSecretID string
+			if err := store.db.QueryRow(`SELECT credential_secret_id,material_secret_id FROM landing_client_grants WHERE parent_id=?`, parent).Scan(&credentialSecretID, &materialSecretID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('retire-target-fence',?,'retire-target-task','landing.server.apply',1,'retire-target-session','retire-target-digest',X'00','unknown','apply',?,?,?)`, owner.ID, now, now, now); err != nil {
+				t.Fatal(err)
+			}
 			completeController("retire")
+			var revokedStatus, retainedMaterial string
+			if err := store.db.QueryRow(`SELECT status,COALESCE(material_secret_id,'') FROM landing_client_grants WHERE parent_id=?`, parent).Scan(&revokedStatus, &retainedMaterial); err != nil || revokedStatus != "revoked" || retainedMaterial != materialSecretID {
+				t.Fatalf("retirement did not retain a durable cleanup marker: status=%q material=%q err=%v", revokedStatus, retainedMaterial, err)
+			}
+			if _, err := store.db.Exec(`DELETE FROM task_executions WHERE id='retire-target-fence'`); err != nil {
+				t.Fatal(err)
+			}
+			cleanup, err := store.db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.reconcileClientLandingSourcesForNode(ctx, cleanup, owner.ID); err != nil {
+				cleanup.Rollback()
+				t.Fatal(err)
+			}
+			if err := cleanup.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			var remaining int
+			if err := store.db.QueryRow(`SELECT COUNT(*) FROM landing_client_grants WHERE parent_id=?`, parent).Scan(&remaining); err != nil || remaining != 0 {
+				t.Fatalf("revoked landing cleanup marker did not converge: remaining=%d err=%v", remaining, err)
+			}
+			for _, secretID := range []string{credentialSecretID, materialSecretID} {
+				if err := store.db.QueryRow(`SELECT COUNT(*) FROM secrets WHERE id=?`, secretID).Scan(&remaining); err != nil || remaining != 0 {
+					t.Fatalf("revoked landing secret was not deleted: remaining=%d err=%v", remaining, err)
+				}
+			}
 			server = claimLanding(true)
 			if server == nil || len(server.LandingServerState.Plan.Sources) != 0 {
 				t.Fatal("disabled parent retained its landing authorization")

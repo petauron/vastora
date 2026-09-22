@@ -6,16 +6,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/secret"
 )
 
+var errLandingRouteApplying = errors.New("center: landing route operation is still applying")
+
 func (s *Store) queueLandingClientCommand(ctx context.Context, tx *sql.Tx, record landingGrantRecord, phase string) error {
 	controllerID, nodeID, err := runningGlobalThreeXUIController(ctx, tx)
 	if err != nil {
 		return err
+	}
+	// A completed controller change may enqueue a landing-server source update.
+	// Do not run the next change for that same landing until its dependent work
+	// has settled, otherwise the result projection hits that node's execution
+	// fence and strands the controller result in result_received.
+	var landingBlocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, record.LandingNodeID).Scan(&landingBlocked); err != nil {
+		return err
+	}
+	if landingBlocked {
+		return nil
+	}
+	var entryRouteApplying bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_proxy_states routes JOIN applications app ON app.node_id=routes.node_id WHERE app.id=? AND routes.status='applying')`, record.ApplicationID).Scan(&entryRouteApplying); err != nil {
+		return err
+	}
+	if entryRouteApplying {
+		return nil
 	}
 	// The grant row is the durable backlog. Keep the existing one-active-
 	// command constraint instead of inserting several pending native writers.
@@ -145,6 +166,7 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 		succeeded = false
 	}
 	status, message := "succeeded", ""
+	retirementCleanupPending := false
 	if !succeeded {
 		status, message = "failed", "Landing configuration failed; retry the operation."
 		if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='failed',last_error=?,updated_at=? WHERE id=?`, message, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
@@ -162,7 +184,9 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 			}
 			if waiting == 0 {
 				if err := s.queueClientLandingRoutes(ctx, tx, record.ApplicationID); err != nil {
-					return err
+					if !errors.Is(err, errLandingRouteApplying) {
+						return err
+					}
 				}
 			}
 		case "activate":
@@ -186,11 +210,14 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 				return err
 			}
 		case "retire":
-			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='revoked',applied_revision=desired_revision,material_secret_id=NULL,last_error='',updated_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='revoked',applied_revision=desired_revision,last_error='',updated_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
 				return err
 			}
 			if err := s.refreshClientLandingSources(ctx, tx, record.LandingNodeID); err != nil {
-				return err
+				if !errors.Is(err, errExecutionBlocked) {
+					return err
+				}
+				retirementCleanupPending = true
 			}
 		default:
 			return errors.New("center: invalid landing completion phase")
@@ -204,16 +231,12 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 	}
 	if succeeded && input.GrantPhase == "retire" {
 		// The native child is confirmed disabled/detached; its accounting
-		// tombstone remains in the Agent journal. Release active topology FKs
-		// and rotate the identity if this combination is authorized again.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM landing_client_grants WHERE id=?`, record.ID); err != nil {
-			return err
-		}
-		for _, id := range []string{record.CredentialSecretID, record.MaterialSecretID.String} {
-			if id != "" {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id=?`, id); err != nil {
-					return err
-				}
+		// tombstone remains in the Agent journal. Release the Center tombstone
+		// only after the landing authorization refresh is durably queued. A
+		// target execution fence leaves the revoked row as the retry marker.
+		if !retirementCleanupPending {
+			if err := s.deleteRevokedLandingGrantTombstones(ctx, tx, record.LandingNodeID); err != nil {
+				return err
 			}
 		}
 		if err := s.recordTaskEvent(ctx, tx, taskID, nodeID, "application.command", int64(record.Revision), "succeeded", "Grant "+record.ID+" revoked for parent "+record.ParentID+" on entry "+record.ApplicationID+" and landing "+record.LandingNodeID+"."); err != nil {
@@ -223,10 +246,52 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 			return err
 		}
 	}
-	if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
+	// The scoped Agent operation and its durable projection are the authority
+	// for this execution. Commit them before deriving any unrelated global-pool
+	// work so one unhealthy pair cannot retain a successful execution fence.
+	if err := commit(tx); err != nil {
 		return err
 	}
-	return commit(tx)
+	// Reconciliation is a separate convergence pass. Its durable grant rows
+	// remain available for the next startup or topology event if it cannot make
+	// progress now.
+	if err := s.resumeGlobalLandingPool(context.WithoutCancel(ctx)); err != nil {
+		slog.ErrorContext(ctx, "Global landing pool reconciliation failed after task commit", "grant_id", record.ID, "error", err)
+	}
+	return nil
+}
+
+func (s *Store) deleteRevokedLandingGrantTombstones(ctx context.Context, tx *sql.Tx, landingNodeID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT credential_secret_id,COALESCE(material_secret_id,'') FROM landing_client_grants WHERE landing_node_id=? AND status='revoked' ORDER BY id`, landingNodeID)
+	if err != nil {
+		return err
+	}
+	secretIDs := []string{}
+	for rows.Next() {
+		var credentialID, materialID string
+		if err := rows.Scan(&credentialID, &materialID); err != nil {
+			rows.Close()
+			return err
+		}
+		secretIDs = append(secretIDs, credentialID)
+		if materialID != "" {
+			secretIDs = append(secretIDs, materialID)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM landing_client_grants WHERE landing_node_id=? AND status='revoked'`, landingNodeID); err != nil {
+		return err
+	}
+	for _, id := range secretIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE id=?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) queueClientLandingRoutes(ctx context.Context, tx *sql.Tx, applicationID string) error {
@@ -246,7 +311,7 @@ func (s *Store) queueClientLandingRoutes(ctx context.Context, tx *sql.Tx, applic
 		return errors.New("center: invalid existing landing state")
 	}
 	if status == "applying" {
-		return errors.New("center: landing route operation is still applying")
+		return errLandingRouteApplying
 	}
 	state.NodeID, state.Revision = nodeID, state.Revision+1
 	state.Clients = &landing.ClientPlan{ApplicationID: applicationID, AllowSessionReset: true}
@@ -304,7 +369,9 @@ func (s *Store) queueClientLandingRoutes(ctx context.Context, tx *sql.Tx, applic
 			owner, source = record.LandingNodeID, record.Source.Address
 		}
 		if err := s.refreshClientLandingSources(ctx, tx, record.LandingNodeID); err != nil {
-			return err
+			if !errors.Is(err, errExecutionBlocked) {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status=CASE WHEN json_extract(grant_json,'$.enabled')=1 THEN 'configuring' ELSE 'revoking' END,route_revision=?,updated_at=? WHERE id=? AND status<>'ready'`, state.Revision, s.now().UTC().Format(time.RFC3339Nano), id); err != nil {
 			return err

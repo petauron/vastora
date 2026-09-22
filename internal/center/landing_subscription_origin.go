@@ -55,7 +55,11 @@ func (s *Store) reconcileLandingSubscriptionOrigin(ctx context.Context, tx *sql.
 }
 
 func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT g.landing_node_id FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE (a.node_id=? OR g.landing_node_id=?) AND g.status<>'revoked'`, nodeID, nodeID)
+	// Revoked grants remain as durable cleanup markers while their target has
+	// an execution fence. Include them when discovering which landing source
+	// sets need to converge; refreshClientLandingSources excludes them from the
+	// resulting authorization plan.
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT g.landing_node_id FROM landing_client_grants g JOIN applications a ON a.id=g.application_id WHERE a.node_id=? OR g.landing_node_id=?`, nodeID, nodeID)
 	if err != nil {
 		return err
 	}
@@ -86,6 +90,9 @@ func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sq
 			continue
 		}
 		if err := s.refreshClientLandingSources(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.deleteRevokedLandingGrantTombstones(ctx, tx, id); err != nil {
 			return err
 		}
 	}

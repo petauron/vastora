@@ -94,7 +94,19 @@ func (s *Store) reconcileGlobalLandingPool(ctx context.Context, tx *sql.Tx, refr
 					if err != nil {
 						return err
 					}
-					if grant.Status != "revoked" && (!refreshReady || grant.Status != "ready") {
+					if grant.Status == "prepared" {
+						pairErr := withLandingPoolSavepoint(ctx, tx, func() error {
+							return s.queueClientLandingRoutes(ctx, tx, grant.ApplicationID)
+						})
+						if pairErr != nil && !landingPoolPairUnavailable(pairErr) {
+							return pairErr
+						}
+						continue
+					}
+					// Revoked rows can be retained briefly as landing-source cleanup
+					// markers. Do not reuse their private identity; cleanup removes the
+					// row before a later pass creates a fresh grant.
+					if grant.Status == "revoked" || !refreshReady || grant.Status != "ready" {
 						continue
 					}
 					revision = grant.Revision
