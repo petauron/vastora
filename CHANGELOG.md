@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.185](https://github.com/petauron/vastora/compare/v0.1.0-alpha.184...v0.1.0-alpha.185) (2026-09-22)
+
+
+### Bug Fixes
+
+* **center:** recover expired retained results on startup ([#583](https://github.com/petauron/vastora/issues/583)) ([6423d2a](https://github.com/petauron/vastora/commit/6423d2a8a60c377cf34135f5c74f396ee154a46b))
+
 ## [0.1.0-alpha.184](https://github.com/petauron/vastora/compare/v0.1.0-alpha.183...v0.1.0-alpha.184) (2026-09-22)
 
 
