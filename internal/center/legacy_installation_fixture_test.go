@@ -35,7 +35,7 @@ func seedLegacyControllerDeployment(t *testing.T, store *Store, node AgentCreden
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,state,created_at,updated_at,application_id)
-		VALUES(?,?,?,'3.7.2',?,'{}',?,'install','succeeded',?,?,?)`, deploymentID, node.ID, threeXUIAppKey, manifest, address, stamp, stamp, applicationID); err != nil {
+		VALUES(?,?,?,'3.7.2',?,'{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}',?,'install','succeeded',?,?,?)`, deploymentID, node.ID, threeXUIAppKey, manifest, address, stamp, stamp, applicationID); err != nil {
 		t.Fatal(err)
 	}
 	encoded, err := json.Marshal(map[string]string{"api_token": apiToken})
