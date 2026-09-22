@@ -35,6 +35,40 @@ func TestFreshMeridianAuthorityIsCompleteOnlyAfterExpectedInventoryMatches(t *te
 	}
 }
 
+func TestMeridianCutoverRequiresExplicitExecutionRecovery(t *testing.T) {
+	store := openOrchestrationStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "cutover-execution-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.54", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.54", LANAddress: "10.0.0.54", EnabledKinds: []string{networking.KindLAN}})
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	const applicationID = "cutover-execution-fence-application"
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES(?,?,?,?,?,'','running','docker','master',?,?)`, applicationID, "3x-ui", node.ID, testSiteID(t, store), threeXUIAppKey, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,last_error,expires_at,created_at,updated_at)
+		VALUES('cutover-unresolved-execution',?,'cutover-unresolved-task','landing.proxy.apply',1,'cutover-session','cutover-digest',X'00','failed','reported','failed before cutover',?,?,?)`, node.ID, stamp, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	check := func() error {
+		tx, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		return ensureMeridianCutoverIdle(ctx, tx, applicationID)
+	}
+	if err := check(); err == nil || !strings.Contains(err.Error(), "explicitly recover unresolved node executions") {
+		t.Fatalf("unresolved execution did not fence cutover: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE task_executions SET disposition='abandon',disposition_note='verified stopped',disposed_at=?,updated_at=? WHERE id='cutover-unresolved-execution'`, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(); err != nil {
+		t.Fatalf("resolved execution still fenced cutover: %v", err)
+	}
+}
+
 func TestMeridianCutoverFencesNewLegacyMutations(t *testing.T) {
 	store := openOrchestrationStore(t)
 	t.Cleanup(func() { _ = store.Close() })
