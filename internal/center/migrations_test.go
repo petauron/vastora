@@ -197,11 +197,11 @@ func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
 	if revision != 6 || state.Revision != 6 || applied != 4 || attempt != 0 || status != "pending" || lease != "" || lastError != "" {
 		t.Fatalf("migration state = revision %d/%d applied %d attempt %d status %q lease %q error %q", revision, state.Revision, applied, attempt, status, lease, lastError)
 	}
-	if len(managed.Upstreams) != 1 || managed.Upstreams[0].Address != dockerruntime.XrayAlias || managed.Upstreams[0].Port != 443 || len(ordinary.Upstreams) != 1 || ordinary.Upstreams[0].Address != "service" || ordinary.Upstreams[0].Port != 8443 {
+	if len(managed.Upstreams) != 1 || managed.Upstreams[0].Address != dockerruntime.LegacyXrayAlias || managed.Upstreams[0].Port != 443 || len(ordinary.Upstreams) != 1 || ordinary.Upstreams[0].Address != "service" || ordinary.Upstreams[0].Port != 8443 {
 		t.Fatalf("migration routes = %#v", state.Listener.Routes)
 	}
 	var endpoint, observedListen string
-	if err := migrated.db.QueryRowContext(ctx, `SELECT endpoint,observed_listen FROM services WHERE id='worker-service'`).Scan(&endpoint, &observedListen); err != nil || endpoint != dockerruntime.XrayAlias+":443" || observedListen != "100.64.0.10" {
+	if err := migrated.db.QueryRowContext(ctx, `SELECT endpoint,observed_listen FROM services WHERE id='worker-service'`).Scan(&endpoint, &observedListen); err != nil || endpoint != dockerruntime.LegacyXrayAlias+":443" || observedListen != "100.64.0.10" {
 		t.Fatalf("migrated service endpoint=%q observed=%q err=%v", endpoint, observedListen, err)
 	}
 }

@@ -1,3 +1,5 @@
+import type { MeridianInventory } from "./meridian-types";
+
 export type LocalizedText = { en: string; "zh-CN": string };
 
 export type CatalogSource = {
@@ -44,7 +46,7 @@ export type AppData = {
   integrations: Integration[];
   actions: Action[];
   threeXUIControllerMigrations: ThreeXUIControllerMigration[];
-  meridian: import("./meridian-types").MeridianInventory;
+  meridian: MeridianInventory;
   systemDomain: SystemDomain;
   tailscaleFixedEndpoint?: TailscaleFixedEndpoint;
   centerRemoteAccess: CenterRemoteAccess | null;
