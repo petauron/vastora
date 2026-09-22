@@ -343,20 +343,22 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		baseID, routeID := "base-"+endpointID, "route-"+endpointID
-		baseSecretID, err := store.putSecret(ctx, tx, []byte("11111111-1111-4111-8111-"+strings.Repeat("1", 12)), meridianCredentialSecretContext(baseID))
+		baseProtocolID := "11111111-1111-4111-8111-" + strings.Repeat("1", 12)
+		routeProtocolID := "22222222-2222-4222-8222-" + strings.Repeat("2", 12)
+		baseSecretID, err := store.putSecret(ctx, tx, []byte(baseProtocolID), meridianCredentialSecretContext(baseID))
 		if err != nil {
 			t.Fatal(err)
 		}
-		routeSecretID, err := store.putSecret(ctx, tx, []byte("22222222-2222-4222-8222-"+strings.Repeat("2", 12)), meridianCredentialSecretContext(routeID))
+		routeSecretID, err := store.putSecret(ctx, tx, []byte(routeProtocolID), meridianCredentialSecretContext(routeID))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
-			VALUES(?,?,?,'native',?,?,?,1,?,?)`, baseID, accountID, endpointID, "user-"+baseID, meridian.Identity("base-secret-"+endpointID), baseSecretID, now, now); err != nil {
+			VALUES(?,?,?,'native',?,?,?,1,?,?)`, baseID, accountID, endpointID, "user-"+baseID, meridian.Identity(baseProtocolID), baseSecretID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
-			VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, "user-"+routeID, meridian.Identity("route-secret-"+endpointID), routeSecretID, egress.ID, now, now); err != nil {
+			VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, "user-"+routeID, meridian.Identity(routeProtocolID), routeSecretID, egress.ID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		for _, credentialID := range []string{baseID, routeID} {
@@ -371,6 +373,12 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 	insertEndpoint("application-a", "service-a", "endpoint-a", entryA.ID)
 	insertEndpoint("application-b", "service-b", "endpoint-b", entryB.ID)
+	for serviceID, nodeID := range map[string]string{"service-a": entryA.ID, "service-b": entryB.ID} {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
+			VALUES(?,?,'public_shared_443','application_node',?,'entry.example.test','www.example.com','manual',0,1,1,'ready',?,?)`, "publication-"+serviceID, serviceID, nodeID, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// A retired endpoint still owns its application identity. Use a separate
 	// installation instead of violating the one-endpoint-per-application key.
 	insertEndpoint("application-retired", "service-retired", "endpoint-retired", egress.ID)
@@ -386,6 +394,12 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 
 	if err := store.markMeridianQuotaBoundaryChanged(ctx, tx, []string{accountID}, now); err != nil {
 		t.Fatal(err)
+	}
+	// No subscription download preceded the usage-driven revision change.
+	// Its last applied entries must still be recoverable during the rebuild.
+	snapshot, err := store.loadMeridianSubscriptionSnapshotInTx(ctx, tx, accountID)
+	if err != nil || snapshot.AccountRevision != 1 || len(snapshot.Entries) != 2 {
+		t.Fatalf("quota boundary lost applied subscription: revision=%d entries=%d err=%v", snapshot.AccountRevision, len(snapshot.Entries), err)
 	}
 	for _, endpointID := range []string{"endpoint-a", "endpoint-b"} {
 		var desiredRevision, healthy int

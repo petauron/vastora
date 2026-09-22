@@ -936,6 +936,12 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx, accountIDs []string, nowText string) error {
 	endpointIDs := map[string]bool{}
 	for _, accountID := range accountIDs {
+		// Usage observations can cross a quota boundary before anyone downloads
+		// the subscription. Preserve its applied projection before invalidating
+		// the account and every associated endpoint revision.
+		if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE meridian_accounts SET desired_revision=desired_revision+1,updated_at=? WHERE id=?`, nowText, accountID); err != nil {
 			return err
 		}
