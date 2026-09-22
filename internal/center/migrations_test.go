@@ -115,6 +115,7 @@ func TestVersion81MigrationAddsHostProfileDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removePostVersion85TablesForFixture(t, store)
 	if _, err := store.db.ExecContext(ctx, `DROP TABLE node_diagnostic_checks`); err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +153,7 @@ func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removePostVersion85TablesForFixture(t, store)
 	siteID := testSiteID(t, store)
 	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: siteID, Name: "Worker", CenterURL: "https://center.example.test"})
 	if err != nil {

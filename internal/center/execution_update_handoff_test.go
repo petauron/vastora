@@ -151,7 +151,11 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 						t.Fatal("stale observation accepted")
 					}
 				}
-				heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.124", true)
+				observedVersion := "0.1.0-alpha.123"
+				if mode == "confirm-completed" {
+					observedVersion = "0.1.0-alpha.124"
+				}
+				heartbeatAgentUpdateVersion(t, store, node, observedVersion, true)
 				body, _ := json.Marshal(decision)
 				r := httptest.NewRequest(http.MethodPost, "/api/v1/executions/"+auth.ID+"/resolve-helper", bytes.NewReader(body))
 				r.Header.Set("Content-Type", "application/json")
