@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.182](https://github.com/petauron/vastora/compare/v0.1.0-alpha.181...v0.1.0-alpha.182) (2026-09-22)
+
+
+### Features
+
+* replace 3x-ui authority with Meridian ([#573](https://github.com/petauron/vastora/issues/573)) ([5970e62](https://github.com/petauron/vastora/commit/5970e624a97f9b0bc6065546cd54135cb7e6b8fb))
+
+
+### Bug Fixes
+
+* **agent:** compile legacy worker recovery ([#574](https://github.com/petauron/vastora/issues/574)) ([d69d8f3](https://github.com/petauron/vastora/commit/d69d8f347825896def0c29ed7445d2d393a290e7))
+* **catalog:** declare Meridian empty config ([#575](https://github.com/petauron/vastora/issues/575)) ([bc4e954](https://github.com/petauron/vastora/commit/bc4e9541ef4b2ce4cdad45d3dda047df87bc12f2))
+
 ## [0.1.0-alpha.181](https://github.com/petauron/vastora/compare/v0.1.0-alpha.180...v0.1.0-alpha.181) (2026-09-21)
 
 
