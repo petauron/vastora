@@ -28,6 +28,11 @@ const landingServerSchema = `CREATE TABLE landing_server_states (
 // Called inside the topology transaction after resolving managed private
 // identities. Never accept a caller-supplied arbitrary host or source address.
 func (s *Store) queueLandingServer(ctx context.Context, tx *sql.Tx, nodeID string, plan *landing.ServerPlan) error {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return err
+	} else if owns {
+		return nil
+	}
 	var revision int64
 	err := tx.QueryRowContext(ctx, `SELECT desired_revision FROM landing_server_states WHERE node_id = ?`, nodeID).Scan(&revision)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -74,6 +79,11 @@ func landingServerTaskRevision(taskID string) (int64, bool) {
 }
 
 func (s *Store) claimLandingServerTask(ctx context.Context, tx *sql.Tx, nodeID string) (*AgentTask, error) {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return nil, err
+	} else if owns {
+		return nil, nil
+	}
 	var encoded []byte
 	var revision, attempt int64
 	err := tx.QueryRowContext(ctx, `SELECT desired_revision,desired_json,attempt FROM landing_server_states

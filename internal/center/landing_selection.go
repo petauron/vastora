@@ -324,6 +324,11 @@ func (s *Store) SelectLanding(ctx context.Context, input LandingSelection) error
 		return err
 	}
 	defer tx.Rollback()
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return err
+	} else if owns {
+		return errMeridianOwnsLegacyLanding
+	}
 	if paused, err := executionClaimsPaused(ctx, tx); err != nil {
 		return err
 	} else if paused {

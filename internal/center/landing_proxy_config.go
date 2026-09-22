@@ -39,6 +39,11 @@ func (s *Store) ConfigureLandingProxy(ctx context.Context, applicationID string,
 }
 
 func (s *Store) configureLandingProxy(ctx context.Context, tx *sql.Tx, applicationID string, input LandingProxyInput) error {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return err
+	} else if owns {
+		return errMeridianOwnsLegacyLanding
+	}
 	var protocolsBusy int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM application_commands WHERE application_id=? AND kind=? AND (state IN ('pending','running') OR reconciliation_required=1)`, applicationID, nodeprotocol.CommandKind).Scan(&protocolsBusy); err != nil {
 		return err

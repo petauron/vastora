@@ -32,6 +32,17 @@ type MeridianCutoverView struct {
 	Complete                      bool   `json:"complete"`
 }
 
+var errMeridianOwnsLegacyLanding = errors.New("center: Meridian authority owns landing configuration")
+
+func meridianOwnsLegacyLanding(ctx context.Context, queryer networkQueryer) (bool, error) {
+	var owns bool
+	err := queryer.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM meridian_cutover
+		WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire','complete')
+	)`).Scan(&owns)
+	return owns, err
+}
+
 func (s *Store) MeridianCutover(ctx context.Context) (MeridianCutoverView, error) {
 	var view MeridianCutoverView
 	var legacyID sql.NullString

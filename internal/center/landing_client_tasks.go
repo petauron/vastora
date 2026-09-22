@@ -16,6 +16,11 @@ import (
 var errLandingRouteApplying = errors.New("center: landing route operation is still applying")
 
 func (s *Store) queueLandingClientCommand(ctx context.Context, tx *sql.Tx, record landingGrantRecord, phase string) error {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return err
+	} else if owns {
+		return nil
+	}
 	controllerID, nodeID, err := runningGlobalThreeXUIController(ctx, tx)
 	if err != nil {
 		return err
@@ -61,6 +66,11 @@ func (s *Store) queueLandingClientCommand(ctx context.Context, tx *sql.Tx, recor
 // Refill one controller slot when it next asks for work. A restart or a lost
 // response cannot discard the remaining grant phases, which live in SQLite.
 func (s *Store) queueNextLandingClientCommand(ctx context.Context, tx *sql.Tx, nodeID string) error {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return err
+	} else if owns {
+		return nil
+	}
 	var id, phase string
 	err := tx.QueryRowContext(ctx, `SELECT g.id,CASE g.status WHEN 'preparing' THEN 'prepare' WHEN 'activating' THEN 'activate' ELSE 'retire' END
 		FROM landing_client_grants g JOIN three_x_ui_client_accounts p ON p.id=g.parent_id JOIN applications app ON app.id=p.controller_id
@@ -295,6 +305,11 @@ func (s *Store) deleteRevokedLandingGrantTombstones(ctx context.Context, tx *sql
 }
 
 func (s *Store) queueClientLandingRoutes(ctx context.Context, tx *sql.Tx, applicationID string) error {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return err
+	} else if owns {
+		return nil
+	}
 	var nodeID string
 	if err := tx.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id=?`, applicationID).Scan(&nodeID); err != nil {
 		return err

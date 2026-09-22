@@ -13,6 +13,11 @@ import (
 // Regenerate protocol capabilities from the union of independent purposes.
 // Old source snapshots stay referenced until route/session revocation succeeds.
 func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, landingID string) error {
+	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
+		return err
+	} else if owns {
+		return nil
+	}
 	// The caller can be another node's heartbeat or task result. Its own
 	// permission does not resolve an interrupted execution on the landing node.
 	var blocked bool
