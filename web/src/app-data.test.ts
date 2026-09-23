@@ -18,6 +18,21 @@ afterEach(() => {
 });
 
 describe("screen-scoped data loading", () => {
+  it("loads Meridian recovery state on a direct nodes visit", async () => {
+    vi.spyOn(api, "status").mockResolvedValue(status);
+    vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
+    vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
+    vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
+    vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
+    const meridian = emptyAppData(status).meridian;
+    const loadMeridian = vi.spyOn(api, "meridian").mockResolvedValue(meridian);
+
+    const result = await loadScreenData("nodes");
+
+    expect(result.meridian).toEqual(meridian);
+    expect(loadMeridian).toHaveBeenCalledWith(undefined);
+  });
+
   it("loads only the home summary resources", async () => {
     const controller = new AbortController();
     vi.spyOn(api, "status").mockResolvedValue(status);

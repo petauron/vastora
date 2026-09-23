@@ -77,19 +77,21 @@ export async function loadScreenData(screen: Screen, signal?: AbortSignal): Prom
       };
     }
     case "nodes": {
-      const [status, sites, agents, integrations, publications] = await Promise.all([
+      const [status, sites, agents, integrations, publications, meridian] = await Promise.all([
         statusPromise,
         api.sites(signal),
         api.agents(signal),
         api.integrations(signal),
-        api.publications(signal)
+        api.publications(signal),
+        api.meridian(signal)
       ]);
       return {
         status,
         sites: sites.sites,
         agents: agents.agents,
         integrations: integrations.integrations,
-        publications: publications.publications
+        publications: publications.publications,
+        meridian
       };
     }
     case "apps": {
