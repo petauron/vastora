@@ -12,6 +12,7 @@ general-purpose proxy panel.
 | Stable native and routed credentials | Meridian domain persisted encrypted by Center | Agent-managed Xray |
 | Entry and egress grants | Meridian domain persisted by Center | Agent-managed Xray and landing gate |
 | Shared usage ledger and reset boundary | Meridian domain persisted by Center | Agent reports monotonic counters |
+| Entry-wide traffic cap and monthly reset | Meridian endpoint state persisted by Center | Agent applies the shared entry gate |
 | Desired/applied revision and runtime health | Center | Agent confirms Xray apply separately from short-lived entry-to-egress transport evidence |
 | VLESS/base64 and Mihomo subscriptions | Meridian renderer | Center subscription listener |
 | Application and host lifecycle | Vastora | Vastora Agent |
@@ -139,9 +140,10 @@ confirmed.
    - Reject duplicate UUIDs, tokens, names, route ownership, missing workers,
      decreasing counters, or ambiguous in-flight operations.
    - Stop with an explicit incompatibility if an old client has a simultaneous
-     IP limit or an old entry has its own traffic ceiling. Meridian has one
-     shared account quota and Xray has no equivalent built-in per-client IP
-     policy, so silently discarding either restriction is forbidden.
+     IP limit, or an old entry's traffic cap or reset schedule differs from
+     Center's converged plan. Meridian preserves the entry-wide cap separately
+     from each account's shared quota. Xray has no equivalent built-in
+     per-client IP policy, so silently discarding that restriction is forbidden.
 2. **Back up**
    - Before starting cutover, create and retain a fresh encrypted full Center
      backup through `POST /api/v1/backups` or `vastora center backup`, using a
@@ -306,6 +308,8 @@ Completion requires all of the following, not merely a successful build:
   credentials;
 - one finite account with a native route and two fixed egress routes consumes
   one shared quota and disables/restores all credentials in one revision;
+- an imported entry-wide traffic cap preserves its used bytes and monthly reset
+  without counting the same account's routed variants as separate allowances;
 - restart, duplicate report, lost response, monthly reset, single-route
   revocation, and runtime-blocked route cases remain idempotent and observable;
 - an explicitly authorized real client reaches the native exit and both
