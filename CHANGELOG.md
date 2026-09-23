@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.199](https://github.com/petauron/vastora/compare/v0.1.0-alpha.198...v0.1.0-alpha.199) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** unblock Meridian cutover restore-point task ([#612](https://github.com/petauron/vastora/issues/612)) ([3f54ec6](https://github.com/petauron/vastora/commit/3f54ec60493fc55a1518e2d8fa29b8549f20ec4c))
+
 ## [0.1.0-alpha.198](https://github.com/petauron/vastora/compare/v0.1.0-alpha.197...v0.1.0-alpha.198) (2026-09-23)
 
 
