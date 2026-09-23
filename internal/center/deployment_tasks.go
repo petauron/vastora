@@ -486,7 +486,14 @@ func (s *Store) completeTaskWithDisposition(ctx context.Context, commit projecti
 	if reconciliationRequired && (succeeded || strings.TrimSpace(taskError) == "") {
 		return errInvalidReconciliationDisposition
 	}
-	if strings.HasPrefix(taskID, "application-command-") {
+	// Application commands are identified by their persisted task kind, not by
+	// an ID prefix. Meridian commands use opaque IDs and must take the same
+	// completion path as older application commands.
+	var applicationCommand bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM application_commands WHERE id=? AND agent_id=?)`, taskID, agentID).Scan(&applicationCommand); err != nil {
+		return err
+	}
+	if applicationCommand {
 		err := s.completeApplicationCommand(ctx, commit, agentID, taskID, expectedAttempt, succeeded, taskError, rawResult, reconciliationRequired)
 		if err == nil && succeeded && !reconciliationRequired {
 			s.startBackground(func() { _ = s.resumeThreeXUIControllerConvergence(s.backgroundCtx) })
