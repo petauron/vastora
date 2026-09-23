@@ -92,6 +92,9 @@ func TestMeridianCutoverClaimsOnlyItsExistingControllerBackup(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=attempt+1 WHERE id='cutover-backup-claim'`); err != nil {
 		t.Fatalf("authorized cutover backup was fenced: %v", err)
 	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running' WHERE id='cutover-backup-claim'`); err != nil {
+		t.Fatalf("authorized backup result confirmation was fenced: %v", err)
+	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='succeeded' WHERE id='cutover-backup-claim'`); err != nil {
 		t.Fatal(err)
 	}

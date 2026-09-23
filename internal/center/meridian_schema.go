@@ -173,7 +173,7 @@ AND (NEW.state IN ('pending','running') OR NEW.reconciliation_required=1)
 AND EXISTS(SELECT 1 FROM meridian_cutover WHERE id=1 AND state IN ('backup','import','publish','project','verify','retire'))
 AND NOT (
  OLD.kind=NEW.kind AND OLD.application_id=NEW.application_id AND OLD.input_json=NEW.input_json
- AND OLD.state='pending' AND NEW.state='running'
+ AND OLD.state IN ('pending','running') AND NEW.state='running'
  AND OLD.reconciliation_required=0 AND NEW.reconciliation_required=0
  AND NEW.kind='3xui.controller.manage'
  AND EXISTS(SELECT 1 FROM meridian_cutover cutover WHERE cutover.id=1 AND cutover.state='backup'
