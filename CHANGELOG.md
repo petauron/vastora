@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.192](https://github.com/petauron/vastora/compare/v0.1.0-alpha.191...v0.1.0-alpha.192) (2026-09-23)
+
+
+### Bug Fixes
+
+* **landing:** retain DNS bind across host resolver remounts ([#597](https://github.com/petauron/vastora/issues/597)) ([0be3263](https://github.com/petauron/vastora/commit/0be3263d46c21cb0d44fdeecee91406ca90514a6))
+
 ## [0.1.0-alpha.191](https://github.com/petauron/vastora/compare/v0.1.0-alpha.190...v0.1.0-alpha.191) (2026-09-23)
 
 
