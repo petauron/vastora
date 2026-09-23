@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.189](https://github.com/petauron/vastora/compare/v0.1.0-alpha.188...v0.1.0-alpha.189) (2026-09-23)
+
+
+### Bug Fixes
+
+* recover landing execution fences and repair Meridian validation ([#591](https://github.com/petauron/vastora/issues/591)) ([45d9bc0](https://github.com/petauron/vastora/commit/45d9bc03c0dbd44a12038b3976acf8242403da18))
+
 ## [0.1.0-alpha.188](https://github.com/petauron/vastora/compare/v0.1.0-alpha.187...v0.1.0-alpha.188) (2026-09-22)
 
 
