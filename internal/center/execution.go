@@ -252,6 +252,9 @@ func (s *Store) executionClaimAllowed(ctx context.Context, agentID, sessionID st
 		WHERE agent_id=? AND disposition='' AND state IN ('offered','running','helper_running') AND expires_at<=?`, now, agentID, now); err != nil {
 		return err
 	}
+	if _, err := disposeSupersededLandingExecutionFailures(ctx, tx, agentID, now); err != nil {
+		return err
+	}
 	var blocked bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, agentID).Scan(&blocked); err != nil {
 		return err

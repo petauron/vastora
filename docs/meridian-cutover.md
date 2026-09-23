@@ -12,7 +12,7 @@ general-purpose proxy panel.
 | Stable native and routed credentials | Meridian domain persisted encrypted by Center | Agent-managed Xray |
 | Entry and egress grants | Meridian domain persisted by Center | Agent-managed Xray and landing gate |
 | Shared usage ledger and reset boundary | Meridian domain persisted by Center | Agent reports monotonic counters |
-| Desired/applied revision and runtime health | Center | Agent confirms after Xray validation and atomic apply |
+| Desired/applied revision and runtime health | Center | Agent confirms Xray apply separately from short-lived entry-to-egress transport evidence |
 | VLESS/base64 and Mihomo subscriptions | Meridian renderer | Center subscription listener |
 | Application and host lifecycle | Vastora | Vastora Agent |
 
@@ -47,17 +47,85 @@ account or fetch mutable configuration from Meridian or 3x-ui.
   Meridian account and renders only applied healthy credentials whose
   shared-443 public listener and DNS verification are also applied. A later
   pending entry is omitted without taking already-ready entries offline.
+- Before rebuilding a shared entry, preserve the last applied subscription
+  for every account using it, even when no client has downloaded it yet. A
+  partial live response must not replace a complete saved snapshot. Snapshot
+  recovery still honors current account quota, explicit credential removal,
+  retired entries, stopped publications, and disabled protocols.
 - A fixed VLESS entry-to-egress route uses its own stable credential and shares
   the parent account plan. Adding routes never duplicates quota. Hysteria2 is
   native-only until Xray provides a reliable per-user routing boundary.
-- An unavailable landing blocks only its fixed routed credential. Center
-  rebuilds the entry without that credential, keeps unrelated native and
-  routed credentials online, and excludes the unavailable route from both
-  live output and last-applied subscription snapshots. If the route was
-  configured to hide its native entry, that entry stays hidden so recovery
-  cannot silently change the selected egress.
+- An unavailable landing blocks only its fixed routed credential. Its
+  peer-scoped gate closes without stopping the shared runtime; unrelated
+  native and healthy routed credentials remain online. Center excludes the
+  unavailable route from both live output and last-applied subscription
+  snapshots. If the route was configured to hide its native entry, that entry
+  stays hidden so recovery cannot silently change the selected egress.
+
+## Entry-to-egress evidence
+
+A running container, an applied configuration, a listening SOCKS port, and a
+landing Agent heartbeat do not prove that the entry can use that landing.
+Each fixed route binds the Center egress Agent ID to its complete authenticated
+Tailscale identity; those IDs are distinct namespaces. The task also pins the
+entry's private identity and covers every actual SOCKS destination in the
+projected Xray configuration. Observations must match that exact identity set,
+revision, and configuration digest.
+
+Agent monitors require a fresh direct Tailscale path and a successful TCP
+exchange through the selected landing that observes a public IPv4 exit.
+Fixed Meridian routes are TCP-only; Xray explicitly blocks their UDP traffic.
+Permission is a short-lived kernel lease, currently bounded by fifteen seconds,
+not a persistent healthy flag. Peer-bearing runtimes report on a five-second
+heartbeat cadence, but slow or absent reports do not extend the lease. Center
+checks its expiry when rendering subscriptions and management status, so an old
+successful receipt cannot remain green indefinitely. Native-only runtimes need
+no peer evidence and are not made unavailable by a landing outage.
+
+The imported legacy subscription exception is per endpoint, not per fleet:
+while the cutover has a verified import digest and that endpoint has never
+applied Meridian, its existing legacy routes stay published. After its first
+Meridian apply, both live output and saved snapshots require fresh peer
+evidence. A snapshot cannot revive an expired or blocked route.
+
+An operator-requested skip, including a node with a known network outage,
+does not remove its configuration, disable its routes, or count as successful
+verification. Do not SSH, upgrade, or retry a skipped node. Any enabled route
+that still depends on it remains visible and holds final cutover verification
+and retirement until its required evidence is available; never silently prune
+the route set to make the migration pass.
 
 ## Forward-only cutover
+
+### Landing source authorization
+
+Meridian uses the existing native landing service and its single
+`landing.server.apply` queue. A route's pinned entry identity determines its
+source authorization. Current capability observations never replace that pin;
+an explicitly different authenticated identity removes the old source rather
+than authorizing the replacement. Missing observations and temporary network
+outages alone do not remove the configured grant.
+
+The landing service keeps confirmed `applied_json` separately from queued
+`desired_json`. Only an applied source permission enables a new fixed route.
+An additive pending update preserves previously authorized sources in runtime
+projection and subscriptions; desired state may tighten permission but cannot
+grant it early. A successful same-peer source update wakes only affected
+entries. Shared-account quota changes do not remove transport authorization.
+
+Revocation first disables the entry credential, then releases the source after
+the entry's successful apply. Other accounts and retained legacy uses keep
+their shared source permission. Derived cleanup failures retain their durable
+markers and report a landing reconciliation error without rolling back an
+already-confirmed entry receipt. Database failures still abort the transaction.
+
+Unclaimed landing intents must converge before cutover starts. The shared
+landing writer stays frozen during handover, and any retained pending intent
+is recomposed from current authority before claiming it after completion.
+Existing native landing updates restart Dante; this workflow does not promise
+that established TCP sessions survive a source-list update.
+
+### Migration phases
 
 The cutover is one migration with explicit durable phases. Each phase is
 idempotent and the next phase starts only after the previous result is
@@ -75,7 +143,13 @@ confirmed.
      shared account quota and Xray has no equivalent built-in per-client IP
      policy, so silently discarding either restriction is forbidden.
 2. **Back up**
-   - Create the normal Center pre-migration backup.
+   - Before starting cutover, create and retain a fresh encrypted full Center
+     backup through `POST /api/v1/backups` or `vastora center backup`, using a
+     password of at least twelve characters. Keep the password separately
+     from the downloaded backup and do not put it in shell arguments.
+   - A schema upgrade creates its own pre-migration SQLite backup. Starting
+     cutover does not create a fresh Center backup, so an earlier schema
+     backup is not a substitute for the explicit pre-cutover backup above.
    - Ask the controller Agent for one final encrypted 3x-ui database snapshot
      and record its digest. Do not use the snapshot as a runtime fallback.
 3. **Import**
@@ -103,11 +177,23 @@ confirmed.
      host as well. When that host owns no entry, package presence and Xray
      runtime presence remain distinct: its heartbeat stays healthy without
      inventing an empty authoritative proxy inventory.
-   - The Agent validates the candidate with the pinned Xray image, atomically
-     replaces the old Xray process, confirms the applied revision and config
-     digest, and reports runtime health. During this phase Center's imported
-     snapshot continues to serve the stable subscription URL, and the new
-     runtime temporarily keeps the old Docker aliases.
+   - Prepare and validate the pinned Xray image and required landing firewall
+     tools before crossing the runtime handover boundary. Preparation must
+     leave the existing runtime and its routing authority unchanged.
+   - Persist the one-way Meridian handover journal, quiesce the old mutable
+     writer and monitor, close the old and new peer gates, and recheck the
+     captured configuration before promotion. A concurrent legacy change is
+     a conflict, not permission to overwrite a newer configuration.
+   - Atomically replace the old Xray process and confirm its applied revision
+     and configuration digest. Only then transfer gate ownership and start
+     Meridian's monitors. Remove superseded closed gate tables by exact peer,
+     bridge, and revision so an old DROP rule cannot strand a new revision.
+     A peer-bearing runtime uses no automatic Docker restart: Agent startup
+     installs closed gates before starting the journaled container.
+   - During projection the subscription URL stays stable and the new runtime
+     temporarily keeps the old Docker aliases. Each applied endpoint's fixed
+     routes now depend on its own fresh transport observations; other endpoints
+     can still serve their not-yet-replaced imported legacy routes.
    - After the runtime receipt, Center marks the entry service ready, applies
      the node-local HAProxy SNI route, and verifies that the public hostname
      resolves to the selected node and reaches the new REALITY listener.
@@ -122,6 +208,9 @@ confirmed.
    - Require every VLESS entry's runtime, service, shared-443 listener, DNS,
      and public reachability receipt to be ready. Runtime health alone is not
      sufficient to switch authority.
+   - Require current entry-to-egress evidence for every enabled imported fixed
+     route. Missing identity evidence, a blocked peer, or an expired lease
+     cannot be replaced by container health or another peer's successful probe.
    - Render both ordinary and Mihomo output from Meridian state at the existing
      URL and token, and compare identities and names to the imported inventory.
    - The subscription authority marker is already durable from the publication
@@ -138,6 +227,12 @@ confirmed.
 	  cutover complete. A landing or entry change during this phase first applies
 	  as an ordinary Meridian revision while retaining migration aliases; cleanup
 	  resumes only after that revision is healthy.
+   - Removing temporary aliases may replace the container and restart its
+     monitors. Before deleting legacy recovery journals or receipts, wait a
+     bounded time for fresh evidence from every required peer again. On failure,
+     retain the legacy recovery evidence and report incomplete retirement
+     without stopping the already running Meridian runtime or repeatedly
+     restarting its monitors.
    - A subscription-only controller host retires its old 3x-ui container,
      volume, local journal, and installation receipt through a separate
      receipt-bearing command because it has no entry revision on which to
@@ -155,10 +250,12 @@ confirmed.
      release and do not provide a downgrade or dual-runtime path.
 
 Released databases never migrate backward. A failed schema migration leaves
-the existing release untouched and reports the backup path. A failed runtime
-phase leaves the last confirmed data plane active and blocks verification and
-legacy retirement; the already-published imported subscription snapshot stays
-available from Center.
+the existing release untouched and reports the backup path. Failure before the
+durable handover leaves the old routing authority intact. After that boundary,
+recovery is Meridian-only: uncertain fixed routes can remain behind closed
+gates, and verification and legacy retirement stop. Do not resurrect a legacy
+writer or publish an expired route as a fallback. The Center subscription URL
+and eligible native or independently healthy entries remain available.
 
 ## Schema target
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 const (
@@ -36,19 +37,26 @@ type Task struct {
 	PreserveLegacyAliases bool                     `json:"preserveLegacyAliases"`
 	RetireLegacy          bool                     `json:"retireLegacy"`
 	ReplacePendingState   bool                     `json:"replacePendingState,omitempty"`
+	Peers                 []Peer                   `json:"peers,omitempty"`
+	Source                *landing.PeerIdentity    `json:"source,omitempty"`
 }
 
 func (t Task) Validate() error {
 	if strings.TrimSpace(t.ApplicationID) == "" || len(t.ApplicationID) > meridian.MaxIdentifierLength || strings.TrimSpace(t.ImageReference) == "" || len(t.ImageReference) > 1024 || t.PreserveLegacyAliases && t.RetireLegacy || t.ReplacePendingState && t.RetireLegacy {
 		return errors.New("meridian runtime: invalid task identity")
 	}
-	return t.Desired.Validate()
+	if err := t.Desired.Validate(); err != nil {
+		return err
+	}
+	return t.validatePeers()
 }
 
 type Result struct {
 	Receipt       meridian.AppliedReceipt `json:"receipt"`
 	Stats         json.RawMessage         `json:"stats"`
 	LegacyRetired bool                    `json:"legacyRetired"`
+	Peers         []PeerObservation       `json:"peers,omitempty"`
+	Source        *landing.PeerIdentity   `json:"source,omitempty"`
 }
 
 // LegacyRetireTask authorizes removal of the superseded 3x-ui installation

@@ -112,11 +112,13 @@ func (r Result) Validate(address string) error {
 	}
 	for index, group := range [][]Classification{r.Report.UsageTypes, r.Report.CompanyTypes} {
 		allowed := classificationSources
+		classificationKind := "usage:"
 		if index == 1 {
 			allowed = companySources
+			classificationKind = "company:"
 		}
 		for _, item := range group {
-			key := "classification:" + item.Source + ":" + item.Value
+			key := "classification:" + classificationKind + item.Source
 			if seen[key] || !contains(allowed, item.Source) || item.Value == "" || len(item.Value) > 48 {
 				return errors.New("ipquality: invalid classification")
 			}

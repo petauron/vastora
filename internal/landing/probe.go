@@ -129,7 +129,7 @@ func traceExit(body []byte) (string, error) {
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.HasPrefix(line, "ip=") {
 			ip, err := netip.ParseAddr(strings.TrimPrefix(line, "ip="))
-			if err != nil || !publicIPv4(ip) || exit != "" {
+			if err != nil || !PublicIPv4(ip) || exit != "" {
 				return "", errors.New("landing: invalid exit address")
 			}
 			exit = ip.String()
@@ -229,7 +229,7 @@ func (p Probe) udp(ctx context.Context, endpoint string) (relay string, err erro
 		return "", errors.New("landing: UDP DNS exchange mismatch")
 	}
 	for _, resource := range answer.Answers {
-		if record, ok := resource.Body.(*dnsmessage.AResource); ok && publicIPv4(netip.AddrFrom4(record.A)) {
+		if record, ok := resource.Body.(*dnsmessage.AResource); ok && PublicIPv4(netip.AddrFrom4(record.A)) {
 			return bound.String(), nil
 		}
 	}

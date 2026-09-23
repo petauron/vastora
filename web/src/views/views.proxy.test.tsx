@@ -119,8 +119,8 @@ describe("network and app views", () => {
       [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("开启订阅"))?.click();
       await Promise.resolve();
     });
-    expect(document.body.textContent).toContain("发布独立订阅服务");
-    expect(document.body.textContent).toContain("管理面板仍只在私网开放");
+    expect(document.body.textContent).toContain("公网订阅");
+    expect(document.body.textContent).toContain("迁移完成前，Vastora 仍会把公网域名同步到旧订阅服务");
     expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.value).toBe("");
     expect(document.querySelector<HTMLInputElement>("#subscription-hostname")?.placeholder).toBe("留空时自动生成");
     expect(document.querySelector<HTMLButtonElement>("#subscription-kind")?.textContent).toContain("Cloudflare Tunnel");
@@ -161,7 +161,7 @@ describe("network and app views", () => {
       await Promise.resolve();
     });
 
-    expect(document.body.textContent).toContain("Vastora Proxy 已配置，入口尚未确认");
+    expect(document.body.textContent).toContain("订阅已发布，入口尚未确认");
     expect(document.body.textContent).toContain("不需要继续等待");
     expect(document.body.textContent).not.toContain("正在自动配置");
     await act(async () => {

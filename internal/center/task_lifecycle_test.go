@@ -23,7 +23,7 @@ func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
 	node := enrollOrchestrationNode(t, store, "expired-catalog", NodeCapabilities{Docker: true}, []networking.Candidate{
 		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
 	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
 	}
 }
 
-func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
+func TestDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
@@ -52,7 +52,7 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
 		{Address: "10.0.0.24", Interface: "eth1", Kind: networking.KindLAN},
 	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,16 +65,16 @@ func TestThreeXUIDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T
 	if err != nil || len(deployments) != 1 || deployments[0].ID != task.ID || deployments[0].State != "failed" || !deployments[0].ReconciliationRequired {
 		t.Fatalf("quarantined deployment is not visible: %#v err=%v", deployments, err)
 	}
-	secretTx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
+	var secretID string
+	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM application_secrets WHERE application_id=?`, created.ApplicationID).Scan(&secretID); err != nil {
 		t.Fatal(err)
 	}
-	apiToken, secretErr := store.threeXUIAPISecret(ctx, secretTx, created.ApplicationID)
-	secretTx.Rollback()
-	if secretErr != nil || apiToken != "recovered-local-api-token" {
-		t.Fatalf("generated API token was not retained: token=%q err=%v", apiToken, secretErr)
+	encodedSecrets, secretErr := store.getSecret(ctx, secretID, "application:"+created.ApplicationID)
+	var recoveredSecrets map[string]string
+	if secretErr != nil || json.Unmarshal(encodedSecrets, &recoveredSecrets) != nil || recoveredSecrets["api_token"] != "recovered-local-api-token" {
+		t.Fatalf("generated API token was not retained: err=%v", secretErr)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}); err == nil || !strings.Contains(err.Error(), "active deployment task") {
 		t.Fatalf("quarantined deployment did not keep the task lock: %v", err)
 	}
 	if _, err := store.ConfirmNetworkProfile(ctx, node.ID, networking.Profile{ServiceAddress: "10.0.0.24", LANAddress: "10.0.0.24", EnabledKinds: []string{networking.KindLAN}}); err == nil || !strings.Contains(err.Error(), "recover deployment tasks") {
@@ -104,7 +104,7 @@ func TestTaskEncryptionFailureReleasesTheCommittedLease(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "encryption-race", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,13 +195,7 @@ func TestRealityDisplayNameReservationSpansAgentsUntilTerminalCompensation(t *te
 		{Address: "203.0.113.17", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{ServiceAddress: "10.0.0.17", LANAddress: "10.0.0.17", PublicAddress: "203.0.113.17", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	previousController := enrollOrchestrationNode(t, store, "previous-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.18", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.18", LANAddress: "10.0.0.18", EnabledKinds: []string{networking.KindLAN}})
-	config := json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: controller.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: config})
-	if err != nil {
-		t.Fatal(err)
-	}
-	installTask := claimTask(t, store, controller)
-	completeThreeXUIDeployment(t, store, controller, installTask, "10.0.0.17", "controller-api-token")
+	deployment := seedLegacyDeployment(t, store, controller, "10.0.0.17", "controller-api-token", threeXUIRoleMaster)
 
 	create := func(name string) (ApplicationCommandView, error) {
 		return createVerifiedRealityCommand(t, store, ctx, RealityCommandInput{
@@ -720,24 +714,24 @@ func TestTaskIDsAreScopedByAgentAndRevision(t *testing.T) {
 	}
 }
 
-func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
+func TestPulseCredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.40", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.40", LANAddress: "10.0.0.40", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: "vastora-official/3x-ui", Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: pulseAppKey, Config: json.RawMessage(`{"public_url":"https://pulse.example.test"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.OneTimeCredentials == nil || created.OneTimeCredentials.Username == "" || len(created.OneTimeCredentials.Password) < 20 {
-		t.Fatalf("3x-ui did not return strong one-time credentials: %#v", created.OneTimeCredentials)
+	if created.OneTimeCredentials == nil || len(created.OneTimeCredentials.SetupToken) < 32 {
+		t.Fatal("Pulse did not return a strong one-time setup token")
 	}
 	task := claimTask(t, store, node)
 	var secrets map[string]string
-	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets["username"] != created.OneTimeCredentials.Username || secrets["password"] != created.OneTimeCredentials.Password {
-		t.Fatalf("Agent task did not receive matching encrypted credentials: %#v", secrets)
+	if json.Unmarshal(task.Secrets, &secrets) != nil || secrets["setup_token"] != created.OneTimeCredentials.SetupToken {
+		t.Fatal("Agent task did not receive the matching encrypted setup token")
 	}
-	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.40"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.40"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
+	result := json.RawMessage(`{"services":[{"name":"dashboard","protocol":"http","containerPort":8080,"hostPort":18080,"address":"10.0.0.40"}]}`)
 	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -746,7 +740,7 @@ func TestThreeXUICredentialsAreReturnedOnceAndRedactedFromLists(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(listed)
-	if bytes.Contains(encoded, []byte(created.OneTimeCredentials.Password)) || bytes.Contains(encoded, []byte("local-api-token")) || listed[0].OneTimeCredentials != nil {
+	if len(listed) != 1 || bytes.Contains(encoded, []byte(created.OneTimeCredentials.SetupToken)) || listed[0].OneTimeCredentials != nil {
 		t.Fatalf("deployment list leaked one-time credentials: %s", encoded)
 	}
 }
@@ -756,15 +750,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "serialized-controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.42", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.42", LANAddress: "10.0.0.42", EnabledKinds: []string{networking.KindLAN}})
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	task := claimTask(t, store, node)
-	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.42"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.42"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
-		t.Fatal(err)
-	}
+	created := seedLegacyDeployment(t, store, node, "10.0.0.42", "local-api-token", threeXUIRoleMaster)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id, application_id, agent_id, gateway_node_id, kind, input_json, state, created_at, updated_at)
 		VALUES('active-reality-command', ?, ?, ?, ?, '{}', 'running', ?, ?)`, created.ApplicationID, node.ID, node.ID, realityCommandKind, now, now); err != nil {
@@ -780,7 +766,7 @@ func TestThreeXUIDeploymentsAndDataPlaneCommandsAreMutuallyExclusive(t *testing.
 		VALUES('failed-client-command', ?, ?, ?, ?, '{}', 'failed', 'previous failure', ?, ?)`, created.ApplicationID, node.ID, node.ID, clientCommandKind, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Operation: "configure", Config: json.RawMessage(`{"enable_fail2ban":false}`)}); err != nil {
+	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Operation: "uninstall"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state = 'pending', error = '' WHERE id = 'failed-client-command'`); err == nil || !strings.Contains(err.Error(), "3x-ui deployment is in progress") {
@@ -797,12 +783,10 @@ func TestIncompleteEndpointObservationPreservesLastSnapshot(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.41", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.41", LANAddress: "10.0.0.41", EnabledKinds: []string{networking.KindLAN}})
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)}); err != nil {
-		t.Fatal(err)
-	}
-	task := claimTask(t, store, node)
-	result := json.RawMessage(`{"services":[{"name":"panel","protocol":"http","containerPort":2053,"hostPort":2053,"address":"10.0.0.41"},{"name":"subscription","protocol":"http","containerPort":2096,"hostPort":2096,"address":"10.0.0.41"}],"generatedSecrets":{"api_token":"local-api-token"}}`)
-	if err := store.CompleteTask(ctx, node.ID, node.Credential, task.ID, task.Attempt, true, "", result, task.RequiredRuntimeGeneration); err != nil {
+	// Observe an existing pre-cutover installation, not a new legacy install.
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES('observation-legacy-app','Existing proxy',?,?,?,'','running','docker','master',?,?)`, node.ID, testSiteID(t, store), threeXUIAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	heartbeat := NodeHeartbeat{Version: "test", Roles: []string{"worker"}, Capabilities: NodeCapabilities{Docker: true}, ApplicationEndpointsObserved: true, ApplicationEndpoints: []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-7", Protocol: "tcp", AppProtocol: "vless/tcp", Listen: "0.0.0.0", Port: 443, Enabled: true}}}

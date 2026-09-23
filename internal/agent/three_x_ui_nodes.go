@@ -101,7 +101,7 @@ func waitForThreeXUINodeReady(ctx context.Context, address string, port int, tok
 			if json.Unmarshal(payload, &status) == nil && status.Xray.State == "running" && status.Xray.Version == xrayWorkerVersion && status.PanelGUID == applicationID && status.DesiredRevision > 0 && status.AppliedRevision == status.DesiredRevision {
 				return nil
 			}
-			err = errors.New("Xray worker status identity is not ready")
+			err = errors.New("agent: Xray worker status identity is not ready")
 		}
 		if err != nil {
 			lastErr = err

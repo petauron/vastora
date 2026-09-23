@@ -272,6 +272,11 @@ func Open(dataDir string, headscaleAllowedURLs ...string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("center: recover expired retained execution results: %w", err)
 	}
+	if err := store.recoverSupersededLandingExecutionFailures(context.Background()); err != nil {
+		backgroundCancel()
+		_ = db.Close()
+		return nil, fmt.Errorf("center: recover superseded landing execution failures: %w", err)
+	}
 	if err := store.BackfillCatalogManifestHistory(context.Background()); err != nil {
 		backgroundCancel()
 		_ = db.Close()

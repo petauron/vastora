@@ -182,30 +182,23 @@ func TestReplacingApplicationSecretDeletesTheSupersededSecretRow(t *testing.T) {
 		Address: "10.0.0.93", Interface: "eth0", Kind: networking.KindLAN,
 	}}, networking.Profile{ServiceAddress: "10.0.0.93", LANAddress: "10.0.0.93", EnabledKinds: []string{networking.KindLAN}})
 
-	created, err := store.CreateDeployment(ctx, DeploymentRequest{
-		AgentID: node.ID,
-		AppKey:  threeXUIAppKey,
-		Role:    threeXUIRoleMaster,
-		Config:  json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	completeThreeXUIDeployment(t, store, node, claimTask(t, store, node), "10.0.0.93", "first-api-token")
+	created := seedLegacyDeployment(t, store, node, "10.0.0.93", "first-api-token", threeXUIRoleMaster)
 	var previousSecretID string
 	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM application_secrets WHERE application_id = ?`, created.ApplicationID).Scan(&previousSecretID); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := store.CreateDeployment(ctx, DeploymentRequest{
-		AgentID:   node.ID,
-		AppKey:    threeXUIAppKey,
-		Operation: "configure",
-		Config:    json.RawMessage(`{"enable_fail2ban":false}`),
-	}); err != nil {
+	replacement, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	completeThreeXUIDeployment(t, store, node, claimTask(t, store, node), "10.0.0.93", "second-api-token")
+	defer replacement.Rollback()
+	if err := store.storeApplicationSecrets(ctx, replacement, created.ID, created.ApplicationID, map[string]string{"api_token": "second-api-token"}, store.now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.Commit(); err != nil {
+		t.Fatal(err)
+	}
 
 	var currentSecretID string
 	if err := store.db.QueryRowContext(ctx, `SELECT secret_id FROM application_secrets WHERE application_id = ?`, created.ApplicationID).Scan(&currentSecretID); err != nil {

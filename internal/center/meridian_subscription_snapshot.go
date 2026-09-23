@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/landing"
 )
 
 type meridianAppliedSubscriptionSnapshot struct {
@@ -98,21 +99,84 @@ func (s *Store) loadMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *sq
 	return value, nil
 }
 
+// meridianSubscriptionEndpointsAppliedInTx distinguishes a complete applied
+// inventory from the deliberately partial live output while an entry rebuilds.
+func meridianSubscriptionEndpointsAppliedInTx(ctx context.Context, tx *sql.Tx, accountID string) (bool, error) {
+	var applied bool
+	err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS (
+		SELECT 1 FROM meridian_credentials credential
+		JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
+		JOIN services service ON service.id=endpoint.service_id
+		WHERE credential.account_id=? AND credential.kind='native' AND credential.enabled=1 AND endpoint.status<>'retired'
+		AND (endpoint.status<>'ready' OR endpoint.runtime_healthy<>1 OR endpoint.desired_revision<>endpoint.applied_revision
+		 OR service.status<>'ready' OR NOT EXISTS (
+			SELECT 1 FROM publications publication WHERE publication.service_id=endpoint.service_id
+			AND publication.kind='public_shared_443' AND publication.status='ready'
+			AND publication.desired_revision=publication.applied_revision AND publication.hostname=endpoint.advertise_host
+			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
+		 ))
+	)`, accountID).Scan(&applied)
+	return applied, err
+}
+
 // filterMeridianSubscriptionSnapshotRoutesInTx keeps the last applied native
-// inventory available while refusing to re-publish a fixed route whose landing
-// runtime is no longer live. A hidden native entry remains hidden when its
-// route is withdrawn, so a fixed egress can fail closed without silently
-// becoming a direct connection.
+// inventory available during rebuilds, while honoring explicit removal of a
+// credential, endpoint, publication, or protocol. Fixed routes also require a
+// live landing and unexpired entry-to-egress evidence; a hidden native stays
+// hidden when its route is unavailable. Only an imported endpoint that has
+// never applied Meridian may retain its existing legacy route during cutover.
 func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context, tx *sql.Tx, value meridianAppliedSubscriptionSnapshot) (meridianAppliedSubscriptionSnapshot, error) {
+	nativeRows, err := tx.QueryContext(ctx, `SELECT credential.id,endpoint.vless_enabled,endpoint.hy2_enabled
+		FROM meridian_credentials credential
+		JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
+		JOIN services service ON service.id=endpoint.service_id
+		WHERE credential.account_id=? AND credential.kind='native' AND credential.enabled=1
+		AND endpoint.status<>'retired' AND service.status<>'stopped'
+		AND EXISTS (
+			SELECT 1 FROM publications publication WHERE publication.service_id=endpoint.service_id
+			AND publication.kind='public_shared_443' AND publication.status<>'stopped'
+			AND publication.hostname=endpoint.advertise_host
+			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
+		)`, value.AccountID)
+	if err != nil {
+		return meridianAppliedSubscriptionSnapshot{}, err
+	}
+	type nativeState struct{ vless, hy2 bool }
+	nativeStates := map[string]nativeState{}
+	for nativeRows.Next() {
+		var credentialID string
+		var state nativeState
+		if err := nativeRows.Scan(&credentialID, &state.vless, &state.hy2); err != nil {
+			nativeRows.Close()
+			return meridianAppliedSubscriptionSnapshot{}, err
+		}
+		nativeStates[credentialID] = state
+	}
+	if err := nativeRows.Err(); err != nil {
+		nativeRows.Close()
+		return meridianAppliedSubscriptionSnapshot{}, err
+	}
+	if err := nativeRows.Close(); err != nil {
+		return meridianAppliedSubscriptionSnapshot{}, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT grant_row.id,grant_row.egress_node_id,grant_row.base_credential_id,grant_row.hide_native,grant_row.enabled,grant_row.status,
 		CASE WHEN grant_row.enabled=1 AND grant_row.status NOT IN ('blocked','revoking','revoked')
-		 AND landing.status='ready' AND landing.desired_revision=landing.applied_revision
+		 AND ((endpoint.applied_revision=0 AND length(cutover.import_sha256)=64
+			AND cutover.state IN ('publish','project','verify','retire'))
+		  OR (grant_row.status='ready' AND grant_row.runtime_healthy=1
+			AND grant_row.desired_revision=grant_row.applied_revision AND grant_row.health_expires_unix_ms>?))
+		 AND landing.status IN ('ready','pending','applying')
 		 AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed' AND agent.last_seen_at>?
-		 THEN 1 ELSE 0 END
+		 THEN 1 ELSE 0 END,
+		endpoint.applied_revision=0 AND length(cutover.import_sha256)=64 AND cutover.state IN ('publish','project','verify','retire'),
+		endpoint.source_peer_json,landing.applied_json,landing.desired_json,landing.peer_json,
+		COALESCE(landing.applied_revision,0),COALESCE(landing.desired_revision,0),COALESCE(landing.status,'')
 		FROM meridian_route_grants grant_row
+		JOIN meridian_endpoints endpoint ON endpoint.id=grant_row.endpoint_id
+		JOIN meridian_cutover cutover ON cutover.id=1
 		LEFT JOIN landing_server_states landing ON landing.node_id=grant_row.egress_node_id
 		LEFT JOIN agents agent ON agent.id=grant_row.egress_node_id
-		WHERE grant_row.account_id=? ORDER BY grant_row.id`, s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), value.AccountID)
+		WHERE grant_row.account_id=? ORDER BY grant_row.id`, s.now().UnixMilli(), s.now().UTC().Add(-2*time.Minute).Format(time.RFC3339Nano), value.AccountID)
 	if err != nil {
 		return meridianAppliedSubscriptionSnapshot{}, err
 	}
@@ -123,11 +187,24 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 	states := map[string]routeState{}
 	hiddenVLESSCredentials := map[string]bool{}
 	for rows.Next() {
-		var grantID, egressID, baseID, status string
+		var grantID, egressID, baseID, status, landingStatus string
 		var hideNative, enabled, live int
-		if err := rows.Scan(&grantID, &egressID, &baseID, &hideNative, &enabled, &status, &live); err != nil {
+		var legacySnapshot bool
+		var landingAppliedRevision, landingDesiredRevision uint64
+		var sourceJSON, landingAppliedJSON, landingDesiredJSON, landingPeerJSON []byte
+		if err := rows.Scan(&grantID, &egressID, &baseID, &hideNative, &enabled, &status, &live, &legacySnapshot,
+			&sourceJSON, &landingAppliedJSON, &landingDesiredJSON, &landingPeerJSON, &landingAppliedRevision, &landingDesiredRevision, &landingStatus); err != nil {
 			rows.Close()
 			return meridianAppliedSubscriptionSnapshot{}, err
+		}
+		if live == 1 {
+			if legacySnapshot {
+				live = boolInt(landingStatus == "ready" && landingDesiredRevision == landingAppliedRevision)
+			} else {
+				var source, peer landing.PeerIdentity
+				live = boolInt(json.Unmarshal(sourceJSON, &source) == nil && json.Unmarshal(landingPeerJSON, &peer) == nil &&
+					meridianLandingSourceAuthorized(landingAppliedJSON, landingDesiredJSON, egressID, landingAppliedRevision, source, peer))
+			}
 		}
 		mustHide := enabled == 1 && hideNative == 1 && status != "revoking" && status != "revoked" && live != 1
 		states[grantID] = routeState{egressID: egressID, live: live == 1}
@@ -155,13 +232,27 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		}
 	}
 	entries := make([]meridian.NativeEntry, 0, len(value.Entries))
+	vlessBases := map[string]bool{}
 	for _, entry := range value.Entries {
+		native, exists := nativeStates[entry.Material.Credential.ID]
+		if !exists || entry.Protocol == meridian.VLESSReality && !native.vless || entry.Protocol == meridian.Hysteria2 && !native.hy2 {
+			continue
+		}
 		if entry.Protocol == meridian.VLESSReality && hiddenVLESSCredentials[entry.Material.Credential.ID] {
 			continue
 		}
 		entries = append(entries, entry)
+		if entry.Protocol == meridian.VLESSReality {
+			vlessBases[entry.Material.Credential.ID] = true
+		}
 	}
-	value.Entries, value.Routes = entries, routes
+	eligibleRoutes := make([]meridian.PublishedRoute, 0, len(routes))
+	for _, route := range routes {
+		if vlessBases[route.Grant.Base.ID] {
+			eligibleRoutes = append(eligibleRoutes, route)
+		}
+	}
+	value.Entries, value.Routes = entries, eligibleRoutes
 	return value, nil
 }
 
@@ -203,6 +294,14 @@ func (s *Store) ensureMeridianSubscriptionSnapshotInTx(ctx context.Context, tx *
 		if snapshotRevision.Valid && uint64(snapshotRevision.Int64) == account.AppliedRevision {
 			return nil
 		}
+		if errors.Is(err, errMeridianSubscriptionNotFound) && !snapshotRevision.Valid {
+			// There is no available subscription to preserve. Blocking management
+			// here would prevent restoring a retired or not-yet-ready first entry.
+			// Do not fabricate a snapshot: public rendering remains unavailable
+			// until an actual runtime and publication are ready. Other projection
+			// errors and existing stale snapshots still fail closed.
+			return nil
+		}
 		return fmt.Errorf("center: capture applied Meridian subscription: %w", err)
 	}
 	return s.saveMeridianSubscriptionSnapshotInTx(ctx, tx, account, projection)
@@ -231,6 +330,39 @@ func (s *Store) ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx context.C
 	}
 	for _, accountID := range accountIDs {
 		if err := s.ensureMeridianSubscriptionSnapshotInTx(ctx, tx, accountID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// An account change rebuilds the shared endpoint, so subscriptions for every
+// account on those endpoints must be captured before either side is changed.
+func (s *Store) ensureMeridianSubscriptionSnapshotsForAccountEndpointsInTx(ctx context.Context, tx *sql.Tx, accountID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT credential.endpoint_id FROM meridian_credentials credential
+		JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
+		WHERE credential.account_id=? AND endpoint.status<>'retired' ORDER BY credential.endpoint_id`, accountID)
+	if err != nil {
+		return err
+	}
+	endpointIDs := []string{}
+	for rows.Next() {
+		var endpointID string
+		if err := rows.Scan(&endpointID); err != nil {
+			rows.Close()
+			return err
+		}
+		endpointIDs = append(endpointIDs, endpointID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, endpointID := range endpointIDs {
+		if err := s.ensureMeridianSubscriptionSnapshotsForEndpointInTx(ctx, tx, endpointID); err != nil {
 			return err
 		}
 	}

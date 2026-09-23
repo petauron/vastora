@@ -3,3 +3,11 @@ f4b353af85ed0c1656f8a9c0f1ebcd37ea19d68f:web/src/api.test.ts:generic-api-key:67
 # Synthetic SOCKS credentials used only by an in-process regression fixture.
 8f843e2706fd462329f21858cd62433a57edbca0:internal/landing/probe_test.go:generic-api-key:35
 8f843e2706fd462329f21858cd62433a57edbca0:internal/landing/probe_test.go:generic-api-key:142
+# Reviewed Go variable declarations, SQL column names, and variable assignments;
+# these historical lines contain no credential values.
+5970e624a97f9b0bc6065546cd54135cb7e6b8fb:internal/center/meridian_management.go:generic-api-key:487
+5970e624a97f9b0bc6065546cd54135cb7e6b8fb:internal/center/meridian_management.go:generic-api-key:489
+5970e624a97f9b0bc6065546cd54135cb7e6b8fb:internal/center/meridian_runtime_tasks.go:generic-api-key:293
+5970e624a97f9b0bc6065546cd54135cb7e6b8fb:internal/center/meridian_cutover_flow.go:generic-api-key:360
+5970e624a97f9b0bc6065546cd54135cb7e6b8fb:internal/center/meridian_cutover_flow.go:generic-api-key:371
+c9c974eadfc6c846c870042956d99a0befb04bcc:internal/center/meridian_subscription_snapshot_lifecycle_test.go:generic-api-key:68

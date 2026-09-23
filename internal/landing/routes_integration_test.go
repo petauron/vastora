@@ -13,13 +13,13 @@ import (
 	"time"
 )
 
-// Use the same digest-pinned 3x-ui image as the catalog, not a separately
+// Use the same digest-pinned Xray image as the Meridian catalog, not a separately
 // downloaded latest Xray. The container has no network, mounts or credentials.
 // This validates real core configuration parsing; it is not an egress drill.
 func TestLandingRoutesAcceptedByCatalogXray(t *testing.T) {
 	image := os.Getenv("VASTORA_LANDING_XRAY_IMAGE")
-	if !strings.HasPrefix(image, "ghcr.io/mhsanaei/3x-ui:") || !strings.Contains(image, "@sha256:") {
-		t.Fatal("catalog digest-pinned 3x-ui image required")
+	if !strings.HasPrefix(image, "ghcr.io/xtls/xray-core:") || !strings.Contains(image, "@sha256:") {
+		t.Fatal("catalog digest-pinned Xray image required")
 	}
 	// Keep the fixture independent of external geodata files. Production rules
 	// remain untouched by PrepareRouteChange.
@@ -48,7 +48,7 @@ func TestLandingRoutesAcceptedByCatalogXray(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, "docker", "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--entrypoint=/app/bin/xray-linux-amd64", "-i", image, "run", "-test", "-format", "json", "-config", "stdin:")
+			command := exec.CommandContext(ctx, "docker", "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "-i", image, "run", "-test", "-format", "json", "-config", "stdin:")
 			command.Stdin = bytes.NewReader(tc.raw)
 			output, err := command.CombinedOutput()
 			if ctx.Err() != nil {

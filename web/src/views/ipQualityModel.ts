@@ -2,6 +2,8 @@ import type { IPQualityCheck } from "../ip-quality-types";
 import type { Language } from "../translations";
 import { copy } from "./shared";
 
+// Reports contain terminal ESC sequences that must be removed before display.
+// eslint-disable-next-line no-control-regex
 const ansiEscapePattern = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const serializedAnsiEscapePattern = /\\?x1b\[[0-?]*[ -/]*[@-~]/gi;
 

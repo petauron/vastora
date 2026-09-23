@@ -71,7 +71,11 @@ func TestLandingQuotaDoesNotReleaseBudgetBeforeDecreasesAreConfirmed(t *testing.
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"items": items, "total": len(items)}})
 				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
-					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
+					inboundClients := make([]map[string]json.RawMessage, 0, len(clients))
+					for _, item := range clients {
+						inboundClients = append(inboundClients, item.Fields)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7, "settings": map[string]any{"clients": inboundClients}}})
 				case r.Method == http.MethodGet && r.URL.Path == "/panel/api/nodes/get/7":
 					dirty := pending
 					if dirty {
@@ -261,7 +265,11 @@ func TestLandingQuotaReconcilesDisabledNativeEnforcementOnce(t *testing.T) {
 				"id": uuid, "totalGB": int64(0), "enable": mainEnabled[email], "expiryTime": int64(0), "reset": int64(0),
 			}, "inboundIds": []int{9}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
+			inboundClients := make([]map[string]any, 0, len(identities))
+			for email, id := range identities {
+				inboundClients = append(inboundClients, map[string]any{"id": id, "email": email, "enable": enforcementEnabled[email], "totalGB": 0, "expiryTime": 0, "reset": 0})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7, "settings": map[string]any{"clients": inboundClients}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/nodes/get/7":
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 7, "enable": true, "status": "online", "configDirty": false}})
 		case r.Method == http.MethodPost && (r.URL.Path == "/panel/api/clients/bulkDisable" || r.URL.Path == "/panel/api/clients/bulkEnable"):
@@ -352,7 +360,11 @@ func TestLandingQuotaRepairsExpiredEnabledEnforcementBeforeReenable(t *testing.T
 			enforcementExpiry[email] = expiry
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"nodePending": false}})
 		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/inbounds/get/9":
-			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7}})
+			inboundClients := make([]map[string]any, 0, len(identities))
+			for email, id := range identities {
+				inboundClients = append(inboundClients, map[string]any{"id": id, "email": email, "enable": enforcementEnabled[email], "totalGB": 0, "expiryTime": enforcementExpiry[email], "reset": 0})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 9, "nodeId": 7, "settings": map[string]any{"clients": inboundClients}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/panel/api/nodes/get/7":
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "obj": map[string]any{"id": 7, "enable": true, "status": "online", "configDirty": false}})
 		default:

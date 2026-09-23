@@ -22,7 +22,7 @@ func TestInspectXrayConfigurationReportsOnlyStructuralDifferences(t *testing.T) 
 	inbounds := config["inbounds"].([]any)
 	inbound := inbounds[1].(map[string]any)
 	settings := inbound["settings"].(map[string]any)
-	settings["clients"] = []any{}
+	settings["clients"] = []any{map[string]any{"id": "00000000-0000-4000-8000-000000000001", "email": "recovery@example.test"}}
 	changed, _ := json.Marshal(config)
 	inspection, err := inspectXrayConfiguration(state, changed)
 	if err != nil || inspection.Matches || len(inspection.Differences) != 1 || inspection.Differences[0].Field != "clients" {

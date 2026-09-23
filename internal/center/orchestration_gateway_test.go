@@ -130,12 +130,7 @@ func TestRealityCommandRequiresVerifiedTargetAndCreatesSeparateSNIEntry(t *testi
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true, Gateway: true}, []networking.Candidate{{Address: "10.0.0.61", Interface: "eth0", Kind: networking.KindLAN}, {Address: "203.0.113.61", Interface: "eth0", Kind: networking.KindPublic}}, networking.Profile{ServiceAddress: "10.0.0.61", LANAddress: "10.0.0.61", PublicAddress: "203.0.113.61", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	installTask := claimTask(t, store, node)
-	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.61", "edge-api-token")
+	deployment := seedLegacyDeployment(t, store, node, "10.0.0.61", "edge-api-token", threeXUIRoleMaster)
 	command, err := createVerifiedRealityCommand(t, store, ctx, RealityCommandInput{ApplicationID: deployment.ApplicationID, RegionCode: "US", Name: "Edge", ClientName: "MacBook", Hostname: "reality.edge.site.example.test", DNSProvider: "manual", TargetHost: "www.example.com", ServerName: "www.example.com"})
 	if err != nil {
 		t.Fatal(err)
@@ -189,12 +184,7 @@ func TestRealityCommandAllocatesRandomHostnameInsideSingleConnectionTransaction(
 	if _, err := store.UpdateSite(ctx, testSiteID(t, store), SiteInput{Name: "Test", Code: "test", Timezone: "UTC", DomainSuffix: "example.test"}); err != nil {
 		t.Fatal(err)
 	}
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	installTask := claimTask(t, store, node)
-	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.64", "edge-api-token")
+	deployment := seedLegacyDeployment(t, store, node, "10.0.0.64", "edge-api-token", threeXUIRoleMaster)
 
 	deadline, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

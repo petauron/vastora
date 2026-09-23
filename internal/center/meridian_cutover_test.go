@@ -309,6 +309,7 @@ func TestMeridianRuntimeProjectionAllowsEndpointWithoutAccounts(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	node := enrollOrchestrationNode(t, store, "empty-meridian-entry", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.41", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.41", HeadscaleAddress: "100.64.0.41", EnabledKinds: []string{networking.KindHeadscale}})
+	siteID := testSiteID(t, store)
 	ctx := context.Background()
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -322,11 +323,11 @@ func TestMeridianRuntimeProjectionAllowsEndpointWithoutAccounts(t *testing.T) {
 		endpointID    = "empty-meridian-endpoint"
 	)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty Meridian entry", node.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Empty Meridian entry", node.ID, siteID, meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,region_code,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
-		VALUES(?,?,?,?,?,'US','tcp',443,443,'100.64.0.41:443','observed',?,0,'0.0.0','pending',?,?)`, serviceID, applicationID, testSiteID(t, store), "inbound-1", "🇺🇸 United States｜Empty", meridianEntryProtocol, stamp, stamp); err != nil {
+		VALUES(?,?,?,?,?,'US','tcp',443,443,'100.64.0.41:443','observed',?,0,'0.0.0','pending',?,?)`, serviceID, applicationID, siteID, "inbound-1", "🇺🇸 United States｜Empty", meridianEntryProtocol, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	privateKeySecretID, err := store.putSecret(ctx, tx, []byte("test-private-key"), meridianEndpointSecretContext(endpointID))
@@ -371,6 +372,7 @@ func TestCreateMeridianEndpointQueuesEmptyRuntimeBeforeFirstAccount(t *testing.T
 	})
 	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{
 		ApplicationID:  applicationID,
+		AdvertiseHost:  "entry.example.test",
 		Name:           "Empty first",
 		RegionCode:     "US",
 		VerificationID: input.VerificationID,
@@ -424,7 +426,7 @@ func TestRecoverMeridianEndpointReleasesOnlyMatchingFenceAndQueuesCenterAuthorit
 		t.Fatal(err)
 	}
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Recover entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Recover entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -487,15 +489,24 @@ func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing
 		t.Fatal(err)
 	}
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Expired entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Expired entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var commandID string
-	if err := store.db.QueryRowContext(ctx, `SELECT id FROM application_commands WHERE agent_id=? AND kind=? AND json_extract(input_json,'$.endpointId')=? AND state='pending'`, node.ID, meridianruntime.ApplyKind, endpoint.ID).Scan(&commandID); err != nil {
+	// Endpoint creation records desired state; dispatch queues the projection.
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, commandID)
+	commandID, err := store.queueMeridianRuntime(ctx, tx, endpoint.ID, false)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
 	if err != nil || task == nil || task.ID != commandID || task.MeridianRuntime == nil {
 		t.Fatalf("claimed Meridian task=%#v err=%v", task, err)
 	}
@@ -540,7 +551,7 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 		t.Fatal(err)
 	}
 	verified := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Retiring entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Retiring entry", RegionCode: "US", VerificationID: verified.VerificationID, TargetIP: verified.TargetIP, TargetHost: verified.TargetHost, ServerName: verified.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -606,8 +617,8 @@ func TestLegacyRetirementTaskNeverRemovesVerifiedEndpointFromSubscriptions(t *te
 		}
 	}
 	assertReady("queued retirement")
-	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, commandID)
-	if err != nil || task == nil || task.MeridianRuntime == nil || !task.MeridianRuntime.RetireLegacy {
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || task == nil || task.ID != commandID || task.MeridianRuntime == nil || !task.MeridianRuntime.RetireLegacy {
 		t.Fatalf("claimed retirement task=%#v err=%v", task, err)
 	}
 	assertReady("claimed retirement")
@@ -638,7 +649,7 @@ func TestCreateMeridianEndpointReusesRetiredIdentityAndUsage(t *testing.T) {
 	}
 	create := func(name string) MeridianEndpointView {
 		input := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-		endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: name, RegionCode: "US", VerificationID: input.VerificationID, TargetIP: input.TargetIP, TargetHost: input.TargetHost, ServerName: input.ServerName})
+		endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: name, RegionCode: "US", VerificationID: input.VerificationID, TargetIP: input.TargetIP, TargetHost: input.TargetHost, ServerName: input.ServerName})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -715,16 +726,31 @@ func TestMeridianRouteLifecycleDoesNotBlockUnrelatedSubscriptionEntries(t *testi
 	egressProfile := networking.Profile{ServiceAddress: "100.64.0.45", HeadscaleAddress: "100.64.0.45", EnabledKinds: []string{networking.KindHeadscale}}
 	egress := enrollOrchestrationNode(t, store, "route-egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: egressProfile.ServiceAddress, Interface: "tailscale0", Kind: networking.KindHeadscale}}, egressProfile)
 	stamp := store.now().UTC().Format(time.RFC3339Nano)
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,status,updated_at) VALUES(?,1,1,'{}','ready',?)`, egress.ID, stamp); err != nil {
+	// A private address alone does not make this a managed landing runtime.
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed',last_seen_at=? WHERE id=?`, stamp, egress.ID); err != nil {
+		t.Fatal(err)
+	}
+	serverJSON, err := json.Marshal(landing.ServerState{NodeID: egress.ID, Revision: 1, Plan: &landing.ServerPlan{Revision: 1, Address: "100.64.0.45", Sources: []landing.AuthorizedNode{{Address: "100.64.0.44", TCPOnly: true}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,status,updated_at) VALUES(?,1,1,?,?,'ready',?)`, egress.ID, serverJSON, serverJSON, stamp); err != nil {
 		t.Fatal(err)
 	}
 	const applicationID = "route-lifecycle-meridian-application"
+	if _, err := store.db.ExecContext(ctx, `UPDATE agents SET tailscale_ownership='managed' WHERE id=?`, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at)
+		VALUES(?,?,?,?)`, entry.ID, landing.ClientRuntimeGeneration, []byte(`{"id":"tailnet-lifecycle-entry","publicKey":"nodekey:test-lifecycle","address":"100.64.0.44"}`), stamp); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES(?,?,?,?,?,'ghcr.io/xtls/xray-core:26.7.28@sha256:b697cda1588faca696ab7f7755dd1161f60862af3ff6026300e44cff6aedd558','running','docker','',?,?)`, applicationID, "Route lifecycle Meridian entry", entry.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	verification := seedVerifiedRealityInput(t, store, ctx, RealityCommandInput{ApplicationID: applicationID, TargetHost: "www.example.com", ServerName: "www.example.com"})
-	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, Name: "Route lifecycle", RegionCode: "US", VerificationID: verification.VerificationID, TargetIP: verification.TargetIP, TargetHost: verification.TargetHost, ServerName: verification.ServerName})
+	endpoint, err := store.CreateMeridianEndpoint(ctx, MeridianEndpointInput{ApplicationID: applicationID, AdvertiseHost: "entry.example.test", Name: "Route lifecycle", RegionCode: "US", VerificationID: verification.VerificationID, TargetIP: verification.TargetIP, TargetHost: verification.TargetHost, ServerName: verification.ServerName})
 	if err != nil {
 		t.Fatal(err)
 	}

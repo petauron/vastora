@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"syscall"
 	"time"
 
 	"github.com/petauron/vastora/internal/controlplane"
@@ -26,7 +27,10 @@ func (c Client) transferLegacyReceiptsBeforeTasks(ctx context.Context, store *St
 		report(err)
 		var response *centerResponseError
 		var network net.Error
-		retryable := errors.As(err, &network) && (network.Timeout() || network.Temporary())
+		var dns *net.DNSError
+		retryable := errors.As(err, &network) && network.Timeout() ||
+			errors.As(err, &dns) && dns.IsTemporary ||
+			errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EINTR)
 		if errors.As(err, &response) {
 			retryable = response.status == http.StatusTooManyRequests || response.status == http.StatusBadGateway || response.status == http.StatusServiceUnavailable || response.status == http.StatusGatewayTimeout
 		}

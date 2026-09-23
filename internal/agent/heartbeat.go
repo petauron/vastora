@@ -401,14 +401,34 @@ func (c Client) RunHeartbeats(ctx context.Context, store *Store, interval time.D
 		}
 	}
 	send()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	lastSent := time.Now()
+	timer := time.NewTimer(min(interval, landing.CheckInterval))
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			send()
+		case <-timer.C:
+			state, _ := store.loadMeridianRuntimeState(ctx)
+			cadence := meridianHeartbeatInterval(interval, state)
+			if time.Since(lastSent) >= cadence {
+				send()
+				lastSent = time.Now()
+			}
+			// Re-evaluate a newly applied peer plan promptly without resetting
+			// the actual send deadline on every wake-up. Slow heartbeats do not
+			// renew the monitor's kernel lease or manufacture fresh evidence.
+			timer.Reset(min(max(cadence-time.Since(lastSent), time.Millisecond), landing.CheckInterval))
 		}
 	}
+}
+
+func meridianHeartbeatInterval(configured time.Duration, state meridianRuntimeState) time.Duration {
+	if configured < time.Second {
+		configured = 15 * time.Second
+	}
+	if state.Applied != nil && len(state.AppliedPeers) != 0 {
+		return min(configured, landing.CheckInterval)
+	}
+	return configured
 }

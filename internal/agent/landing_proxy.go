@@ -67,6 +67,28 @@ func isLandingXrayRuntimeMigration(task DeploymentTask) bool {
 // while the audited worker replacement transfers ownership from the legacy
 // container to Vastora Xray.
 func (s *Store) prepareLandingXrayRuntimeMigration(ctx context.Context, task DeploymentTask) (*landingRuntimeState, error) {
+	if task.AppKey == threeXUIKey {
+		if err := s.requireLegacyLandingAuthority(ctx); err != nil {
+			return nil, err
+		}
+	}
+	// The audited Meridian install only prepares its image. The complete runtime
+	// command, not package preparation, owns the one-way landing handover.
+	if task.AppKey == meridianKey && task.Operation == "install" && task.Manifest.ID == "meridian" && ValidateOfficialContract(task.Manifest) == nil {
+		if state, err := s.landingRuntime(ctx); err != nil {
+			return nil, err
+		} else if state != nil && state.Route != nil && state.ApplicationID != task.ApplicationID {
+			return nil, errors.New("agent: Meridian preparation belongs to another landing application")
+		}
+		legacy, err := s.AppliedInstallation(ctx, threeXUIKey)
+		if err == nil && legacy.ApplicationID != task.ApplicationID {
+			return nil, errors.New("agent: Meridian preparation belongs to another legacy application")
+		}
+		if err != nil && !errors.Is(err, errApplicationNotInstalled) {
+			return nil, err
+		}
+		return nil, nil
+	}
 	if !isLandingXrayRuntimeMigration(task) {
 		if err := s.checkLandingApplicationMutation(ctx, task.AppKey); err != nil {
 			return nil, err
@@ -129,6 +151,11 @@ func (s *Store) finishLandingXrayRuntimeMigration(ctx context.Context, previous 
 func (s *Store) ResumeLandingRuntime(ctx context.Context) (result error) {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
+	// A staged Meridian authority is a one-way boundary, even if its first
+	// command failed. Its recovery owns all retained landing gates and journals.
+	if _, err := s.loadMeridianRuntimeState(ctx); !errors.Is(err, errApplicationNotInstalled) {
+		return err
+	}
 	return s.resumeLandingRuntimeLocked(ctx)
 }
 
@@ -243,7 +270,7 @@ func (s *Store) openLandingDockerForRuntime(ctx context.Context, state *landingR
 	if state.Route == nil || state.Phase != "applied" || state.Applied == nil || state.Retiring != nil || state.Applied.Revision != state.Desired.Revision || state.Route.Revision != state.Desired.Revision || state.ApplicationID != state.Desired.ApplicationID() {
 		return nil, "", "", errors.New("agent: recreated landing runtime requires explicit reconciliation")
 	}
-	docker, bridge, policy, err = openLandingDocker(ctx, state.ApplicationID, "")
+	docker, bridge, _, err = openLandingDocker(ctx, state.ApplicationID, "")
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -340,6 +367,9 @@ func verifyLocalLandingInbounds(ctx context.Context, routes threeXUILandingRoute
 func (s *Store) applyLandingProxy(ctx context.Context, desired landing.DesiredState) error {
 	s.landingMutationMu.Lock()
 	defer s.landingMutationMu.Unlock()
+	if err := s.requireLegacyLandingAuthority(ctx); err != nil {
+		return err
+	}
 	if desired.Validate() != nil || desired.Server != nil {
 		return errors.New("agent: invalid landing proxy intent")
 	}

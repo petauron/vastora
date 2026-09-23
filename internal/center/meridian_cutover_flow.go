@@ -49,6 +49,7 @@ type meridianImportedEndpoint struct {
 	serviceID     string
 	applicationID string
 	nodeID        string
+	sourcePeer    *landing.PeerIdentity
 }
 
 func (value meridianImportedCredential) material() meridian.CredentialMaterial {
@@ -78,6 +79,9 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 	}
 	now := s.now().UTC()
 	formattedNow := now.Format(time.RFC3339Nano)
+	if _, err := disposeSupersededLandingExecutionFailures(ctx, tx, "", formattedNow); err != nil {
+		return MeridianCutoverView{}, err
+	}
 	switch state {
 	case "inspect", "failed":
 		var imported int
@@ -140,8 +144,8 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 }
 
 func ensureMeridianCutoverIdle(ctx context.Context, tx *sql.Tx, controllerApplicationID string) error {
-	var activeCommands, activeDeployments, activeMigrations, unresolvedExecutions int
-	if err := tx.QueryRowContext(ctx, `WITH cutover_agents(id) AS (
+	var activeCommands, activeDeployments, activeMigrations, unresolvedExecutions, pendingLanding int
+	if err := tx.QueryRowContext(ctx, `WITH cutover_entries(id) AS (
 		SELECT node_id FROM applications WHERE id=?
 		UNION
 		SELECT application.node_id FROM three_x_ui_nodes topology
@@ -150,18 +154,30 @@ func ensureMeridianCutoverIdle(ctx context.Context, tx *sql.Tx, controllerApplic
 		UNION
 		SELECT application.node_id FROM meridian_endpoints endpoint
 		JOIN applications application ON application.id=endpoint.application_id
+	), cutover_agents(id) AS (
+		SELECT id FROM cutover_entries
+		UNION
+		SELECT grant_row.landing_node_id FROM landing_client_grants grant_row
+		JOIN applications application ON application.id=grant_row.application_id
+		WHERE application.node_id IN (SELECT id FROM cutover_entries) AND grant_row.status<>'revoked'
+		UNION
+		SELECT landing_node_id FROM landing_proxy_states WHERE node_id IN (SELECT id FROM cutover_entries)
+		UNION
+		SELECT egress_node_id FROM meridian_route_grants WHERE status<>'revoked'
 	)
 	SELECT
 		(SELECT COUNT(*) FROM application_commands WHERE agent_id IN (SELECT id FROM cutover_agents) AND (state IN ('pending','running') OR reconciliation_required=1)),
 		(SELECT COUNT(*) FROM deployments WHERE agent_id IN (SELECT id FROM cutover_agents) AND (state IN ('pending','running') OR reconciliation_required=1)),
 		(SELECT COUNT(*) FROM three_x_ui_migrations WHERE state IN ('backing_up','restoring','switching')),
-		(SELECT COUNT(*) FROM task_executions WHERE agent_id IN (SELECT id FROM cutover_agents) AND disposition='' AND state<>'succeeded')`, controllerApplicationID, controllerApplicationID).Scan(&activeCommands, &activeDeployments, &activeMigrations, &unresolvedExecutions); err != nil {
+		(SELECT COUNT(*) FROM task_executions WHERE agent_id IN (SELECT id FROM cutover_agents) AND disposition='' AND state<>'succeeded'),
+		(SELECT COUNT(*) FROM landing_server_states WHERE node_id IN (SELECT id FROM cutover_agents) AND status IN ('pending','applying') AND desired_revision>applied_revision)
+		 + (SELECT COUNT(*) FROM landing_proxy_states WHERE node_id IN (SELECT id FROM cutover_entries) AND status IN ('pending','applying') AND desired_revision>applied_revision)`, controllerApplicationID, controllerApplicationID).Scan(&activeCommands, &activeDeployments, &activeMigrations, &unresolvedExecutions, &pendingLanding); err != nil {
 		return err
 	}
 	if unresolvedExecutions != 0 {
 		return errors.New("center: explicitly recover unresolved node executions before starting the Meridian cutover")
 	}
-	if activeCommands != 0 || activeDeployments != 0 || activeMigrations != 0 {
+	if activeCommands != 0 || activeDeployments != 0 || activeMigrations != 0 || pendingLanding != 0 {
 		return errors.New("center: finish or explicitly recover active operations before starting the Meridian cutover")
 	}
 	return nil
@@ -253,7 +269,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 	}
 	var existing int
 	if err := tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM meridian_endpoints)+(SELECT COUNT(*) FROM meridian_accounts)+(SELECT COUNT(*) FROM meridian_credentials)`).Scan(&existing); err != nil || existing != 0 {
-		return errors.New("Meridian import target is not empty")
+		return errors.New("center: Meridian import target is not empty")
 	}
 	endpointByInbound := map[int]meridianImportedEndpoint{}
 	endpointByEntry := map[string]meridianImportedEndpoint{}
@@ -314,6 +330,11 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if !exists {
 			return errors.New("legacy route endpoint was not imported")
 		}
+		egressID, err := resolveLegacyMeridianGrant(ctx, tx, &endpoint, legacy)
+		if err != nil {
+			return err
+		}
+		endpointByInbound[legacy.InboundID], endpointByEntry[endpoint.applicationID] = endpoint, endpoint
 		account := &accounts[accountIndex]
 		base, exists := baseByAccountAndEndpoint[account.model.ID+"\x00"+endpoint.model.ID]
 		if !exists {
@@ -323,9 +344,9 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if err != nil {
 			return err
 		}
-		route := meridianImportedCredential{model: meridian.Credential{ID: routeCredentialID, AccountID: account.model.ID, Kind: meridian.RouteCredential, User: meridian.RouteUser(legacy.ID), Identity: meridian.Identity(legacy.FixedUUID), EntryID: endpoint.applicationID, EgressID: legacy.EgressNodeID, Enabled: legacy.Enabled && account.model.Plan.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.FixedUUID, baseline: legacy.UsageBaseline, observed: legacy.UsageObserved}
+		route := meridianImportedCredential{model: meridian.Credential{ID: routeCredentialID, AccountID: account.model.ID, Kind: meridian.RouteCredential, User: meridian.RouteUser(legacy.ID), Identity: meridian.Identity(legacy.FixedUUID), EntryID: endpoint.applicationID, EgressID: egressID, Enabled: legacy.Enabled && account.model.Plan.Enabled}, endpointID: endpoint.model.ID, protocolID: legacy.FixedUUID, baseline: legacy.UsageBaseline, observed: legacy.UsageObserved}
 		account.credentials = append(account.credentials, route)
-		account.grants = append(account.grants, meridian.RouteGrant{ID: legacy.ID, AccountID: account.model.ID, EntryID: endpoint.applicationID, EgressID: legacy.EgressNodeID, InboundTag: endpoint.model.InboundTag, Base: base.model, Route: route.model, Mode: meridian.FixedMode, Enabled: legacy.Enabled, HideNative: legacy.HideNative, DesiredRev: 1})
+		account.grants = append(account.grants, meridian.RouteGrant{ID: legacy.ID, AccountID: account.model.ID, EntryID: endpoint.applicationID, EgressID: egressID, InboundTag: endpoint.model.InboundTag, Base: base.model, Route: route.model, Mode: meridian.FixedMode, Enabled: legacy.Enabled, HideNative: legacy.HideNative, DesiredRev: 1})
 	}
 
 	planAccounts := make([]meridian.ImportAccount, 0, len(accounts))
@@ -360,6 +381,10 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		}
 		names, _ := json.Marshal(endpoint.model.ServerNames)
 		shortIDs, _ := json.Marshal(endpoint.model.ShortIDs)
+		sourceJSON := []byte(`{}`)
+		if endpoint.sourcePeer != nil {
+			sourceJSON, _ = json.Marshal(endpoint.sourcePeer)
+		}
 		var hy2Tag, hy2ServerName string
 		var hy2CertificateSecretID, hy2PrivateKeySecretID any
 		if endpoint.hy2 != nil {
@@ -374,7 +399,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			}
 			hy2CertificateSecretID, hy2PrivateKeySecretID = certificateID, privateKeyID
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,desired_revision,applied_revision,runtime_healthy,legacy_retired,status,last_error,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,0,0,0,'pending','',?,?)`, endpoint.model.ID, endpoint.applicationID, endpoint.serviceID, endpoint.model.InboundTag, endpoint.model.ListenPort, endpoint.model.AdvertiseHost, endpoint.model.AdvertisePort, endpoint.model.Target, endpoint.targetIP, names, privateSecretID, endpoint.model.PublicKey, shortIDs, endpoint.model.Fingerprint, boolInt(endpoint.vlessEnabled), boolInt(endpoint.hy2Enabled), hy2Tag, hy2ServerName, hy2CertificateSecretID, hy2PrivateKeySecretID, endpoint.hy2NotAfter, stamp, stamp); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,desired_revision,applied_revision,runtime_healthy,legacy_retired,status,last_error,created_at,updated_at,source_peer_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,0,0,0,'pending','',?,?,?)`, endpoint.model.ID, endpoint.applicationID, endpoint.serviceID, endpoint.model.InboundTag, endpoint.model.ListenPort, endpoint.model.AdvertiseHost, endpoint.model.AdvertisePort, endpoint.model.Target, endpoint.targetIP, names, privateSecretID, endpoint.model.PublicKey, shortIDs, endpoint.model.Fingerprint, boolInt(endpoint.vlessEnabled), boolInt(endpoint.hy2Enabled), hy2Tag, hy2ServerName, hy2CertificateSecretID, hy2PrivateKeySecretID, endpoint.hy2NotAfter, stamp, stamp, sourceJSON); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=443,host_port=443,source='observed',app_protocol=?,observed_listen='0.0.0.0',status='pending',last_error='',updated_at=? WHERE id=?`, net.JoinHostPort(dockerruntime.MeridianAlias, "443"), meridianEntryProtocol, stamp, endpoint.serviceID); err != nil {
@@ -464,6 +489,36 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		return errors.New("center: subscription authority changed during Meridian import")
 	}
 	return nil
+}
+
+// The legacy Agent export carries the Tailscale peer ID from its applied
+// journal. Only the exact Center grant maps that identity back to a Vastora
+// Agent and supplies the previously authorized entry identity. A current
+// capability observation must never silently authorize a replacement source.
+func resolveLegacyMeridianGrant(ctx context.Context, tx *sql.Tx, endpoint *meridianImportedEndpoint, legacy meridianruntime.LegacyRoute) (string, error) {
+	record, err := readLandingGrant(ctx, tx, legacy.ID)
+	if err != nil || record.ApplicationID != endpoint.applicationID || record.ServiceID != endpoint.serviceID ||
+		record.ParentID != legacy.ParentIdentityHash || record.Grant.InboundTag != legacy.InboundTag || record.Grant.BaseUser != legacy.BaseUser ||
+		record.Grant.FixedUser != legacy.FixedUser || record.Grant.FixedIdentity != landing.Identity(legacy.FixedUUID) ||
+		record.Grant.Peer.ID != legacy.EgressNodeID || record.Revision != legacy.Revision || record.Grant.Enabled != legacy.Enabled ||
+		record.Grant.HideBase != legacy.HideNative || !meridian.ValidIdentifier(record.LandingNodeID) ||
+		!sameLegacyInboundTag(endpoint.model.InboundTag, legacy.InboundTag) {
+		return "", errors.New("center: legacy route no longer matches its authorized Center grant")
+	}
+	if record.Status == "revoked" || record.Status == "revoking" {
+		return "", errors.New("center: a revoked legacy route cannot grant Meridian authority")
+	}
+	if legacy.Enabled {
+		if (meridianruntime.Peer{EgressID: endpoint.nodeID, Identity: record.Source}).Validate() != nil {
+			return "", errors.New("center: enabled legacy route has no authorized entry identity")
+		}
+		if endpoint.sourcePeer != nil && *endpoint.sourcePeer != record.Source {
+			return "", errors.New("center: legacy routes disagree about the authorized entry identity")
+		}
+		source := record.Source
+		endpoint.sourcePeer = &source
+	}
+	return record.LandingNodeID, nil
 }
 
 func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, controllerApplicationID string, legacy meridianruntime.LegacyEndpoint) (meridianImportedEndpoint, error) {
@@ -841,7 +896,7 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 		 ))),
 		(SELECT COUNT(*) FROM meridian_endpoints WHERE status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND legacy_retired=1),
 		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status<>'revoked'),
-		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision)`).Scan(&accounts, &credentials, &endpoints, &ready, &published, &retired, &routes, &readyRoutes); err != nil {
+		(SELECT COUNT(*) FROM meridian_route_grants WHERE enabled=1 AND status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision AND health_expires_unix_ms>?)`, s.now().UTC().UnixMilli()).Scan(&accounts, &credentials, &endpoints, &ready, &published, &retired, &routes, &readyRoutes); err != nil {
 		return err
 	}
 	if accounts != expectedAccounts || credentials != expectedCredentials || endpoints != expectedEndpoints || routes != expectedRoutes || expectedEndpoints == 0 {
@@ -1082,6 +1137,19 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 	if !publicationReady {
 		return nil
 	}
+	// Explicit retirement retries call this function without the full cutover
+	// reconciler. Neither entries nor a controller-only host may retire while
+	// an imported fixed route has lost its fresh transport evidence.
+	nowMillis := s.now().UTC().UnixMilli()
+	var unreadyRoutes int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_route_grants
+		WHERE enabled=1 AND status<>'revoked'
+		AND (status<>'ready' OR runtime_healthy<>1 OR desired_revision<>applied_revision OR health_expires_unix_ms<=?)`, nowMillis).Scan(&unreadyRoutes); err != nil {
+		return err
+	}
+	if unreadyRoutes != 0 {
+		return nil
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT endpoint.id FROM meridian_endpoints endpoint
 		JOIN applications application ON application.id=endpoint.application_id
 		WHERE endpoint.legacy_retired=0 AND endpoint.status='ready' AND endpoint.runtime_healthy=1
@@ -1089,7 +1157,7 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 		AND NOT EXISTS(
 			SELECT 1 FROM meridian_route_grants route
 			WHERE route.endpoint_id=endpoint.id AND route.enabled=1 AND route.status<>'revoked'
-			AND (route.status<>'ready' OR route.runtime_healthy<>1 OR route.desired_revision<>route.applied_revision)
+			AND (route.status<>'ready' OR route.runtime_healthy<>1 OR route.desired_revision<>route.applied_revision OR route.health_expires_unix_ms<=?)
 		)
 		AND application.app_key=? AND application.status='running'
 		AND NOT EXISTS(
@@ -1101,7 +1169,7 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 			SELECT 1 FROM application_commands command
 			WHERE command.application_id=endpoint.application_id AND command.kind=? AND command.state IN ('pending','running')
 		)
-		ORDER BY endpoint.id`, meridianAppKey, meridianruntime.ApplyKind)
+		ORDER BY endpoint.id`, nowMillis, meridianAppKey, meridianruntime.ApplyKind)
 	if err != nil {
 		return err
 	}

@@ -229,7 +229,10 @@ func TestMeridianSubscriptionHostMovesOnlyAfterPublicationStops(t *testing.T) {
 		{Address: "203.0.113.72", Interface: "eth0", Kind: networking.KindPublic},
 	}, networking.Profile{ServiceAddress: "10.0.0.72", LANAddress: "10.0.0.72", PublicAddress: "203.0.113.72", EnabledKinds: []string{networking.KindLAN, networking.KindPublic}, DirectPublic: true})
 	completeNextTask(t, store, first, "gateway.component.apply", nil)
-	completeNextTask(t, store, second, "gateway.component.apply", nil)
+	// Only the selected site gateway receives a component installation.
+	if task, err := store.ClaimNextTask(ctx, second.ID, second.Credential); err != nil || task != nil {
+		t.Fatalf("unselected gateway received work: task=%#v err=%v", task, err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	siteID := testSiteID(t, store)
 	for _, application := range []struct {
@@ -332,12 +335,7 @@ func TestRealityNodeCanBeRenamedWithoutChangingServiceIdentity(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "edge", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.71", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.71", LANAddress: "10.0.0.71", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	installTask := claimTask(t, store, node)
-	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.71", "edge-api-token")
+	deployment := seedLegacyDeployment(t, store, node, "10.0.0.71", "edge-api-token", threeXUIRoleMaster)
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, display_name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)
 		VALUES('reality-service', ?, ?, 'inbound-9', 'Old name', 'tcp', 32009, 32009, '10.0.0.71:32009', 'observed', 'vless/tcp/reality', 0, '10.0.0.71', 'ready', ?, ?)`, deployment.ApplicationID, testSiteID(t, store), now, now); err != nil {

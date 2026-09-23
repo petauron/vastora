@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/meridian"
 	"github.com/petauron/vastora/internal/meridianruntime"
@@ -192,13 +193,13 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 	entry := enrollOrchestrationNode(t, store, "route-filter-entry", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.71", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.71", HeadscaleAddress: "100.64.0.71", EnabledKinds: []string{networking.KindHeadscale}})
 	egress := enrollOrchestrationNode(t, store, "route-filter-egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.72", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.72", HeadscaleAddress: "100.64.0.72", EnabledKinds: []string{networking.KindHeadscale}})
 	ctx := context.Background()
+	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
-	siteID := testSiteID(t, store)
 	const (
 		applicationID = "route-filter-application"
 		serviceID     = "route-filter-service"
@@ -216,6 +217,10 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
 		VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-1", "Route filter entry", "100.64.0.71:443", meridianEntryProtocol, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES('route-filter-publication',?,'public_shared_443','application_node',?,'entry.example.test','www.example.com','manual',0,1,1,'ready',?,?)`, serviceID, entry.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
 	endpointSecretID, err := store.putSecret(ctx, tx, []byte("route-filter-private-key"), meridianEndpointSecretContext(endpointID))
@@ -250,8 +255,12 @@ func TestUnavailableMeridianLandingBlocksOnlyItsFixedRoute(t *testing.T) {
 		VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, meridian.RouteUser(grantID), meridian.Identity(routeSecret), routeSecretID, egress.ID, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,peer_json,status,last_error,updated_at)
-		VALUES(?,1,0,'{}','{}','failed','landing unavailable',?)`, egress.ID, now); err != nil {
+	serverJSON, _ := meridianAppliedLandingFixtureJSON(t, egress.ID, "100.64.0.72", "100.64.0.71")
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET source_peer_json=? WHERE id=?`, []byte(`{"id":"tailnet-filter-entry","publicKey":"nodekey:test-filter-entry","address":"100.64.0.71"}`), endpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO landing_server_states(node_id,desired_revision,applied_revision,desired_json,applied_json,peer_json,status,last_error,updated_at)
+		VALUES(?,1,0,?,'{}','{}','failed','landing unavailable',?)`, egress.ID, serverJSON, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,hide_native,desired_revision,applied_revision,runtime_healthy,status,last_error,created_at,updated_at)
@@ -308,13 +317,13 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	egress := enrollOrchestrationNode(t, store, "egress", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.33", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.33", HeadscaleAddress: "100.64.0.33", EnabledKinds: []string{networking.KindHeadscale}})
 
 	ctx := context.Background()
+	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
-	siteID := testSiteID(t, store)
 	accountID := "shared-account"
 	tokenSecretID, err := store.putSecret(ctx, tx, []byte("shared-token"), meridianAccountSecretContext(accountID))
 	if err != nil {
@@ -327,11 +336,11 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 
 	insertEndpoint := func(applicationID, serviceID, endpointID string, nodeID string) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-			VALUES(?,?,?,?,?,'','running','docker','',?,?)`, applicationID, applicationID, nodeID, siteID, meridianAppKey, now, now); err != nil {
+			VALUES(?,?,?,?,?,'','running','docker','',?,?) ON CONFLICT(id) DO NOTHING`, applicationID, applicationID, nodeID, siteID, meridianAppKey, now, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,display_name,protocol,container_port,host_port,endpoint,source,app_protocol,management,observed_listen,status,created_at,updated_at)
-			VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-1", applicationID, "100.64.0.31:443", meridianEntryProtocol, now, now); err != nil {
+			VALUES(?,?,?,?,?,'tcp',443,443,?,'observed',?,0,'0.0.0','ready',?,?)`, serviceID, applicationID, siteID, "inbound-"+endpointID, applicationID, "100.64.0.31:443", meridianEntryProtocol, now, now); err != nil {
 			t.Fatal(err)
 		}
 		endpointSecretID, err := store.putSecret(ctx, tx, []byte("private-"+endpointID), meridianEndpointSecretContext(endpointID))
@@ -339,24 +348,26 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-			VALUES(?,?,?,?,443,'entry.example.test',443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'public','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "inbound-"+endpointID, endpointSecretID, now, now); err != nil {
+			VALUES(?,?,?,?,443,?,443,'www.example.com:443','203.0.113.20','["www.example.com"]',?,'public','["abcd"]','chrome',1,1,1,'ready',?,?)`, endpointID, applicationID, serviceID, "inbound-"+endpointID, endpointID+".example.test", endpointSecretID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		baseID, routeID := "base-"+endpointID, "route-"+endpointID
-		baseSecretID, err := store.putSecret(ctx, tx, []byte("11111111-1111-4111-8111-"+strings.Repeat("1", 12)), meridianCredentialSecretContext(baseID))
+		baseProtocolID := "11111111-1111-4111-8111-" + strings.Repeat("1", 12)
+		routeProtocolID := "22222222-2222-4222-8222-" + strings.Repeat("2", 12)
+		baseSecretID, err := store.putSecret(ctx, tx, []byte(baseProtocolID), meridianCredentialSecretContext(baseID))
 		if err != nil {
 			t.Fatal(err)
 		}
-		routeSecretID, err := store.putSecret(ctx, tx, []byte("22222222-2222-4222-8222-"+strings.Repeat("2", 12)), meridianCredentialSecretContext(routeID))
+		routeSecretID, err := store.putSecret(ctx, tx, []byte(routeProtocolID), meridianCredentialSecretContext(routeID))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
-			VALUES(?,?,?,'native',?,?,?,1,?,?)`, baseID, accountID, endpointID, "user-"+baseID, meridian.Identity("base-secret-"+endpointID), baseSecretID, now, now); err != nil {
+			VALUES(?,?,?,'native',?,?,?,1,?,?)`, baseID, accountID, endpointID, "user-"+baseID, meridian.Identity(baseProtocolID), baseSecretID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,egress_node_id,enabled,created_at,updated_at)
-			VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, "user-"+routeID, meridian.Identity("route-secret-"+endpointID), routeSecretID, egress.ID, now, now); err != nil {
+			VALUES(?,?,?,'route',?,?,?,?,1,?,?)`, routeID, accountID, endpointID, "user-"+routeID, meridian.Identity(routeProtocolID), routeSecretID, egress.ID, now, now); err != nil {
 			t.Fatal(err)
 		}
 		for _, credentialID := range []string{baseID, routeID} {
@@ -364,14 +375,27 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,desired_revision,applied_revision,runtime_healthy,status,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,1,1,1,'ready',?,?)`, "grant-"+endpointID, accountID, endpointID, egress.ID, baseID, routeID, now, now); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_route_grants(id,account_id,endpoint_id,egress_node_id,base_credential_id,route_credential_id,desired_revision,applied_revision,runtime_healthy,status,health_expires_unix_ms,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,1,1,1,'ready',?,?,?)`, "grant-"+endpointID, accountID, endpointID, egress.ID, baseID, routeID, store.now().Add(10*time.Second).UnixMilli(), now, now); err != nil {
 			t.Fatal(err)
 		}
 	}
 	insertEndpoint("application-a", "service-a", "endpoint-a", entryA.ID)
 	insertEndpoint("application-b", "service-b", "endpoint-b", entryB.ID)
-	insertEndpoint("application-retired", "service-retired", "endpoint-retired", entryB.ID)
+	// Distinct physical entries must not describe the same public transport.
+	// Reusing the UUID across entries is valid; duplicating host/SNI/REALITY is not.
+	for _, publication := range []struct{ serviceID, endpointID, nodeID string }{
+		{"service-a", "endpoint-a", entryA.ID},
+		{"service-b", "endpoint-b", entryB.ID},
+	} {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO publications(id,service_id,kind,ingress_owner,entry_node_id,hostname,sni_hostname,dns_provider,tls_enabled,desired_revision,applied_revision,status,created_at,updated_at)
+			VALUES(?,?,'public_shared_443','application_node',?,?,'www.example.com','manual',0,1,1,'ready',?,?)`, "publication-"+publication.serviceID, publication.serviceID, publication.nodeID, publication.endpointID+".example.test", now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A retired endpoint still owns its application identity. Use a separate
+	// installation instead of violating the one-endpoint-per-application key.
+	insertEndpoint("application-retired", "service-retired", "endpoint-retired", egress.ID)
 	if _, err := tx.ExecContext(ctx, `UPDATE meridian_credentials SET enabled=0 WHERE endpoint_id='endpoint-retired'`); err != nil {
 		t.Fatal(err)
 	}
@@ -382,8 +406,56 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A different account shares the same runtime but has never downloaded its
+	// subscription. Exhausting the first account must not withdraw this account.
+	const (
+		otherAccountID    = "independent-account"
+		otherToken        = "independent-token"
+		otherCredentialID = "independent-base-a"
+		otherProtocolID   = "33333333-3333-4333-8333-333333333333"
+	)
+	otherTokenSecretID, err := store.putSecret(ctx, tx, []byte(otherToken), meridianAccountSecretContext(otherAccountID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_accounts(id,display_name,total_bytes,enabled,subscription_token_secret_id,subscription_token_sha256,desired_revision,applied_revision,status,created_at,updated_at)
+		VALUES(?, 'Independent account', 100, 1, ?, ?, 1, 1, 'active', ?, ?)`, otherAccountID, otherTokenSecretID, meridian.SubscriptionTokenFingerprint(otherToken), now, now); err != nil {
+		t.Fatal(err)
+	}
+	otherCredentialSecretID, err := store.putSecret(ctx, tx, []byte(otherProtocolID), meridianCredentialSecretContext(otherCredentialID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_credentials(id,account_id,endpoint_id,kind,user_name,identity_sha256,protocol_secret_id,enabled,created_at,updated_at)
+		VALUES(?,?,'endpoint-a','native','independent-user',?,?,1,?,?)`, otherCredentialID, otherAccountID, meridian.Identity(otherProtocolID), otherCredentialSecretID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,observed_bytes,observed_at) VALUES(?,5,?)`, otherCredentialID, now); err != nil {
+		t.Fatal(err)
+	}
+	var initialSnapshots int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_subscription_snapshots WHERE account_id IN (?,?)`, accountID, otherAccountID).Scan(&initialSnapshots); err != nil || initialSnapshots != 0 {
+		t.Fatalf("subscriptions were already snapshotted: count=%d err=%v", initialSnapshots, err)
+	}
+	quotaBefore, err := store.meridianQuotaStatesInTx(ctx, tx, "endpoint-a")
+	if err != nil || !quotaBefore[accountID] || !quotaBefore[otherAccountID] {
+		t.Fatalf("accounts were not initially within quota: states=%v err=%v", quotaBefore, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET observed_bytes=100 WHERE credential_id='base-endpoint-a'`); err != nil {
+		t.Fatal(err)
+	}
+	quotaAfter, err := store.meridianQuotaStatesInTx(ctx, tx, "endpoint-a")
+	if err != nil || quotaAfter[accountID] || !quotaAfter[otherAccountID] {
+		t.Fatalf("quota crossing affected the wrong accounts: states=%v err=%v", quotaAfter, err)
+	}
 	if err := store.markMeridianQuotaBoundaryChanged(ctx, tx, []string{accountID}, now); err != nil {
 		t.Fatal(err)
+	}
+	// No subscription download preceded the usage-driven revision change.
+	// Its last applied entries must still be recoverable during the rebuild.
+	snapshot, err := store.loadMeridianSubscriptionSnapshotInTx(ctx, tx, accountID)
+	if err != nil || snapshot.AccountRevision != 1 || len(snapshot.Entries) != 2 {
+		t.Fatalf("quota boundary lost applied subscription: revision=%d entries=%d err=%v", snapshot.AccountRevision, len(snapshot.Entries), err)
 	}
 	for _, endpointID := range []string{"endpoint-a", "endpoint-b"} {
 		var desiredRevision, healthy int
@@ -412,6 +484,16 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
+	}
+	server := NewServer(store, t.TempDir(), false)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sub/"+otherToken, nil))
+	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(response.Body.String()))
+	if response.Code != http.StatusOK || decodeErr != nil || !strings.Contains(string(decoded), "vless://"+otherProtocolID+"@endpoint-a.example.test:443") {
+		t.Fatalf("shared runtime rebuild withdrew unaffected subscription: status=%d body=%q err=%v", response.Code, decoded, decodeErr)
+	}
+	if _, err := store.MeridianSubscription(ctx, "shared-token"); !errors.Is(err, errMeridianSubscriptionNotFound) {
+		t.Fatalf("applied snapshot bypassed exhausted account quota: %v", err)
 	}
 	enabled := true
 	if _, err := store.UpdateMeridianAccount(ctx, accountID, MeridianAccountInput{DisplayName: "Shared account", TotalBytes: 100, Enabled: &enabled}); err != nil {
@@ -451,7 +533,7 @@ func TestMeridianQuotaBoundaryRebuildsEveryAccountEndpoint(t *testing.T) {
 	}
 }
 
-func TestUndeployableMeridianEndpointDoesNotBlockAgentClaims(t *testing.T) {
+func TestInvalidMeridianRuntimeDoesNotBlockAgentClaims(t *testing.T) {
 	store, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -459,13 +541,15 @@ func TestUndeployableMeridianEndpointDoesNotBlockAgentClaims(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	node := enrollOrchestrationNode(t, store, "entry-blocked", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "100.64.0.41", Interface: "tailscale0", Kind: networking.KindHeadscale}}, networking.Profile{ServiceAddress: "100.64.0.41", HeadscaleAddress: "100.64.0.41", EnabledKinds: []string{networking.KindHeadscale}})
 	ctx := context.Background()
+	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
 	now := store.now().UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
-	siteID := testSiteID(t, store)
+	// An empty credential set is deployable. An installation with no audited
+	// image is not; its failure must release the claim loop for other work.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
 		VALUES('blocked-application','Blocked entry',?,?,?,'','running','docker','',?,?)`, node.ID, siteID, meridianAppKey, now, now); err != nil {
 		t.Fatal(err)
@@ -491,7 +575,7 @@ func TestUndeployableMeridianEndpointDoesNotBlockAgentClaims(t *testing.T) {
 	if err := tx.QueryRowContext(ctx, `SELECT status,last_error FROM meridian_endpoints WHERE id='blocked-endpoint'`).Scan(&status, &lastError); err != nil {
 		t.Fatal(err)
 	}
-	if status != "failed" || !strings.Contains(lastError, "credentials") {
+	if status != "failed" || !strings.Contains(lastError, "runtime task is invalid") {
 		t.Fatalf("undeployable endpoint status=%s error=%q", status, lastError)
 	}
 }
@@ -560,7 +644,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT event FROM task_events WHERE task_id='superseded-queued-command' ORDER BY created_at DESC LIMIT 1`).Scan(&event); err != nil {
 		t.Fatal(err)
 	}
-	if desiredRevision != 2 || endpointStatus != "pending" || commandState != "succeeded" || event != "superseded" {
+	if desiredRevision != 2 || endpointStatus != "pending" || commandState != "succeeded" || event != "succeeded" {
 		t.Fatalf("superseded queued command changed newest desired state: revision=%d endpoint=%s command=%s event=%s", desiredRevision, endpointStatus, commandState, event)
 	}
 
@@ -592,7 +676,7 @@ func TestSupersededMeridianReceiptLeavesNewestRevisionPending(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT event FROM task_events WHERE task_id='superseded-completion-command' ORDER BY created_at DESC LIMIT 1`).Scan(&event); err != nil {
 		t.Fatal(err)
 	}
-	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "succeeded" || event != "superseded" {
+	if desiredRevision != 3 || endpointStatus != "pending" || commandState != "succeeded" || event != "succeeded" {
 		t.Fatalf("superseded completion changed newest desired state: revision=%d endpoint=%s command=%s event=%s", desiredRevision, endpointStatus, commandState, event)
 	}
 }

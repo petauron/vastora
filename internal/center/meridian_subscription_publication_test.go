@@ -37,11 +37,12 @@ func seedFailedMeridianSubscriptionPublication(t *testing.T, store *Store, suffi
 		VALUES(?,?,'public_direct','site_gateway',?,'subscription.example.test','manual',1,1,0,'failed','gateway apply failed',?,?)`, publicationID, serviceID, node.ID, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
+	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.upsertPublicationRoute(ctx, tx, publicationID, testSiteID(t, store), serviceID, node.ID, "subscription.example.test", "http", dockerruntime.CenterAlias+":8080", true, store.now().UTC()); err != nil {
+	if err := store.upsertPublicationRoute(ctx, tx, publicationID, siteID, serviceID, node.ID, "subscription.example.test", "http", dockerruntime.CenterAlias+":8080", true, store.now().UTC()); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}

@@ -115,6 +115,7 @@ func TestVersion81MigrationAddsHostProfileDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removePostVersion85TablesForFixture(t, store)
 	if _, err := store.db.ExecContext(ctx, `DROP TABLE node_diagnostic_checks`); err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +153,7 @@ func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	removePostVersion85TablesForFixture(t, store)
 	siteID := testSiteID(t, store)
 	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: siteID, Name: "Worker", CenterURL: "https://center.example.test"})
 	if err != nil {
@@ -197,11 +199,11 @@ func TestVersion83MigrationMovesManagedRealityToLocalDockerAlias(t *testing.T) {
 	if revision != 6 || state.Revision != 6 || applied != 4 || attempt != 0 || status != "pending" || lease != "" || lastError != "" {
 		t.Fatalf("migration state = revision %d/%d applied %d attempt %d status %q lease %q error %q", revision, state.Revision, applied, attempt, status, lease, lastError)
 	}
-	if len(managed.Upstreams) != 1 || managed.Upstreams[0].Address != dockerruntime.XrayAlias || managed.Upstreams[0].Port != 443 || len(ordinary.Upstreams) != 1 || ordinary.Upstreams[0].Address != "service" || ordinary.Upstreams[0].Port != 8443 {
+	if len(managed.Upstreams) != 1 || managed.Upstreams[0].Address != dockerruntime.LegacyXrayAlias || managed.Upstreams[0].Port != 443 || len(ordinary.Upstreams) != 1 || ordinary.Upstreams[0].Address != "service" || ordinary.Upstreams[0].Port != 8443 {
 		t.Fatalf("migration routes = %#v", state.Listener.Routes)
 	}
 	var endpoint, observedListen string
-	if err := migrated.db.QueryRowContext(ctx, `SELECT endpoint,observed_listen FROM services WHERE id='worker-service'`).Scan(&endpoint, &observedListen); err != nil || endpoint != dockerruntime.XrayAlias+":443" || observedListen != "100.64.0.10" {
+	if err := migrated.db.QueryRowContext(ctx, `SELECT endpoint,observed_listen FROM services WHERE id='worker-service'`).Scan(&endpoint, &observedListen); err != nil || endpoint != dockerruntime.LegacyXrayAlias+":443" || observedListen != "100.64.0.10" {
 		t.Fatalf("migrated service endpoint=%q observed=%q err=%v", endpoint, observedListen, err)
 	}
 }
@@ -532,6 +534,11 @@ func createLegacyVersion3Database(t *testing.T, directory string) {
 	defer tx.Rollback()
 	for _, statement := range []string{
 		`DROP TABLE meridian_deployments`,
+		`DROP TRIGGER application_commands_block_during_meridian_cutover`,
+		`DROP TRIGGER application_command_updates_block_during_meridian_cutover`,
+		`DROP TRIGGER deployments_block_during_meridian_cutover`,
+		`DROP TRIGGER deployment_updates_block_during_meridian_cutover`,
+		`DROP TABLE meridian_subscription_snapshots`,
 		`DROP TABLE meridian_usage_watermarks`,
 		`DROP TABLE meridian_route_grants`,
 		`DROP TABLE meridian_credentials`,

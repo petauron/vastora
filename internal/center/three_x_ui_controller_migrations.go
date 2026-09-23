@@ -334,6 +334,11 @@ func (s *Store) CreateThreeXUIControllerMigration(ctx context.Context, sourceApp
 		return ThreeXUIControllerMigrationView{}, err
 	}
 	defer tx.Rollback()
+	// Controller relocation eventually redeploys the source as a worker. Check
+	// that executor capability before backup/role changes, not after handoff.
+	if _, err := currentOfficialApplicationManifest(ctx, tx, "3x-ui", s.now()); err != nil {
+		return ThreeXUIControllerMigrationView{}, fmt.Errorf("center: legacy controller relocation is unavailable; use Meridian cutover: %w", err)
+	}
 	if err := requireLandingControllerTransferSafe(ctx, tx, sourceApplicationID, input.TargetApplicationID); err != nil {
 		return ThreeXUIControllerMigrationView{}, err
 	}

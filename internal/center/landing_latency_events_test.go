@@ -73,7 +73,7 @@ func TestLandingLatencyReportStreamsBeforeNextHeartbeat(t *testing.T) {
 	}
 	server := httptest.NewServer(NewServer(store, "", false).Handler())
 	defer server.Close()
-	streamURL := server.URL + "/api/v1/three-x-ui/landing/latencies/events"
+	streamURL := server.URL + "/api/v1/meridian/landing/latencies/events"
 	unauthorized, err := http.Get(streamURL)
 	if err != nil {
 		t.Fatal(err)

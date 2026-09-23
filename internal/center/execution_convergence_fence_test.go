@@ -14,8 +14,15 @@ func TestControllerConvergenceStopsBeforeReadingPlansWithUnresolvedExecution(t *
 	defer store.Close()
 	ctx := context.Background()
 	node := enrollOrchestrationNode(t, store, "convergence-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.19", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.19", LANAddress: "10.0.0.19", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
+	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Model a persisted pre-Meridian task, not a newly installable catalog app.
+	if _, err := store.db.Exec(`UPDATE deployments SET app_key=? WHERE id=?`, threeXUIAppKey, deployment.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE applications SET app_key=?,role=? WHERE id=?`, threeXUIAppKey, threeXUIRoleMaster, deployment.ApplicationID); err != nil {
 		t.Fatal(err)
 	}
 	session := "convergence-test-current-process-session"

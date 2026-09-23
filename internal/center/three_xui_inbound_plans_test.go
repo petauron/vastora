@@ -34,12 +34,7 @@ func TestDueThreeXUIInboundPlanResetAdvancesWithRevisionCAS(t *testing.T) {
 	clock := store.now().UTC()
 	store.now = func() time.Time { return clock }
 	node := enrollOrchestrationNode(t, store, "controller", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
-	deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	installTask := claimTask(t, store, node)
-	completeThreeXUIDeployment(t, store, node, installTask, "10.0.0.80", "controller-token")
+	deployment := seedLegacyDeployment(t, store, node, "10.0.0.80", "controller-token", threeXUIRoleMaster)
 	now := clock.Format(time.RFC3339Nano)
 	serviceID := "reality-plan-service"
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id, application_id, site_id, name, protocol, container_port, host_port, endpoint, source, app_protocol, management, observed_listen, status, created_at, updated_at)

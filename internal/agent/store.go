@@ -16,6 +16,7 @@ import (
 	"github.com/petauron/vastora/internal/catalog"
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
+	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 var errApplicationNotInstalled = errors.New("agent: application is not installed")
@@ -37,6 +38,10 @@ type Store struct {
 	landingStatusMu            sync.RWMutex
 	landingStatus              landing.MonitorStatus
 	landingPeerStatuses        map[string]landingPeerStatus
+	meridianPeerStatuses       map[string]meridianruntime.PeerObservation
+	meridianMonitorRevision    uint64
+	meridianMonitorSHA256      string
+	meridianMonitorSource      *landing.PeerIdentity
 	landingSubscriptionMu      sync.RWMutex
 	landingSubscriptionAddress string
 	landingLatencyMu           sync.Mutex

@@ -25,7 +25,7 @@ func acceptXrayWorkerControllerStats(state xrayWorkerState, request *http.Reques
 		return nil, nil, errors.New("invalid controller traffic snapshot")
 	}
 	if state.ControllerID != "" && state.ControllerID != payload.ControllerID {
-		return nil, nil, errors.New("Xray worker traffic controller changed")
+		return nil, nil, errors.New("agent: Xray worker traffic controller changed")
 	}
 	state.ControllerID = payload.ControllerID
 	if state.ControllerStats == nil {

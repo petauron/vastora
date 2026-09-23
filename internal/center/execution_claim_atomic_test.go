@@ -7,6 +7,7 @@ import (
 
 	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/networking"
+	"github.com/petauron/vastora/internal/platform"
 )
 
 func TestExecutionClaimAuthorizationFailureRollsBackSelection(t *testing.T) {
@@ -17,7 +18,20 @@ func TestExecutionClaimAuthorizationFailureRollsBackSelection(t *testing.T) {
 				defer store.Close()
 				ctx := context.Background()
 				node := enrollOrchestrationNode(t, store, "atomic-claim", NodeCapabilities{Docker: true, Gateway: kind == "gateway.component.apply"}, []networking.Candidate{{Address: "10.0.0.23", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.23", LANAddress: "10.0.0.23", EnabledKinds: []string{networking.KindLAN}})
-				heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.123", true)
+				version := Version
+				roles := []string{"worker"}
+				if kind == "gateway.component.apply" {
+					roles = append(roles, "gateway")
+				}
+				if kind == "agent.update" {
+					version = "0.1.0-alpha.123"
+				}
+				if err := store.RecordAgentHeartbeat(ctx, node.ID, node.Credential, NodeHeartbeat{
+					Version: version, Roles: roles, Capabilities: NodeCapabilities{Docker: true, Gateway: kind == "gateway.component.apply"},
+					ApplicationRuntimeGeneration: platform.ApplicationRuntimeGeneration, RemoteUpdateSupported: true,
+				}); err != nil {
+					t.Fatal(err)
+				}
 				query := `SELECT status,attempt FROM gateway_components WHERE gateway_node_id=?`
 				identity := node.ID
 				if kind == "application.apply" {

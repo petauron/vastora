@@ -132,15 +132,15 @@ func TestAssistantProposalRequiresExactApprovalAndAppliesExactlyOnce(t *testing.
 		t.Fatal(err)
 	}
 	node := enrollOrchestrationNode(t, store, "assistant-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", EnabledKinds: []string{networking.KindLAN}})
-	conversation, err := store.CreateAssistantConversation(ctx, adminID, "Install 3x-ui")
+	conversation, err := store.CreateAssistantConversation(ctx, adminID, "Install CPA")
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := store.QueueAssistantMessage(ctx, adminID, conversation.ID, "请安装 3x-ui")
+	run, err := store.QueueAssistantMessage(ctx, adminID, conversation.ID, "请安装 CPA")
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := assistantInstallRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{"timezone":"UTC","panel_port":2053,"enable_fail2ban":true,"vmess_aead_forced":false}`)}
+	request := assistantInstallRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)}
 	preview, err := store.PreviewAssistantInstall(ctx, request)
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +430,7 @@ func TestAssistantRejectionStaleRevisionAndToolBoundaryFailClosed(t *testing.T) 
 	node := enrollOrchestrationNode(t, store, "rejected-node", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.92", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.92", LANAddress: "10.0.0.92", EnabledKinds: []string{networking.KindLAN}})
 	conversation, _ := store.CreateAssistantConversation(ctx, adminID, "Approval boundaries")
 	run, _ := store.QueueAssistantMessage(ctx, adminID, conversation.ID, "yes, confirm and install")
-	request := assistantInstallRequest{AgentID: node.ID, AppKey: threeXUIAppKey, Role: threeXUIRoleMaster, Config: json.RawMessage(`{}`)}
+	request := assistantInstallRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`)}
 	preview, err := store.PreviewAssistantInstall(ctx, request)
 	if err != nil {
 		t.Fatal(err)

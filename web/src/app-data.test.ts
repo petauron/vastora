@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { APIError, api } from "./api";
-import { loadScreenData, pathForScreen, screenFromPath } from "./app-data";
+import { emptyAppData, loadScreenData, pathForScreen, screenFromPath } from "./app-data";
 import type { CenterStatus } from "./types";
 
 const status: CenterStatus = {
@@ -52,6 +52,7 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
 	vi.spyOn(api, "registryCredentials").mockResolvedValue({ credentials: [] });
 	vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
+    vi.spyOn(api, "meridian").mockResolvedValue(emptyAppData(status).meridian);
     const centerRemoteAccess = vi.spyOn(api, "centerRemoteAccess").mockResolvedValue({ available: true, enabled: true, status: "configured" });
     const actions = vi.spyOn(api, "actions");
 
@@ -80,6 +81,7 @@ describe("screen-scoped data loading", () => {
     vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
     vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
     vi.spyOn(api, "threeXUIControllerMigrations").mockResolvedValue({ migrations: [] });
+    vi.spyOn(api, "meridian").mockResolvedValue(emptyAppData(status).meridian);
     vi.spyOn(api, "centerRemoteAccess").mockRejectedValue(new APIError("status unavailable", 503));
 
     const result = await loadScreenData("apps");

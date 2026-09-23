@@ -18,8 +18,9 @@ func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
 			defer store.Close()
 			ctx := context.Background()
 			node := enrollOrchestrationNode(t, store, "update-fence", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
-			heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.134", true)
-			session := "replacement-session"
+			// Keep ordinary work outside the independent older-Agent upgrade gate.
+			heartbeatAgentUpdateVersion(t, store, node, "99.0.0", true)
+			session := "replacement-session-for-update-test"
 			if err := store.RegisterExecutionSession(ctx, node.ID, node.Credential, session, controlplane.ExecutionProtocol); err != nil {
 				t.Fatal(err)
 			}
@@ -27,7 +28,8 @@ func TestInstalledUpdateExecutionDoesNotBlockOrdinaryWork(t *testing.T) {
 			if _, err := store.db.Exec(`INSERT INTO agent_updates(id,agent_id,target_version,state,attempt,last_error,created_at,updated_at) VALUES('installed-update',?,'0.1.0-alpha.134','failed',1,'preserved update evidence',?,?)`, node.ID, now, now); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('installed-update-execution',?,'installed-update','agent.update',1,'old-session','digest',X'00',?,'reported','',?,?)`, node.ID, state, now, now); err != nil {
+			expires := store.now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
+			if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('installed-update-execution',?,'installed-update','agent.update',1,'old-session','digest',X'00',?,'reported',?,?,?)`, node.ID, state, expires, now, now); err != nil {
 				t.Fatal(err)
 			}
 			deployment, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{"debug":false}`)})
