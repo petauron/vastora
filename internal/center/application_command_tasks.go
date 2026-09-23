@@ -476,8 +476,7 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 // An uncertain Agent result still needs a terminal endpoint projection. Keep a
 // previously verified runtime ready during retirement, but never leave an
 // unapplied first revision displaying "applying" after its command failed.
-func markUncertainMeridianRuntimeFailure(ctx context.Context, tx *sql.Tx, endpointID, commandID, message string, now time.Time) error {
-	stamp := now.UTC().Format(time.RFC3339Nano)
+func markUncertainMeridianRuntimeFailure(ctx context.Context, tx *sql.Tx, endpointID, commandID, message, stamp string) error {
 	result, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='failed',last_error=?,updated_at=?
 		WHERE endpoint_id=? AND command_id=? AND status IN ('pending','applying')`, message, stamp, endpointID, commandID)
 	if err != nil {
