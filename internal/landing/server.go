@@ -133,6 +133,9 @@ PrivateTmp=true
 PrivateDevices=true
 BindReadOnlyPaths=/etc/vastora-landing/resolv.conf:/etc/resolv.conf
 BindReadOnlyPaths=/etc/vastora-landing/nsswitch.conf:/etc/nsswitch.conf
+# Tailscale may replace the host resolver mount after this unit starts.
+# Keep its unprivileged DNS resolver pinned for the lifetime of Dante.
+MountFlags=private
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

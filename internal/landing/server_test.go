@@ -60,7 +60,7 @@ func TestNativeDantePrivateMembershipAndUDP(t *testing.T) {
 	if err != nil || strings.Contains(string(raw), "client pass") || strings.Contains(string(raw), "socks pass") {
 		t.Fatal("unselected server must deny all")
 	}
-	for _, token := range []string{"User=vastora-landing", "ExecStart=/etc/vastora-landing/danted", "Requires=vastora-landing-firewall.service", "MemoryMax=128M", "StandardOutput=null", "BindReadOnlyPaths=/etc/vastora-landing/resolv.conf", "BindReadOnlyPaths=/etc/vastora-landing/nsswitch.conf"} {
+	for _, token := range []string{"User=vastora-landing", "ExecStart=/etc/vastora-landing/danted", "Requires=vastora-landing-firewall.service", "MemoryMax=128M", "StandardOutput=null", "BindReadOnlyPaths=/etc/vastora-landing/resolv.conf", "BindReadOnlyPaths=/etc/vastora-landing/nsswitch.conf", "MountFlags=private"} {
 		if !strings.Contains(NativeUnit, token) {
 			t.Fatalf("unit missing %s", token)
 		}
