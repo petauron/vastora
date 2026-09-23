@@ -362,7 +362,7 @@ func TestTaskClaimDecryptsEnvelopeBoundToAgentAndAttempt(t *testing.T) {
 	}
 }
 
-func TestTerminalTaskAuthorityConflictStopsTaskReceiver(t *testing.T) {
+func TestTerminalTaskAuthorityConflictStartsFreshSessionWithoutReplayingTask(t *testing.T) {
 	connection := testConnection(t, "agent-1", "test", "http://127.0.0.1", "credential")
 	publicKey, err := controlplane.PublicKey(connection.PrivateKey)
 	if err != nil {
@@ -380,14 +380,26 @@ func TestTerminalTaskAuthorityConflictStopsTaskReceiver(t *testing.T) {
 		t.Fatal(err)
 	}
 	var claims atomic.Int64
+	var sessions atomic.Int64
+	restarted := make(chan struct{})
+	resumed := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/api/v1/agents/agent-1/execution-session":
+			if sessions.Add(1) == 2 {
+				close(restarted)
+			}
 			_, _ = response.Write([]byte(`{"registered":true}`))
 		case "/api/v1/agents/agent-1/tasks/next":
-			claims.Add(1)
-			_ = json.NewEncoder(response).Encode(map[string]any{"task": map[string]any{"id": task.ID, "attempt": task.Attempt, "envelope": envelope, "authorization": authorization}})
+			if count := claims.Add(1); count == 1 {
+				_ = json.NewEncoder(response).Encode(map[string]any{"task": map[string]any{"id": task.ID, "attempt": task.Attempt, "envelope": envelope, "authorization": authorization}})
+			} else {
+				if count == 2 {
+					close(resumed)
+				}
+				<-request.Context().Done()
+			}
 		case "/api/v1/agents/agent-1/executions/stale-execution":
 			http.Error(response, `{"error":"execution authority expired"}`, http.StatusConflict)
 		default:
@@ -404,18 +416,31 @@ func TestTerminalTaskAuthorityConflictStopsTaskReceiver(t *testing.T) {
 	if err := store.SaveConnection(context.Background(), connection); err != nil {
 		t.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan struct{})
 	go func() {
-		(Client{HTTPClient: server.Client()}).RunTasks(context.Background(), store, func(error) {})
+		(Client{HTTPClient: server.Client()}).RunTasks(ctx, store, func(error) {})
 		close(done)
 	}()
 	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("task receiver retried after terminal authority conflict")
+	case <-restarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("task receiver did not register a new execution session")
 	}
-	if claims.Load() != 1 {
-		t.Fatalf("terminal task was claimed %d times", claims.Load())
+	select {
+	case <-resumed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("task receiver did not resume polling after registration")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("task receiver did not stop after cancellation")
+	}
+	if sessions.Load() != 2 || claims.Load() != 2 {
+		t.Fatalf("sessions=%d claims=%d; stale task may have been replayed", sessions.Load(), claims.Load())
 	}
 }
 
