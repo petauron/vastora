@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.198](https://github.com/petauron/vastora/compare/v0.1.0-alpha.197...v0.1.0-alpha.198) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** verify landing and assistant secrets in backups ([#610](https://github.com/petauron/vastora/issues/610)) ([e2724cd](https://github.com/petauron/vastora/commit/e2724cde0e2a4dfc2c0a94540b9f4d9cc880f942))
+
 ## [0.1.0-alpha.197](https://github.com/petauron/vastora/compare/v0.1.0-alpha.196...v0.1.0-alpha.197) (2026-09-23)
 
 
