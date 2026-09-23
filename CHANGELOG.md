@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.204](https://github.com/petauron/vastora/compare/v0.1.0-alpha.203...v0.1.0-alpha.204) (2026-09-23)
+
+
+### Bug Fixes
+
+* accept verified pinned REALITY targets in Meridian import ([f90cef8](https://github.com/petauron/vastora/commit/f90cef85f3d2e55292244879ec815acb613b82ea))
+
 ## [0.1.0-alpha.203](https://github.com/petauron/vastora/compare/v0.1.0-alpha.202...v0.1.0-alpha.203) (2026-09-23)
 
 
