@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.201](https://github.com/petauron/vastora/compare/v0.1.0-alpha.200...v0.1.0-alpha.201) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** dispatch Meridian command receipts by stored task ([#616](https://github.com/petauron/vastora/issues/616)) ([f5cf472](https://github.com/petauron/vastora/commit/f5cf472f460af0769d4c946e0b638621ba30e8b2))
+* **meridian:** native-only MVP cutover ([#618](https://github.com/petauron/vastora/issues/618)) ([ad1dd99](https://github.com/petauron/vastora/commit/ad1dd998763d6845c0b0b2d73d4c168f39bb098f))
+
 ## [0.1.0-alpha.200](https://github.com/petauron/vastora/compare/v0.1.0-alpha.199...v0.1.0-alpha.200) (2026-09-23)
 
 
