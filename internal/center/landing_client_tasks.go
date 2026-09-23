@@ -364,6 +364,16 @@ func (s *Store) queueClientLandingRoutes(ctx context.Context, tx *sql.Tx, applic
 	if status == "applying" {
 		return errLandingRouteApplying
 	}
+	// A new fixed identity is not present in Xray until the controller has
+	// confirmed prepare. An unrelated route refresh must not promote that
+	// grant to configuring and send an unusable entry plan first.
+	var preparing bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM landing_client_grants WHERE application_id=? AND status='preparing')`, applicationID).Scan(&preparing); err != nil {
+		return err
+	}
+	if preparing {
+		return fmt.Errorf("%w: client preparation pending", errLandingRouteApplying)
+	}
 	state.NodeID, state.Revision = nodeID, state.Revision+1
 	state.Clients = &landing.ClientPlan{ApplicationID: applicationID, AllowSessionReset: true}
 	if err := loadLandingClientBlocks(ctx, tx, applicationID, state.Clients); err != nil {

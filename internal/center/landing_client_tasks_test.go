@@ -90,6 +90,24 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if grant.Status != "preparing" || grant.AppliedRevision != 0 {
 		t.Fatalf("grant queued: %+v %v", grant, err)
 	}
+	// A separate topology refresh can arrive while the controller is still
+	// preparing the child. It must leave the grant queued for prepare rather
+	// than claiming an entry route whose fixed user does not exist yet.
+	preparationTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.queueClientLandingRoutes(ctx, preparationTx, grant.ApplicationID); !errors.Is(err, errLandingRouteApplying) {
+		preparationTx.Rollback()
+		t.Fatalf("unprepared grant was sent to entry: %v", err)
+	}
+	if err := preparationTx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	grants, err = store.LandingClientGrants(ctx, parent)
+	if err != nil || len(grants) != 1 || grants[0].Status != "preparing" {
+		t.Fatalf("topology refresh consumed preparation: %+v %v", grants, err)
+	}
 	completeController := func(phase string, beforeComplete ...func()) landing.ControllerTask {
 		t.Helper()
 		task := claimTask(t, store, entry)
