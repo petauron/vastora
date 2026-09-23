@@ -93,7 +93,7 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 			if grant.Phase == "revoked" {
 				continue
 			}
-			if grant.Phase != "active" || grant.Task.Phase != "activate" {
+			if !legacyRouteGrantConverged(grant) {
 				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared route journal has not converged")
 			}
 			if !managedInboundIDs[grant.Task.InboundID] {
@@ -183,6 +183,12 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 		return meridianruntime.LegacyExportResult{}, errors.New("agent: legacy Meridian export failed validation")
 	}
 	return result, nil
+}
+
+func legacyRouteGrantConverged(grant landingControllerGrant) bool {
+	// A confirmed activation is journaled as ready. Active is the Center-side
+	// grant status, not an Agent journal phase.
+	return grant.Phase == "ready" && grant.Task.Phase == "activate"
 }
 
 func exportLegacyMeridianEndpoint(inbound threeXUIRealityInbound, hy2 *threeXUIRealityInbound) (meridianruntime.LegacyEndpoint, bool, error) {
