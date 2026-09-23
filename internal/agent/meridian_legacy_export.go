@@ -81,6 +81,7 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 		return meridianruntime.LegacyExportResult{}, err
 	}
 	childEmails := map[string]bool{}
+	retiredChildren := map[string]landingControllerGrant{}
 	accountJournals := map[string]landingControllerAccount{}
 	if controller != nil {
 		for id, account := range controller.Accounts {
@@ -91,6 +92,13 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 		}
 		for _, grant := range controller.Grants {
 			if grant.Phase == "revoked" {
+				// 3x-ui retains disabled child records after retirement so their
+				// traffic counters remain available. They are not independent
+				// subscriptions to import into Meridian.
+				if _, duplicate := retiredChildren[grant.Task.Grant.FixedUser]; duplicate {
+					return meridianruntime.LegacyExportResult{}, errors.New("agent: duplicate retired shared child")
+				}
+				retiredChildren[grant.Task.Grant.FixedUser] = grant
 				continue
 			}
 			if !legacyRouteGrantConverged(grant) {
@@ -114,6 +122,11 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 			})
 		}
 	}
+	for email := range retiredChildren {
+		if childEmails[email] {
+			return meridianruntime.LegacyExportResult{}, errors.New("agent: shared child has conflicting ownership")
+		}
+	}
 	slices.SortFunc(export.Routes, func(a, b meridianruntime.LegacyRoute) int { return strings.Compare(a.ID, b.ID) })
 
 	listed, err := listThreeXUIClients(ctx, baseURL, token)
@@ -121,6 +134,13 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 		return meridianruntime.LegacyExportResult{}, err
 	}
 	for _, summary := range listed {
+		if grant, retired := retiredChildren[summary.Email]; retired {
+			detail, detailErr := getThreeXUIClient(ctx, baseURL, token, summary.Email)
+			if detailErr != nil || legacyRetiredChildChanged(summary, detail, grant) {
+				return meridianruntime.LegacyExportResult{}, errors.New("agent: retired shared child changed before export")
+			}
+			continue
+		}
 		if childEmails[summary.Email] {
 			continue
 		}
@@ -183,6 +203,10 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 		return meridianruntime.LegacyExportResult{}, errors.New("agent: legacy Meridian export failed validation")
 	}
 	return result, nil
+}
+
+func legacyRetiredChildChanged(summary ThreeXUIClientView, detail threeXUIClientDetail, grant landingControllerGrant) bool {
+	return grant.Phase != "revoked" || summary.Email != grant.Task.Grant.FixedUser || verifyLandingChild(detail, grant) != nil || summary.Enabled || summary.TrafficObserved && summary.TrafficEnabled
 }
 
 func legacyRouteGrantConverged(grant landingControllerGrant) bool {
