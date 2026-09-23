@@ -175,11 +175,8 @@ func TestExecutionUpdateHandoffIsAtomicAndSingleUse(t *testing.T) {
 				}
 				post("/api/v1/agents/"+node.ID+"/tasks/"+task.ID+"/result", result, http.StatusConflict)
 				if mode == "abandon" {
-					if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.125"); err != nil || len(queued) != 0 {
-						t.Fatalf("automatic rollout replaced abandoned intent: %v %v", queued, err)
-					}
-					if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.125"); err != nil {
-						t.Fatalf("explicit new intent rejected: %v", err)
+					if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.125"); err != nil || len(queued) != 1 {
+						t.Fatalf("verified abandoned intent was not replaced by a fresh rollout: %v %v", queued, err)
 					}
 				}
 				return

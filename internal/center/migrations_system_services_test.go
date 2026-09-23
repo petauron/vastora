@@ -44,6 +44,13 @@ func TestVersion88PreservesSubscriptionGraphAndAddsSystemOwnership(t *testing.T)
 		`ALTER TABLE services_v87_fixture RENAME TO services`, `DROP TABLE goose_db_version`,
 		`ALTER TABLE meridian_route_grants DROP COLUMN health_expires_unix_ms`,
 		`ALTER TABLE meridian_endpoints DROP COLUMN source_peer_json`,
+		`DROP INDEX meridian_endpoints_reset`,
+		`ALTER TABLE meridian_endpoints DROP COLUMN total_bytes`,
+		`ALTER TABLE meridian_endpoints DROP COLUMN used_bytes`,
+		`ALTER TABLE meridian_endpoints DROP COLUMN quota_applied_enabled`,
+		`ALTER TABLE meridian_endpoints DROP COLUMN reset_day`,
+		`ALTER TABLE meridian_endpoints DROP COLUMN next_reset_at`,
+		`ALTER TABLE meridian_endpoints DROP COLUMN last_reset_at`,
 		`ALTER TABLE landing_server_states DROP COLUMN applied_json`,
 		`PRAGMA user_version=87`, `COMMIT`, `PRAGMA legacy_alter_table=OFF`, `PRAGMA foreign_keys=ON`,
 	} {
