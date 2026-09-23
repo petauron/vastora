@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.210](https://github.com/petauron/vastora/compare/v0.1.0-alpha.209...v0.1.0-alpha.210) (2026-09-23)
+
+
+### Bug Fixes
+
+* **meridian:** distinguish heartbeat projection failures from authentication ([#637](https://github.com/petauron/vastora/issues/637)) ([3338890](https://github.com/petauron/vastora/commit/3338890a6788f4ef5bd5d869ecd91300b2009575))
+
 ## [0.1.0-alpha.209](https://github.com/petauron/vastora/compare/v0.1.0-alpha.208...v0.1.0-alpha.209) (2026-09-23)
 
 
