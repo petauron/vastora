@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.200](https://github.com/petauron/vastora/compare/v0.1.0-alpha.199...v0.1.0-alpha.200) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** allow Meridian backup receipt confirmation ([#614](https://github.com/petauron/vastora/issues/614)) ([5c70eda](https://github.com/petauron/vastora/commit/5c70eda5e0beb27243d6b0202c08e27234ebd02c))
+
 ## [0.1.0-alpha.199](https://github.com/petauron/vastora/compare/v0.1.0-alpha.198...v0.1.0-alpha.199) (2026-09-23)
 
 
