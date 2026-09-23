@@ -818,7 +818,7 @@ func (s *Store) queueMeridianCutoverDeployments(ctx context.Context, tx *sql.Tx,
 		if affected, err := updated.RowsAffected(); err != nil || affected != 1 {
 			return errors.New("center: legacy application changed before Meridian deployment was queued")
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,delete_data,state,error,created_at,updated_at,application_id,runtime_generation,pre_dispatch_application_status) VALUES(?,?,?,?,?,'{}',?,'install',0,'pending','',?,?,?,?,'failed')`, deploymentID, target.nodeID, meridianAppKey, manifest.Version, manifestJSON, serviceAddress, stamp, stamp, applicationID, platform.ApplicationRuntimeGeneration); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,delete_data,state,error,created_at,updated_at,application_id,runtime_generation,pre_dispatch_application_status) VALUES(?,?,?,?,?,?,?,'install',0,'pending','',?,?,?,?,'failed')`, deploymentID, target.nodeID, meridianAppKey, manifest.Version, manifestJSON, []byte("{}"), serviceAddress, stamp, stamp, applicationID, platform.ApplicationRuntimeGeneration); err != nil {
 			return fmt.Errorf("center: queue Meridian cutover deployment: %w", err)
 		}
 		if err := s.recordTaskEvent(ctx, tx, deploymentID, target.nodeID, "application.apply", applicationTaskRevision, "queued", "install "+meridianAppKey+" from verified cutover"); err != nil {
@@ -889,7 +889,7 @@ func (s *Store) retryFailedMeridianCutoverDeployments(ctx context.Context, tx *s
 		if affected, err := updated.RowsAffected(); err != nil || affected != 1 {
 			return errors.New("center: failed Meridian application changed before retry")
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,delete_data,state,error,created_at,updated_at,application_id,runtime_generation,pre_dispatch_application_status) VALUES(?,?,?,?,?,'{}',?,'install',0,'pending','',?,?,?,?,'failed')`, deploymentID, value.agentID, meridianAppKey, value.version, value.manifest, value.serviceAddress, stamp, stamp, value.applicationID, platform.ApplicationRuntimeGeneration); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO deployments(id,agent_id,app_key,app_version,manifest_json,config_json,service_address,operation,delete_data,state,error,created_at,updated_at,application_id,runtime_generation,pre_dispatch_application_status) VALUES(?,?,?,?,?,?,?,'install',0,'pending','',?,?,?,?,'failed')`, deploymentID, value.agentID, meridianAppKey, value.version, value.manifest, []byte("{}"), value.serviceAddress, stamp, stamp, value.applicationID, platform.ApplicationRuntimeGeneration); err != nil {
 			return err
 		}
 		if err := s.recordTaskEvent(ctx, tx, deploymentID, value.agentID, "application.apply", applicationTaskRevision, "queued", "retry verified Meridian cutover package"); err != nil {

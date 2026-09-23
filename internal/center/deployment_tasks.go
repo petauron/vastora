@@ -187,6 +187,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	}
 	var task AgentTask
 	var manifest []byte
+	var config []byte
 	var secretID sql.NullString
 	var registryCredentialID sql.NullString
 	var attempt int64
@@ -200,7 +201,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 		queryArgs = append(queryArgs, requiredTaskID)
 	}
 	query += ` ORDER BY d.created_at, d.rowid LIMIT 1`
-	err = tx.QueryRowContext(ctx, query, queryArgs...).Scan(&task.ID, &task.AppKey, &manifest, &task.Config, &secretID, &registryCredentialID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt, &reconciliationRequested, &requiredRuntimeGeneration)
+	err = tx.QueryRowContext(ctx, query, queryArgs...).Scan(&task.ID, &task.AppKey, &manifest, &config, &secretID, &registryCredentialID, &task.Operation, &task.DeleteData, &task.ApplicationID, &task.ApplicationRole, &task.ServiceAddress, &attempt, &reconciliationRequested, &requiredRuntimeGeneration)
 	if errors.Is(err, sql.ErrNoRows) {
 		if requiredTaskID != "" {
 			return nil, nil
@@ -366,6 +367,7 @@ func (s *Store) claimNextTask(ctx context.Context, agentID, credential, required
 	if err != nil {
 		return nil, fmt.Errorf("center: read pending task: %w", err)
 	}
+	task.Config = json.RawMessage(config)
 	if err := json.Unmarshal(manifest, &task.Manifest); err != nil {
 		return nil, fmt.Errorf("center: decode pending task: %w", err)
 	}

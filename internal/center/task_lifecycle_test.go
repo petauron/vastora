@@ -44,6 +44,29 @@ func TestOfficialCatalogExpiryRejectsUnissuedDeployment(t *testing.T) {
 	}
 }
 
+func TestPendingDeploymentClaimsJSONStoredAsText(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "text-json-deployment", NodeCapabilities{Docker: true}, []networking.Candidate{
+		{Address: "10.0.0.14", Interface: "eth0", Kind: networking.KindLAN},
+	}, networking.Profile{ServiceAddress: "10.0.0.14", LANAddress: "10.0.0.14", EnabledKinds: []string{networking.KindLAN}})
+	created, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: node.ID, AppKey: cpaAppKey, Config: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE deployments SET config_json='{}' WHERE id=?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task == nil || string(task.Config) != "{}" {
+		t.Fatal("text JSON deployment was not claimed with its configuration")
+	}
+}
+
 func TestDeploymentCanBeQuarantinedAndRetriedWithItsSecrets(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
