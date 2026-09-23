@@ -162,7 +162,14 @@ func (s *Store) reconcileGlobalLandingPool(ctx context.Context, tx *sql.Tx, refr
 		if err != nil {
 			return err
 		}
-		if desired[landingPoolCombinationKey(grant.ParentID, grant.ApplicationID, grant.LandingNodeID)] || grant.Status == "revoking" || grant.Status == "failed" || grant.Status == "paused" {
+		if desired[landingPoolCombinationKey(grant.ParentID, grant.ApplicationID, grant.LandingNodeID)] || grant.Status == "revoking" {
+			continue
+		}
+		// An explicitly removed server must also retire grants whose previous
+		// application failed. Otherwise they keep the unavailable peer in the
+		// entry's desired routes and prevent the pool retirement from finishing.
+		// Leave unrelated failed/paused grants for their explicit recovery flow.
+		if (grant.Status == "failed" || grant.Status == "paused") && !slices.Contains(selection.RetiringNodeIDs, grant.LandingNodeID) {
 			continue
 		}
 		pairErr := withLandingPoolSavepoint(ctx, tx, func() error {
