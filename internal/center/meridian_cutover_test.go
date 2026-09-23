@@ -557,7 +557,7 @@ func TestUncertainMeridianRuntimeFailureExposesEndpointRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := markUncertainMeridianRuntimeFailure(ctx, tx, sharedSnapshotEndpointID, commandID, "legacy worker drift", store.now()); err != nil {
+	if err := markUncertainMeridianRuntimeFailure(ctx, tx, sharedSnapshotEndpointID, commandID, "legacy worker drift", stamp); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
