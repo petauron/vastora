@@ -277,9 +277,11 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 			t.Fatalf("shared parent status was not reconciled: enabled=%v grants=%+v err=%v", enabled, grants, err)
 		}
 	}
-	// The old landing can be offline: entry deny and controller retirement
-	// must not wait for a successful connection to that landing.
+	// The old landing can be offline, and its last grant can have failed after
+	// previously applying. Explicit pool removal must still retire that grant
+	// without waiting for a successful connection to the landing.
 	exec(`UPDATE landing_server_states SET status='failed' WHERE node_id=?`, owner.ID)
+	exec(`UPDATE landing_client_grants SET status='failed',last_error='previous route apply failed' WHERE parent_id=?`, parent)
 	if err := store.SelectLanding(ctx, LandingSelection{NodeIDs: []string{}, Revision: 1}); err != nil {
 		t.Fatal(err)
 	}
