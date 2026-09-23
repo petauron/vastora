@@ -190,11 +190,15 @@ func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sq
 	reconcilePublications := false
 	for _, value := range observations {
 		var serviceID, previousProtocol, previousEndpoint, previousStatus string
-		if err := tx.QueryRowContext(ctx, `SELECT service.id,service.app_protocol,service.endpoint,service.status
+		err := tx.QueryRowContext(ctx, `SELECT service.id,service.app_protocol,service.endpoint,service.status
 			FROM meridian_endpoints endpoint JOIN services service ON service.id=endpoint.service_id
 			WHERE endpoint.application_id=? AND service.application_id=? AND service.source='observed'
-			AND endpoint.status<>'retired' AND (endpoint.inbound_tag=? OR endpoint.hy2_inbound_tag=?)`, applicationID, applicationID, value.InboundTag, value.InboundTag).Scan(&serviceID, &previousProtocol, &previousEndpoint, &previousStatus); err != nil {
+			AND endpoint.status<>'retired' AND (endpoint.inbound_tag=? OR endpoint.hy2_inbound_tag=?)`, applicationID, applicationID, value.InboundTag, value.InboundTag).Scan(&serviceID, &previousProtocol, &previousEndpoint, &previousStatus)
+		if errors.Is(err, sql.ErrNoRows) {
 			return errors.New("center: observed Meridian endpoint does not match desired state")
+		}
+		if err != nil {
+			return err
 		}
 		if !existing[serviceID] {
 			return errors.New("center: observed Meridian endpoint is duplicated")
