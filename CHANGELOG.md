@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.205](https://github.com/petauron/vastora/compare/v0.1.0-alpha.204...v0.1.0-alpha.205) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** keep Meridian subscription origin stable ([#625](https://github.com/petauron/vastora/issues/625)) ([f29dc3d](https://github.com/petauron/vastora/commit/f29dc3def872f76fe53ba9df0d76cf1e9b2f6e75))
+
 ## [0.1.0-alpha.204](https://github.com/petauron/vastora/compare/v0.1.0-alpha.203...v0.1.0-alpha.204) (2026-09-23)
 
 
