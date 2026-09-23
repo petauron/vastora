@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
+	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/meridianruntime"
 	"github.com/petauron/vastora/internal/nodeprotocol"
 )
@@ -80,8 +82,8 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 	if err != nil {
 		return meridianruntime.LegacyExportResult{}, err
 	}
-	childEmails := map[string]bool{}
-	retiredChildren := map[string]landingControllerGrant{}
+	excludedChildren := map[string]landingControllerGrant{}
+	childOwnerByIdentity := map[string]string{}
 	accountJournals := map[string]landingControllerAccount{}
 	if controller != nil {
 		for id, account := range controller.Accounts {
@@ -91,57 +93,35 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 			accountJournals[id] = account
 		}
 		for _, grant := range controller.Grants {
-			if grant.Phase == "revoked" {
-				// 3x-ui retains disabled child records after retirement so their
-				// traffic counters remain available. They are not independent
-				// subscriptions to import into Meridian.
-				if _, duplicate := retiredChildren[grant.Task.Grant.FixedUser]; duplicate {
-					return meridianruntime.LegacyExportResult{}, errors.New("agent: duplicate retired shared child")
-				}
-				retiredChildren[grant.Task.Grant.FixedUser] = grant
-				continue
+			// The MVP migrates native entry subscriptions only. Shared-route
+			// children are not independent accounts, regardless of their old
+			// controller phase. Keep their ownership inventory so an unknown
+			// child can never be mistaken for a native subscriber.
+			user := grant.Task.Grant.FixedUser
+			if user == "" || grant.ChildSubscription == "" || landing.Identity(grant.Task.FixedUUID) != grant.Task.Grant.FixedIdentity {
+				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared child ownership is incomplete")
 			}
-			if !legacyRouteGrantConverged(grant) {
-				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared route journal has not converged")
+			if _, duplicate := excludedChildren[user]; duplicate {
+				return meridianruntime.LegacyExportResult{}, errors.New("agent: duplicate shared child")
 			}
-			if !managedInboundIDs[grant.Task.InboundID] {
-				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared route references an unmanaged endpoint")
+			if _, duplicate := childOwnerByIdentity[grant.Task.Grant.FixedIdentity]; duplicate {
+				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared child has conflicting account ownership")
 			}
-			childEmails[grant.Task.Grant.FixedUser] = true
-			baseline, observed, found := legacyUsageMember(accountJournals[grant.Task.Grant.ParentID], grant.Task.Grant.FixedIdentity)
-			if !found {
-				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared route usage ledger is incomplete")
-			}
-			export.Routes = append(export.Routes, meridianruntime.LegacyRoute{
-				ID: grant.Task.Grant.ID, ParentIdentityHash: grant.Task.Grant.ParentID,
-				InboundID: grant.Task.InboundID, InboundTag: grant.Task.Grant.InboundTag,
-				BaseUser: grant.Task.Grant.BaseUser, FixedUser: grant.Task.Grant.FixedUser,
-				FixedUUID: grant.Task.FixedUUID, EgressNodeID: grant.Task.Grant.Peer.ID,
-				Enabled: grant.Task.Grant.Enabled, HideNative: grant.Task.Grant.HideBase,
-				Revision: grant.Task.Revision, UsageBaseline: baseline, UsageObserved: observed,
-			})
+			excludedChildren[user] = grant
+			childOwnerByIdentity[grant.Task.Grant.FixedIdentity] = grant.Task.Grant.ParentID
 		}
 	}
-	for email := range retiredChildren {
-		if childEmails[email] {
-			return meridianruntime.LegacyExportResult{}, errors.New("agent: shared child has conflicting ownership")
-		}
-	}
-	slices.SortFunc(export.Routes, func(a, b meridianruntime.LegacyRoute) int { return strings.Compare(a.ID, b.ID) })
 
 	listed, err := listThreeXUIClients(ctx, baseURL, token)
 	if err != nil {
 		return meridianruntime.LegacyExportResult{}, err
 	}
 	for _, summary := range listed {
-		if grant, retired := retiredChildren[summary.Email]; retired {
+		if grant, excluded := excludedChildren[summary.Email]; excluded {
 			detail, detailErr := getThreeXUIClient(ctx, baseURL, token, summary.Email)
-			if detailErr != nil || legacyRetiredChildChanged(summary, detail, grant) {
-				return meridianruntime.LegacyExportResult{}, errors.New("agent: retired shared child changed before export")
+			if detailErr != nil || legacyExcludedChildChanged(summary, detail, grant) {
+				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared child changed before export")
 			}
-			continue
-		}
-		if childEmails[summary.Email] {
 			continue
 		}
 		detail, err := getThreeXUIClient(ctx, baseURL, token, summary.Email)
@@ -174,7 +154,7 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 			}
 			enabled, totalBytes, expiryTime, resetDays = account.Enabled, account.Total, account.Expiry, account.ResetDays
 			var found bool
-			baseline, observed, found = legacyUsageMember(account, identityHash)
+			baseline, observed, found = legacyNativeOnlyUsage(account, identityHash, childOwnerByIdentity)
 			if !found {
 				return meridianruntime.LegacyExportResult{}, errors.New("agent: shared account usage ledger is incomplete")
 			}
@@ -205,14 +185,8 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 	return result, nil
 }
 
-func legacyRetiredChildChanged(summary ThreeXUIClientView, detail threeXUIClientDetail, grant landingControllerGrant) bool {
-	return grant.Phase != "revoked" || summary.Email != grant.Task.Grant.FixedUser || verifyLandingChild(detail, grant) != nil || summary.Enabled || summary.TrafficObserved && summary.TrafficEnabled
-}
-
-func legacyRouteGrantConverged(grant landingControllerGrant) bool {
-	// A confirmed activation is journaled as ready. Active is the Center-side
-	// grant status, not an Agent journal phase.
-	return grant.Phase == "ready" && grant.Task.Phase == "activate"
+func legacyExcludedChildChanged(summary ThreeXUIClientView, detail threeXUIClientDetail, grant landingControllerGrant) bool {
+	return summary.Email != grant.Task.Grant.FixedUser || verifyLandingChild(detail, grant) != nil
 }
 
 func exportLegacyMeridianEndpoint(inbound threeXUIRealityInbound, hy2 *threeXUIRealityInbound) (meridianruntime.LegacyEndpoint, bool, error) {
@@ -320,11 +294,28 @@ func legacyHysteriaAuth(inbound threeXUIRealityInbound, email string) (string, e
 	return "", errors.New("agent: legacy Hysteria credential is unavailable")
 }
 
-func legacyUsageMember(account landingControllerAccount, identity string) (int64, int64, bool) {
+func legacyNativeOnlyUsage(account landingControllerAccount, identity string, childOwnerByIdentity map[string]string) (int64, int64, bool) {
+	if account.ID != identity {
+		return 0, 0, false
+	}
+	var baseline, used int64
+	found := false
+	seen := map[string]bool{}
 	for _, member := range account.Members {
+		if seen[member.ID] || (member.ID != identity && childOwnerByIdentity[member.ID] != identity) || member.Baseline < 0 || member.Observed < member.Baseline || member.Observed-member.Baseline > math.MaxInt64-used {
+			return 0, 0, false
+		}
+		seen[member.ID] = true
+		used += member.Observed - member.Baseline
 		if member.ID == identity {
-			return member.Baseline, member.Observed, true
+			baseline, found = member.Baseline, true
 		}
 	}
-	return 0, 0, false
+	if !found || used > math.MaxInt64-baseline {
+		return 0, 0, false
+	}
+	// Preserve consumption by all retired or omitted child credentials in the
+	// one imported native watermark. New Xray counters start at zero and the
+	// Center watermark adds only their subsequent deltas.
+	return baseline, baseline + used, true
 }
