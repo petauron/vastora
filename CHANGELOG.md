@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0-alpha.190](https://github.com/petauron/vastora/compare/v0.1.0-alpha.189...v0.1.0-alpha.190) (2026-09-23)
+
+
+### Bug Fixes
+
+* **updates:** recover task channel and retire unclaimed stale update targets ([#593](https://github.com/petauron/vastora/issues/593)) ([163a5c8](https://github.com/petauron/vastora/commit/163a5c82d20ea172812ae3b31908debf4487dd9c))
+
+## [0.1.0-alpha.189](https://github.com/petauron/vastora/compare/v0.1.0-alpha.188...v0.1.0-alpha.189) (2026-09-23)
+
+
+### Bug Fixes
+
+* recover landing execution fences and repair Meridian validation ([#591](https://github.com/petauron/vastora/issues/591)) ([45d9bc0](https://github.com/petauron/vastora/commit/45d9bc03c0dbd44a12038b3976acf8242403da18))
+
 ## [0.1.0-alpha.188](https://github.com/petauron/vastora/compare/v0.1.0-alpha.187...v0.1.0-alpha.188) (2026-09-22)
 
 

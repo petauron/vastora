@@ -31,43 +31,50 @@ func (c Client) RunTasks(ctx context.Context, store *Store, report func(error)) 
 			report(err)
 		}
 	}
-	session, err := newExecutionSessionID()
-	if err != nil {
-		reportError(err)
-		return
-	}
-	c.executionSession = session
 	for {
-		if err := c.registerExecutionSession(ctx, store); err == nil {
-			break
-		} else {
-			reportError(err)
-		}
-		if !waitForTaskRetry(ctx) {
-			return
-		}
-	}
-	if !c.transferLegacyReceiptsBeforeTasks(ctx, store, reportError) {
-		return
-	}
-	for {
-		claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
-		task, err := c.claimNextTask(claimContext, store, 10*time.Second)
-		cancel()
+		session, err := newExecutionSessionID()
 		if err != nil {
 			reportError(err)
+			return
+		}
+		c.executionSession = session
+		for {
+			if err := c.registerExecutionSession(ctx, store); err == nil {
+				break
+			} else {
+				reportError(err)
+			}
 			if !waitForTaskRetry(ctx) {
 				return
 			}
-			continue
 		}
-		if task == nil {
-			if ctx.Err() != nil {
-				return
+		if !c.transferLegacyReceiptsBeforeTasks(ctx, store, reportError) {
+			return
+		}
+		for {
+			claimContext, cancel := context.WithTimeout(ctx, 15*time.Second)
+			task, err := c.claimNextTask(claimContext, store, 10*time.Second)
+			cancel()
+			if err != nil {
+				reportError(err)
+				if !waitForTaskRetry(ctx) {
+					return
+				}
+				continue
 			}
-			continue
+			if task == nil {
+				if ctx.Err() != nil {
+					return
+				}
+				continue
+			}
+			if c.processTaskWithLease(ctx, store, *task, report) {
+				// The previous authorization is terminal. A new session fences
+				// that execution at Center before any other task can be claimed.
+				break
+			}
 		}
-		if c.processTaskWithLease(ctx, store, *task, report) {
+		if !waitForTaskRetry(ctx) {
 			return
 		}
 	}

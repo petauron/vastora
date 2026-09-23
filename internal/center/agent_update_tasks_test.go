@@ -184,6 +184,86 @@ func TestAgentUpdateRolloutQueuesOnlineAgentsConcurrently(t *testing.T) {
 	}
 }
 
+func TestAgentUpdateRolloutSupersedesOnlyUnclaimedOlderTarget(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "unclaimed-update", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.98", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.98", LANAddress: "10.0.0.98", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+	old, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90")
+	if err != nil || len(queued) != 1 || queued[0] != node.ID {
+		t.Fatalf("new rollout queue = %v, %v", queued, err)
+	}
+	var state, reason string
+	var attempt, failedEvents int
+	if err := store.db.QueryRowContext(ctx, `SELECT state,attempt,last_error FROM agent_updates WHERE id=?`, old.ID).Scan(&state, &attempt, &reason); err != nil || state != "failed" || attempt != 0 || !strings.Contains(reason, "Superseded before claim") {
+		t.Fatalf("retired update = %q attempt=%d reason=%q err=%v", state, attempt, reason, err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM task_events WHERE task_id=? AND event='failed'`, old.ID).Scan(&failedEvents); err != nil || failedEvents != 1 {
+		t.Fatalf("retired update events = %d, %v", failedEvents, err)
+	}
+	task, err := store.ClaimNextTask(ctx, node.ID, node.Credential)
+	if err != nil || task == nil || task.Kind != "agent.update" || task.ID == old.ID || task.TargetVersion != "0.1.0-alpha.90" {
+		t.Fatalf("claim replacement update = %#v, %v", task, err)
+	}
+}
+
+func TestAgentUpdateRolloutKeepsClaimedOlderTarget(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "claimed-update", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.97", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.97", LANAddress: "10.0.0.97", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+	old, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task, err := store.ClaimNextTask(ctx, node.ID, node.Credential); err != nil || task == nil || task.ID != old.ID {
+		t.Fatalf("claim older update = %#v, %v", task, err)
+	}
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+		t.Fatalf("claimed update was replaced by rollout: %v, %v", queued, err)
+	}
+	if _, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.90"); err == nil {
+		t.Fatal("claimed update was replaced by direct queue")
+	}
+	var state string
+	var attempt int
+	if err := store.db.QueryRowContext(ctx, `SELECT state,attempt FROM agent_updates WHERE id=?`, old.ID).Scan(&state, &attempt); err != nil || state != "running" || attempt != 1 {
+		t.Fatalf("claimed update = %q attempt=%d err=%v", state, attempt, err)
+	}
+}
+
+func TestAgentUpdateRolloutRetriesOnlyExplicitlyAbandonedFailure(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "abandoned-update", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.96", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.96", LANAddress: "10.0.0.96", EnabledKinds: []string{networking.KindLAN}})
+	heartbeatAgentUpdateVersion(t, store, node, "0.1.0-alpha.88", true)
+	old, err := store.QueueAgentUpdate(ctx, node.ID, "0.1.0-alpha.89")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_updates SET state='failed',attempt=1 WHERE id=?`, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 0 {
+		t.Fatalf("unverified failure was retried: %v, %v", queued, err)
+	}
+	now := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at,disposition)
+		VALUES('abandoned-test-execution',?,?,'agent.update',1,'retired-test-session','test-digest',X'00','failed','reported',?,?,?,'abandon')`, node.ID, old.ID, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if queued, err := store.QueueAgentUpdates(ctx, "0.1.0-alpha.90"); err != nil || len(queued) != 1 || queued[0] != node.ID {
+		t.Fatalf("verified failure did not rejoin rollout: %v, %v", queued, err)
+	}
+}
+
 func TestAgentUpdateRolloutEscapesMigrationPause(t *testing.T) {
 	store := openOrchestrationStore(t)
 	defer store.Close()
