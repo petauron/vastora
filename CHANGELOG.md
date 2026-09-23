@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.196](https://github.com/petauron/vastora/compare/v0.1.0-alpha.195...v0.1.0-alpha.196) (2026-09-23)
+
+
+### Bug Fixes
+
+* keep landing grants pending until child preparation ([#606](https://github.com/petauron/vastora/issues/606)) ([64bdf63](https://github.com/petauron/vastora/commit/64bdf634f4fe4c256418e635b19fd5e0648d7411))
+
 ## [0.1.0-alpha.195](https://github.com/petauron/vastora/compare/v0.1.0-alpha.194...v0.1.0-alpha.195) (2026-09-23)
 
 
