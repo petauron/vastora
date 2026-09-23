@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -31,6 +32,40 @@ func TestDecodeJSONRejectsPayloadLargerThanLimit(t *testing.T) {
 	var target map[string]string
 	if err := decodeJSON(request, &target); err == nil || !strings.Contains(err.Error(), "exceeds the allowed size") {
 		t.Fatalf("oversized JSON error = %v", err)
+	}
+}
+
+func TestAgentHeartbeatProjectionFailureIsNotReportedAsAuthenticationFailure(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	enrollment, err := store.CreateAgentEnrollment(ctx, AgentEnrollmentSpec{SiteID: testSiteID(t, store), Name: "heartbeat-node", CenterURL: "https://center.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey := testAgentPublicKey(t)
+	credential, err := store.EnrollAgent(ctx, enrollment.Token, "test", "linux", "amd64", publicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestBody, err := json.Marshal(map[string]any{
+		"publicKey": publicKey, "version": "test", "roles": []string{"worker"},
+		"capabilities": NodeCapabilities{Docker: true}, "applicationEndpointsObserved": true,
+		"applicationEndpoints": []ApplicationEndpointObservation{{AppKey: meridianAppKey, Name: "invalid", Protocol: "tcp", AppProtocol: meridianEntryProtocol, Port: 443, Enabled: true, InboundTag: "test-inbound"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+credential.ID+"/heartbeat", bytes.NewReader(requestBody))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+credential.Credential)
+	response := httptest.NewRecorder()
+	NewServer(store, "", false).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusInternalServerError || !strings.Contains(response.Body.String(), `"code":"internal_error"`) {
+		t.Fatalf("valid Agent projection failure was misreported as authentication: status=%d body=%q", response.Code, response.Body.String())
 	}
 }
 
