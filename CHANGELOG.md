@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.206](https://github.com/petauron/vastora/compare/v0.1.0-alpha.205...v0.1.0-alpha.206) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** distinguish Agent claim failures from authentication ([#627](https://github.com/petauron/vastora/issues/627)) ([09a8152](https://github.com/petauron/vastora/commit/09a8152acb625b86f6efe3364bf44060c4c16a9e))
+
 ## [0.1.0-alpha.205](https://github.com/petauron/vastora/compare/v0.1.0-alpha.204...v0.1.0-alpha.205) (2026-09-23)
 
 
