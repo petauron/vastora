@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.194](https://github.com/petauron/vastora/compare/v0.1.0-alpha.193...v0.1.0-alpha.194) (2026-09-23)
+
+
+### Bug Fixes
+
+* **landing:** commit proxy receipts before pool reconciliation ([#601](https://github.com/petauron/vastora/issues/601)) ([d5e475d](https://github.com/petauron/vastora/commit/d5e475dc6947634d708093452ea20c06077837bf))
+
 ## [0.1.0-alpha.193](https://github.com/petauron/vastora/compare/v0.1.0-alpha.192...v0.1.0-alpha.193) (2026-09-23)
 
 
