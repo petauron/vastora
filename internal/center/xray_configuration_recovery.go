@@ -133,7 +133,14 @@ func (s *Store) StartXrayConfigurationApply(ctx context.Context, agentID, source
 
 func xrayWorkerApplicationID(ctx context.Context, tx *sql.Tx, agentID string) (string, error) {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM applications WHERE node_id=? AND app_key='vastora-official/3x-ui' AND role='worker' AND status IN ('running','failed') ORDER BY created_at DESC LIMIT 1`, agentID).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT application.id FROM applications application WHERE application.node_id=? AND application.status IN ('running','failed') AND (
+		(application.app_key='vastora-official/3x-ui' AND application.role='worker') OR
+		(application.app_key='vastora-official/meridian' AND EXISTS(
+			SELECT 1 FROM meridian_endpoints endpoint JOIN meridian_cutover cutover ON cutover.id=1
+			WHERE endpoint.application_id=application.id AND endpoint.legacy_retired=0
+			AND cutover.subscription_authority='meridian' AND cutover.state IN ('project','verify','retire')
+		))
+	) ORDER BY application.created_at DESC LIMIT 1`, agentID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", errors.New("center: managed Xray worker was not found")
 	}
@@ -226,6 +233,11 @@ func (s *Store) completeXrayConfigurationRecovery(ctx context.Context, commit pr
 		if _, err := tx.ExecContext(ctx, `UPDATE task_executions SET disposition='configuration-recovered',disposition_note='Explicit Xray configuration recovery completed',disposition_actor='system',disposed_at=?,updated_at=?
 		 WHERE agent_id=? AND id<>(SELECT id FROM task_executions WHERE task_id=? AND attempt=? ORDER BY created_at DESC LIMIT 1) AND disposition='' AND state<>'succeeded'
 		 AND ((kind='application.apply' AND task_id IN (SELECT id FROM deployments WHERE application_id=?)) OR (kind='application.command' AND task_id IN (SELECT id FROM application_commands WHERE application_id=?)) OR kind IN ('xray.configuration.inspect','xray.configuration.apply'))`, now, now, agentID, id, attempt, applicationID, applicationID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required=0,reconciliation_requested=0,updated_at=?
+		 WHERE application_id=? AND agent_id=? AND state='failed' AND reconciliation_required=1
+		 AND id IN (SELECT task_id FROM task_executions WHERE agent_id=? AND disposition='configuration-recovered')`, now, applicationID, agentID, agentID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE applications SET status='running',updated_at=? WHERE id=?`, now, applicationID); err != nil {

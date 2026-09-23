@@ -25,6 +25,9 @@ func TestMeridianExportDoesNotBlockPublicationVerification(t *testing.T) {
 	if err := store.ensureServicePublicationVerificationAllowed(ctx, store.db, "verification-service"); err != nil {
 		t.Fatalf("read-only export blocked verification: %v", err)
 	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='succeeded' WHERE id='verification-export'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at)
 		VALUES('verification-mutation','verification-app',?,?,'3xui.subscription.configure','{}','running',1,?,?)`, agent.ID, agent.ID, stamp, stamp); err != nil {
 		t.Fatal(err)

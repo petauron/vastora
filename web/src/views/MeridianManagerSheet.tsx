@@ -65,7 +65,7 @@ export function MeridianManagerSheet({ application, data, language, mutate, onCl
         </TabsList>
         <div className="mt-4 max-h-[calc(100vh-12rem)] overflow-y-auto pb-6">
           {inventory.cutover.lastError ? <Alert className="mb-4" variant="destructive"><ShieldAlertIcon /><AlertTitle>{copy(language, "迁移需要处理", "Migration needs attention")}</AlertTitle><AlertDescription>{inventory.cutover.lastError}</AlertDescription></Alert> : null}
-          <TabsContent value="overview"><div className="flex flex-col gap-4"><CutoverPanel cutover={inventory.cutover} language={language} busy={busy} error={error} onRun={run} />{managementReady ? <EndpointPanel application={application} endpoint={endpoint} publication={endpointPublication} language={language} busy={busy} error={error} onRun={run} /> : null}</div></TabsContent>
+          <TabsContent value="overview"><div className="flex flex-col gap-4"><CutoverPanel cutover={inventory.cutover} language={language} busy={busy} error={error} onRun={run} />{managementReady || endpoint?.status === "failed" ? <EndpointPanel application={application} endpoint={endpoint} publication={endpointPublication} language={language} busy={busy} error={error} onRun={run} /> : null}</div></TabsContent>
           <TabsContent value="accounts"><AccountsPanel created={created} data={data} language={language} busy={busy} error={error} onCreated={setCreated} onRun={run} /></TabsContent>
           <TabsContent value="routes"><RoutesPanel data={data} endpointId={endpoint?.id ?? ""} language={language} busy={busy} error={error} onRun={run} /></TabsContent>
         </div>
