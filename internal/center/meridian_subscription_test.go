@@ -130,6 +130,69 @@ func TestMeridianSubscriptionIsRenderedByCenterAuthority(t *testing.T) {
 	if independent.Code != http.StatusOK {
 		t.Fatalf("native subscription depended on global landing metadata: status=%d body=%s", independent.Code, independent.Body.String())
 	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET total_bytes=120,used_bytes=105 WHERE id=?`, endpointID); err != nil {
+		t.Fatal(err)
+	}
+	usageTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.observeMeridianUsageInTx(ctx, usageTx, endpointID, []meridian.CounterSnapshot{{CredentialID: credentialID, UpBytes: 15}}, now); err != nil {
+		usageTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := usageTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var used int64
+	if err := store.db.QueryRowContext(ctx, `SELECT used_bytes FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used); err != nil || used != 120 {
+		t.Fatalf("shared entry usage=%d err=%v", used, err)
+	}
+	if _, err := store.MeridianSubscription(ctx, token); !errors.Is(err, errMeridianSubscriptionNotFound) {
+		t.Fatalf("exhausted entry served a saved subscription: %v", err)
+	}
+	usageTx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.observeMeridianUsageInTx(ctx, usageTx, endpointID, []meridian.CounterSnapshot{{CredentialID: credentialID, UpBytes: 3}}, now); err != nil {
+		usageTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := usageTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT used_bytes FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used); err != nil || used != 123 {
+		t.Fatalf("entry usage after raw counter reset=%d err=%v", used, err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET reset_day=1,next_reset_at=?,quota_applied_enabled=0 WHERE id=?`, store.now().UTC().Add(-time.Minute).Format(time.RFC3339Nano), endpointID); err != nil {
+		t.Fatal(err)
+	}
+	resetTx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.resetDueMeridianEndpoints(ctx, resetTx); err != nil {
+		resetTx.Rollback()
+		t.Fatal(err)
+	}
+	if err := resetTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var desired, applied int64
+	var appliedEnabled int
+	if err := store.db.QueryRowContext(ctx, `SELECT used_bytes,desired_revision,applied_revision,quota_applied_enabled FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used, &desired, &applied, &appliedEnabled); err != nil || used != 0 || desired != 2 || applied != 1 || appliedEnabled != 0 {
+		t.Fatalf("monthly entry reset used=%d revisions=%d/%d applied gate=%d err=%v", used, desired, applied, appliedEnabled, err)
+	}
+	if _, err := store.MeridianSubscription(ctx, token); !errors.Is(err, errMeridianSubscriptionNotFound) {
+		t.Fatalf("reset entry served subscription before runtime applied: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET total_bytes=0,reset_day=0,next_reset_at='',quota_applied_enabled=1,applied_revision=desired_revision,runtime_healthy=1,status='ready' WHERE id=?`, endpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.MeridianSubscription(ctx, token); err != nil {
+		t.Fatalf("entry did not recover after runtime applied: %v", err)
+	}
 
 	// The authority route is moved to Center before any legacy runtime is
 	// replaced. During that bounded phase the immutable imported identity set

@@ -43,6 +43,12 @@ CREATE TABLE meridian_endpoints (
  hy2_certificate_secret_id TEXT REFERENCES secrets(id) ON DELETE RESTRICT,
  hy2_private_key_secret_id TEXT REFERENCES secrets(id) ON DELETE RESTRICT,
  hy2_certificate_not_after TEXT NOT NULL DEFAULT '',
+ total_bytes INTEGER NOT NULL DEFAULT 0 CHECK(total_bytes>=0),
+ used_bytes INTEGER NOT NULL DEFAULT 0 CHECK(used_bytes>=0),
+ quota_applied_enabled INTEGER NOT NULL DEFAULT 1 CHECK(quota_applied_enabled IN(0,1)),
+ reset_day INTEGER NOT NULL DEFAULT 0 CHECK(reset_day BETWEEN 0 AND 31),
+ next_reset_at TEXT NOT NULL DEFAULT '',
+ last_reset_at TEXT NOT NULL DEFAULT '',
  desired_revision INTEGER NOT NULL DEFAULT 1 CHECK(desired_revision>0),
  applied_revision INTEGER NOT NULL DEFAULT 0 CHECK(applied_revision BETWEEN 0 AND desired_revision),
  runtime_healthy INTEGER NOT NULL DEFAULT 0 CHECK(runtime_healthy IN(0,1)),
@@ -58,6 +64,7 @@ CREATE TABLE meridian_endpoints (
  CHECK(hy2_enabled=0 OR (hy2_inbound_tag<>'' AND hy2_server_name<>'' AND hy2_certificate_secret_id IS NOT NULL AND hy2_private_key_secret_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX meridian_endpoints_hy2_tag ON meridian_endpoints(hy2_inbound_tag) WHERE hy2_inbound_tag<>'';
+CREATE INDEX meridian_endpoints_reset ON meridian_endpoints(next_reset_at) WHERE reset_day>0 AND status<>'retired';
 CREATE TABLE meridian_accounts (
  id TEXT PRIMARY KEY,
  display_name TEXT NOT NULL,

@@ -131,6 +131,7 @@ func (s *Store) filterMeridianSubscriptionSnapshotRoutesInTx(ctx context.Context
 		JOIN meridian_endpoints endpoint ON endpoint.id=credential.endpoint_id
 		JOIN services service ON service.id=endpoint.service_id
 		WHERE credential.account_id=? AND credential.kind='native' AND credential.enabled=1
+		AND endpoint.quota_applied_enabled=1 AND (endpoint.total_bytes=0 OR endpoint.used_bytes<endpoint.total_bytes)
 		AND endpoint.status<>'retired' AND service.status<>'stopped'
 		AND EXISTS (
 			SELECT 1 FROM publications publication WHERE publication.service_id=endpoint.service_id

@@ -160,6 +160,7 @@ func (s *Store) queueDueThreeXUIInboundPlanResets(ctx context.Context) error {
 	now := s.now().UTC()
 	rows, err := s.db.QueryContext(ctx, `SELECT service_id FROM three_x_ui_inbound_plans
 		WHERE reset_day > 0 AND next_reset_at <> '' AND julianday(next_reset_at) <= julianday(?)
+		AND NOT EXISTS (SELECT 1 FROM meridian_endpoints endpoint WHERE endpoint.service_id=three_x_ui_inbound_plans.service_id)
 		AND (status = 'active' OR (status = 'failed' AND retry_at <> '' AND julianday(retry_at) <= julianday(?)))
 		ORDER BY next_reset_at, service_id LIMIT 64`, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
@@ -197,6 +198,13 @@ func (s *Store) queueThreeXUIInboundPlanReset(ctx context.Context, serviceID str
 			return nil
 		}
 		return err
+	}
+	var imported bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM meridian_endpoints WHERE service_id=?)`, serviceID).Scan(&imported); err != nil {
+		return err
+	}
+	if imported {
+		return nil
 	}
 	boundary, boundaryErr := time.Parse(time.RFC3339Nano, plan.NextResetAt)
 	retryAt, retryErr := time.Parse(time.RFC3339Nano, plan.RetryAt)

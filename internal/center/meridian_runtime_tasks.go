@@ -426,6 +426,10 @@ func (s *Store) buildMeridianRuntimeTask(ctx context.Context, tx *sql.Tx, endpoi
 }
 
 func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpointID, entryID string) ([]meridian.CredentialMaterial, map[string]meridian.CredentialMaterial, error) {
+	endpointEnabled, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpointID)
+	if err != nil {
+		return nil, nil, err
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT credential.id,credential.account_id,credential.kind,credential.user_name,credential.identity_sha256,
 		credential.protocol_secret_id,credential.hy2_auth_secret_id,credential.hy2_identity_sha256,credential.egress_node_id,credential.enabled,
 		account.total_bytes,account.expiry_time,account.reset_days,account.enabled,account.status
@@ -502,7 +506,7 @@ func (s *Store) meridianRuntimeMaterials(ctx context.Context, tx *sql.Tx, endpoi
 		if value.material.Validate() != nil {
 			return nil, nil, errors.New("center: stored Meridian credential is invalid")
 		}
-		value.material.Credential.Enabled = value.material.Credential.Enabled && quotaEnabled[value.material.Credential.AccountID]
+		value.material.Credential.Enabled = value.material.Credential.Enabled && quotaEnabled[value.material.Credential.AccountID] && endpointEnabled
 		byID[value.material.Credential.ID] = value.material
 		materials = append(materials, value.material)
 	}
@@ -689,17 +693,27 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 	state, event, message := "succeeded", "succeeded", "Meridian runtime revision applied"
 	resultJSON := []byte(`{}`)
 	changedAccounts := []string{}
+	var endpointQuotaBefore, endpointQuotaChanged bool
 	if succeeded {
 		before, err := s.meridianQuotaStatesInTx(ctx, tx, command.EndpointID)
+		if err != nil {
+			return err
+		}
+		endpointQuotaBefore, err = meridianEndpointQuotaEnabledInTx(ctx, tx, command.EndpointID)
 		if err != nil {
 			return err
 		}
 		snapshots, err := meridian.ParseXrayUserCounters(projection.materials, envelope.MeridianRuntime.Stats)
 		if err != nil {
 			succeeded, taskError = false, "center: Agent returned invalid Meridian usage counters"
-		} else if err := s.observeMeridianUsageInTx(ctx, tx, snapshots, now); err != nil {
+		} else if err := s.observeMeridianUsageInTx(ctx, tx, command.EndpointID, snapshots, now); err != nil {
 			return err
 		} else {
+			endpointQuotaAfter, err := meridianEndpointQuotaEnabledInTx(ctx, tx, command.EndpointID)
+			if err != nil {
+				return err
+			}
+			endpointQuotaChanged = endpointQuotaBefore != endpointQuotaAfter
 			after, err := s.meridianQuotaStatesInTx(ctx, tx, command.EndpointID)
 			if err != nil {
 				return err
@@ -718,7 +732,7 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		if envelope.MeridianRuntime.LegacyRetired {
 			legacyRetired = 1
 		}
-		endpointUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=?,runtime_healthy=1,legacy_retired=?,status='ready',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, revision, legacyRetired, now, command.EndpointID, revision)
+		endpointUpdate, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET applied_revision=?,runtime_healthy=1,legacy_retired=?,quota_applied_enabled=?,status='ready',last_error='',updated_at=? WHERE id=? AND desired_revision=?`, revision, legacyRetired, boolInt(endpointQuotaBefore), now, command.EndpointID, revision)
 		if err != nil {
 			return err
 		}
@@ -821,6 +835,10 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 			if err := s.markMeridianQuotaBoundaryChanged(ctx, tx, changedAccounts, now); err != nil {
 				return err
 			}
+		} else if endpointQuotaChanged {
+			if err := s.markMeridianEndpointQuotaBoundaryChanged(ctx, tx, command.EndpointID, now); err != nil {
+				return err
+			}
 		}
 		if err := s.reconcileMeridianCutoverInTx(ctx, tx, now); err != nil {
 			return err
@@ -897,8 +915,12 @@ func meridianSupersededReceiptMatches(revision int64, expectedSHA string, result
 		len(result.Stats) > 0 && len(result.Stats) <= 4<<20 && json.Valid(result.Stats)
 }
 
-func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, snapshots []meridian.CounterSnapshot, observedAt string) error {
+func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, endpointID string, snapshots []meridian.CounterSnapshot, observedAt string) error {
+	var endpointDelta int64
 	for _, snapshot := range snapshots {
+		if snapshot.UpBytes < 0 || snapshot.DownBytes < 0 {
+			return errors.New("center: Meridian usage counter is negative")
+		}
 		var baseline, observed, rawUp, rawDown int64
 		err := tx.QueryRowContext(ctx, `SELECT baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes FROM meridian_usage_watermarks WHERE credential_id=?`, snapshot.CredentialID).Scan(&baseline, &observed, &rawUp, &rawDown)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -906,6 +928,7 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, snapsh
 			if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_usage_watermarks(credential_id,baseline_bytes,observed_bytes,raw_up_bytes,raw_down_bytes,observed_at) VALUES(?,0,?,?,?,?)`, snapshot.CredentialID, observed, snapshot.UpBytes, snapshot.DownBytes, observedAt); err != nil {
 				return err
 			}
+			endpointDelta = saturatingAdd(endpointDelta, observed)
 			continue
 		}
 		if err != nil {
@@ -923,12 +946,29 @@ func (s *Store) observeMeridianUsageInTx(ctx context.Context, tx *sql.Tx, snapsh
 		if nextObserved < baseline {
 			return errors.New("center: Meridian usage watermark overflowed its baseline")
 		}
+		endpointDelta = saturatingAdd(endpointDelta, nextObserved-observed)
 		updated, err := tx.ExecContext(ctx, `UPDATE meridian_usage_watermarks SET observed_bytes=?,raw_up_bytes=?,raw_down_bytes=?,observed_at=? WHERE credential_id=?`, nextObserved, snapshot.UpBytes, snapshot.DownBytes, observedAt, snapshot.CredentialID)
 		if err != nil {
 			return err
 		}
 		if changed, _ := updated.RowsAffected(); changed != 1 {
 			return errors.New("center: Meridian usage watermark changed during observation")
+		}
+	}
+	if endpointDelta > 0 {
+		var used int64
+		if err := tx.QueryRowContext(ctx, `SELECT used_bytes FROM meridian_endpoints WHERE id=?`, endpointID).Scan(&used); err != nil {
+			return err
+		}
+		if used < 0 {
+			return errors.New("center: stored Meridian entry traffic is invalid")
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET used_bytes=?,updated_at=? WHERE id=?`, saturatingAdd(used, endpointDelta), observedAt, endpointID)
+		if err != nil {
+			return err
+		}
+		if changed, _ := result.RowsAffected(); changed != 1 {
+			return errors.New("center: Meridian entry changed during usage observation")
 		}
 	}
 	return nil
@@ -960,12 +1000,20 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return err
 	}
+	endpointBefore, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpointID)
+	if err != nil {
+		return err
+	}
 	snapshots, err := meridian.ParseXrayUserCounters(projection.materials, result.Stats)
 	if err != nil {
 		return errors.New("center: Agent reported invalid Meridian usage counters")
 	}
 	nowText := now.UTC().Format(time.RFC3339Nano)
-	if err := s.observeMeridianUsageInTx(ctx, tx, snapshots, nowText); err != nil {
+	if err := s.observeMeridianUsageInTx(ctx, tx, endpointID, snapshots, nowText); err != nil {
+		return err
+	}
+	endpointAfter, err := meridianEndpointQuotaEnabledInTx(ctx, tx, endpointID)
+	if err != nil {
 		return err
 	}
 	after, err := s.meridianQuotaStatesInTx(ctx, tx, endpointID)
@@ -978,7 +1026,7 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 			changedAccounts = append(changedAccounts, accountID)
 		}
 	}
-	if len(changedAccounts) == 0 {
+	if len(changedAccounts) == 0 && endpointBefore == endpointAfter {
 		updated, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET runtime_healthy=1,last_error='',updated_at=? WHERE id=? AND status='ready' AND desired_revision=applied_revision`, nowText, endpointID)
 		if err != nil {
 			return err
@@ -991,7 +1039,10 @@ func (s *Store) recordMeridianRuntimeObservation(ctx context.Context, tx *sql.Tx
 		}
 		return s.reconcileMeridianCutoverInTx(ctx, tx, nowText)
 	}
-	return s.markMeridianQuotaBoundaryChanged(ctx, tx, changedAccounts, nowText)
+	if len(changedAccounts) != 0 {
+		return s.markMeridianQuotaBoundaryChanged(ctx, tx, changedAccounts, nowText)
+	}
+	return s.markMeridianEndpointQuotaBoundaryChanged(ctx, tx, endpointID, nowText)
 }
 
 func (s *Store) markMeridianQuotaBoundaryChanged(ctx context.Context, tx *sql.Tx, accountIDs []string, nowText string) error {

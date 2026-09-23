@@ -213,7 +213,8 @@ func (s *Store) meridianSubscriptionCredentials(ctx context.Context, tx *sql.Tx,
 			AND ((?=1 AND publication.status<>'stopped') OR (publication.status='ready' AND publication.desired_revision=publication.applied_revision))
 			AND publication.hostname=endpoint.advertise_host
 			AND EXISTS(SELECT 1 FROM json_each(endpoint.server_names_json) WHERE value=publication.sni_hostname)
-		WHERE credential.account_id=? AND (
+		WHERE credential.account_id=? AND endpoint.quota_applied_enabled=1
+		AND (endpoint.total_bytes=0 OR endpoint.used_bytes<endpoint.total_bytes) AND (
 			(?=1 AND service.status<>'stopped' AND endpoint.status<>'retired')
 			OR (service.status='ready' AND endpoint.status='ready' AND endpoint.runtime_healthy=1 AND endpoint.desired_revision=endpoint.applied_revision)
 		)
@@ -356,7 +357,8 @@ func (s *Store) meridianPublishedRoutes(ctx context.Context, tx *sql.Tx, account
 		JOIN agents egress_agent ON egress_agent.id=grant_row.egress_node_id
 			AND egress_agent.status='active' AND egress_agent.credential_revoked_at=''
 			AND egress_agent.tailscale_ownership='managed' AND egress_agent.last_seen_at>?
-		WHERE grant_row.account_id=? AND grant_row.enabled=1 AND (
+		WHERE grant_row.account_id=? AND grant_row.enabled=1 AND endpoint.quota_applied_enabled=1
+		AND (endpoint.total_bytes=0 OR endpoint.used_bytes<endpoint.total_bytes) AND (
 			(?=1 AND endpoint.applied_revision=0 AND service.status<>'stopped'
 				AND grant_row.status NOT IN ('blocked','revoking','revoked') AND endpoint.status<>'retired')
 			OR (grant_row.status='ready' AND grant_row.runtime_healthy=1 AND grant_row.desired_revision=grant_row.applied_revision
