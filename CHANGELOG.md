@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.193](https://github.com/petauron/vastora/compare/v0.1.0-alpha.192...v0.1.0-alpha.193) (2026-09-23)
+
+
+### Bug Fixes
+
+* **landing:** retire failed grants for removed landing servers ([#599](https://github.com/petauron/vastora/issues/599)) ([59ce932](https://github.com/petauron/vastora/commit/59ce932656459ec3359864fa527fe3347d0b4398))
+
 ## [0.1.0-alpha.192](https://github.com/petauron/vastora/compare/v0.1.0-alpha.191...v0.1.0-alpha.192) (2026-09-23)
 
 
