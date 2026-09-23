@@ -278,7 +278,7 @@ func (s *Store) finalizeLandingPoolRetirements(ctx context.Context, tx *sql.Tx, 
 	for _, nodeID := range selection.RetiringNodeIDs {
 		var references int
 		if err := tx.QueryRowContext(ctx, `SELECT
-			(SELECT COUNT(*) FROM landing_client_grants WHERE landing_node_id=? AND status<>'revoked') +
+			(SELECT COUNT(*) FROM landing_client_grants WHERE landing_node_id=?) +
 			(SELECT COUNT(*) FROM landing_proxy_states WHERE landing_node_id=? AND json_extract(desired_json,'$.proxy') IS NOT NULL) +
 			(SELECT COUNT(*) FROM landing_proxy_retirements WHERE landing_node_id=?)`, nodeID, nodeID, nodeID).Scan(&references); err != nil {
 			return err

@@ -105,7 +105,13 @@ func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sq
 		if _, err := tx.ExecContext(ctx, `SAVEPOINT landing_source_reconciliation`); err != nil {
 			return err
 		}
-		reconcileErr := s.refreshClientLandingSources(ctx, tx, id)
+		// A revoked row cannot be deleted until its entry has a queued plan
+		// without that credential. Both route and source updates are atomic
+		// with removal of the durable cleanup marker.
+		reconcileErr := s.queueRevokedLandingGrantRoutes(ctx, tx, id)
+		if reconcileErr == nil {
+			reconcileErr = s.refreshClientLandingSources(ctx, tx, id)
+		}
 		if reconcileErr == nil {
 			reconcileErr = s.deleteRevokedLandingGrantTombstones(ctx, tx, id)
 		}
@@ -118,7 +124,9 @@ func (s *Store) reconcileClientLandingSourcesForNode(ctx context.Context, tx *sq
 			return err
 		}
 		if reconcileErr != nil {
-			if !errors.Is(reconcileErr, errLandingSourceReconciliation) && !errors.Is(reconcileErr, errExecutionBlocked) {
+			if !errors.Is(reconcileErr, errLandingSourceReconciliation) && !errors.Is(reconcileErr, errExecutionBlocked) &&
+				!errors.Is(reconcileErr, errLandingRouteApplying) && !errors.Is(reconcileErr, errEntryPrivateIdentityChanged) &&
+				!errors.Is(reconcileErr, errLandingPrivateIdentityChanged) {
 				return reconcileErr
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE landing_server_states SET last_error=? WHERE node_id=?`, landingSourceReconciliationMessage, id); err != nil {

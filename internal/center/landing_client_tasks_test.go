@@ -246,11 +246,21 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 			if _, err := store.db.Exec(`INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,expires_at,created_at,updated_at) VALUES('retire-target-fence',?,'retire-target-task','landing.server.apply',1,'retire-target-session','retire-target-digest',X'00','unknown','apply',?,?,?)`, owner.ID, now, now, now); err != nil {
 				t.Fatal(err)
 			}
-			completeController("retire")
+			completeController("retire", func() {
+				// The controller has already disabled the child, but an unrelated
+				// entry route is still applying. Its derived queue error cannot
+				// strand the confirmed result in result_received.
+				exec(`UPDATE landing_proxy_states SET status='applying' WHERE node_id=?`, entry.ID)
+			})
+			var retireCommandState string
+			if err := store.db.QueryRow(`SELECT state FROM application_commands WHERE json_extract(input_json,'$.grantId')=? AND json_extract(input_json,'$.grantPhase')='retire' ORDER BY updated_at DESC LIMIT 1`, grant.ID).Scan(&retireCommandState); err != nil || retireCommandState != "succeeded" {
+				t.Fatalf("confirmed retirement did not settle independently of route cleanup: state=%q err=%v", retireCommandState, err)
+			}
 			var revokedStatus, retainedMaterial string
 			if err := store.db.QueryRow(`SELECT status,COALESCE(material_secret_id,'') FROM landing_client_grants WHERE parent_id=?`, parent).Scan(&revokedStatus, &retainedMaterial); err != nil || revokedStatus != "revoked" || retainedMaterial != materialSecretID {
 				t.Fatalf("retirement did not retain a durable cleanup marker: status=%q material=%q err=%v", revokedStatus, retainedMaterial, err)
 			}
+			exec(`UPDATE landing_proxy_states SET status='ready' WHERE node_id=?`, entry.ID)
 			if _, err := store.db.Exec(`DELETE FROM task_executions WHERE id='retire-target-fence'`); err != nil {
 				t.Fatal(err)
 			}

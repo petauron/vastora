@@ -14,6 +14,8 @@ import (
 )
 
 var errLandingRouteApplying = errors.New("center: landing route operation is still applying")
+var errEntryPrivateIdentityChanged = errors.New("center: entry private identity changed")
+var errLandingPrivateIdentityChanged = errors.New("center: landing private identity changed")
 
 func (s *Store) queueLandingClientCommand(ctx context.Context, tx *sql.Tx, record landingGrantRecord, phase string) error {
 	if owns, err := meridianOwnsLegacyLanding(ctx, tx); err != nil {
@@ -151,10 +153,10 @@ func (s *Store) checkClientLandingIdentity(ctx context.Context, tx *sql.Tx, reco
 	}
 	var source, peer landing.PeerIdentity
 	if json.Unmarshal(sourceJSON, &source) != nil || source != record.Source {
-		return errors.New("center: entry private identity changed")
+		return errEntryPrivateIdentityChanged
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT s.peer_json FROM landing_server_states s JOIN agents a ON a.id=s.node_id WHERE s.node_id=? AND a.status='active' AND a.credential_revoked_at='' AND a.tailscale_ownership='managed'`, record.LandingNodeID).Scan(&peerJSON); err != nil || json.Unmarshal(peerJSON, &peer) != nil || peer != record.Grant.Peer {
-		return errors.New("center: landing private identity changed")
+		return errLandingPrivateIdentityChanged
 	}
 	return nil
 }
@@ -176,7 +178,7 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 		succeeded = false
 	}
 	status, message := "succeeded", ""
-	retirementCleanupPending := false
+	var retirementCleanupErr error
 	if !succeeded {
 		status, message = "failed", "Landing configuration failed; retry the operation."
 		if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='failed',last_error=?,updated_at=? WHERE id=?`, message, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
@@ -223,12 +225,6 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 			if _, err := tx.ExecContext(ctx, `UPDATE landing_client_grants SET status='revoked',applied_revision=desired_revision,last_error='',updated_at=? WHERE id=?`, s.now().UTC().Format(time.RFC3339Nano), record.ID); err != nil {
 				return err
 			}
-			if err := s.refreshClientLandingSources(ctx, tx, record.LandingNodeID); err != nil {
-				if !errors.Is(err, errExecutionBlocked) {
-					return err
-				}
-				retirementCleanupPending = true
-			}
 		default:
 			return errors.New("center: invalid landing completion phase")
 		}
@@ -240,19 +236,29 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 		return err
 	}
 	if succeeded && input.GrantPhase == "retire" {
-		// The native child is confirmed disabled/detached; its accounting
-		// tombstone remains in the Agent journal. Release the Center tombstone
-		// only after the landing authorization refresh is durably queued. A
-		// target execution fence leaves the revoked row as the retry marker.
-		if !retirementCleanupPending {
-			if err := s.deleteRevokedLandingGrantTombstones(ctx, tx, record.LandingNodeID); err != nil {
-				return err
-			}
-		}
 		if err := s.recordTaskEvent(ctx, tx, taskID, nodeID, "application.command", int64(record.Revision), "succeeded", "Grant "+record.ID+" revoked for parent "+record.ParentID+" on entry "+record.ApplicationID+" and landing "+record.LandingNodeID+"."); err != nil {
 			return err
 		}
-		if err := s.queueClientLandingRoutes(ctx, tx, record.ApplicationID); err != nil {
+		// The Agent's confirmed retirement is the scoped result. Route and
+		// landing-source cleanup are derived work: a peer identity conflict or
+		// an applying route must not roll that result back. The revoked grant is
+		// the durable retry marker until both plans have been queued together.
+		if _, err := tx.ExecContext(ctx, `SAVEPOINT landing_retirement_cleanup`); err != nil {
+			return err
+		}
+		retirementCleanupErr = s.queueRevokedLandingGrantRoutes(ctx, tx, record.LandingNodeID)
+		if retirementCleanupErr == nil {
+			retirementCleanupErr = s.refreshClientLandingSources(ctx, tx, record.LandingNodeID)
+		}
+		if retirementCleanupErr == nil {
+			retirementCleanupErr = s.deleteRevokedLandingGrantTombstones(ctx, tx, record.LandingNodeID)
+		}
+		if retirementCleanupErr != nil {
+			if _, err := tx.ExecContext(ctx, `ROLLBACK TO landing_retirement_cleanup`); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `RELEASE landing_retirement_cleanup`); err != nil {
 			return err
 		}
 	}
@@ -262,11 +268,41 @@ func (s *Store) completeLandingClientCommand(ctx context.Context, commit project
 	if err := commit(tx); err != nil {
 		return err
 	}
+	if retirementCleanupErr != nil {
+		slog.ErrorContext(ctx, "Landing retirement cleanup deferred after confirmed Agent result", "grant_id", record.ID, "error", retirementCleanupErr)
+	}
 	// Reconciliation is a separate convergence pass. Its durable grant rows
 	// remain available for the next startup or topology event if it cannot make
 	// progress now.
 	if err := s.resumeGlobalLandingPool(context.WithoutCancel(ctx)); err != nil {
 		slog.ErrorContext(ctx, "Global landing pool reconciliation failed after task commit", "grant_id", record.ID, "error", err)
+	}
+	return nil
+}
+
+func (s *Store) queueRevokedLandingGrantRoutes(ctx context.Context, tx *sql.Tx, landingNodeID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT application_id FROM landing_client_grants WHERE landing_node_id=? AND status='revoked' ORDER BY application_id`, landingNodeID)
+	if err != nil {
+		return err
+	}
+	applications := []string{}
+	for rows.Next() {
+		var applicationID string
+		if err := rows.Scan(&applicationID); err != nil {
+			rows.Close()
+			return err
+		}
+		applications = append(applications, applicationID)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, applicationID := range applications {
+		if err := s.queueClientLandingRoutes(ctx, tx, applicationID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
