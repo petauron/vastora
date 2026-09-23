@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.203](https://github.com/petauron/vastora/compare/v0.1.0-alpha.202...v0.1.0-alpha.203) (2026-09-23)
+
+
+### Bug Fixes
+
+* unblock Meridian export publication verification ([d48edee](https://github.com/petauron/vastora/commit/d48edeea1e6524d91f1ef4f13cfb5c29ecde6150))
+
 ## [0.1.0-alpha.202](https://github.com/petauron/vastora/compare/v0.1.0-alpha.201...v0.1.0-alpha.202) (2026-09-23)
 
 
