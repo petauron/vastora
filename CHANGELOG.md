@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.191](https://github.com/petauron/vastora/compare/v0.1.0-alpha.190...v0.1.0-alpha.191) (2026-09-23)
+
+
+### Features
+
+* **meridian:** preserve entry traffic caps during cutover ([#595](https://github.com/petauron/vastora/issues/595)) ([4f3f29a](https://github.com/petauron/vastora/commit/4f3f29aadacf5b7e63eec9377e04c7dcdcf46414))
+
 ## [0.1.0-alpha.190](https://github.com/petauron/vastora/compare/v0.1.0-alpha.189...v0.1.0-alpha.190) (2026-09-23)
 
 
