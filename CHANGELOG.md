@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.195](https://github.com/petauron/vastora/compare/v0.1.0-alpha.194...v0.1.0-alpha.195) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** retain confirmed landing retirements across cleanup conflicts ([#603](https://github.com/petauron/vastora/issues/603)) ([07e8e9f](https://github.com/petauron/vastora/commit/07e8e9f8c73faa2c84639581d7e988aac17732a5))
+
 ## [0.1.0-alpha.194](https://github.com/petauron/vastora/compare/v0.1.0-alpha.193...v0.1.0-alpha.194) (2026-09-23)
 
 
