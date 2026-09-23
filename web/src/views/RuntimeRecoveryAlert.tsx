@@ -29,7 +29,7 @@ export function RuntimeRecoveryAlert({ agent, language, onApplications }: { agen
   </Alert>;
 }
 
-function XrayConfigurationRecoverySheet({ agent, language, onOpenChange, open }: { agent: AgentView; language: Language; onOpenChange: (open: boolean) => void; open: boolean }) {
+export function XrayConfigurationRecoverySheet({ agent, language, onOpenChange, open }: { agent: AgentView; language: Language; onOpenChange: (open: boolean) => void; open: boolean }) {
   const [recovery, setRecovery] = useState<XrayConfigurationRecovery | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);

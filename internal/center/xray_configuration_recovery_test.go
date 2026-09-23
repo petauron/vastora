@@ -64,6 +64,49 @@ func TestXrayConfigurationRecoveryRequiresInspectionBeforeAuthoritySelection(t *
 	if applyTask.Kind != xrayrecovery.ApplyKind || applyTask.XrayRecovery.ExpectedAgentRevision != 7 || applyTask.XrayRecovery.ExpectedRuntimeSHA256 != result.RuntimeSHA256 {
 		t.Fatalf("apply task=%#v", applyTask)
 	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,reconciliation_required,attempt,error,created_at,updated_at)
+		VALUES('xray-drift-command','xray-app',?,?,'3xui.node.reconcile','{}','failed',1,1,'unknown result',?,?)`, node.ID, node.ID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO task_executions(id,agent_id,task_id,kind,attempt,session_id,digest,sealed_task,state,phase,last_error,expires_at,created_at,updated_at)
+		VALUES('xray-drift-execution',?,'xray-drift-command','application.command',1,'prior-session','digest',X'01','failed','reported','unknown result',?,?,?)`, node.ID, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+	applied := xrayrecovery.Result{Action: xrayrecovery.AgentSource, AppliedSource: xrayrecovery.AgentSource, ApplicationID: "xray-app", RuntimeSHA256: digestFixture('b'), AgentSHA256: digestFixture('b'), AgentRevision: 8, Matches: true}
+	appliedRaw, _ := json.Marshal(map[string]any{"xrayRecovery": applied})
+	if err := store.completeXrayConfigurationRecovery(ctx, commitProjectionOnlyForTest, node.ID, applyTask.ID, applyTask.Attempt, true, "", appliedRaw); err != nil {
+		t.Fatal(err)
+	}
+	var disposition string
+	var reconciliationRequired int
+	if err := store.db.QueryRowContext(ctx, `SELECT disposition FROM task_executions WHERE id='xray-drift-execution'`).Scan(&disposition); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT reconciliation_required FROM application_commands WHERE id='xray-drift-command'`).Scan(&reconciliationRequired); err != nil {
+		t.Fatal(err)
+	}
+	if disposition != "configuration-recovered" || reconciliationRequired != 0 {
+		t.Fatalf("recovery left the old execution fenced: disposition=%q required=%d", disposition, reconciliationRequired)
+	}
+}
+
+func TestXrayConfigurationRecoveryFindsLegacyWorkerDuringMeridianCutover(t *testing.T) {
+	store := openMeridianSharedEndpointSnapshotFixture(t)
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='verify',subscription_authority='meridian' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	var nodeID string
+	if err := store.db.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartXrayConfigurationInspection(ctx, nodeID); err != nil {
+		t.Fatalf("legacy worker inspection was hidden by its Meridian application key: %v", err)
+	}
+	view, err := store.XrayConfigurationRecovery(ctx, nodeID)
+	if err != nil || view.ApplicationID != "snapshot-shared-app" || view.State != "pending" {
+		t.Fatalf("cutover recovery=%#v err=%v", view, err)
+	}
 }
 
 func digestFixture(character byte) string {

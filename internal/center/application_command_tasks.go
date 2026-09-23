@@ -414,6 +414,15 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		if err := s.recordTaskEvent(ctx, tx, taskID, agentID, "application.command", 1, "failed", taskError); err != nil {
 			return err
 		}
+		if kind == meridianruntime.ApplyKind {
+			var command meridianruntime.Command
+			if json.Unmarshal(inputJSON, &command) != nil || command.Validate() != nil {
+				return errors.New("center: stored Meridian runtime command is invalid")
+			}
+			if err := markUncertainMeridianRuntimeFailure(ctx, tx, command.EndpointID, taskID, taskError, now); err != nil {
+				return err
+			}
+		}
 		return commit(tx)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE application_commands SET reconciliation_required = 0, reconciliation_requested = 0 WHERE id = ?`, taskID); err != nil {
@@ -462,6 +471,37 @@ func (s *Store) projectApplicationCommand(ctx context.Context, tx *sql.Tx, commi
 		return errors.New("center: stored application operation kind is invalid")
 	}
 	return s.completeRealityCreateCommand(ctx, commit, tx, taskID, agentID, applicationID, gatewayID, inputJSON, succeeded, taskError, rawResult)
+}
+
+// An uncertain Agent result still needs a terminal endpoint projection. Keep a
+// previously verified runtime ready during retirement, but never leave an
+// unapplied first revision displaying "applying" after its command failed.
+func markUncertainMeridianRuntimeFailure(ctx context.Context, tx *sql.Tx, endpointID, commandID, message string, now time.Time) error {
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	result, err := tx.ExecContext(ctx, `UPDATE meridian_deployments SET status='failed',last_error=?,updated_at=?
+		WHERE endpoint_id=? AND command_id=? AND status IN ('pending','applying')`, message, stamp, endpointID, commandID)
+	if err != nil {
+		return err
+	}
+	if changed, _ := result.RowsAffected(); changed == 0 {
+		// A newer revision replaced this command; it owns the endpoint now.
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_endpoints SET
+		status=CASE WHEN status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision THEN status ELSE 'failed' END,
+		runtime_healthy=CASE WHEN status='ready' AND runtime_healthy=1 AND desired_revision=applied_revision THEN runtime_healthy ELSE 0 END,
+		last_error=?,updated_at=? WHERE id=?`, message, stamp, endpointID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE meridian_route_grants SET runtime_healthy=0,
+		status=CASE WHEN status IN ('revoking','revoked') THEN status ELSE 'failed' END,last_error=?,updated_at=?
+		WHERE endpoint_id=? AND status<>'revoked'
+		AND NOT EXISTS(SELECT 1 FROM meridian_endpoints endpoint WHERE endpoint.id=? AND endpoint.status='ready' AND endpoint.runtime_healthy=1)`, message, stamp, endpointID, endpointID); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE meridian_cutover SET last_error=?,updated_at=?
+		WHERE id=1 AND state IN ('project','verify','retire')`, message, stamp)
+	return err
 }
 
 func (s *Store) completeRealityVerifyCommand(ctx context.Context, commit projectionCommit, tx *sql.Tx, taskID, agentID string, inputJSON []byte, succeeded bool, taskError string, rawResult json.RawMessage) error {

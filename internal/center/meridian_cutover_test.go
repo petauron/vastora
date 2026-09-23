@@ -530,6 +530,48 @@ func TestRecoverMeridianEndpointReleasesOnlyMatchingFenceAndQueuesCenterAuthorit
 	}
 }
 
+func TestUncertainMeridianRuntimeFailureExposesEndpointRecovery(t *testing.T) {
+	store := openMeridianSharedEndpointSnapshotFixture(t)
+	ctx := context.Background()
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	const commandID = "uncertain-meridian-runtime"
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='verify',subscription_authority='meridian' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_endpoints SET desired_revision=2,applied_revision=1,runtime_healthy=0,status='applying' WHERE id=?`, sharedSnapshotEndpointID); err != nil {
+		t.Fatal(err)
+	}
+	var nodeID, siteID string
+	if err := store.db.QueryRowContext(ctx, `SELECT node_id,site_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&nodeID, &siteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,site_id,display_name,agent_id,gateway_node_id,kind,input_json,state,reconciliation_required,attempt,error,created_at,updated_at)
+		VALUES(?,'snapshot-shared-app',?,'Shared entry',?,?,?,?,'failed',1,1,'legacy worker drift',?,?)`, commandID, siteID, nodeID, nodeID, meridianruntime.ApplyKind, []byte(`{"endpointId":"`+sharedSnapshotEndpointID+`"}`), stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO meridian_deployments(endpoint_id,desired_revision,desired_sha256,command_id,status,updated_at)
+		VALUES(?,2,?,?,'applying',?)`, sharedSnapshotEndpointID, strings.Repeat("a", 64), commandID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := markUncertainMeridianRuntimeFailure(ctx, tx, sharedSnapshotEndpointID, commandID, "legacy worker drift", store.now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var endpointStatus, deploymentStatus, lastError string
+	if err := store.db.QueryRowContext(ctx, `SELECT endpoint.status,deployment.status,endpoint.last_error FROM meridian_endpoints endpoint JOIN meridian_deployments deployment ON deployment.endpoint_id=endpoint.id WHERE endpoint.id=?`, sharedSnapshotEndpointID).Scan(&endpointStatus, &deploymentStatus, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if endpointStatus != "failed" || deploymentStatus != "failed" || lastError != "legacy worker drift" {
+		t.Fatalf("endpoint=%q deployment=%q error=%q", endpointStatus, deploymentStatus, lastError)
+	}
+}
+
 func TestExpiredMeridianRuntimeLeaseProjectsFailedEndpointForRecovery(t *testing.T) {
 	store := openOrchestrationStore(t)
 	t.Cleanup(func() { _ = store.Close() })

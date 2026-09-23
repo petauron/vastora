@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { CheckCircle2Icon, CircleArrowUpIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
+import { CheckCircle2Icon, CircleArrowUpIcon, GitCompareArrowsIcon, MapPinIcon, NetworkIcon, PlusIcon, RotateCcwIcon, SearchIcon, ServerIcon, Settings2Icon, ShieldCheckIcon, TerminalIcon, Trash2Icon, UnplugIcon } from "lucide-react";
 import { api } from "../api";
 import { validCenterURL } from "../lib/network";
 import type { AppData, Mutate, Screen } from "../App";
@@ -20,7 +20,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { RuntimeRecoveryAlert } from "./RuntimeRecoveryAlert";
+import { RuntimeRecoveryAlert, XrayConfigurationRecoverySheet } from "./RuntimeRecoveryAlert";
 import { StopNodeAccessSheet } from "./StopNodeAccessSheet";
 import { RemoveNodeDialog } from "./RemoveNodeDialog";
 import { NodeDiagnosticsButton, NodeDiagnosticsProvider, NodeHealthCells, NodeHealthInline } from "./IPQuality";
@@ -182,16 +182,19 @@ function NodeSiteRows({ agents, data, language, onApplications, onConfigure, onN
 }
 
 function NodeTableRow({ agent, data, language, onApplications, onConfigure, onNetwork, onReconnect, onRemove }: { agent: AgentView; data: AppData; language: Language; onApplications: () => void; onConfigure: () => void; onNetwork: () => void; onReconnect: () => void; onRemove: () => void }) {
+  const [configurationRecoveryOpen, setConfigurationRecoveryOpen] = useState(false);
   const site = data.sites.find((value) => value.id === agent.siteId);
   const selectedGateway = Boolean(site?.gatewayNodes.includes(agent.id));
   const architecture = agent.architecture === "arm64" ? "ARM64" : "x64";
   const state = nodeState(agent);
+  const cutoverActive = ["project", "verify", "retire"].includes(data.meridian.cutover.state);
+  const needsLegacyConfigurationInspection = cutoverActive && agent.connected && !agent.runtimeRecovery && data.meridian.endpoints.some((endpoint) => endpoint.nodeId === agent.id && !endpoint.legacyRetired && (endpoint.status === "applying" || endpoint.status === "failed"));
   return <>
     <TableRow className="h-16">
       <TableCell><div className="flex min-w-0 items-start gap-2"><ServerIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><p className="truncate font-medium" title={agent.name}>{agent.name}</p><span className="shrink-0 md:hidden"><StateBadge language={language} value={state} /></span></div><p className="truncate text-xs text-muted-foreground" title={agent.version}>{architecture} · {agent.version || "—"}{selectedGateway ? ` · ${copy(language, "网关", "Gateway")}` : ""}</p><NodeHealthInline agent={agent} /></div></div></TableCell>
       <TableCell className="max-md:hidden"><StateBadge language={language} value={state} />{!agent.networkProfile ? <span className="mt-1 block text-xs text-destructive">{copy(language, "网络未确认", "Network unconfirmed")}</span> : null}</TableCell>
       <NodeHealthCells agent={agent} language={language} />
-      <TableCell><div className="flex items-center justify-end gap-1 max-md:flex-wrap"><NodeDiagnosticsButton nodeId={agent.id} name={agent.name} language={language} compact />{agent.status === "active" && !agent.networkProfile ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm"><NetworkIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "active" && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" variant="outline"><RotateCcwIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}{!agent.removal && agent.status === "active" ? <Button onClick={onConfigure} size="icon-sm" variant="ghost" aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)}><Settings2Icon aria-hidden="true" /></Button> : null}{!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}</div></TableCell>
+      <TableCell><div className="flex items-center justify-end gap-1 max-md:flex-wrap"><NodeDiagnosticsButton nodeId={agent.id} name={agent.name} language={language} compact />{needsLegacyConfigurationInspection ? <Button aria-label={copy(language, `检查 ${agent.name} 的旧 Xray 配置差异`, `Inspect ${agent.name} legacy Xray configuration`)} onClick={() => setConfigurationRecoveryOpen(true)} size="icon-sm" title={copy(language, "检查旧 Xray 配置差异", "Inspect legacy Xray configuration")} variant="outline"><GitCompareArrowsIcon aria-hidden="true" /></Button> : null}{agent.status === "active" && !agent.networkProfile ? <Button aria-label={copy(language, `确认 ${agent.name} 的网络`, `Confirm network for ${agent.name}`)} onClick={onNetwork} size="icon-sm"><NetworkIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "active" && !agent.connected ? <Button aria-label={copy(language, `重新接入 ${agent.name}`, `Reconnect ${agent.name}`)} onClick={onReconnect} size="icon-sm" variant="outline"><RotateCcwIcon aria-hidden="true" /></Button> : null}{!agent.removal && agent.status === "disabled" ? <Button onClick={onConfigure} size="sm" variant="outline"><Trash2Icon data-icon="inline-start" />{copy(language, "删除", "Delete")}</Button> : null}{!agent.removal && agent.status === "active" ? <Button onClick={onConfigure} size="icon-sm" variant="ghost" aria-label={copy(language, `管理 ${agent.name}`, `Manage ${agent.name}`)}><Settings2Icon aria-hidden="true" /></Button> : null}{!agent.connected ? <Button aria-label={agent.removal ? copy(language, `查看 ${agent.name} 的移除进度`, `View removal progress for ${agent.name}`) : copy(language, `永久移除 ${agent.name}`, `Permanently remove ${agent.name}`)} onClick={onRemove} size="icon-sm" variant="ghost"><Trash2Icon aria-hidden="true" /></Button> : null}</div>{needsLegacyConfigurationInspection ? <XrayConfigurationRecoverySheet agent={agent} language={language} onOpenChange={setConfigurationRecoveryOpen} open={configurationRecoveryOpen} /> : null}</TableCell>
     </TableRow>
     {agent.connected && agent.runtimeRecovery ? <TableRow><TableCell className="py-2" colSpan={7}><RuntimeRecoveryAlert agent={agent} language={language} onApplications={onApplications} /></TableCell></TableRow> : null}
   </>;
