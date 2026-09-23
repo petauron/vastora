@@ -260,10 +260,13 @@ func (c Client) processTask(ctx context.Context, store *Store, task DeploymentTa
 			}
 		}
 	case "application.command":
-		// Commands may restart the panel or replace its database. Do not let
-		// them race a landing checkpoint, route write, or container restart.
-		store.landingMutationMu.Lock()
-		defer store.landingMutationMu.Unlock()
+		// Mutating commands may restart the panel or replace its database.
+		// The legacy export only reads and validates identities; keeping it
+		// behind a stalled landing write would also stall the migration.
+		if task.MeridianLegacyExport == nil {
+			store.landingMutationMu.Lock()
+			defer store.landingMutationMu.Unlock()
+		}
 		commands := 0
 		if task.PulseEnrollment != nil {
 			commands++
