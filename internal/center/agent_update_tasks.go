@@ -161,14 +161,56 @@ func (s *Store) queueAgentUpdate(ctx context.Context, agentID, targetVersion str
 	}
 	var existing AgentUpdateView
 	var existingUpdatedAt string
-	err = tx.QueryRowContext(ctx, `SELECT id, target_version, state, last_error, updated_at FROM agent_updates WHERE agent_id = ? AND state IN ('pending', 'running', 'installing')`, agentID).Scan(&existing.ID, &existing.TargetVersion, &existing.State, &existing.LastError, &existingUpdatedAt)
+	var existingAttempt int64
+	err = tx.QueryRowContext(ctx, `SELECT id, target_version, state, last_error, updated_at, attempt FROM agent_updates WHERE agent_id = ? AND state IN ('pending', 'running', 'installing')`, agentID).Scan(&existing.ID, &existing.TargetVersion, &existing.State, &existing.LastError, &existingUpdatedAt, &existingAttempt)
 	if err == nil {
 		existing.UpdatedAt, err = time.Parse(time.RFC3339Nano, existingUpdatedAt)
 		if err != nil {
 			return AgentUpdateView{}, errors.New("center: stored Agent update timestamp is invalid")
 		}
 		if existing.TargetVersion != targetVersion {
-			return AgentUpdateView{}, errors.New("center: another Agent update is already active")
+			// A queued task that has never been offered has no host effect or
+			// execution authority. Retire it atomically before queuing the newer
+			// Center binary; an already claimed task must keep its own recovery.
+			if recovery != nil || existing.State != "pending" || existingAttempt != 0 || !agentVersionBehindTarget(existing.TargetVersion, targetVersion) {
+				return AgentUpdateView{}, errors.New("center: another Agent update is already active")
+			}
+			var executed, runtimeRecovery bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE task_id=?), (SELECT runtime_recovery<>'' FROM agents WHERE id=?)`, existing.ID, agentID).Scan(&executed, &runtimeRecovery); err != nil {
+				return AgentUpdateView{}, err
+			}
+			blocked, err := unresolvedExecutionBlocksAgentUpdate(ctx, tx, agentID, currentVersion)
+			if err != nil {
+				return AgentUpdateView{}, err
+			}
+			if executed || runtimeRecovery || blocked {
+				return AgentUpdateView{}, errors.New("center: resolve outstanding execution and runtime recovery before updating")
+			}
+			if paused, err := agentUpdateRolloutPaused(ctx, tx); err != nil {
+				return AgentUpdateView{}, err
+			} else if paused {
+				return AgentUpdateView{}, errExecutionBlocked
+			}
+			now := s.now().UTC().Format(time.RFC3339Nano)
+			message := "Superseded before claim by Agent update to " + targetVersion
+			result, err := tx.ExecContext(ctx, `UPDATE agent_updates SET state='failed', last_error=?, updated_at=? WHERE id=? AND agent_id=? AND state='pending' AND attempt=0`, message, now, existing.ID, agentID)
+			if err != nil {
+				return AgentUpdateView{}, err
+			}
+			if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+				return AgentUpdateView{}, errors.New("center: queued Agent update changed before supersession")
+			}
+			if err := s.recordTaskEvent(ctx, tx, existing.ID, agentID, "agent.update", 1, "failed", message); err != nil {
+				return AgentUpdateView{}, err
+			}
+			update, err := s.queueAgentUpdateTx(ctx, tx, agentID, targetVersion, "Agent update to "+targetVersion+" queued")
+			if err != nil {
+				return AgentUpdateView{}, err
+			}
+			if err := tx.Commit(); err != nil {
+				return AgentUpdateView{}, err
+			}
+			return update, nil
 		}
 		return existing, tx.Commit()
 	}
@@ -241,7 +283,8 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	} else if paused {
 		return []string{}, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT agent.id, agent.version, COALESCE(previous.state,''), COALESCE(previous.target_version,'')
+	rows, err := s.db.QueryContext(ctx, `SELECT agent.id, agent.version, COALESCE(previous.state,''), COALESCE(previous.target_version,''),
+		EXISTS(SELECT 1 FROM task_executions execution WHERE execution.task_id=previous.id AND execution.attempt=previous.attempt AND execution.disposition='abandon')
 		FROM agents agent
 		LEFT JOIN agent_updates previous ON previous.id=(SELECT id FROM agent_updates WHERE agent_id=agent.id ORDER BY created_at DESC,rowid DESC LIMIT 1)
 		WHERE agent.status = 'active'
@@ -252,7 +295,9 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 		  AND agent.runtime_recovery = ''
 		  AND NOT EXISTS (
 			SELECT 1 FROM agent_updates active_task
-			WHERE active_task.agent_id = agent.id AND active_task.state IN ('pending', 'running', 'installing')
+			WHERE active_task.agent_id = agent.id AND
+				(active_task.state IN ('running', 'installing') OR
+				 (active_task.state = 'pending' AND (active_task.attempt > 0 OR EXISTS(SELECT 1 FROM task_executions WHERE task_id=active_task.id))))
 		  )
 		  AND NOT EXISTS (
 			SELECT 1 FROM agent_updates update_task
@@ -268,11 +313,15 @@ func (s *Store) QueueAgentUpdates(ctx context.Context, targetVersion string) ([]
 	candidates := []rolloutCandidate{}
 	for rows.Next() {
 		var agentID, currentVersion, previousState, previousTarget string
-		if err := rows.Scan(&agentID, &currentVersion, &previousState, &previousTarget); err != nil {
+		var previousAbandoned bool
+		if err := rows.Scan(&agentID, &currentVersion, &previousState, &previousTarget, &previousAbandoned); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if previousState == "failed" && !agentUpdateFailureSuperseded(currentVersion, previousTarget) {
+		if previousState == "failed" && !agentUpdateFailureSuperseded(currentVersion, previousTarget) && !previousAbandoned {
+			continue
+		}
+		if previousState == "pending" && !agentVersionBehindTarget(previousTarget, targetVersion) {
 			continue
 		}
 		currentSemver := "v" + strings.TrimPrefix(strings.TrimSpace(currentVersion), "v")
