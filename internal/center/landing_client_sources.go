@@ -38,8 +38,18 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 	} else if err != nil {
 		return err
 	}
+	// An unresolved execution on the landing node fences any mutation. Keep
+	// that error authoritative even if a stored plan is malformed, while a
+	// removed service can still return above without touching the fence.
+	var blocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, landingID).Scan(&blocked); err != nil {
+		return err
+	}
 	var state landing.ServerState
 	if json.Unmarshal(data, &state) != nil || state.Validate() != nil || state.NodeID != landingID {
+		if blocked {
+			return errExecutionBlocked
+		}
 		return errors.Join(errLandingSourceReconciliation, errors.New("center: invalid landing service state"))
 	}
 	if state.Plan == nil {
@@ -149,13 +159,7 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 	if slices.Equal(merged, state.Plan.Sources) {
 		return nil
 	}
-	// The caller can be another node's heartbeat or task result. An
-	// interrupted execution on this landing node only fences a real write;
-	// a no-op refresh must not roll back an unrelated successful receipt.
-	var blocked bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, landingID).Scan(&blocked); err != nil {
-		return err
-	}
+	// A valid no-op refresh must not roll back an unrelated successful receipt.
 	if blocked {
 		return errExecutionBlocked
 	}
