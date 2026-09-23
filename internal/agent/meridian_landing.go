@@ -204,6 +204,28 @@ func (s *Store) captureMeridianLegacyLanding(ctx context.Context, applicationID 
 	return sealed, gates, nil
 }
 
+// The first Meridian import has no landing peers or migrated child credentials.
+// Its complete native-only artifact intentionally replaces the legacy route,
+// so route parity is not a prerequisite for that one-way handover. Peer-bearing
+// revisions still require the exact applied route and landing plan.
+func (s *Store) verifyMeridianLegacyRouteHandover(ctx context.Context, task meridianruntime.Task, legacy *landingRuntimeState) error {
+	if len(task.Peers) == 0 {
+		return nil
+	}
+	routes, err := s.localThreeXUILandingRoutes(ctx, task.ApplicationID)
+	if err != nil {
+		return err
+	}
+	raw, _, err := routes.Read(ctx)
+	if err != nil {
+		return err
+	}
+	if _, write, err := legacy.Route.NextWrite(raw, true); err != nil || write {
+		return errors.New("agent: legacy landing route changed before Meridian handover")
+	}
+	return s.verifyLocalLandingPlan(ctx, routes, legacy.Desired)
+}
+
 func (s *Store) verifyMeridianLegacyLanding(ctx context.Context, expected []byte) error {
 	var actual []byte
 	err := s.db.QueryRowContext(ctx, `SELECT sealed_state FROM landing_runtime_state WHERE id=1`).Scan(&actual)
@@ -277,18 +299,7 @@ func (e ApplicationExecutor) beginMeridianLandingHandover(ctx context.Context, d
 			if legacy.Desired.Clients != nil && len(task.Peers) != 0 && (task.Source == nil || legacy.Desired.Clients.Source != *task.Source) {
 				return errors.New("agent: Meridian source identity differs from the authorized legacy entry")
 			}
-			routes, err := e.Store.localThreeXUILandingRoutes(ctx, task.ApplicationID)
-			if err != nil {
-				return err
-			}
-			raw, _, err := routes.Read(ctx)
-			if err != nil {
-				return err
-			}
-			if _, write, err := legacy.Route.NextWrite(raw, true); err != nil || write {
-				return errors.New("agent: legacy landing route changed before Meridian handover")
-			}
-			if err := e.Store.verifyLocalLandingPlan(ctx, routes, legacy.Desired); err != nil {
+			if err := e.Store.verifyMeridianLegacyRouteHandover(ctx, task, legacy); err != nil {
 				return err
 			}
 			current, _, exists, err := inspectCurrentMeridianRuntime(ctx, docker)

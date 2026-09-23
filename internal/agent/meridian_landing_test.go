@@ -246,6 +246,19 @@ func TestMeridianLegacyCaptureRejectsIncompleteAndForeignJournal(t *testing.T) {
 	}
 }
 
+func TestMeridianNativeHandoverDoesNotDependOnLegacyRouteParity(t *testing.T) {
+	store := openMeridianLandingTestStore(t)
+	legacy := seedMeridianLegacyLanding(t, store, "applied")
+	task := meridianruntime.Task{ApplicationID: legacy.ApplicationID}
+	if err := store.verifyMeridianLegacyRouteHandover(context.Background(), task, &legacy); err != nil {
+		t.Fatalf("native-only import was blocked by an excluded legacy route: %v", err)
+	}
+	task.Peers = meridianLandingFixture().AppliedPeers
+	if err := store.verifyMeridianLegacyRouteHandover(context.Background(), task, &legacy); err == nil {
+		t.Fatal("peer-bearing handover skipped legacy route verification")
+	}
+}
+
 func TestMeridianPendingAuthorityNeverResumesLegacyWriterOrMonitor(t *testing.T) {
 	store := openMeridianLandingTestStore(t)
 	legacy := seedMeridianLegacyLanding(t, store, "applied")
