@@ -20,6 +20,7 @@ func removePostVersion85TablesForFixture(t *testing.T, store *Store) {
 		`DROP TABLE meridian_endpoints`,
 		`DROP TABLE meridian_cutover`,
 		`DROP TABLE xray_configuration_recoveries`,
+		`ALTER TABLE landing_server_states DROP COLUMN applied_json`,
 	} {
 		if _, err := store.db.Exec(statement); err != nil {
 			t.Fatal(err)

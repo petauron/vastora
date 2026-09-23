@@ -228,11 +228,16 @@ func TestMeridianPreparationIsScopedAndDoesNotStopLegacyMonitor(t *testing.T) {
 
 func TestMeridianLegacyCaptureRejectsIncompleteAndForeignJournal(t *testing.T) {
 	store := openMeridianLandingTestStore(t)
-	seedMeridianLegacyLanding(t, store, "prepared")
+	legacy := seedMeridianLegacyLanding(t, store, "prepared")
 	if _, _, err := store.captureMeridianLegacyLanding(context.Background(), "meridian-application"); err == nil {
 		t.Fatal("unapplied legacy route accepted")
 	}
-	seedMeridianLegacyLanding(t, store, "applied")
+	legacy.Phase = "applied"
+	applied := legacy.Desired
+	legacy.Applied = &applied
+	if err := store.saveLandingRuntime(context.Background(), legacy); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := store.captureMeridianLegacyLanding(context.Background(), "different-application"); err == nil {
 		t.Fatal("foreign legacy route accepted")
 	}
@@ -330,7 +335,7 @@ func TestMeridianDrainedLegacyDigestIgnoresCountersButRejectsConfigurationDrift(
 	if actual, err := store.meridianLegacyWorkerDigest(context.Background(), state.ApplicationID); err != nil || actual != expected {
 		t.Fatalf("traffic counters changed authority: %v", err)
 	}
-	inbound["port"] = 8443
+	inbound["tag"] = "changed-managed"
 	state.Inbounds[0], _ = json.Marshal(inbound)
 	if err := store.saveXrayWorkerState(context.Background(), state); err != nil {
 		t.Fatal(err)

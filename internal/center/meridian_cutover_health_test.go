@@ -187,9 +187,11 @@ func openMeridianCutoverHealthFixture(t *testing.T, phase string) (*Store, strin
 	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_route_grants SET applied_revision=desired_revision,runtime_healthy=1,status='ready',health_expires_unix_ms=? WHERE id=?`, clock.Add(landing.AllowLifetime).UnixMilli(), grantID); err != nil {
 		t.Fatal(err)
 	}
+	controller := enrollOrchestrationNode(t, store, "cutover-health-controller", NodeCapabilities{Docker: true},
+		[]networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}},
+		networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
-		SELECT 'cutover-health-controller','Subscription host',node_id,site_id,?,'','running','docker','',?,?
-		FROM applications WHERE id='snapshot-shared-app'`, meridianAppKey, stamp, stamp); err != nil {
+		VALUES('cutover-health-controller','Subscription host',?,?,?,'','running','docker','',?,?)`, controller.ID, testSiteID(t, store), meridianAppKey, stamp, stamp); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,management,status,created_at,updated_at)

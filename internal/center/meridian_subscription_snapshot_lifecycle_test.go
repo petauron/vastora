@@ -156,8 +156,11 @@ func TestMeridianAppliedSnapshotRemovesRouteWhenNativeAuthorityIsRevoked(t *test
 func addMeridianSnapshotSecondEndpoint(t *testing.T, store *Store) {
 	t.Helper()
 	node := enrollOrchestrationNode(t, store, "snapshot-second-entry", NodeCapabilities{Docker: true},
-		[]networking.Candidate{{Address: "100.64.0.62", Interface: "tailscale0", Kind: networking.KindHeadscale}},
-		networking.Profile{ServiceAddress: "100.64.0.62", HeadscaleAddress: "100.64.0.62", EnabledKinds: []string{networking.KindHeadscale}})
+		[]networking.Candidate{
+			{Address: "100.64.0.62", Interface: "tailscale0", Kind: networking.KindHeadscale},
+			{Address: "203.0.113.62", Interface: "eth0", Kind: networking.KindPublic},
+		},
+		networking.Profile{ServiceAddress: "100.64.0.62", HeadscaleAddress: "100.64.0.62", PublicAddress: "203.0.113.62", EnabledKinds: []string{networking.KindHeadscale, networking.KindPublic}, DirectPublic: true})
 	ctx := context.Background()
 	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)

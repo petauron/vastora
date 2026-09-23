@@ -112,8 +112,11 @@ func openMeridianSharedEndpointSnapshotFixture(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	node := enrollOrchestrationNode(t, store, "shared-subscription-entry", NodeCapabilities{Docker: true},
-		[]networking.Candidate{{Address: "100.64.0.61", Interface: "tailscale0", Kind: networking.KindHeadscale}},
-		networking.Profile{ServiceAddress: "100.64.0.61", HeadscaleAddress: "100.64.0.61", EnabledKinds: []string{networking.KindHeadscale}})
+		[]networking.Candidate{
+			{Address: "100.64.0.61", Interface: "tailscale0", Kind: networking.KindHeadscale},
+			{Address: "203.0.113.61", Interface: "eth0", Kind: networking.KindPublic},
+		},
+		networking.Profile{ServiceAddress: "100.64.0.61", HeadscaleAddress: "100.64.0.61", PublicAddress: "203.0.113.61", EnabledKinds: []string{networking.KindHeadscale, networking.KindPublic}, DirectPublic: true})
 	ctx := context.Background()
 	siteID := testSiteID(t, store)
 	tx, err := store.db.BeginTx(ctx, nil)

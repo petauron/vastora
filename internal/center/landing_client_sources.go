@@ -32,15 +32,6 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 	} else if blocked {
 		return nil
 	}
-	// The caller can be another node's heartbeat or task result. Its own
-	// permission does not resolve an interrupted execution on the landing node.
-	var blocked bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, landingID).Scan(&blocked); err != nil {
-		return err
-	}
-	if blocked {
-		return errExecutionBlocked
-	}
 	var data []byte
 	if err := tx.QueryRowContext(ctx, `SELECT desired_json FROM landing_server_states WHERE node_id=?`, landingID).Scan(&data); errors.Is(err, sql.ErrNoRows) {
 		return nil // Nothing remains to authorize on a removed service.
@@ -157,6 +148,16 @@ func (s *Store) refreshClientLandingSources(ctx context.Context, tx *sql.Tx, lan
 	}
 	if slices.Equal(merged, state.Plan.Sources) {
 		return nil
+	}
+	// The caller can be another node's heartbeat or task result. An
+	// interrupted execution on this landing node only fences a real write;
+	// a no-op refresh must not roll back an unrelated successful receipt.
+	var blocked bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM task_executions WHERE agent_id=? AND disposition='' AND state<>'succeeded')`, landingID).Scan(&blocked); err != nil {
+		return err
+	}
+	if blocked {
+		return errExecutionBlocked
 	}
 	state.Plan.Sources = merged
 	if err := state.Plan.Validate(); err != nil {
