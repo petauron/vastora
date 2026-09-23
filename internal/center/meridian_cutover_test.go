@@ -103,6 +103,33 @@ func TestMeridianCutoverClaimsOnlyItsExistingControllerBackup(t *testing.T) {
 	}
 }
 
+func TestMeridianExportCompletesWithOpaqueApplicationCommandID(t *testing.T) {
+	store := openOrchestrationStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "opaque-export", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.56", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.56", LANAddress: "10.0.0.56", EnabledKinds: []string{networking.KindLAN}})
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	const applicationID = "opaque-export-application"
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES(?,?,?,?,?,'','running','docker','master',?,?)`, applicationID, "3x-ui", node.ID, testSiteID(t, store), threeXUIAppKey, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,attempt,created_at,updated_at)
+		VALUES('opaque-export-command',?,?,?,? ,?,'running',1,?,?)`, applicationID, node.ID, node.ID, meridianruntime.LegacyExportKind, []byte(`{"applicationId":"opaque-export-application"}`), stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='import',subscription_authority='legacy',legacy_controller_application_id=?,updated_at=? WHERE id=1`, applicationID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.completeTaskWithDisposition(ctx, commitProjectionOnlyForTest, node.ID, node.Credential, "opaque-export-command", 1, false, "export rejected", nil, false); err != nil {
+		t.Fatalf("opaque Meridian export command did not complete: %v", err)
+	}
+	var state string
+	if err := store.db.QueryRowContext(ctx, `SELECT state FROM application_commands WHERE id='opaque-export-command'`).Scan(&state); err != nil || state != "failed" {
+		t.Fatalf("export command state=%q err=%v", state, err)
+	}
+}
+
 func TestMeridianCutoverFencesNewLegacyMutations(t *testing.T) {
 	store := openOrchestrationStore(t)
 	t.Cleanup(func() { _ = store.Close() })
