@@ -232,7 +232,7 @@ func (s *Store) reconcileObservedMeridianApplication(ctx context.Context, tx *sq
 			}
 		}
 	}
-	for _, serviceID := range existing {
+	for serviceID := range existing {
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET status='stopped',updated_at=? WHERE id=?`, stamp, serviceID); err != nil {
 			return err
 		}
