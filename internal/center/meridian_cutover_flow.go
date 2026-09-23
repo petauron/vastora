@@ -601,7 +601,14 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	}
 	guardedHost = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(guardedHost), "."))
 	guardedServerName = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(guardedServerName), "."))
-	if guardStatus != "ready" || guardedHost != strings.ToLower(strings.TrimSuffix(targetHost, ".")) || guardedServerName != strings.ToLower(strings.TrimSuffix(model.ServerNames[0], ".")) || !isPublicPublicationVerificationIP(net.ParseIP(targetIP)) {
+	guardedTargetMatches := guardedHost == strings.ToLower(strings.TrimSuffix(targetHost, "."))
+	if pinnedIP := net.ParseIP(targetHost); pinnedIP != nil {
+		// The legacy hardener pins the verified hostname to its public IP in
+		// Xray's target. Keep that exact pin instead of requiring the runtime
+		// target to equal the guard's original DNS hostname.
+		guardedTargetMatches = pinnedIP.Equal(net.ParseIP(targetIP))
+	}
+	if guardStatus != "ready" || !guardedTargetMatches || guardedServerName != strings.ToLower(strings.TrimSuffix(model.ServerNames[0], ".")) || !isPublicPublicationVerificationIP(net.ParseIP(targetIP)) {
 		return meridianImportedEndpoint{}, errors.New("center: legacy REALITY endpoint target guard is not ready")
 	}
 	resolved := meridianImportedEndpoint{model: model, totalBytes: plan.TotalBytes, usedBytes: legacy.UsedBytes, resetDay: plan.ResetDay, nextResetAt: plan.NextResetAt, lastResetAt: plan.LastResetAt, targetIP: strings.TrimSpace(targetIP), vlessEnabled: legacy.VLESSEnabled, hy2Enabled: legacy.HY2Enabled, entryName: displayName, serviceID: candidates[0].id, applicationID: applicationID, nodeID: nodeID}

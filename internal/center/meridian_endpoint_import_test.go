@@ -50,6 +50,15 @@ func TestLegacyMeridianImportPreservesConvergedEntryTrafficPlan(t *testing.T) {
 	if err != nil || resolved.totalBytes != 500 || resolved.usedBytes != 240 || resolved.resetDay != 15 || resolved.nextResetAt != reset {
 		t.Fatalf("imported entry cap=%d used=%d day=%d next=%q err=%v", resolved.totalBytes, resolved.usedBytes, resolved.resetDay, resolved.nextResetAt, err)
 	}
+	legacy.Target = "8.8.8.8:443"
+	if _, err := store.resolveLegacyMeridianEndpoint(ctx, tx, applicationID, legacy); err != nil {
+		t.Fatalf("verified public target pin was rejected: %v", err)
+	}
+	legacy.Target = "8.8.4.4:443"
+	if _, err := store.resolveLegacyMeridianEndpoint(ctx, tx, applicationID, legacy); err == nil {
+		t.Fatal("target IP that differed from the verified guard was accepted")
+	}
+	legacy.Target = "8.8.8.8:443"
 	legacy.TotalBytes++
 	if _, err := store.resolveLegacyMeridianEndpoint(ctx, tx, applicationID, legacy); err == nil {
 		t.Fatal("import accepted a cap that differed from the Center-managed plan")
