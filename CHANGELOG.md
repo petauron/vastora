@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.207](https://github.com/petauron/vastora/compare/v0.1.0-alpha.206...v0.1.0-alpha.207) (2026-09-23)
+
+
+### Bug Fixes
+
+* **center:** claim Meridian deployments with text JSON config ([#629](https://github.com/petauron/vastora/issues/629)) ([606ddab](https://github.com/petauron/vastora/commit/606ddab1b5963c322720c5272f6db197a71d8e51))
+
 ## [0.1.0-alpha.206](https://github.com/petauron/vastora/compare/v0.1.0-alpha.205...v0.1.0-alpha.206) (2026-09-23)
 
 
