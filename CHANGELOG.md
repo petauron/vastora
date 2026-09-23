@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.209](https://github.com/petauron/vastora/compare/v0.1.0-alpha.208...v0.1.0-alpha.209) (2026-09-23)
+
+
+### Bug Fixes
+
+* **meridian:** unblock native-only cutover from legacy landing drift ([#634](https://github.com/petauron/vastora/issues/634)) ([4271021](https://github.com/petauron/vastora/commit/42710218ba42805f4165a571a8aa5737c26c590b))
+
 ## [0.1.0-alpha.208](https://github.com/petauron/vastora/compare/v0.1.0-alpha.207...v0.1.0-alpha.208) (2026-09-23)
 
 
