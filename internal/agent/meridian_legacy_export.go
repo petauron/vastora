@@ -19,7 +19,10 @@ func exportLegacyMeridianState(ctx context.Context, store *Store, command meridi
 		return meridianruntime.LegacyExportResult{}, errors.New("agent: invalid Meridian legacy export command")
 	}
 	installation, err := store.AppliedInstallation(ctx, threeXUIKey)
-	if err != nil || installation.ApplicationID != command.ApplicationID {
+	if err != nil {
+		return meridianruntime.LegacyExportResult{}, fmt.Errorf("agent: read legacy subscription controller: %w", err)
+	}
+	if installation.ApplicationID != command.ApplicationID {
 		return meridianruntime.LegacyExportResult{}, errors.New("agent: legacy subscription controller identity changed")
 	}
 	baseURL, token, err := threeXUIClientAPIConnection(ctx, store)
