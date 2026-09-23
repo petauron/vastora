@@ -1,5 +1,15 @@
 # Meridian cutover
 
+The first production cutover is native-entry only. It preserves the existing
+subscription token, parent account plan, and VLESS/Hysteria credentials, but
+does not migrate or publish 3x-ui landing-route child credentials. The exporter
+checks every child against the Agent ownership journal before excluding it, so
+an unknown client cannot be silently treated as a native subscriber. The
+parent quota retains consumption recorded by those child credentials. The
+encrypted pre-cutover backup retains the old landing configuration. Landing
+routes may be configured in Meridian after native entries are verified; they
+are not a prerequisite for this MVP migration.
+
 Meridian replaces the remaining 3x-ui control and subscription ownership in
 Vastora. It is a Petauron product module, not a renamed 3x-ui package and not a
 general-purpose proxy panel.
@@ -135,8 +145,8 @@ confirmed.
 1. **Inspect**
    - Freeze new 3x-ui client mutations.
    - Read the selected controller inventory, node inventory, subscription
-     tokens, account plans, identities, REALITY material, route grants, and
-     monotonic counters.
+     tokens, account plans, identities, REALITY material, child ownership,
+     and native-account monotonic counters.
    - Reject duplicate UUIDs, tokens, names, route ownership, missing workers,
      decreasing counters, or ambiguous in-flight operations.
    - Stop with an explicit incompatibility if an old client has a simultaneous
@@ -155,13 +165,12 @@ confirmed.
    - Ask the controller Agent for one final encrypted 3x-ui database snapshot
      and record its digest. Do not use the snapshot as a runtime fallback.
 3. **Import**
-   - Insert Meridian accounts, credentials, grants, watermarks, and deployment
+   - Insert Meridian accounts, native credentials, watermarks, and deployment
      revisions without changing public identities or active Xray state.
    - Store subscription tokens and authentication material through existing
      encrypted Center secret storage.
-   - Record the exact number of enabled landing routes. Retirement cannot
-     begin until every imported route has an applied healthy runtime receipt;
-     an unavailable landing stays visible as blocked and holds verification.
+   - Record zero imported landing routes. Do not resurrect a stale route or
+     child account from the legacy Agent journal.
 4. **Publish the imported snapshot**
    - Change the existing public subscription route to the Center listener and
      wait for its applied gateway or tunnel receipt before replacing any
@@ -210,9 +219,8 @@ confirmed.
    - Require every VLESS entry's runtime, service, shared-443 listener, DNS,
      and public reachability receipt to be ready. Runtime health alone is not
      sufficient to switch authority.
-   - Require current entry-to-egress evidence for every enabled imported fixed
-     route. Missing identity evidence, a blocked peer, or an expired lease
-     cannot be replaced by container health or another peer's successful probe.
+   - The native-entry MVP has no imported fixed routes; entry-to-egress
+     evidence is required only for routes created later in Meridian.
    - Render both ordinary and Mihomo output from Meridian state at the existing
      URL and token, and compare identities and names to the imported inventory.
    - The subscription authority marker is already durable from the publication
@@ -224,8 +232,8 @@ confirmed.
 	  remove the old installation receipt, database volume, account journal,
 	  management API state, and temporary Docker aliases from every migrated
 	  node.
-	- Recheck the Center publication, every entry revision, and every enabled
-	  egress route before each remaining retirement task and before marking the
+	- Recheck the Center publication and every entry revision before each
+	  remaining retirement task and before marking the
 	  cutover complete. A landing or entry change during this phase first applies
 	  as an ordinary Meridian revision while retaining migration aliases; cleanup
 	  resumes only after that revision is healthy.

@@ -2,12 +2,13 @@ package agent
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/petauron/vastora/internal/landing"
 )
 
-func TestLegacyRetiredChildChanged(t *testing.T) {
+func TestLegacyExcludedChildChanged(t *testing.T) {
 	const uuid = "57c7be07-b250-4d85-89cd-a010eb48e2d0"
 	for _, tc := range []struct {
 		name           string
@@ -19,11 +20,10 @@ func TestLegacyRetiredChildChanged(t *testing.T) {
 		childToken     string
 		wantChanged    bool
 	}{
-		{name: "owned disabled child", phase: "revoked", summaryEmail: "old-child", childUUID: uuid, childToken: "child-token"},
-		{name: "active grant", phase: "ready", summaryEmail: "old-child", childUUID: uuid, childToken: "child-token", wantChanged: true},
+		{name: "retired child", phase: "revoked", summaryEmail: "old-child", childUUID: uuid, childToken: "child-token"},
+		{name: "prepared child", phase: "prepared", summaryEmail: "old-child", childUUID: uuid, childToken: "child-token"},
+		{name: "active child", phase: "ready", summaryEmail: "old-child", enabled: true, trafficEnabled: true, childUUID: uuid, childToken: "child-token"},
 		{name: "different email", phase: "revoked", summaryEmail: "other-child", childUUID: uuid, childToken: "child-token", wantChanged: true},
-		{name: "reenabled account", phase: "revoked", summaryEmail: "old-child", enabled: true, childUUID: uuid, childToken: "child-token", wantChanged: true},
-		{name: "reenabled traffic", phase: "revoked", summaryEmail: "old-child", trafficEnabled: true, childUUID: uuid, childToken: "child-token", wantChanged: true},
 		{name: "different credential", phase: "revoked", summaryEmail: "old-child", childUUID: "different", childToken: "child-token", wantChanged: true},
 		{name: "different subscription", phase: "revoked", summaryEmail: "old-child", childUUID: uuid, childToken: "different", wantChanged: true},
 	} {
@@ -37,31 +37,41 @@ func TestLegacyRetiredChildChanged(t *testing.T) {
 				"subId": json.RawMessage(`"` + tc.childToken + `"`),
 				"email": json.RawMessage(`"old-child"`),
 			}}
-			if got := legacyRetiredChildChanged(summary, detail, grant); got != tc.wantChanged {
-				t.Fatalf("legacyRetiredChildChanged() = %t, want %t", got, tc.wantChanged)
+			if got := legacyExcludedChildChanged(summary, detail, grant); got != tc.wantChanged {
+				t.Fatalf("legacyExcludedChildChanged() = %t, want %t", got, tc.wantChanged)
 			}
 		})
 	}
 }
 
-func TestLegacyRouteGrantConverged(t *testing.T) {
+func TestLegacyNativeOnlyUsagePreservesSharedConsumption(t *testing.T) {
+	account := landingControllerAccount{ID: "native", Members: []landing.QuotaMember{
+		{ID: "native", Baseline: 100, Observed: 130},
+		{ID: "child", Baseline: 20, Observed: 60},
+		{ID: "retired-child", Baseline: 0, Observed: 5},
+	}}
+	baseline, observed, ok := legacyNativeOnlyUsage(account, "native", map[string]string{"child": "native", "retired-child": "native"})
+	if !ok || baseline != 100 || observed != 175 {
+		t.Fatalf("legacyNativeOnlyUsage() = (%d, %d, %t), want (100, 175, true)", baseline, observed, ok)
+	}
+}
+
+func TestLegacyNativeOnlyUsageRejectsUnownedOrInvalidConsumption(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		phase     string
-		taskPhase string
-		want      bool
+		name    string
+		account landingControllerAccount
+		owners  map[string]string
 	}{
-		{name: "confirmed activation", phase: "ready", taskPhase: "activate", want: true},
-		{name: "prepared only", phase: "prepared", taskPhase: "prepare"},
-		{name: "activation in progress", phase: "activating", taskPhase: "activate"},
-		{name: "retired", phase: "revoked", taskPhase: "retire"},
-		{name: "unwritten active phase", phase: "active", taskPhase: "activate"},
+		{name: "missing native", account: landingControllerAccount{ID: "native", Members: []landing.QuotaMember{{ID: "child", Observed: 1}}}, owners: map[string]string{"child": "native"}},
+		{name: "unknown child", account: landingControllerAccount{ID: "native", Members: []landing.QuotaMember{{ID: "native"}, {ID: "child", Observed: 1}}}},
+		{name: "other account child", account: landingControllerAccount{ID: "native", Members: []landing.QuotaMember{{ID: "native"}, {ID: "child", Observed: 1}}}, owners: map[string]string{"child": "other"}},
+		{name: "duplicate member", account: landingControllerAccount{ID: "native", Members: []landing.QuotaMember{{ID: "native"}, {ID: "native"}}}},
+		{name: "decreasing counter", account: landingControllerAccount{ID: "native", Members: []landing.QuotaMember{{ID: "native", Baseline: 2, Observed: 1}}}},
+		{name: "overflow", account: landingControllerAccount{ID: "native", Members: []landing.QuotaMember{{ID: "native", Baseline: 1, Observed: math.MaxInt64}, {ID: "child", Observed: 2}}}, owners: map[string]string{"child": "native"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			grant := landingControllerGrant{Phase: tc.phase}
-			grant.Task.Phase = tc.taskPhase
-			if got := legacyRouteGrantConverged(grant); got != tc.want {
-				t.Fatalf("legacyRouteGrantConverged() = %t, want %t", got, tc.want)
+			if _, _, ok := legacyNativeOnlyUsage(tc.account, "native", tc.owners); ok {
+				t.Fatal("legacyNativeOnlyUsage() accepted invalid usage")
 			}
 		})
 	}
