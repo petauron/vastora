@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -142,8 +143,15 @@ func (s *Store) projectLandingProxy(ctx context.Context, tx *sql.Tx, commit proj
 	if err := s.completeClientLandingRoutes(ctx, tx, nodeID, uint64(revision), succeeded); err != nil {
 		return err
 	}
-	if err := s.reconcileGlobalLandingPool(ctx, tx, false); err != nil {
+	// The scoped Agent result must be durable before deriving unrelated pool
+	// changes. Reconciliation can queue a newer revision for this same entry;
+	// doing it inside this transaction makes the execution projection reject an
+	// otherwise valid result and strands its execution fence.
+	if err := commit(tx); err != nil {
 		return err
 	}
-	return commit(tx)
+	if err := s.resumeGlobalLandingPool(context.WithoutCancel(ctx)); err != nil {
+		slog.ErrorContext(ctx, "Global landing pool reconciliation failed after proxy task commit", "node_id", nodeID, "error", err)
+	}
+	return nil
 }

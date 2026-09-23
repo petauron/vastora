@@ -141,9 +141,17 @@ func TestLandingClientTaskPipelineAndOfflineRevocation(t *testing.T) {
 	if routes == nil || routes.LandingProxyState.Clients == nil || len(routes.LandingProxyState.Clients.Grants) != 1 || !routes.LandingProxyState.Clients.Grants[0].Enabled {
 		t.Fatal("missing scoped entry routes")
 	}
+	// A global-pool read error after a valid Agent result must not roll back the
+	// entry's result or leave its execution fence unresolved.
+	exec(`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,observed_at) VALUES('broken-proxy-parent','client-controller','Broken','{"email":"Broken","inboundIds":"bad"}',?)`, now)
 	if err := store.completeLandingProxy(ctx, commitProjectionOnlyForTest, entry.ID, routes.Revision, routes.Attempt, true); err != nil {
 		t.Fatal(err)
 	}
+	var proxyStatus string
+	if err := store.db.QueryRow(`SELECT status FROM landing_proxy_states WHERE node_id=?`, entry.ID).Scan(&proxyStatus); err != nil || proxyStatus != "ready" {
+		t.Fatalf("scoped proxy result was rolled back by pool convergence: status=%q err=%v", proxyStatus, err)
+	}
+	exec(`DELETE FROM three_x_ui_client_accounts WHERE id='broken-proxy-parent'`)
 	completeController("activate")
 	grants, err = store.LandingClientGrants(ctx, parent)
 	if err != nil || len(grants) != 1 || grants[0].Status != "ready" || grants[0].AppliedRevision != grant.Revision {
