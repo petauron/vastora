@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -116,5 +117,44 @@ func TestExistingLegacyCrossSiteTopologyPreservesObservationsAndSecrets(t *testi
 	}
 	if _, err := store.CreateDeployment(ctx, DeploymentRequest{AgentID: master.ID, AppKey: threeXUIAppKey, Operation: "uninstall"}); err == nil || !strings.Contains(err.Error(), "VLESS nodes") {
 		t.Fatalf("controller uninstall error = %v", err)
+	}
+}
+
+func TestLegacyControllerObservationDoesNotOverwriteMigratedMeridianWorker(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	master := enrollOrchestrationNode(t, store, "legacy-master", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.90", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.90", LANAddress: "10.0.0.90", EnabledKinds: []string{networking.KindLAN}})
+	worker := enrollOrchestrationNode(t, store, "migrated-worker", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.91", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.91", LANAddress: "10.0.0.91", EnabledKinds: []string{networking.KindLAN}})
+	masterDeployment := seedLegacyDeployment(t, store, master, "10.0.0.90", "master-api-token", threeXUIRoleMaster)
+	workerDeployment := seedLegacyDeployment(t, store, worker, "10.0.0.91", "worker-api-token", threeXUIRoleWorker)
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_nodes(worker_application_id,master_application_id,remote_node_id,status,created_at,updated_at)
+		VALUES(?,?,7,'ready',?,?)`, workerDeployment.ApplicationID, masterDeployment.ApplicationID, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,status,created_at,updated_at)
+		VALUES('migrated-service',?,?,'inbound-8','tcp',443,443,'10.0.0.91:443','observed',?,'ready',?,?)`, workerDeployment.ApplicationID, testSiteID(t, store), meridianEntryProtocol, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE applications SET app_key=?,role='' WHERE id=?`, meridianAppKey, workerDeployment.ApplicationID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	observations := []ApplicationEndpointObservation{{AppKey: threeXUIAppKey, Name: "inbound-8", Protocol: "tcp", AppProtocol: "vless/tcp/reality", Listen: "10.0.0.91", Port: 443, Enabled: true, RemoteNodeID: 7, InboundTag: "legacy-worker-inbound"}}
+	var cleanups []publicationCleanup
+	if err := store.reconcileApplicationEndpoints(ctx, tx, master.ID, observations, store.now().UTC(), &cleanups); err != nil {
+		t.Fatal(err)
+	}
+	var protocol string
+	if err := tx.QueryRowContext(ctx, `SELECT app_protocol FROM services WHERE id='migrated-service'`).Scan(&protocol); err != nil {
+		t.Fatal(err)
+	}
+	if protocol != meridianEntryProtocol {
+		t.Fatalf("legacy controller overwrote migrated Meridian service protocol: %s", protocol)
 	}
 }

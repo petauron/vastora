@@ -75,7 +75,17 @@ func completeMeridianHealthFixture(t *testing.T, store *Store, projection meridi
 func TestMeridianRuntimeSuccessNeedsPeerEvidenceAndHeartbeatRenewsWithoutRevisionChange(t *testing.T) {
 	store, projection, commandID, grantID := openMeridianHealthCompletionFixture(t)
 	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET app_protocol='vless/tcp/reality' WHERE id='snapshot-shared-service'`); err != nil {
+		t.Fatal(err)
+	}
 	completeMeridianHealthFixture(t, store, projection, commandID, meridianHealthResult(projection, store.now(), false))
+	var protocol string
+	if err := store.db.QueryRowContext(ctx, `SELECT app_protocol FROM services WHERE id='snapshot-shared-service'`).Scan(&protocol); err != nil {
+		t.Fatal(err)
+	}
+	if protocol != meridianEntryProtocol {
+		t.Fatalf("Meridian runtime receipt left legacy service protocol: %q", protocol)
+	}
 	check := func(wantHealthy int, wantStatus string) {
 		t.Helper()
 		var healthy int
