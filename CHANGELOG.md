@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.202](https://github.com/petauron/vastora/compare/v0.1.0-alpha.201...v0.1.0-alpha.202) (2026-09-23)
+
+
+### Bug Fixes
+
+* **agent:** keep read-only Meridian export out of landing write queue ([#619](https://github.com/petauron/vastora/pull/619)) ([bcd8be1](https://github.com/petauron/vastora/commit/bcd8be163efd63d7f704cf86b37af508aacde63d))
+
 ## [0.1.0-alpha.201](https://github.com/petauron/vastora/compare/v0.1.0-alpha.200...v0.1.0-alpha.201) (2026-09-23)
 
 
