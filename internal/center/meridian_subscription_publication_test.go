@@ -65,6 +65,53 @@ func seedFailedMeridianSubscriptionPublication(t *testing.T, store *Store, suffi
 	return node.ID, publicationID
 }
 
+func TestMeridianCutoverRestoresOnlyKnownSubscriptionOriginDrift(t *testing.T) {
+	store := openOrchestrationStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	nodeID, publicationID := seedFailedMeridianSubscriptionPublication(t, store, "origin-drift")
+	applicationID := "meridian-publication-app-origin-drift"
+	serviceID := "meridian-publication-service-origin-drift"
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET endpoint=? WHERE id=?`, dockerruntime.CenterAlias+":2097", serviceID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.restoreMeridianSubscriptionOrigin(ctx, tx, applicationID, store.now().UTC()); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var endpoint, publicationStatus, gatewayStatus string
+	if err := store.db.QueryRowContext(ctx, `SELECT endpoint FROM services WHERE id=?`, serviceID).Scan(&endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT status FROM publications WHERE id=?`, publicationID).Scan(&publicationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT status FROM gateway_states WHERE gateway_node_id=?`, nodeID).Scan(&gatewayStatus); err != nil {
+		t.Fatal(err)
+	}
+	if endpoint != dockerruntime.CenterAlias+":8080" || publicationStatus != "pending" || gatewayStatus != "pending" {
+		t.Fatalf("origin=%q publication=%q gateway=%q", endpoint, publicationStatus, gatewayStatus)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET endpoint='unrecognized:2097' WHERE id=?`, serviceID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := store.restoreMeridianSubscriptionOrigin(ctx, tx, applicationID, store.now().UTC()); err == nil {
+		t.Fatal("unrecognized subscription origin was repaired")
+	}
+}
+
 func TestMeridianCutoverReportsAndExplicitlyRetriesFailedSubscriptionPublication(t *testing.T) {
 	store := openOrchestrationStore(t)
 	t.Cleanup(func() { _ = store.Close() })

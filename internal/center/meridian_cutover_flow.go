@@ -115,6 +115,9 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 			return MeridianCutoverView{}, err
 		}
 		if state == "publish" {
+			if err := s.restoreMeridianSubscriptionOrigin(ctx, tx, controllerApplicationID, now); err != nil {
+				return MeridianCutoverView{}, err
+			}
 			if err := s.retryFailedMeridianSubscriptionPublication(ctx, tx, now); err != nil {
 				return MeridianCutoverView{}, err
 			}
@@ -1043,6 +1046,42 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 		}
 	}
 	return nil
+}
+
+// The legacy landing reconciler once rewrote Center's subscription origin to
+// its former :2097 port after import. Repair only that exact, known drift on
+// explicit cutover resume; any other origin mismatch remains fail-closed.
+func (s *Store) restoreMeridianSubscriptionOrigin(ctx context.Context, tx *sql.Tx, controllerApplicationID string, now time.Time) error {
+	var serviceID, endpoint, protocol, appProtocol string
+	var containerPort, hostPort int
+	if err := tx.QueryRowContext(ctx, `SELECT id,endpoint,protocol,app_protocol,container_port,host_port FROM services
+		WHERE application_id=? AND name=? AND source='system' AND status='ready'`, controllerApplicationID, meridianSubscriptionServiceName).
+		Scan(&serviceID, &endpoint, &protocol, &appProtocol, &containerPort, &hostPort); err != nil {
+		return errors.New("center: preserved Meridian subscription origin is unavailable")
+	}
+	if protocol != "http" || appProtocol != meridianSubscriptionProtocol || containerPort != 8080 || hostPort != 8080 {
+		return errors.New("center: preserved Meridian subscription origin changed unexpectedly")
+	}
+	if endpoint == net.JoinHostPort(dockerruntime.CenterAlias, "8080") {
+		return nil
+	}
+	if endpoint != net.JoinHostPort(dockerruntime.CenterAlias, strconv.Itoa(landing.SubscriptionPort)) {
+		return errors.New("center: Meridian subscription origin drift is not recognized")
+	}
+	var active int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM publications publication
+		LEFT JOIN cloudflare_tunnels tunnel ON publication.ingress_owner='tunnel_connector' AND tunnel.agent_id=publication.entry_node_id
+		LEFT JOIN gateway_states gateway ON publication.ingress_owner='site_gateway' AND gateway.gateway_node_id=publication.entry_node_id
+		WHERE publication.service_id=? AND publication.status<>'stopped' AND (
+			publication.ingress_owner='tunnel_connector' AND COALESCE(tunnel.status,'') NOT IN ('ready','failed')
+			OR publication.ingress_owner='site_gateway' AND COALESCE(gateway.status,'') NOT IN ('ready','failed')
+		)`, serviceID).Scan(&active); err != nil {
+		return err
+	}
+	if active != 0 {
+		return errors.New("center: finish the current subscription entry task before restoring its origin")
+	}
+	return s.switchMeridianSubscriptionPublication(ctx, tx, controllerApplicationID, now)
 }
 
 func (s *Store) switchMeridianSubscriptionPublication(ctx context.Context, tx *sql.Tx, controllerApplicationID string, now time.Time) error {
