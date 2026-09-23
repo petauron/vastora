@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.197](https://github.com/petauron/vastora/compare/v0.1.0-alpha.196...v0.1.0-alpha.197) (2026-09-23)
+
+
+### Bug Fixes
+
+* exclude retired shared children from Meridian import ([#608](https://github.com/petauron/vastora/issues/608)) ([d3732ce](https://github.com/petauron/vastora/commit/d3732ce27423cdf07af00efccd16dea33b171997))
+
 ## [0.1.0-alpha.196](https://github.com/petauron/vastora/compare/v0.1.0-alpha.195...v0.1.0-alpha.196) (2026-09-23)
 
 
