@@ -71,6 +71,35 @@ func TestMeridianCutoverRequiresExplicitExecutionRecovery(t *testing.T) {
 	}
 }
 
+func TestMeridianCutoverClaimsOnlyItsExistingControllerBackup(t *testing.T) {
+	store := openOrchestrationStore(t)
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "cutover-backup-claim", NodeCapabilities{Docker: true}, []networking.Candidate{{Address: "10.0.0.55", Interface: "eth0", Kind: networking.KindLAN}}, networking.Profile{ServiceAddress: "10.0.0.55", LANAddress: "10.0.0.55", EnabledKinds: []string{networking.KindLAN}})
+	stamp := store.now().UTC().Format(time.RFC3339Nano)
+	const applicationID = "cutover-backup-claim-application"
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO applications(id,name,node_id,site_id,app_key,image,status,runtime,role,created_at,updated_at)
+		VALUES(?,?,?,?,?,'','running','docker','master',?,?)`, applicationID, "3x-ui", node.ID, testSiteID(t, store), threeXUIAppKey, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO application_commands(id,application_id,agent_id,gateway_node_id,kind,input_json,state,created_at,updated_at)
+		VALUES('cutover-backup-claim',?,?,?,'3xui.controller.manage',?,'pending',?,?)`, applicationID, node.ID, node.ID, []byte(`{"action":"backup","applicationId":"cutover-backup-claim-application","backupRevision":7}`), stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE meridian_cutover SET state='backup',subscription_authority='legacy',legacy_controller_application_id=?,backup_revision=7,updated_at=? WHERE id=1`, applicationID, stamp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running',attempt=attempt+1 WHERE id='cutover-backup-claim'`); err != nil {
+		t.Fatalf("authorized cutover backup was fenced: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='succeeded' WHERE id='cutover-backup-claim'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE application_commands SET state='running' WHERE id='cutover-backup-claim'`); err == nil || !strings.Contains(err.Error(), "Meridian authority cutover") {
+		t.Fatalf("completed backup replay crossed cutover fence: %v", err)
+	}
+}
+
 func TestMeridianCutoverFencesNewLegacyMutations(t *testing.T) {
 	store := openOrchestrationStore(t)
 	t.Cleanup(func() { _ = store.Close() })
