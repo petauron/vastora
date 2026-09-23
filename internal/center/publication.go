@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 const (
@@ -471,6 +473,17 @@ func randomPublicationHostnameInZone(ctx context.Context, queryer networkQueryer
 }
 
 func (s *Store) ensureServicePublicationChangeAllowed(ctx context.Context, queryer networkQueryer, serviceID string) error {
+	return s.ensureServicePublicationOperationAllowed(ctx, queryer, serviceID, false)
+}
+
+// A legacy export only reads the existing controller. It cannot change a
+// publication, so it must not prevent the verifier from restoring a healthy
+// subscription publication during the export's own cutover transaction.
+func (s *Store) ensureServicePublicationVerificationAllowed(ctx context.Context, queryer networkQueryer, serviceID string) error {
+	return s.ensureServicePublicationOperationAllowed(ctx, queryer, serviceID, true)
+}
+
+func (s *Store) ensureServicePublicationOperationAllowed(ctx context.Context, queryer networkQueryer, serviceID string, verification bool) error {
 	var applicationID, serviceStatus, applicationStatus string
 	if err := queryer.QueryRowContext(ctx, `SELECT s.application_id, s.status, a.status
 		FROM services s JOIN applications a ON a.id = s.application_id WHERE s.id = ?`, serviceID).Scan(&applicationID, &serviceStatus, &applicationStatus); errors.Is(err, sql.ErrNoRows) {
@@ -484,7 +497,8 @@ func (s *Store) ensureServicePublicationChangeAllowed(ctx context.Context, query
 	var blocked int
 	if err := queryer.QueryRowContext(ctx, `SELECT
 		(SELECT COUNT(*) FROM deployments WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)) +
-		(SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1))`, applicationID, applicationID).Scan(&blocked); err != nil {
+		(SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND (state IN ('pending', 'running') OR reconciliation_required = 1)
+		AND (? = 0 OR kind <> ?))`, applicationID, applicationID, boolInt(verification), meridianruntime.LegacyExportKind).Scan(&blocked); err != nil {
 		return err
 	}
 	if blocked != 0 {

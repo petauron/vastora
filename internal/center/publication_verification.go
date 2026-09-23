@@ -54,7 +54,7 @@ func (s *Store) verifyPublicationRevision(ctx context.Context, id string, expect
 			return publication, nil
 		}
 	}
-	if err := s.ensureServicePublicationChangeAllowed(ctx, s.db, publication.ServiceID); err != nil {
+	if err := s.ensureServicePublicationVerificationAllowed(ctx, s.db, publication.ServiceID); err != nil {
 		return s.recordPublicationVerification(ctx, id, expectedRevision, err.Error())
 	}
 	if publication.Status == "failed" && publication.DNSProvider != "manual" && (publication.Kind != publicationCloudflare || publication.DNSRecordID == "") {
