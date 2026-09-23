@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.208](https://github.com/petauron/vastora/compare/v0.1.0-alpha.207...v0.1.0-alpha.208) (2026-09-23)
+
+
+### Bug Fixes
+
+* **meridian:** expose explicit recovery for uncertain legacy runtime ([#631](https://github.com/petauron/vastora/issues/631)) ([c0db82e](https://github.com/petauron/vastora/commit/c0db82e3a005dbb61b710d4c9e58d987489ef518))
+
 ## [0.1.0-alpha.207](https://github.com/petauron/vastora/compare/v0.1.0-alpha.206...v0.1.0-alpha.207) (2026-09-23)
 
 
