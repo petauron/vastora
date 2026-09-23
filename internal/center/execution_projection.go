@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
+
+	"github.com/petauron/vastora/internal/meridianruntime"
 )
 
 // The claimed outcome is evidence, not authority to mark a rejected business
@@ -77,6 +80,19 @@ func validateExecutionProjection(ctx context.Context, tx *sql.Tx, id string, suc
 	}
 	if succeeded && (state == "succeeded" || state == "awaiting_decision" || state == "ready" || state == "stopped") || !succeeded && state == "failed" {
 		return nil
+	}
+	if succeeded && kind == "application.command" && state == "failed" {
+		var commandKind, businessError string
+		if err := tx.QueryRowContext(ctx, `SELECT kind,error FROM application_commands WHERE id=? AND agent_id=? AND attempt=?`, taskID, agentID, attempt).Scan(&commandKind, &businessError); err != nil {
+			return err
+		}
+		// Export is read-only on the Agent. A successful export can still fail
+		// Center-side validation/import; record that business failure without
+		// misclassifying the Agent result as an uncertain execution.
+		if commandKind == meridianruntime.LegacyExportKind &&
+			(strings.HasPrefix(businessError, "center: Meridian import failed:") || businessError == "center: Agent returned an invalid Meridian legacy export") {
+			return nil
+		}
 	}
 	return errors.New("center: execution result does not match the business projection")
 }
