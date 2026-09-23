@@ -3,6 +3,7 @@ package center
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/gateway"
 	"github.com/petauron/vastora/internal/landing"
 	"github.com/petauron/vastora/internal/networking"
 )
@@ -21,6 +23,68 @@ const (
 	sharedSnapshotTokenB     = "snapshot-subscription-b"
 	sharedSnapshotUUIDB      = "22222222-2222-4222-8222-222222222222"
 )
+
+func TestMeridianObservationKeepsImportedServiceIdentityAndRepairsListener(t *testing.T) {
+	store := openMeridianSharedEndpointSnapshotFixture(t)
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET name='inbound-8',app_protocol='vless/tcp/reality' WHERE id='snapshot-shared-service'`); err != nil {
+		t.Fatal(err)
+	}
+	observation := []ApplicationEndpointObservation{{AppKey: meridianAppKey, Name: "inbound-1", Protocol: "tcp", AppProtocol: meridianEntryProtocol, Listen: "0.0.0.0", Port: 443, Enabled: true, InboundTag: "shared-entry"}}
+	var nodeID string
+	if err := store.db.QueryRowContext(ctx, `SELECT node_id FROM applications WHERE id='snapshot-shared-app'`).Scan(&nodeID); err != nil {
+		t.Fatal(err)
+	}
+	reconcile := func() {
+		t.Helper()
+		tx, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		var cleanups []publicationCleanup
+		if err := store.reconcileMeridianEndpoints(ctx, tx, nodeID, observation, store.now().UTC(), &cleanups); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The imported inbound number is not the Agent's normalized observation
+	// name. Its stable tag, service ID and subscription identity must survive.
+	reconcile()
+	var name, protocol string
+	var services int
+	if err := store.db.QueryRowContext(ctx, `SELECT name,app_protocol FROM services WHERE id='snapshot-shared-service'`).Scan(&name, &protocol); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE application_id='snapshot-shared-app'`).Scan(&services); err != nil {
+		t.Fatal(err)
+	}
+	if name != "inbound-8" || protocol != meridianEntryProtocol || services != 1 {
+		t.Fatalf("Meridian observation changed imported identity: name=%q protocol=%q services=%d", name, protocol, services)
+	}
+	var revision int64
+	var encoded []byte
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision,desired_json FROM node_listener_states WHERE node_id=?`, nodeID).Scan(&revision, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	var listener gateway.NodeListenerState
+	if err := json.Unmarshal(encoded, &listener); err != nil {
+		t.Fatal(err)
+	}
+	if len(listener.Listener.Routes) != 1 || listener.Listener.Routes[0].ProxyProtocol != gateway.ProxyProtocolV2 {
+		t.Fatalf("repaired Meridian listener lacks PROXY v2: %#v", listener.Listener.Routes)
+	}
+	reconcile()
+	var nextRevision int64
+	if err := store.db.QueryRowContext(ctx, `SELECT desired_revision FROM node_listener_states WHERE node_id=?`, nodeID).Scan(&nextRevision); err != nil {
+		t.Fatal(err)
+	}
+	if nextRevision != revision {
+		t.Fatalf("unchanged Meridian observation churned listener revision: %d to %d", revision, nextRevision)
+	}
+}
 
 func TestMeridianSharedEndpointMutationsPreserveOtherAccountSubscription(t *testing.T) {
 	for _, operation := range []string{"account-update", "scheduled-reset", "account-expiry"} {

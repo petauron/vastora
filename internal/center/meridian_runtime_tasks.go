@@ -739,8 +739,9 @@ func (s *Store) completeMeridianRuntimeCommand(ctx context.Context, commit proje
 		if changed, _ := endpointUpdate.RowsAffected(); changed != 1 {
 			return errors.New("center: Meridian endpoint changed before its runtime receipt was committed")
 		}
-		serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,status='ready',last_error='',updated_at=?
-			WHERE id=? AND application_id=? AND status<>'stopped'`, net.JoinHostPort(dockerruntime.MeridianAlias, "443"), now, projection.serviceID, projection.task.ApplicationID)
+		serviceUpdate, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=443,host_port=443,
+			app_protocol=?,observed_listen='0.0.0.0',status='ready',last_error='',updated_at=?
+			WHERE id=? AND application_id=? AND status<>'stopped'`, net.JoinHostPort(dockerruntime.MeridianAlias, "443"), meridianEntryProtocol, now, projection.serviceID, projection.task.ApplicationID)
 		if err != nil {
 			return err
 		}
