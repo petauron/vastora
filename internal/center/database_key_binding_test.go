@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/petauron/vastora/internal/networking"
 	"github.com/petauron/vastora/internal/secret"
 	_ "modernc.org/sqlite"
 )
@@ -170,6 +171,59 @@ func TestCenterBackupRejectsChangedOrMixedRootKeys(t *testing.T) {
 	}
 	if err := store.Backup(context.Background(), filepath.Join(t.TempDir(), "mixed.vastora"), "binding-password"); err == nil || !strings.Contains(err.Error(), "verify encrypted state") {
 		t.Fatalf("mixed-key backup error = %v", err)
+	}
+}
+
+func TestCenterBackupRestoresLandingAndAssistantSecrets(t *testing.T) {
+	store := openOrchestrationStore(t)
+	defer store.Close()
+	ctx := context.Background()
+	node := enrollOrchestrationNode(t, store, "backup-secret-owner", NodeCapabilities{Docker: true},
+		[]networking.Candidate{{Address: "10.0.0.80", Interface: "eth0", Kind: networking.KindLAN}},
+		networking.Profile{ServiceAddress: "10.0.0.80", LANAddress: "10.0.0.80", EnabledKinds: []string{networking.KindLAN}})
+	now := store.now().UTC().Format(time.RFC3339Nano)
+	siteID := testSiteID(t, store)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	assistantSecret, err := store.putSecret(ctx, tx, []byte("assistant-test-key"), assistantProviderSecretData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialSecret, err := store.putSecret(ctx, tx, []byte("landing-test-credential"), "landing-credential:backup-grant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialSecret, err := store.putSecret(ctx, tx, []byte("landing-test-material"), "landing-material:backup-grant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO assistant_model_providers(id,api_url,model,api_key_secret_id,status,created_at,updated_at) VALUES(1,'https://assistant.example.test','test',?,'configured',?,?)`, []any{assistantSecret, now, now}},
+		{`INSERT INTO applications(id,name,node_id,site_id,app_key,status,runtime,role,created_at,updated_at) VALUES('backup-controller','3x-ui',?,?,'vastora-official/3x-ui','running','docker','master',?,?)`, []any{node.ID, siteID, now, now}},
+		{`INSERT INTO services(id,application_id,site_id,name,protocol,container_port,host_port,endpoint,source,app_protocol,status,created_at,updated_at) VALUES('backup-entry','backup-controller',?,'inbound-9','tcp',30009,30009,'10.0.0.80:30009','observed','vless/tcp/reality','ready',?,?)`, []any{siteID, now, now}},
+		{`INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,observed_at) VALUES('backup-parent','backup-controller','Backup Parent','{}',?)`, []any{now}},
+		{`INSERT INTO landing_client_grants(id,parent_id,application_id,service_id,landing_node_id,source_peer_json,grant_json,credential_secret_id,material_secret_id,status,updated_at) VALUES('backup-grant','backup-parent','backup-controller','backup-entry',?,'{}','{}',?,?,'ready',?)`, []any{node.ID, credentialSecret, materialSecret, now}},
+	} {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	const password = "backup-secret-owner-password"
+	backupPath := filepath.Join(t.TempDir(), "center.vastora")
+	if err := store.Backup(ctx, backupPath, password); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(backupPath, filepath.Join(t.TempDir(), "restored"), password); err != nil {
+		t.Fatal(err)
 	}
 }
 
