@@ -40,6 +40,11 @@ type meridianImportedAccount struct {
 
 type meridianImportedEndpoint struct {
 	model         meridian.RealityEndpoint
+	totalBytes    int64
+	usedBytes     int64
+	resetDay      int
+	nextResetAt   string
+	lastResetAt   string
 	targetIP      string
 	hy2           *meridian.HysteriaEndpoint
 	vlessEnabled  bool
@@ -277,9 +282,6 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 		if legacy.Port != meridian.DefaultRealityPort || !legacy.VLESSEnabled {
 			return errors.New("every imported endpoint must keep VLESS enabled on TCP 443 before Meridian cutover")
 		}
-		if legacy.TotalBytes > 0 {
-			return errors.New("legacy entry traffic limits must be removed before Meridian cutover; Meridian enforces one shared quota per account")
-		}
 		resolved, err := s.resolveLegacyMeridianEndpoint(ctx, tx, exported.ControllerApplicationID, legacy)
 		if err != nil {
 			return err
@@ -399,7 +401,7 @@ func (s *Store) importLegacyMeridianInTx(ctx context.Context, tx *sql.Tx, export
 			}
 			hy2CertificateSecretID, hy2PrivateKeySecretID = certificateID, privateKeyID
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,desired_revision,applied_revision,runtime_healthy,legacy_retired,status,last_error,created_at,updated_at,source_peer_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,0,0,0,'pending','',?,?,?)`, endpoint.model.ID, endpoint.applicationID, endpoint.serviceID, endpoint.model.InboundTag, endpoint.model.ListenPort, endpoint.model.AdvertiseHost, endpoint.model.AdvertisePort, endpoint.model.Target, endpoint.targetIP, names, privateSecretID, endpoint.model.PublicKey, shortIDs, endpoint.model.Fingerprint, boolInt(endpoint.vlessEnabled), boolInt(endpoint.hy2Enabled), hy2Tag, hy2ServerName, hy2CertificateSecretID, hy2PrivateKeySecretID, endpoint.hy2NotAfter, stamp, stamp, sourceJSON); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO meridian_endpoints(id,application_id,service_id,inbound_tag,listen_port,advertise_host,advertise_port,target,target_ip,server_names_json,private_key_secret_id,public_key,short_ids_json,fingerprint,vless_enabled,hy2_enabled,hy2_inbound_tag,hy2_server_name,hy2_certificate_secret_id,hy2_private_key_secret_id,hy2_certificate_not_after,desired_revision,applied_revision,runtime_healthy,legacy_retired,status,last_error,created_at,updated_at,source_peer_json,total_bytes,used_bytes,quota_applied_enabled,reset_day,next_reset_at,last_reset_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,0,0,0,'pending','',?,?,?,?,?,?,?,?,?)`, endpoint.model.ID, endpoint.applicationID, endpoint.serviceID, endpoint.model.InboundTag, endpoint.model.ListenPort, endpoint.model.AdvertiseHost, endpoint.model.AdvertisePort, endpoint.model.Target, endpoint.targetIP, names, privateSecretID, endpoint.model.PublicKey, shortIDs, endpoint.model.Fingerprint, boolInt(endpoint.vlessEnabled), boolInt(endpoint.hy2Enabled), hy2Tag, hy2ServerName, hy2CertificateSecretID, hy2PrivateKeySecretID, endpoint.hy2NotAfter, stamp, stamp, sourceJSON, endpoint.totalBytes, endpoint.usedBytes, boolInt(endpoint.totalBytes == 0 || endpoint.usedBytes < endpoint.totalBytes), endpoint.resetDay, endpoint.nextResetAt, endpoint.lastResetAt); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE services SET endpoint=?,protocol='tcp',container_port=443,host_port=443,source='observed',app_protocol=?,observed_listen='0.0.0.0',status='pending',last_error='',updated_at=? WHERE id=?`, net.JoinHostPort(dockerruntime.MeridianAlias, "443"), meridianEntryProtocol, stamp, endpoint.serviceID); err != nil {
@@ -556,6 +558,23 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	if len(candidates) != 1 {
 		return meridianImportedEndpoint{}, errors.New("center: legacy REALITY service mapping is ambiguous")
 	}
+	plan, err := readThreeXUIInboundPlan(ctx, tx, candidates[0].id)
+	if err != nil || plan.Status != "active" || !sameLegacyInboundTag(plan.InboundTag, legacy.Tag) ||
+		plan.TotalBytes != legacy.TotalBytes || legacy.TotalBytes < 0 || legacy.UsedBytes < 0 ||
+		plan.ResetDay < 0 || plan.ResetDay > 31 || plan.ResetDay == 0 && plan.NextResetAt != "" ||
+		plan.ResetDay > 0 && plan.NextResetAt == "" {
+		return meridianImportedEndpoint{}, errors.New("center: legacy entry traffic plan is not converged")
+	}
+	if plan.NextResetAt != "" {
+		if _, err := time.Parse(time.RFC3339Nano, plan.NextResetAt); err != nil {
+			return meridianImportedEndpoint{}, errors.New("center: legacy entry traffic reset boundary is invalid")
+		}
+	}
+	if plan.LastResetAt != "" {
+		if _, err := time.Parse(time.RFC3339Nano, plan.LastResetAt); err != nil {
+			return meridianImportedEndpoint{}, errors.New("center: legacy entry last traffic reset is invalid")
+		}
+	}
 	var advertiseHost string
 	if err := tx.QueryRowContext(ctx, `SELECT hostname FROM publications WHERE service_id=? AND kind='public_shared_443' AND status='ready' ORDER BY updated_at DESC LIMIT 1`, candidates[0].id).Scan(&advertiseHost); err != nil || strings.TrimSpace(advertiseHost) == "" {
 		return meridianImportedEndpoint{}, errors.New("center: legacy endpoint has no verified public hostname")
@@ -585,7 +604,7 @@ func (s *Store) resolveLegacyMeridianEndpoint(ctx context.Context, tx *sql.Tx, c
 	if guardStatus != "ready" || guardedHost != strings.ToLower(strings.TrimSuffix(targetHost, ".")) || guardedServerName != strings.ToLower(strings.TrimSuffix(model.ServerNames[0], ".")) || !isPublicPublicationVerificationIP(net.ParseIP(targetIP)) {
 		return meridianImportedEndpoint{}, errors.New("center: legacy REALITY endpoint target guard is not ready")
 	}
-	resolved := meridianImportedEndpoint{model: model, targetIP: strings.TrimSpace(targetIP), vlessEnabled: legacy.VLESSEnabled, hy2Enabled: legacy.HY2Enabled, entryName: displayName, serviceID: candidates[0].id, applicationID: applicationID, nodeID: nodeID}
+	resolved := meridianImportedEndpoint{model: model, totalBytes: plan.TotalBytes, usedBytes: legacy.UsedBytes, resetDay: plan.ResetDay, nextResetAt: plan.NextResetAt, lastResetAt: plan.LastResetAt, targetIP: strings.TrimSpace(targetIP), vlessEnabled: legacy.VLESSEnabled, hy2Enabled: legacy.HY2Enabled, entryName: displayName, serviceID: candidates[0].id, applicationID: applicationID, nodeID: nodeID}
 	if legacy.HY2Configured {
 		hy2 := meridian.HysteriaEndpoint{ID: endpointID + "-hy2", EntryID: applicationID, InboundTag: legacy.HY2Tag, ListenPort: 443, AdvertiseHost: advertiseHost, AdvertisePort: 443, ServerName: legacy.HY2ServerName, CertificatePEM: legacy.HY2Certificate, PrivateKeyPEM: legacy.HY2PrivateKey}
 		if hy2.Validate() != nil {

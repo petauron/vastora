@@ -25,6 +25,9 @@ func (s *Store) claimApplicationCommand(ctx context.Context, tx *sql.Tx, agentID
 	if err := s.resetDueMeridianAccounts(ctx, tx); err != nil {
 		return nil, err
 	}
+	if err := s.resetDueMeridianEndpoints(ctx, tx); err != nil {
+		return nil, err
+	}
 	if err := s.queueNextMeridianRuntime(ctx, tx, agentID); err != nil {
 		return nil, err
 	}
