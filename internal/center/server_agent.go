@@ -315,7 +315,12 @@ func (s *Server) handleClaimTask(writer http.ResponseWriter, request *http.Reque
 	}
 	task, err := s.store.claimExecutionTask(request.Context(), request.PathValue("id"), credential, sessionID, wait)
 	if err != nil {
-		writeError(writer, http.StatusUnauthorized, err)
+		if errors.Is(err, errExecutionBlocked) || errors.Is(err, errExecutionAuthorization) {
+			writeError(writer, http.StatusConflict, err)
+			return
+		}
+		slog.ErrorContext(request.Context(), "Agent task claim failed", "agent_id", request.PathValue("id"), "error", controlplane.SafeError(err.Error()))
+		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
 	if task == nil {
