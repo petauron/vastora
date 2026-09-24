@@ -230,8 +230,10 @@ func (s *Store) completeXrayConfigurationRecovery(ctx context.Context, commit pr
 		if err := tx.QueryRowContext(ctx, `SELECT application_id FROM xray_configuration_recoveries WHERE id=?`, id).Scan(&applicationID); err != nil {
 			return err
 		}
+		// A recovery attempt may have no task_executions row. An empty
+		// exclusion set must still release earlier fenced executions.
 		if _, err := tx.ExecContext(ctx, `UPDATE task_executions SET disposition='configuration-recovered',disposition_note='Explicit Xray configuration recovery completed',disposition_actor='system',disposed_at=?,updated_at=?
-		 WHERE agent_id=? AND id<>(SELECT id FROM task_executions WHERE task_id=? AND attempt=? ORDER BY created_at DESC LIMIT 1) AND disposition='' AND state<>'succeeded'
+		 WHERE agent_id=? AND id NOT IN (SELECT id FROM task_executions WHERE task_id=? AND attempt=? ORDER BY created_at DESC LIMIT 1) AND disposition='' AND state<>'succeeded'
 		 AND ((kind='application.apply' AND task_id IN (SELECT id FROM deployments WHERE application_id=?)) OR (kind='application.command' AND task_id IN (SELECT id FROM application_commands WHERE application_id=?)) OR kind IN ('xray.configuration.inspect','xray.configuration.apply'))`, now, now, agentID, id, attempt, applicationID, applicationID); err != nil {
 			return err
 		}

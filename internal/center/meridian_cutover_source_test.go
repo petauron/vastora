@@ -131,7 +131,9 @@ func openMeridianLegacyGrantSourceFixture(t *testing.T) (*Store, meridianImporte
 		[]networking.Candidate{{Address: "100.64.0.63", Interface: "tailscale0", Kind: networking.KindHeadscale}},
 		networking.Profile{ServiceAddress: "100.64.0.63", HeadscaleAddress: "100.64.0.63", EnabledKinds: []string{networking.KindHeadscale}})
 	const baseUUID = "11111111-1111-4111-8111-111111111111"
-	const routeUUID = "22222222-2222-4222-8222-222222222222"
+	// The shared endpoint already has account B's 2222 identity. A routed
+	// credential needs its own identity within that same entry runtime.
+	const routeUUID = "44444444-4444-4444-8444-444444444444"
 	parentID := landing.Identity(baseUUID)
 	source := landing.PeerIdentity{ID: "tailscale-legacy-entry", PublicKey: "nodekey:test-legacy-entry", Address: "100.64.0.61"}
 	peer := landing.PeerIdentity{ID: "tailscale-legacy-egress", PublicKey: "nodekey:test-legacy-egress", Address: "100.64.0.63"}
