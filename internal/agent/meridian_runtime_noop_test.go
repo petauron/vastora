@@ -79,7 +79,9 @@ func TestApplyMeridianRevisionOnlyDoesNotMutateDockerContainer(t *testing.T) {
 	defer server.Close()
 	task := meridianruntime.Task{ApplicationID: state.ApplicationID, ImageReference: state.ImageReference, Desired: applied}
 	task.Desired.Revision++
-	executor := ApplicationExecutor{Store: store, DockerSocket: server.URL}
+	// Docker's ExecAttach dials this host directly. The client accepts an
+	// HTTP URL for ordinary requests, but its hijack dialer needs tcp://.
+	executor := ApplicationExecutor{Store: store, DockerSocket: "tcp://" + strings.TrimPrefix(server.URL, "http://")}
 	result, err := executor.ApplyMeridianRuntime(ctx, task)
 	if err != nil || result.Validate(task.Desired) != nil || result.Receipt.Revision != 8 {
 		t.Fatalf("no-reload apply receipt=%#v err=%v", result.Receipt, err)
