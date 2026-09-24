@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	CheckInterval = 5 * time.Second
-	CheckTimeout  = 3 * time.Second
-	AllowLifetime = 15 * time.Second
-	DefaultSocket = "/var/run/tailscale/tailscaled.sock"
+	CheckInterval   = 5 * time.Second
+	CheckTimeout    = 3 * time.Second
+	TCPCheckTimeout = 5 * time.Second
+	AllowLifetime   = 15 * time.Second
+	DefaultSocket   = "/var/run/tailscale/tailscaled.sock"
 )
 
 type PeerIdentity struct {

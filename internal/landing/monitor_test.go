@@ -294,3 +294,21 @@ func TestLandingLeaseRequiresCurrentDirectAndActualBusinessProof(t *testing.T) {
 		t.Fatal("lease was extended beyond the oldest proof")
 	}
 }
+
+func TestTCPOnlyLeaseAcceptsMeasuredFourSecondBusinessProof(t *testing.T) {
+	gate := fixtureGate(t)
+	now := time.Now()
+	before := LinkResult{State: "direct", Reason: "fresh_disco_direct_response", StartedAt: now.Add(-9 * time.Second), CheckedAt: now.Add(-8 * time.Second)}
+	business := BusinessResult{Peer: gate.peer, Revision: gate.revision, TCP: true, ExitIPv4: "1.1.1.1", StartedAt: now.Add(-8 * time.Second), CheckedAt: now.Add(-4 * time.Second)}
+	after := LinkResult{State: "direct", Reason: "fresh_disco_direct_response", StartedAt: now.Add(-2 * time.Second), CheckedAt: now.Add(-time.Second)}
+	if until, ok := leaseDeadlineForTransport(gate, before, business, after, now, true); !ok || !until.Equal(before.StartedAt.Add(AllowLifetime)) {
+		t.Fatal("fresh TCP-only proof rejected or lease extended")
+	}
+	if _, ok := leaseDeadlineForTransport(gate, before, business, after, now, false); ok {
+		t.Fatal("UDP-capable route accepted TCP-only proof")
+	}
+	business.CheckedAt = business.StartedAt.Add(TCPCheckTimeout + time.Nanosecond)
+	if _, ok := leaseDeadlineForTransport(gate, before, business, after, now, true); ok {
+		t.Fatal("TCP-only proof beyond its time budget opened the gate")
+	}
+}
