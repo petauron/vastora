@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.215](https://github.com/petauron/vastora/compare/v0.1.0-alpha.214...v0.1.0-alpha.215) (2026-09-24)
+
+
+### Bug Fixes
+
+* **agent:** allow measured TCP egress probe latency ([#653](https://github.com/petauron/vastora/issues/653)) ([1040461](https://github.com/petauron/vastora/commit/1040461e50a3296ac289a6c227c1e523812d3f5f))
+
 ## [0.1.0-alpha.214](https://github.com/petauron/vastora/compare/v0.1.0-alpha.213...v0.1.0-alpha.214) (2026-09-24)
 
 
