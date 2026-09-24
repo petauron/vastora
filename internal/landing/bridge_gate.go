@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"reflect"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -37,6 +38,8 @@ type BridgeGate struct {
 }
 
 var bridgeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,14}$`)
+var bridgeGateTablePattern = regexp.MustCompile(`^vastora_landing_[0-9a-f]{24}$`)
+var bridgeGateMarkerPattern = regexp.MustCompile(`^vastora-landing-v1:[0-9a-f]{64}$`)
 
 func NewBridgeGate(peer PeerIdentity, bridge string, revision uint64) (*BridgeGate, error) {
 	address, err := netip.ParseAddr(peer.Address)
@@ -172,6 +175,102 @@ func (g *BridgeGate) Remove(ctx context.Context) error {
 		return errors.Join(removeErr, err, errors.New("landing: gate removal was not confirmed"))
 	}
 	return nil
+}
+
+// A closed gate from an earlier revision still runs as a separate nft forward
+// base chain. It drops container packets even when the current gate has a live
+// lease. Remove only closed tables with the exact managed policy for this peer
+// address and bridge; the current gate remains the traffic authority.
+func (g *BridgeGate) RemoveClosedConflicts(ctx context.Context) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	document, err := g.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if found, err := g.validate(document); err != nil || !found {
+		return errors.Join(err, errors.New("landing: current gate is unavailable"))
+	}
+	conflicts := []*BridgeGate{}
+	for _, object := range document.Objects {
+		table := object["table"]
+		if table == nil || table["family"] != "inet" {
+			continue
+		}
+		name, _ := table["name"].(string)
+		if name == g.table || !strings.HasPrefix(name, "vastora_landing_") || !g.matchesForwardTarget(document, name) {
+			continue
+		}
+		marker, _ := table["comment"].(string)
+		if !bridgeGateTablePattern.MatchString(name) || !bridgeGateMarkerPattern.MatchString(marker) ||
+			!strings.HasPrefix(strings.TrimPrefix(marker, "vastora-landing-v1:"), strings.TrimPrefix(name, "vastora_landing_")) {
+			return errors.New("landing: conflicting gate ownership is unavailable")
+		}
+		candidate := &BridgeGate{peer: g.peer, bridge: g.bridge, revision: g.revision, table: name, marker: marker, run: g.run}
+		if found, err := candidate.validate(document); err != nil || !found || len(candidate.elements(document)) != 0 {
+			return errors.Join(err, errors.New("landing: conflicting gate is not a closed managed policy"))
+		}
+		conflicts = append(conflicts, candidate)
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+	commands := make([]any, 0, len(conflicts))
+	for _, candidate := range conflicts {
+		commands = append(commands, nftObject{"delete": nftObject{"table": nftObject{"family": "inet", "name": candidate.table}}})
+	}
+	applyErr := g.apply(ctx, commands)
+	document, err = g.snapshot(ctx)
+	if err != nil {
+		return errors.Join(applyErr, err)
+	}
+	if found, err := g.validate(document); err != nil || !found {
+		return errors.Join(applyErr, err, errors.New("landing: current gate changed during conflict cleanup"))
+	}
+	for _, candidate := range conflicts {
+		if found, err := candidate.validate(document); err != nil || found {
+			return errors.Join(applyErr, err, errors.New("landing: conflicting gate removal was not confirmed"))
+		}
+	}
+	return nil // A lost command response is harmless after confirming all removals.
+}
+
+func (g *BridgeGate) matchesForwardTarget(document nftDocument, table string) bool {
+	for _, object := range document.Objects {
+		rule := object["rule"]
+		if rule == nil || rule["family"] != "inet" || rule["table"] != table || rule["chain"] != "forward" {
+			continue
+		}
+		bridge, address := false, false
+		expressions, ok := rule["expr"].([]any)
+		if !ok {
+			continue
+		}
+		for _, expression := range expressions {
+			item, ok := expression.(map[string]any)
+			if !ok {
+				continue
+			}
+			match, ok := item["match"].(map[string]any)
+			if !ok || match["op"] != "==" {
+				continue
+			}
+			left, ok := match["left"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if meta, ok := left["meta"].(map[string]any); ok && meta["key"] == "iifname" && match["right"] == g.bridge {
+				bridge = true
+			}
+			if payload, ok := left["payload"].(map[string]any); ok && payload["protocol"] == "ip" && payload["field"] == "daddr" && match["right"] == g.peer.Address {
+				address = true
+			}
+		}
+		if bridge && address {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *BridgeGate) block(ctx context.Context) error {

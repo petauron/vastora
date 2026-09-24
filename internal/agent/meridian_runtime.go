@@ -241,6 +241,9 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 			if err := e.ensureCleanMeridianContainerIdentity(ctx, task, state); err != nil {
 				return result, err
 			}
+			if err := removeClosedMeridianGateConflicts(ctx, state); err != nil {
+				return result, err
+			}
 		}
 		result, err := e.observeAppliedMeridianRuntime(ctx, state)
 		if err != nil {

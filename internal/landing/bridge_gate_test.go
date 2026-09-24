@@ -123,6 +123,45 @@ func TestBridgeGateInstallClosesExistingPermissionWithoutReplacingRules(t *testi
 	}
 }
 
+func TestBridgeGateConflictCleanupRefusesUnprovenTables(t *testing.T) {
+	current := fixtureGate(t)
+	oldPeer := current.peer
+	oldPeer.PublicKey = "nodekey:previous"
+	old, err := NewBridgeGate(oldPeer, current.bridge, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*nftDocument)
+	}{
+		{"live old permission", func(document *nftDocument) {
+			document.Objects[1]["set"]["elem"] = []any{old.peer.Address}
+		}},
+		{"foreign table marker", func(document *nftDocument) {
+			document.Objects[0]["table"]["comment"] = "foreign"
+		}},
+		{"changed old drop rule", func(document *nftDocument) {
+			document.Objects[len(old.objects())-1]["rule"]["expr"] = []any{map[string]any{"accept": nil}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := fixtureNFT(t, old)
+			test.change(&document)
+			document.Objects = append(document.Objects, fixtureNFT(t, current).Objects...)
+			current.run = func(_ context.Context, input []byte, _ ...string) ([]byte, error) {
+				if input != nil {
+					t.Fatal("unproven table was deleted")
+				}
+				return json.Marshal(document)
+			}
+			if err := current.RemoveClosedConflicts(context.Background()); err == nil {
+				t.Fatal("unproven conflicting table was accepted")
+			}
+		})
+	}
+}
+
 func TestBridgeGateCommandsNeverContainGlobalOrSelfRefreshingRules(t *testing.T) {
 	gate := fixtureGate(t)
 	data, _ := json.Marshal(gate.objects())
