@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.0-alpha.214](https://github.com/petauron/vastora/compare/v0.1.0-alpha.213...v0.1.0-alpha.214) (2026-09-24)
+
+
+### Bug Fixes
+
+* **agent:** advance identical Meridian revisions without Xray reload ([#651](https://github.com/petauron/vastora/issues/651)) ([c08b18d](https://github.com/petauron/vastora/commit/c08b18d2fb29d5d968dde0d4d098f40f73c14151))
+* restore full CI baseline after Meridian cutover ([#648](https://github.com/petauron/vastora/issues/648)) ([ef8c34e](https://github.com/petauron/vastora/commit/ef8c34e21097fb16ec61f3ac218ad2d95e25837f))
+
 ## [0.1.0-alpha.213](https://github.com/petauron/vastora/compare/v0.1.0-alpha.212...v0.1.0-alpha.213) (2026-09-24)
 
 
