@@ -364,11 +364,30 @@ func (e ApplicationExecutor) finishMeridianLandingHandover(ctx context.Context, 
 	if err := removeSupersededMeridianGates(ctx, state.RetiringGates, current, newMeridianTrafficGate); err != nil {
 		return err
 	}
+	if err := removeClosedMeridianGateConflicts(ctx, *state); err != nil {
+		return err
+	}
 	state.RetiringGates, state.HandoverPending = nil, false
 	if err := e.Store.saveMeridianRuntimeState(ctx, *state); err != nil {
 		return err
 	}
 	return e.startMeridianLandingMonitor(ctx, *state)
+}
+
+func removeClosedMeridianGateConflicts(ctx context.Context, state meridianRuntimeState) error {
+	if state.Applied == nil || state.Pending != nil {
+		return errors.New("agent: Meridian gate cleanup requires an applied runtime")
+	}
+	for _, peer := range state.AppliedPeers {
+		gate, err := landing.NewBridgeGate(peer.Identity, state.Bridge, state.Applied.Revision)
+		if err != nil {
+			return err
+		}
+		if err := gate.RemoveClosedConflicts(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // A peer-bearing runtime cannot auto-start after reboot before nft gates exist.

@@ -24,7 +24,7 @@ func TestBridgeGateKernelPolicyAndExpiry(t *testing.T) {
 		}
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	gate, err := NewBridgeGate(PeerIdentity{ID: "kernel-test", PublicKey: "nodekey:kernel-test", Address: "100.64.0.8"}, "br-test", 1)
 	if err != nil {
@@ -69,5 +69,37 @@ func TestBridgeGateKernelPolicyAndExpiry(t *testing.T) {
 	document, err = gate.snapshot(ctx)
 	if err != nil || len(gate.elements(document)) != 0 {
 		t.Fatalf("process restart retained permission: %v", err)
+	}
+	// Both tables are forward base chains. A closed older table still drops
+	// container packets to the same peer after the new table has a live lease.
+	oldPeer := gate.peer
+	oldPeer.PublicKey = "nodekey:previous"
+	old, err := NewBridgeGate(oldPeer, gate.bridge, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old.run = gate.run
+	if err := old.Install(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := gate.renew(ctx, time.Now().Add(AllowLifetime)); err != nil {
+		t.Fatal(err)
+	}
+	document, err = gate.snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, err := old.validate(document); err != nil || !found || len(old.elements(document)) != 0 || len(gate.elements(document)) != 1 {
+		t.Fatalf("conflicting closed table was not reproduced: found=%v err=%v", found, err)
+	}
+	if err := gate.RemoveClosedConflicts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	document, err = gate.snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found, err := old.validate(document); err != nil || found || len(gate.elements(document)) != 1 {
+		t.Fatalf("current permission is still masked by the older table: found=%v err=%v", found, err)
 	}
 }
