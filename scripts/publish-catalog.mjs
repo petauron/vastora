@@ -91,10 +91,14 @@ export function unpackPublication(bundle, directory) {
 
 export function publishCatalog(options, run = execFileSync, upload = uploadCatalog) {
   const { revision, commit, repository, work, rootDirectory, catalog, binDirectory, bucket, endpoint, bootstrap = false, supersede = false, runURL } = options;
+  // Report only fixed stage names. Child-process errors may contain protected
+  // signer or storage details, so the workflow must never print them.
+  const stage = name => console.error(`Catalog publication stage: ${name}`);
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") || !work || !rootDirectory || !binDirectory || !catalog) throw new Error("Invalid publication configuration");
   mkdirSync(work, { mode: 0o700 }); // caller supplies a new, isolated workspace
   const execute = (command, args) => run(command, args, { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 40 * 1024 * 1024 });
   const gh = (...args) => execute("gh", [...args, "--repo", repository]);
+  stage("discover-release-ledger");
   const pages = JSON.parse(execute("gh", ["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`]));
   const plan = selectPublication(pages.flat(), revision, commit, bootstrap, supersede);
   const tag = `catalog-r${revision}`;
@@ -116,6 +120,7 @@ export function publishCatalog(options, run = execFileSync, upload = uploadCatal
   const staged = path.join(work, "staged");
   let bundle;
   let previous;
+  stage("load-protected-ledger");
   if (plan.resume) {
     bundle = readLedger(plan.resume);
     if (bundle.catalogSHA256 !== catalogSHA256) throw new Error("Retry catalog differs from the approved publication");
@@ -147,18 +152,21 @@ export function publishCatalog(options, run = execFileSync, upload = uploadCatal
       if (!options.keyFiles?.[role]) throw new Error("Protected publication signer is missing");
       args.push(`--${role}-keys`, options.keyFiles[role]);
     }
+    stage("sign-catalog");
     execute(path.join(binDirectory, "catalog-publish"), args);
     for (const root of roots) copyFileSync(path.join(rootDirectory, root), path.join(staged, root));
     bundle = packagePublication(staged, { revision, commit, runURL, catalogSHA256, supersedesRevision: plan.superseded ? plan.previous.revision : undefined });
   }
   const state = validatePublication(bundle);
   const verifyArgs = ["--root", path.join(rootDirectory, "1.root.json"), "--revision", String(revision), "--sha256", state.sha256];
+  stage("verify-staged-catalog");
   execute(path.join(binDirectory, "catalog-verify"), ["--directory", staged, ...verifyArgs]);
   if (plan.resume && !plan.resume.draft) {
     execute(path.join(binDirectory, "catalog-verify"), ["--origin", origin, ...verifyArgs]);
     return; // already complete: do not write or sign again
   }
   if (!plan.resume) {
+    stage("persist-release-ledger");
     const asset = path.join(work, assetName);
     writeFileSync(asset, JSON.stringify(bundle), { mode: 0o600, flag: "wx" });
     gh("release", "create", tag, asset, "--draft", "--prerelease", "--latest=false", "--target", commit, "--title", `Official catalog r${revision}`, "--notes", `Application catalog only; no Center/Agent release.\nReviewed commit: ${commit}\nApproval/run: ${runURL}\nTarget SHA256: ${state.sha256}${plan.superseded ? `\nSupersedes pending revision: ${plan.previous.revision}; prior ledger retained.` : ""}`);
@@ -173,6 +181,7 @@ export function publishCatalog(options, run = execFileSync, upload = uploadCatal
   const awsArgs = ["--cli-connect-timeout", "10", "--cli-read-timeout", "60", "s3api", "get-object", "--bucket", bucket, "--endpoint-url", endpoint, "--key", "vastora/catalog/timestamp.json", output, "--no-cli-pager"];
   let previousETag;
   let activated = false;
+  stage("compare-r2-timestamp");
   if (previous || plan.resume || plan.superseded) {
     let response;
     try { response = JSON.parse(execute("aws", awsArgs)); }
@@ -194,8 +203,13 @@ export function publishCatalog(options, run = execFileSync, upload = uploadCatal
       previousETag = response.ETag;
     }
   }
-  if (!activated) upload({ directory: staged, bucket, endpoint, bootstrap: !previousETag, previousETag }, run);
+  if (!activated) {
+    stage("upload-catalog-to-r2");
+    upload({ directory: staged, bucket, endpoint, bootstrap: !previousETag, previousETag }, run);
+  }
+  stage("verify-public-catalog");
   execute(path.join(binDirectory, "catalog-verify"), ["--origin", origin, ...verifyArgs]);
+  stage("complete-release-ledger");
   gh("release", "edit", tag, "--draft=false", "--prerelease", "--latest=false");
 }
 
