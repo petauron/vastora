@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -60,6 +61,13 @@ func TestApplyMeridianRevisionOnlyDoesNotMutateDockerContainer(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/containers/"+containerID+"/exec"):
 			_, _ = w.Write([]byte(`{"Id":"stats-exec"}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/exec/stats-exec/start"):
+			// Consume the ExecAttach request body before closing the hijacked
+			// socket. Leaving it unread makes the fake server reset the stream
+			// while the client reads the Xray response.
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				t.Errorf("read Docker exec request: %v", err)
+				return
+			}
 			conn, writer, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				t.Errorf("hijack Docker exec: %v", err)
