@@ -1,4 +1,4 @@
-# Petauron Meridian app package
+# Meridian app package
 
 Meridian is Vastora's native managed access and subscription data plane. Each
 entry installation runs only the pinned official Xray image; there is no node

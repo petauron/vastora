@@ -289,7 +289,7 @@ migration; they are not translated by guesswork.
 ## Interface target
 
 - Catalog ID and app key: `meridian` / `vastora-official/meridian`
-- User-visible name: `Petauron Meridian`
+- User-visible name: `Meridian`
 - Command prefix: `meridian.*`
 - API prefix: `/api/v1/meridian`
 - Xray container: `meridian-xray`
