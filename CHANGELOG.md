@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.211](https://github.com/petauron/vastora/compare/v0.1.0-alpha.210...v0.1.0-alpha.211) (2026-09-24)
+
+
+### Bug Fixes
+
+* **meridian:** verify legacy route receipt identities ([417329e](https://github.com/petauron/vastora/commit/417329e6e298c9434a89b5f8e2a8a7643973fc17))
+
 ## [0.1.0-alpha.210](https://github.com/petauron/vastora/compare/v0.1.0-alpha.209...v0.1.0-alpha.210) (2026-09-23)
 
 
