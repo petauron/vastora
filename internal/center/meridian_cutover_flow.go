@@ -114,6 +114,11 @@ func (s *Store) StartMeridianCutover(ctx context.Context) (MeridianCutoverView, 
 		if err := ensureMeridianCutoverIdle(ctx, tx, controllerApplicationID); err != nil {
 			return MeridianCutoverView{}, err
 		}
+		if state == "verify" {
+			if _, err := s.importReadyMeridianLegacyRoutesInTx(ctx, tx, now); err != nil {
+				return MeridianCutoverView{}, err
+			}
+		}
 		if state == "publish" {
 			if err := s.restoreMeridianSubscriptionOrigin(ctx, tx, controllerApplicationID, now); err != nil {
 				return MeridianCutoverView{}, err
@@ -992,6 +997,15 @@ func (s *Store) reconcileMeridianCutoverInTx(ctx context.Context, tx *sql.Tx, st
 		state = "verify"
 	}
 	if state == "verify" && ready == expectedEndpoints && published == expectedEndpoints && readyRoutes == expectedRoutes {
+		unimported, err := meridianUnimportedReadyLegacyRoutes(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if unimported != 0 {
+			// The imported native subscription must not retire a Center-
+			// authorized fixed client that has no Meridian route identity.
+			return nil
+		}
 		if authority != "meridian" {
 			return errors.New("center: Center subscription authority was lost during runtime verification")
 		}

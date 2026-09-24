@@ -598,7 +598,10 @@ func (s *Store) verifyMeridianLegacyRetirement(ctx context.Context, applicationI
 	if state.ApplicationID != applicationID || state.Applied == nil || state.Pending != nil || state.HandoverPending || len(state.RetiringGates) != 0 {
 		return errors.New("agent: Meridian landing ownership is not ready for retirement")
 	}
-	return s.verifyMeridianLegacyLanding(ctx, state.LegacyLandingSealed)
+	if err := s.verifyMeridianLegacyLanding(ctx, state.LegacyLandingSealed); err != nil {
+		return err
+	}
+	return s.verifyMeridianLegacyChildCoverage(ctx, *state.Applied)
 }
 
 // Retirement atomically consumes the exact retained source journal. A changed
