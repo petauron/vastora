@@ -347,9 +347,15 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		}
 		return e.Store.writeExactMeridianConfig(previousActive)
 	}
+	e.Store.meridianUsageMu.Lock()
 	sha, err := replaceXrayWorkerContainer(ctx, docker, options, func() error {
 		if err := e.beginMeridianLandingHandover(ctx, docker, &state, task); err != nil {
 			return err
+		}
+		if state.Applied != nil {
+			if _, err := e.observeAppliedMeridianRuntimeWithDockerUnlocked(ctx, docker, state); err != nil {
+				return fmt.Errorf("agent: capture final Meridian usage before replacement: %w", err)
+			}
 		}
 		if err := commitXrayWorkerConfig(staged, active); err != nil {
 			return fmt.Errorf("agent: commit Meridian configuration: %w", err)
@@ -366,6 +372,7 @@ func (e ApplicationExecutor) ApplyMeridianRuntime(ctx context.Context, task meri
 		}
 		return nil
 	}, restore)
+	e.Store.meridianUsageMu.Unlock()
 	if err != nil {
 		return result, err
 	}
@@ -434,7 +441,11 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 	}
 	options := xrayWorkerContainerOptions(deployment, task.ImageReference, active, hy2Enabled, false)
 	meridianContainerLandingPolicy(&options, state.AppliedPeers)
+	e.Store.meridianUsageMu.Lock()
 	sha, err := replaceXrayWorkerContainer(ctx, docker, options, func() error {
+		if _, err := e.observeAppliedMeridianRuntimeWithDockerUnlocked(ctx, docker, state); err != nil {
+			return fmt.Errorf("agent: capture final Meridian usage before identity cleanup: %w", err)
+		}
 		state.HandoverPending = true
 		if err := e.Store.saveMeridianRuntimeState(ctx, state); err != nil {
 			return err
@@ -454,6 +465,7 @@ func (e ApplicationExecutor) ensureCleanMeridianContainerIdentity(ctx context.Co
 		}
 		return nil
 	}, nil)
+	e.Store.meridianUsageMu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -649,6 +661,12 @@ func (e ApplicationExecutor) ObserveMeridianRuntime(ctx context.Context) (meridi
 }
 
 func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDocker(ctx context.Context, docker *client.Client, state meridianRuntimeState) (meridianruntime.Result, error) {
+	e.Store.meridianUsageMu.Lock()
+	defer e.Store.meridianUsageMu.Unlock()
+	return e.observeAppliedMeridianRuntimeWithDockerUnlocked(ctx, docker, state)
+}
+
+func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDockerUnlocked(ctx context.Context, docker *client.Client, state meridianRuntimeState) (meridianruntime.Result, error) {
 	if state.Applied == nil {
 		return meridianruntime.Result{}, errors.New("agent: Meridian runtime has no applied revision")
 	}
@@ -667,7 +685,19 @@ func (e ApplicationExecutor) observeAppliedMeridianRuntimeWithDocker(ctx context
 	if err != nil || !json.Valid(stats) {
 		return meridianruntime.Result{}, errors.Join(errors.New("agent: read Meridian Xray statistics"), err)
 	}
-	result := meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(stats), Peers: e.Store.meridianPeerObservations(state), Source: cloneMeridianSource(state.AppliedSource)}
+	generation, err := meridianRuntimeGeneration(inspected.Container.ID, inspected.Container.State.StartedAt)
+	if err != nil {
+		return meridianruntime.Result{}, err
+	}
+	activeUsers, err := meridianActiveUsageUsers(state.Applied.Config)
+	if err != nil {
+		return meridianruntime.Result{}, err
+	}
+	usage, err := e.Store.accumulateMeridianUsage(ctx, state.ApplicationID, generation, activeUsers, stats)
+	if err != nil {
+		return meridianruntime.Result{}, err
+	}
+	result := meridianruntime.Result{Receipt: meridian.AppliedReceipt{Revision: state.Applied.Revision, ConfigSHA256: state.Applied.ConfigSHA256, RuntimeReady: true}, Stats: json.RawMessage(stats), Usage: usage, Peers: e.Store.meridianPeerObservations(state), Source: cloneMeridianSource(state.AppliedSource)}
 	if err := result.Validate(*state.Applied); err != nil {
 		return meridianruntime.Result{}, err
 	}

@@ -5,11 +5,15 @@
 package meridianruntime
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
+	"slices"
 	"strings"
 
 	"github.com/petauron/meridian"
+	"github.com/petauron/vastora/internal/controlplane"
 	"github.com/petauron/vastora/internal/landing"
 )
 
@@ -54,9 +58,33 @@ func (t Task) Validate() error {
 type Result struct {
 	Receipt       meridian.AppliedReceipt `json:"receipt"`
 	Stats         json.RawMessage         `json:"stats"`
+	Usage         *UsageLedgerReport      `json:"usage,omitempty"`
 	LegacyRetired bool                    `json:"legacyRetired"`
 	Peers         []PeerObservation       `json:"peers,omitempty"`
 	Source        *landing.PeerIdentity   `json:"source,omitempty"`
+}
+
+// UsageLedgerReport is cumulative within one durable Agent ledger. Stats in
+// Result remains the raw Xray sample for the released Center during the Agent
+// first rollout phase; the ledger is the next Center's accounting authority.
+type UsageLedgerReport struct {
+	ID            string          `json:"id"`
+	Sequence      uint64          `json:"sequence"`
+	Stats         json.RawMessage `json:"stats"`
+	AffectedUsers []string        `json:"affectedUsers,omitempty"`
+}
+
+func (r UsageLedgerReport) Validate() error {
+	id, err := hex.DecodeString(r.ID)
+	if err != nil || len(id) != 16 || hex.EncodeToString(id) != r.ID || r.Sequence == 0 || r.Sequence > math.MaxInt64 || len(r.Stats) == 0 || len(r.Stats) > 4<<20 || !json.Valid(r.Stats) || len(r.AffectedUsers) > 65536 || !slices.IsSorted(r.AffectedUsers) {
+		return errors.New("meridian runtime: invalid usage ledger report")
+	}
+	for index, user := range r.AffectedUsers {
+		if strings.TrimSpace(user) == "" || len(user) > 512 || index > 0 && r.AffectedUsers[index-1] == user {
+			return errors.New("meridian runtime: invalid affected usage user")
+		}
+	}
+	return nil
 }
 
 // LegacyRetireTask authorizes removal of the superseded 3x-ui installation
@@ -87,6 +115,13 @@ func (r LegacyRetireResult) Validate() error {
 func (r Result) Validate(desired meridian.DesiredArtifact) error {
 	if meridian.VerifyAppliedReceipt(desired, r.Receipt) != nil || len(r.Stats) == 0 || len(r.Stats) > 4<<20 || !json.Valid(r.Stats) {
 		return errors.New("meridian runtime: invalid applied result")
+	}
+	if r.Usage != nil && r.Usage.Validate() != nil {
+		return errors.New("meridian runtime: invalid usage ledger")
+	}
+	encoded, err := json.Marshal(r)
+	if err != nil || len(encoded) > controlplane.MaxJSONPayload*3/4 {
+		return errors.New("meridian runtime: result exceeds the heartbeat capacity")
 	}
 	return nil
 }

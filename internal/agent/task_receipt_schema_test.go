@@ -28,7 +28,7 @@ func TestTaskReceiptSchemaV19BacksUpWALAndPreservesArchive(t *testing.T) {
 	}
 	defer old.Close()
 	dropTaskReceiptIndexesForFixture(t, old.db)
-	if _, err := old.db.Exec(`DROP TABLE meridian_runtime_state; PRAGMA user_version = 18; PRAGMA wal_autocheckpoint = 0`); err != nil {
+	if _, err := old.db.Exec(`DROP TABLE meridian_usage_state; DROP TABLE meridian_runtime_state; PRAGMA user_version = 18; PRAGMA wal_autocheckpoint = 0`); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -105,7 +105,7 @@ func TestTaskReceiptSchemaV19FailsClosed(t *testing.T) {
 			}
 			defer store.Close()
 			dropTaskReceiptIndexesForFixture(t, store.db)
-			if _, err := store.db.Exec(`DROP TABLE meridian_runtime_state; PRAGMA user_version = 18`); err != nil {
+			if _, err := store.db.Exec(`DROP TABLE meridian_usage_state; DROP TABLE meridian_runtime_state; PRAGMA user_version = 18`); err != nil {
 				t.Fatal(err)
 			}
 			if failure == "backup" {
