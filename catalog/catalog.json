@@ -77,8 +77,8 @@
       "id": "meridian",
       "version": "0.1.0-alpha.1",
       "name": {
-        "en": "Petauron Meridian",
-        "zh-CN": "Petauron Meridian"
+        "en": "Meridian",
+        "zh-CN": "Meridian"
       },
       "description": {
         "en": "Petauron's native managed access, subscription, shared-quota, and Xray data plane.",
