@@ -38,7 +38,8 @@ conflict, never a reason to retry without the condition. R2 documents these
 conditions in its [S3 API compatibility reference](https://developers.cloudflare.com/r2/api/s3/api/).
 
 1. Review the application change and retain immutable content for all previously
-   published app versions. Pin OCI digests and native platform-specific SHA256.
+   published app versions. Assign a new app version for any manifest change,
+   including display text. Pin OCI digests and native platform-specific SHA256.
 2. Run catalog validation and artifact verification before granting signing
    approval. A contract change is not approved merely because its JSON is valid.
 3. Use the protected signing environment and independently approved root. Never
