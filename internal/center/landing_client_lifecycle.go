@@ -40,7 +40,7 @@ func (s *Store) prepareLandingParentMutation(ctx context.Context, tx *sql.Tx, co
 			continue
 		}
 		var capable int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM landing_client_capabilities c JOIN agents a ON a.id=c.node_id WHERE c.node_id=? AND c.generation=? AND a.status='active' AND a.credential_revoked_at=''`, inbound.NodeID, landing.ClientRuntimeGeneration).Scan(&capable); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_private_peer_capabilities c JOIN agents a ON a.id=c.node_id WHERE c.node_id=? AND c.generation=? AND a.status='active' AND a.credential_revoked_at=''`, inbound.NodeID, landing.ClientRuntimeGeneration).Scan(&capable); err != nil {
 			return err
 		}
 		if capable != 1 {

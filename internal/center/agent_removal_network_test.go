@@ -79,7 +79,7 @@ func TestRemoveOfflineAgentPrivateIdentityRejectsUnownedNodes(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.observation != "" {
-				if _, err := s.db.Exec(`INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at) VALUES(?,1,?,'')`, node.ID, tc.observation); err != nil {
+				if _, err := s.db.Exec(`INSERT INTO agent_private_peer_capabilities(node_id,generation,peer_json,observed_at) VALUES(?,1,?,'')`, node.ID, tc.observation); err != nil {
 					t.Fatal(err)
 				}
 			}

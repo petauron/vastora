@@ -22,7 +22,7 @@ func (s *Store) authorizeMeridianEntrySource(ctx context.Context, tx *sql.Tx, en
 	err := tx.QueryRowContext(ctx, `SELECT endpoint.source_peer_json,capability.peer_json,agent.id
 		FROM meridian_endpoints endpoint JOIN applications application ON application.id=endpoint.application_id
 		JOIN agents agent ON agent.id=application.node_id
-		JOIN landing_client_capabilities capability ON capability.node_id=agent.id
+		JOIN agent_private_peer_capabilities capability ON capability.node_id=agent.id
 		WHERE endpoint.id=? AND agent.status='active' AND agent.credential_revoked_at='' AND agent.tailscale_ownership='managed'
 		AND capability.generation=? AND capability.observed_at>?`, endpointID, landing.ClientRuntimeGeneration,
 		s.now().UTC().Add(-landingHealthFreshness).Format(time.RFC3339Nano)).Scan(&pinnedJSON, &observedJSON, &agentID)

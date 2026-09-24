@@ -71,7 +71,7 @@ func (s *Store) removeAgentPrivateIdentity(ctx context.Context, id string) error
 	}
 	if identity.ID == "" {
 		var observedKey, observedAddress string
-		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(peer_json,'$.publicKey'),''),COALESCE(json_extract(peer_json,'$.address'),'') FROM landing_client_capabilities WHERE node_id=?`, id).Scan(&observedKey, &observedAddress)
+		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(json_extract(peer_json,'$.publicKey'),''),COALESCE(json_extract(peer_json,'$.address'),'') FROM agent_private_peer_capabilities WHERE node_id=?`, id).Scan(&observedKey, &observedAddress)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}

@@ -313,7 +313,7 @@ func TestMeridianSamePeerServerReceiptWakesOnlyNewlyAuthorizedEntry(t *testing.T
 	if _, err := store.db.Exec(`UPDATE agent_network_profiles SET service_address='100.64.0.64',headscale_address='100.64.0.64' WHERE agent_id=?`, entryID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.Exec(`INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at) VALUES(?,?,?,?)`, entryID, landing.ClientRuntimeGeneration,
+	if _, err := store.db.Exec(`INSERT INTO agent_private_peer_capabilities(node_id,generation,peer_json,observed_at) VALUES(?,?,?,?)`, entryID, landing.ClientRuntimeGeneration,
 		[]byte(`{"id":"tailnet-second-entry","publicKey":"nodekey:test-second-entry","address":"100.64.0.64"}`), stamp); err != nil {
 		t.Fatal(err)
 	}

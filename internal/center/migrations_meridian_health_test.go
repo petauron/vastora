@@ -135,7 +135,7 @@ func seedMeridianVersion88HealthFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	stamp := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := db.ExecContext(ctx, `INSERT INTO landing_client_capabilities(node_id,generation,peer_json,observed_at)
+	if _, err := db.ExecContext(ctx, `INSERT INTO agent_private_peer_capabilities(node_id,generation,peer_json,observed_at)
 		VALUES('agent-v3',1,'{"id":"current-observation","publicKey":"test-source-key","address":"100.64.0.71"}',?)`, stamp); err != nil {
 		t.Fatal(err)
 	}

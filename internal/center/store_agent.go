@@ -779,7 +779,7 @@ func (s *Store) RecordAgentHeartbeat(ctx context.Context, id, credential string,
 		}
 	}
 	if heartbeat.Capabilities.Docker {
-		if err := recordLandingClientRuntime(ctx, tx, id, heartbeat.LandingClientRuntime, now); err != nil {
+		if err := recordAgentPrivatePeer(ctx, tx, id, heartbeat.LandingClientRuntime, now); err != nil {
 			return err
 		}
 		if !executionBlocked {

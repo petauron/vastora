@@ -145,7 +145,7 @@ func openMeridianLegacyGrantSourceFixture(t *testing.T) (*Store, meridianImporte
 	if err := store.db.QueryRowContext(ctx, `SELECT application.node_id,endpoint.private_key_secret_id FROM applications application JOIN meridian_endpoints endpoint ON endpoint.application_id=application.id WHERE endpoint.id=?`, sharedSnapshotEndpointID).Scan(&entryID, &secretID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE landing_client_capabilities SET generation=?,peer_json=?,observed_at=? WHERE node_id=?`, landing.ClientRuntimeGeneration, sourceJSON, stamp, entryID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE agent_private_peer_capabilities SET generation=?,peer_json=?,observed_at=? WHERE node_id=?`, landing.ClientRuntimeGeneration, sourceJSON, stamp, entryID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `INSERT INTO three_x_ui_client_accounts(id,controller_id,email,metadata_json,observed_at) VALUES(?,'snapshot-shared-app','Original account','{}',?)`, parentID, stamp); err != nil {
