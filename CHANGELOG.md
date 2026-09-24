@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.213](https://github.com/petauron/vastora/compare/v0.1.0-alpha.212...v0.1.0-alpha.213) (2026-09-24)
+
+
+### Bug Fixes
+
+* remove closed landing gates that mask Meridian routes ([#646](https://github.com/petauron/vastora/issues/646)) ([61f684e](https://github.com/petauron/vastora/commit/61f684e48d8eaf03395965cd230a209395387e47))
+
 ## [0.1.0-alpha.212](https://github.com/petauron/vastora/compare/v0.1.0-alpha.211...v0.1.0-alpha.212) (2026-09-24)
 
 
