@@ -2,7 +2,7 @@
 
 ARG TARGETARCH
 
-FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS dante-source
+FROM --platform=$BUILDPLATFORM ubuntu:22.10 AS dante-source
 COPY scripts/install-landing-build-deps.sh /install-build-deps.sh
 RUN sh /install-build-deps.sh
 COPY scripts/build-landing-dante.sh /build-dante.sh

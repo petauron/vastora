@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM ubuntu:22.04 AS dante-build
+FROM --platform=$BUILDPLATFORM ubuntu:22.10 AS dante-build
 ARG TARGETARCH
 COPY scripts/install-landing-build-deps.sh /install-build-deps.sh
 RUN sh /install-build-deps.sh
