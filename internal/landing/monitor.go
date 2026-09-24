@@ -73,7 +73,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 		var after LinkResult
 		var checkErr error
 		if before.State == "direct" {
-			businessCtx, cancel := context.WithTimeout(ctx, CheckTimeout)
+			businessCtx, cancel := context.WithTimeout(ctx, businessCheckTimeout(m.TCPOnly))
 			business, checkErr = m.CheckBusiness(businessCtx, m.Gate.peer, m.Gate.revision)
 			if businessCtx.Err() != nil && checkErr == nil {
 				checkErr = probeFailure("business_check", businessCtx.Err())
@@ -136,13 +136,20 @@ func leaseDeadline(gate *BridgeGate, before LinkResult, business BusinessResult,
 	return leaseDeadlineForTransport(gate, before, business, after, now, false)
 }
 
+func businessCheckTimeout(tcpOnly bool) time.Duration {
+	if tcpOnly {
+		return TCPCheckTimeout
+	}
+	return CheckTimeout
+}
+
 func leaseDeadlineForTransport(gate *BridgeGate, before LinkResult, business BusinessResult, after LinkResult, now time.Time, tcpOnly bool) (time.Time, bool) {
 	validLink := func(result LinkResult) bool {
 		return result.State == "direct" && result.Reason == "fresh_disco_direct_response" && !result.StartedAt.IsZero() &&
 			!result.CheckedAt.Before(result.StartedAt) && result.CheckedAt.Sub(result.StartedAt) <= CheckTimeout && !result.CheckedAt.After(now)
 	}
 	if !validLink(before) || !validLink(after) || business.Peer != gate.peer || business.Revision != gate.revision || !business.TCP ||
-		business.StartedAt.Before(before.CheckedAt) || business.CheckedAt.Before(business.StartedAt) || business.CheckedAt.Sub(business.StartedAt) > CheckTimeout ||
+		business.StartedAt.Before(before.CheckedAt) || business.CheckedAt.Before(business.StartedAt) || business.CheckedAt.Sub(business.StartedAt) > businessCheckTimeout(tcpOnly) ||
 		after.StartedAt.Before(business.CheckedAt) || (!tcpOnly && (!business.UDP || !validUDPRelay(business.UDPRelay, gate.peer.Address))) {
 		return time.Time{}, false
 	}

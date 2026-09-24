@@ -26,7 +26,7 @@ import (
 type Probe struct{ TCPOnly bool }
 
 func (p Probe) Check(ctx context.Context, peer PeerIdentity, revision uint64) (BusinessResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, CheckTimeout)
+	ctx, cancel := context.WithTimeout(ctx, businessCheckTimeout(p.TCPOnly))
 	defer cancel()
 	return p.check(ctx, peer, revision)
 }
