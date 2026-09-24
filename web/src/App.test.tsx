@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { APIError, api } from "./api";
+import { emptyAppData } from "./app-data";
 import { ThemeProvider } from "./components/theme";
 import type { CenterUpdateStatus, Site } from "./types";
 
@@ -41,7 +42,8 @@ afterEach(() => {
 
 function mockReadyCenter() {
   vi.spyOn(api, "setupStatus").mockResolvedValue({ administratorConfigured: true, onboardingComplete: true, suggestedAgentConnectUrl: "https://center.example.com", builtinHeadscaleAvailable: true, cloudflareOAuthAvailable: true, publicNetworkHelperAvailable: true, regionLookupAvailable: true, cloudflareConfigured: false, cloudflareAccessConfigured: false, cloudflareTurnstileConfigured: false, loginProtection: { captchaRequired: false }, publicAddressCandidates: [], gatewayAddressCandidates: [] });
-  const status = vi.spyOn(api, "status").mockResolvedValue({ version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan", agentConnectUrl: "https://center.example.com" });
+  const centerStatus = { version: "test", agentInstallerAvailable: true, agentConnectionMode: "lan" as const, agentConnectUrl: "https://center.example.com" };
+  const status = vi.spyOn(api, "status").mockResolvedValue(centerStatus);
   vi.spyOn(api, "centerUpdate").mockResolvedValue({ currentVersion: "test", latestVersion: "test", updateAvailable: false, releaseCheckAvailable: true, automatic: true, state: "idle" });
   vi.spyOn(api, "sites").mockResolvedValue({ sites: [] });
   vi.spyOn(api, "agents").mockResolvedValue({ agents: [] });
@@ -49,6 +51,7 @@ function mockReadyCenter() {
   vi.spyOn(api, "publications").mockResolvedValue({ publications: [] });
   vi.spyOn(api, "actions").mockResolvedValue({ actions: [] });
   vi.spyOn(api, "integrations").mockResolvedValue({ integrations: [] });
+  vi.spyOn(api, "meridian").mockResolvedValue(emptyAppData(centerStatus).meridian);
   return status;
 }
 
