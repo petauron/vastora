@@ -1318,6 +1318,13 @@ func (s *Store) queueMissingMeridianRetirements(ctx context.Context, tx *sql.Tx,
 		return err
 	}
 	if controllerHasEndpoint == 0 {
+		var unretiredEntries int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM meridian_endpoints WHERE status<>'retired' AND legacy_retired=0`).Scan(&unretiredEntries); err != nil {
+			return err
+		}
+		if unretiredEntries != 0 {
+			return nil
+		}
 		var succeeded, active int
 		if err := tx.QueryRowContext(ctx, `SELECT
 			EXISTS(SELECT 1 FROM application_commands WHERE application_id=? AND kind=? AND state='succeeded'),
